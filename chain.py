@@ -248,57 +248,60 @@ class BloomChain:
     @classmethod    
     async def stream(cls, cache: Conversation, inp: str ):
         # VoE has to happen first. If there's user prediction history, derive and store fact(s)
-        if cache.messages('user_prediction_thought_revision'):
-            user_prediction_thought_revision = cache.messages('user_prediction_thought_revision')[-1].content
+        try:
+            if cache.messages('user_prediction_thought_revision'):
+                user_prediction_thought_revision = cache.messages('user_prediction_thought_revision')[-1].content
 
-            voe_thought = await cls.think_violation_of_expectation(cache, inp, user_prediction_thought_revision)
-            voe_facts = await cls.violation_of_expectation(cache, inp, user_prediction_thought_revision, voe_thought)
+                voe_thought = await cls.think_violation_of_expectation(cache, inp, user_prediction_thought_revision)
+                voe_facts = await cls.violation_of_expectation(cache, inp, user_prediction_thought_revision, voe_thought)
 
-            if not voe_facts or voe_facts[0] == "None":
-                pass
-            else:
-                await cls.check_voe_list(cache, voe_facts)
+                if not voe_facts or voe_facts[0] == "None":
+                    pass
+                else:
+                    await cls.check_voe_list(cache, voe_facts)
 
-        print("=========================================")
-        print("Finished Init")
-        print("=========================================")
+            print("=========================================")
+            print("Finished Init")
+            print("=========================================")
 
-        thought_iterator = cls.think(cache, inp)
-        thought = ""
-        async for item in thought_iterator:
-            # escape ❀ if present
-            item = item.replace("❀", "🌸")
-            thought += item
-            yield item
-        yield "❀"
+            thought_iterator = cls.think(cache, inp)
+            thought = ""
+            async for item in thought_iterator:
+                # escape ❀ if present
+                item = item.replace("❀", "🌸")
+                thought += item
+                yield item
+            yield "❀"
 
-        print("=========================================")
-        print("Finished Thought")
-        print("=========================================")
+            print("=========================================")
+            print("Finished Thought")
+            print("=========================================")
 
 
-        thought_revision_iterator = cls.revise_thought(cache, inp, thought)
-        thought_revision = await thought_revision_iterator()
+            thought_revision_iterator = cls.revise_thought(cache, inp, thought)
+            thought_revision = await thought_revision_iterator()
 
-        response_iterator = cls.respond(cache, thought_revision, inp)
-        #response = ""
+            response_iterator = cls.respond(cache, thought_revision, inp)
+            #response = ""
 
-        async for item in response_iterator:
-            # if "❀" in item:
-            item = item.replace("❀", "🌸")
-            #response += item 
-            yield item
+            async for item in response_iterator:
+                # if "❀" in item:
+                item = item.replace("❀", "🌸")
+                #response += item 
+                yield item
 
-        print("=========================================")
-        print("Finished Response")
-        print("=========================================")
+            print("=========================================")
+            print("Finished Response")
+            print("=========================================")
 
-        user_prediction_thought = await cls.think_user_prediction(cache, inp)
-        user_prediction_thought_revision = await cls.revise_user_prediction_thought(cache, user_prediction_thought, inp)
+            user_prediction_thought = await cls.think_user_prediction(cache, inp)
+            user_prediction_thought_revision = await cls.revise_user_prediction_thought(cache, user_prediction_thought, inp)
 
-        print("=========================================")
-        print("Finished User Prediction")
-        print("=========================================")
+            print("=========================================")
+            print("Finished User Prediction")
+            print("=========================================")
+        finally:
+            yield "TERMINATED SEQUENCE"
 
 
 
