@@ -1,0 +1,23 @@
+_type: prompt
+input_variables:
+    ["ai_message", "user_prediction_thought_revision", "actual", "voe_thought"]
+template: >
+  Below is the most recent AI message we sent to a user, a "thought" about what the user was going to say to that, what the user actually responded with, and a theory of mind prediction about the user's response. Derive a fact (or list of facts) about the user based on the difference between the original thought and their actual response plus the theory of mind prediction about that response.
+
+  Most recent AI message: """
+  {ai_message}
+  """
+
+  Thought about what they were going to say: """
+  {user_prediction_thought_revision}
+  """
+
+  Actual response: """
+  {actual}
+  """
+
+  Theory of mind prediction about that response: """
+  {voe_thought}
+  """
+
+  Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out. Your response should be a numbered list with each item on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".

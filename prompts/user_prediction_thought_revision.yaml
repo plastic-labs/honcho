@@ -1,0 +1,25 @@
+_type: prompt
+input_variables:
+    ["history", "user_prediction_thought", "retrieved_vectors"]
+template: >
+    You are tasked with revising theory of mind "thoughts" about what the user is going to say. Here is the thought generated previously:
+
+    Thought: """
+    {user_prediction_thought}
+    """
+
+    Based on this thought, the following personal data has been retrieved:
+
+    Personal Data: """
+    {retrieved_vectors}
+    """
+
+    And here's the conversation history that was used to generate the original thought:
+
+    History: """
+    {history}
+    """
+    
+    Given the thought, conversation history, and personal data, revise the thought if you believe there are changes to be made.
+
+    thought revision:

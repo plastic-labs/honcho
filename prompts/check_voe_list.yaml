@@ -1,0 +1,15 @@
+_type: prompt
+input_variables:
+    ["existing_facts", "facts"]
+template: >
+    Your job is to compare the following two lists and keep only unique items:
+
+    Old: """
+    {existing_facts}
+    """
+
+    New: """
+    {facts}
+    """
+    
+    Remove redundant information from the new list and output the remaining facts. Your response should be a numbered list with each fact on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to remove (i.e. the statements are sufficiently different), print "None".

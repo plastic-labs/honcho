@@ -1,0 +1,13 @@
+_type: prompt
+input_variables:
+    ["history"]
+template: >
+    Generate a "thought" that makes a prediction about what the user will say based on the way the conversation has been going.
+
+    History: ```
+
+    {history}
+
+    ```
+
+    thought:
