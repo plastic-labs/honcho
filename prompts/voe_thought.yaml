@@ -1,0 +1,15 @@
+_type: prompt
+input_variables:
+    ["user_prediction_thought_revision", "actual"]
+template: >
+  Below is a "thought" about what the user was going to say, and then what the user actually said. Generate a theory of mind prediction about the user based on the difference between the "thought" and actual response.
+
+  Thought: """
+  {user_prediction_thought_revision}
+  """
+
+  Actual: """
+  {actual}
+  """
+
+  Provide the theory of mind prediction solely in reference to the Actual statement, i.e. do not generate something that negates the thought. Do not speculate anything about the user.
