@@ -301,7 +301,7 @@ class BloomChain:
             print("Finished User Prediction")
             print("=========================================")
         finally:
-            yield "TERMINATED SEQUENCE"
+            yield "❀"
 
 
 
