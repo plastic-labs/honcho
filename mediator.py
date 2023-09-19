@@ -5,7 +5,7 @@ from langchain.vectorstores import SupabaseVectorStore
 from langchain.embeddings.base import Embeddings
 from langchain.embeddings.openai import OpenAIEmbeddings
 import uuid
-import urllib
+import sentry_sdk
 import os
 from dotenv import load_dotenv
 # Supabase for Postgres Management
@@ -16,6 +16,8 @@ import json
 load_dotenv()
 
 class SupabaseMediator:
+
+    @sentry_sdk.trace
     def __init__(self):
         self.supabase: Client = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
         self.memory_table = os.environ["MEMORY_TABLE"]
@@ -42,15 +44,18 @@ class SupabaseMediator:
 
         # self.vector_table.add_documents(seed_docs)
 
+    @sentry_sdk.trace
     def messages(self, session_id: str, user_id: str, message_type: str) -> List[BaseMessage]:  # type: ignore
         response = self.supabase.table(self.memory_table).select("message").eq("session_id", session_id).eq("user_id", user_id).eq("message_type", message_type).order("id", desc=True).limit(10).execute()
         items = [record["message"] for record in response.data]
         messages = messages_from_dict(items)
         return messages[::-1]
 
+    @sentry_sdk.trace
     def add_message(self, session_id: str, user_id: str, message_type: str, message: BaseMessage) -> None:
         self.supabase.table(self.memory_table).insert({"session_id": session_id, "user_id": user_id, "message_type": message_type, "message": _message_to_dict(message)}).execute()
 
+    @sentry_sdk.trace
     def conversations(self, location_id: str, user_id: str) -> str | None:
         response = self.supabase.table(self.conversation_table).select("id").eq("location_id", location_id).eq("user_id", user_id).eq("isActive", True).maybe_single().execute()
         if response:
@@ -58,11 +63,13 @@ class SupabaseMediator:
            return conversation_id
         return None
     
+    @sentry_sdk.trace
     def add_conversation(self, location_id: str, user_id: str) -> str:
         conversation_id = str(uuid.uuid4())
         self.supabase.table(self.conversation_table).insert({"id": conversation_id, "user_id": user_id, "location_id": location_id}).execute()
         return conversation_id
 
+    @sentry_sdk.trace
     def delete_conversation(self, conversation_id: str) -> None:
         self.supabase.table(self.conversation_table).update({"isActive": False}).eq("id", conversation_id).execute()
 
