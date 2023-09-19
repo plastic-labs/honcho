@@ -16,6 +16,7 @@ openai = "^0.28.0"
 pydantic = "^2.3.0"
 python-dotenv = "^1.0.0"
 uvicorn = "^0.23.2"
+sentry-sdk = {extras = ["fastapi"], version = "^1.31.0"}
 
 
 [build-system]

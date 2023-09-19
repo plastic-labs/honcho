@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from collections.abc import AsyncIterator
 from cache import Conversation
 from typing import List
+import sentry_sdk
 
 load_dotenv()
 
@@ -40,6 +41,7 @@ class BloomChain:
         pass
         
     @classmethod
+    @sentry_sdk.trace
     def think(cls, cache: Conversation, input: str):
         """Generate Bloom's thought on the user."""
         # load message history
@@ -58,6 +60,7 @@ class BloomChain:
         )
     
     @classmethod
+    @sentry_sdk.trace
     def revise_thought(cls, cache: Conversation, input: str, thought: str):
         """Revise Bloom's thought about the user with retrieved personal data"""
         
@@ -80,6 +83,7 @@ class BloomChain:
         )
         
     @classmethod
+    @sentry_sdk.trace
     def respond(cls, cache: Conversation, thought: str, input: str):
         """Generate Bloom's response to the user."""
         response_prompt = ChatPromptTemplate.from_messages([
@@ -97,6 +101,7 @@ class BloomChain:
         )
     
     @classmethod
+    @sentry_sdk.trace
     async def think_user_prediction(cls, cache: Conversation, input: str):
         """Generate a thought about what the user is going to say"""
 
@@ -117,6 +122,7 @@ class BloomChain:
         return user_prediction_thought.content
     
     @classmethod
+    @sentry_sdk.trace
     async def revise_user_prediction_thought(cls, cache: Conversation, user_prediction_thought: str, input: str):
         """Revise the thought about what the user is going to say based on retrieval of VoE facts"""
 
@@ -142,6 +148,7 @@ class BloomChain:
     
     
     @classmethod
+    @sentry_sdk.trace
     async def think_violation_of_expectation(cls, cache: Conversation, inp: str, user_prediction_thought_revision: str) -> None:
         """Assess whether expectation was violated, derive and store facts"""
 
@@ -161,6 +168,7 @@ class BloomChain:
         return voe_thought.content
     
     @classmethod
+    @sentry_sdk.trace
     async def violation_of_expectation(cls, cache: Conversation, inp: str, user_prediction_thought_revision: str, voe_thought: str) -> None:
         """Assess whether expectation was violated, derive and store facts"""
 
@@ -185,6 +193,7 @@ class BloomChain:
         return facts
 
     @classmethod
+    @sentry_sdk.trace
     async def check_voe_list(cls, cache: Conversation, facts: List[str]):
         """Filter the facts to just new ones"""
 
@@ -218,6 +227,7 @@ class BloomChain:
             cache.add_texts(data)
 
     @classmethod    
+    @sentry_sdk.trace
     async def chat(cls, cache: Conversation, inp: str ) -> tuple[str, str]:
         # VoE has to happen first. If there's user prediction history, derive and store fact(s)
         if cache.messages('user_prediction_thought_revision'):
@@ -246,6 +256,7 @@ class BloomChain:
         return thought, response
 
     @classmethod    
+    @sentry_sdk.trace
     async def stream(cls, cache: Conversation, inp: str ):
         # VoE has to happen first. If there's user prediction history, derive and store fact(s)
         try:

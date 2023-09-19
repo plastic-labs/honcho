@@ -8,8 +8,17 @@ from chain import BloomChain
 from mediator import SupabaseMediator
 from cache import Conversation
 
+import os
 from dotenv import load_dotenv
+import sentry_sdk
 load_dotenv()
+
+rate = 0.2 if os.getenv("SENTRY_ENVIRONMENT") == "production" else 1.0
+sentry_sdk.init(
+    dsn=os.environ['SENTRY_DSN'],
+    traces_sample_rate=rate,
+    profiles_sample_rate=rate
+)
 
 app = FastAPI()
 
