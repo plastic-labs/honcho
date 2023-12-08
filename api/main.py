@@ -32,10 +32,6 @@ class SessionInput(BaseModel):
     message: str
     message_type: str
 
-@app.get("/")
-def root():
-    return {"message": "Hello World"}
-
 class Session(BaseModel):
     session_id: str
     user_id: str
@@ -61,6 +57,7 @@ class UnknownSession(BaseModel):
 @app.get('/session')
 async def get_session(inp: UnknownSession):
     """Return session ids and metadata associated with a user and location"""
+    # TODO update to return a list of ID's
     location = "default" if inp.location_id is None else inp.location_id 
     async with LOCK:
         id: str = MEDIATOR.session(location, inp.user_id)
