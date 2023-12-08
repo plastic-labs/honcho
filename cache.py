@@ -5,7 +5,7 @@ in OrderedDict data structure.
 from collections import OrderedDict
 from mediator import SupabaseMediator
 import uuid
-from typing import List
+from typing import List, Dict
 from langchain.schema import BaseMessage, Document
 from pydantic import BaseModel
 import sentry_sdk
@@ -13,24 +13,36 @@ import sentry_sdk
 class Conversation:
     "Wrapper Class for storing contexts between channels. Using an object to pass by reference avoid additional cache hits"
     @sentry_sdk.trace
-    def __init__(self, mediator: SupabaseMediator, user_id: str, conversation_id: str = str(uuid.uuid4()), location_id: str = "web"):
+    def __init__(self, mediator: SupabaseMediator, user_id: str, session_id: str = str(uuid.uuid4()), location_id: str = "web", metadata: Dict = {}):
         self.mediator: SupabaseMediator = mediator
         self.user_id: str = user_id
-        self.conversation_id: str = conversation_id 
+        self.session_id: str = session_id 
         self.location_id: str = location_id
+        self.metadata: Dict = metadata
 
     @sentry_sdk.trace
     def add_message(self, message_type: str, message: BaseMessage,) -> None:
-        self.mediator.add_message(self.conversation_id, self.user_id, message_type, message)
+        self.mediator.add_message(self.session_id, self.user_id, message_type, message)
 
     @sentry_sdk.trace
     def messages(self, message_type: str) -> List[BaseMessage]:
-        return self.mediator.messages(self.conversation_id, self.user_id, message_type)
+        return self.mediator.messages(self.session_id, self.user_id, message_type)
+
+    @sentry_sdk.trace
+    def delete(self) -> None:
+        self.mediator.delete_session(self.session_id)
+
+    @sentry_sdk.trace
+    def restart(self) -> None:
+        self.delete()
+        representation = self.mediator.add_session(user_id=self.user_id, location_id=self.location_id)
+        self.session_id: str = representation["id"]
+        self.metadata = representation["metadata"]
     
     # vector DB fn
     @sentry_sdk.trace
     def add_texts(self, texts: List[str]) -> None:
-        metadatas = [{"conversation_id": self.conversation_id, "user_id": self.user_id} for _ in range(len(texts))]
+        metadatas = [{"session_id": self.session_id, "user_id": self.user_id} for _ in range(len(texts))]
         self.mediator.vector_table.add_texts(texts, metadatas)
 
     # vector DB fn
