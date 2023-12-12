@@ -3,7 +3,7 @@ from langchain.schema import Document
 from langchain.schema.messages import BaseMessage, _message_to_dict, messages_from_dict
 from langchain.vectorstores import SupabaseVectorStore
 from langchain.embeddings.base import Embeddings
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.embeddings import AzureOpenAIEmbeddings
 import uuid
 import sentry_sdk
 import os
@@ -24,11 +24,9 @@ class SupabaseMediator:
         self.conversation_table = os.environ["CONVERSATION_TABLE"]
         self.match_function = os.environ["MATCH_FUNCTION"]
 
-        embeddings = OpenAIEmbeddings(
+        embeddings = AzureOpenAIEmbeddings(
                 deployment=os.environ["OPENAI_API_EMBEDDING_NAME"],
                 model="text-embedding-ada-002",
-                openai_api_base=os.environ["OPENAI_API_BASE"],
-                openai_api_type=os.environ["OPENAI_API_TYPE"],
                 )
         self.vector_table = SupabaseVectorStore(
             embedding=embeddings,
