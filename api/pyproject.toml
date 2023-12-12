@@ -9,7 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.9"
 fastapi = "^0.103.1"
-langchain = "^0.0.3"
+langchain = "^0.0.350"
 supabase = "^1.0.4"
 tiktoken = "^0.4.0"
 openai = "^0.28.0"
