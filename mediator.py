@@ -10,6 +10,7 @@ import os
 from dotenv import load_dotenv
 # Supabase for Postgres Management
 from supabase.client import create_client, Client
+from supabase.lib.client_options import ClientOptions
 from typing import List
 import json
 
@@ -19,7 +20,9 @@ class SupabaseMediator:
 
     @sentry_sdk.trace
     def __init__(self):
-        self.supabase: Client = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
+        timeout_client_options = ClientOptions(postgrest_client_timeout=60)
+        self.supabase: Client = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'], timeout_client_options)
+        # self.supabase: Client = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
         self.memory_table = os.environ["MEMORY_TABLE"]
         self.conversation_table = os.environ["CONVERSATION_TABLE"]
         self.match_function = os.environ["MATCH_FUNCTION"]
