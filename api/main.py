@@ -105,7 +105,7 @@ class Message(BaseModel):
 async def get_messages(user_id, session_id):
     """Return messages associated with a session"""
     async with LOCK:
-        data: str = MEDIATOR.get_messages(session_id, "response")
+        data: str = MEDIATOR.get_messages(session_id)
     return JSONResponse(status_code=200, content=data)
 
 
@@ -117,18 +117,27 @@ async def add_message(user_id, session_id, inp: Message):
     return JSONResponse(status_code=200, content={"message": "OK"})
 
 
-class SessionInput(BaseModel):
-    user_id: str
-    session_id: str
+class ChatInput(BaseModel):
     message: str
-    message_type: str
 
 
-class Session(BaseModel):
-    session_id: str
-    user_id: str
-    location_id: Optional[str]
-    metadata: Optional[Dict]
+@app.post("/users/{user_id}/sessions/{session_id}/chat")
+async def voe(user_id, session_id, inp: ChatInput):
+    async with LOCK:
+        session = Conversation(MEDIATOR, user_id, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+    thought, response = await BloomChain.chat(session, inp.message)
+    return {"thought": thought, "response": response}
+
+
+# @app.post("/stream")
+# async def stream(inp: SessionInput):
+#     async with LOCK:
+#         session = Conversation(MEDIATOR, user_id=inp.user_id, session_id=inp.session_id)
+#     if session is None:
+#         raise HTTPException(status_code=404, detail="Item not found")
+#     return StreamingResponse(BloomChain.stream(session, inp.message))
 
 
 ### API Fundamentals
@@ -140,22 +149,3 @@ class Session(BaseModel):
 ## Honcho Utilities
 # @app.get('/theoryofmind')
 # @app.get('/voe')
-
-
-@app.post("/chat")
-async def voe(inp: SessionInput):
-    async with LOCK:
-        session = Conversation(MEDIATOR, user_id=inp.user_id, session_id=inp.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Item not found")
-    thought, response = await BloomChain.chat(session, inp.message)
-    return {"thought": thought, "response": response}
-
-
-@app.post("/stream")
-async def stream(inp: SessionInput):
-    async with LOCK:
-        session = Conversation(MEDIATOR, user_id=inp.user_id, session_id=inp.session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Item not found")
-    return StreamingResponse(BloomChain.stream(session, inp.message))

@@ -134,17 +134,19 @@ class SupabaseMediator(Mediator):
     # Session Usage Read & Write
 
     @sentry_sdk.trace
-    def get_messages(self, session_id: str) -> List[BaseMessage]:  # type: ignore
+    def get_messages(self, session_id: str, type: str | None = None) -> List[BaseMessage]:  # type: ignore
         response = (
             self.supabase.table(self.memory_table)
             .select("*")
             .eq("session_id", session_id)
-            .order("created_at", desc=True)
+        )
+        response = (
+            (response if type is None else response.eq("type", type))
+            .order("created_at")
             .execute()
         )
-        items = [record["message"] for record in response.data]
-        messages = messages_from_dict(items)
-        return messages[::-1]
+        print(response)
+        return response.data
 
     @sentry_sdk.trace
     def add_message(self, session_id: str, message_type: str, content: str) -> None:
