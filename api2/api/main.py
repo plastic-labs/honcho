@@ -47,3 +47,30 @@ def create_message_for_session(
     db: Session = Depends(get_db),
 ):
     return crud.create_message(db, message, session_id)
+
+
+@app.get(
+    "/users/{user_id}/sessions/{session_id}/messages/{message_id}/metacognitions/",
+    response_model=list[schemas.Metacognitions],
+)
+def get_metacognitions_for_message(
+    user_id: str,
+    session_id: int,
+    message_id: int,
+    db: Session = Depends(get_db),
+):
+    return crud.get_metacognitions(db, message_id)
+
+
+@app.post(
+    "/users/{user_id}/sessions/{session_id}/messages/{message_id}/metacognitions/",
+    response_model=schemas.Metacognitions,
+)
+def create_metacognition_for_message(
+    user_id: str,
+    session_id: int,
+    message_id: int,
+    metacognition: schemas.MetacognitionsCreate,
+    db: Session = Depends(get_db),
+):
+    return crud.create_metacognition(db, metacognition, message_id)

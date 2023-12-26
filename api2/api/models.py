@@ -21,10 +21,19 @@ class Message(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     session_id = Column(Integer, ForeignKey("sessions.id"))
-    message_type = Column(String, index=True)
+    is_user = Column(Boolean)
     content = Column(String)
 
     session = relationship("Session", back_populates="messages")
+    metacognitions = relationship("Metacognitions", back_populates="message")
 
 
 # TODO: add metacognitive data to messages
+class Metacognitions(Base):
+    __tablename__ = "metacognitions"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    message_id = Column(Integer, ForeignKey("messages.id"))
+    metacognition_type = Column(String, index=True)
+    content = Column(String)
+
+    message = relationship("Message", back_populates="metacognitions")
