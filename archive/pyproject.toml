@@ -1,0 +1,24 @@
+[tool.poetry]
+name = "honcho"
+version = "0.1.0"
+description = "Framework for Privacy Preserving Personalization of AI Agents"
+authors = ["Vineeth Voruganti <13438633+VVoruganti@users.noreply.github.com>"]
+license = "AGPLv3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+fastapi = "^0.103.1"
+langchain = "^0.0.350"
+supabase = "^1.0.4"
+tiktoken = "^0.4.0"
+openai = "^0.28.0"
+pydantic = "^2.3.0"
+python-dotenv = "^1.0.0"
+uvicorn = "^0.23.2"
+sentry-sdk = {extras = ["fastapi"], version = "^1.31.0"}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
