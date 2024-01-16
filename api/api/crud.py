@@ -36,6 +36,7 @@ def create_session(db: Session, user_id: str, session: schemas.SessionCreate):
     db.refresh(db_session)
     return db_session
 
+# TODO add a method to update a session and change the active state
 
 def create_message(db: Session, message: schemas.MessageCreate, session_id: int):
     db_message = models.Message(
