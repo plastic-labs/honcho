@@ -8,7 +8,6 @@ models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-
 def get_db():
     db = SessionLocal()
     try:
@@ -16,6 +15,9 @@ def get_db():
     finally:
         db.close()
 
+########################################################
+# Session Routes
+########################################################
 
 @app.get("/users/{user_id}/sessions", response_model=list[schemas.Session])
 def get_sessions(user_id: str, db: Session = Depends(get_db)):
@@ -28,6 +30,25 @@ def create_session(
 ):
     return crud.create_session(db, user_id, session)
 
+@app.put("/users/{user_id}/sessions/{session_id}")
+def update_session(
+    user_id: str,
+    session_id: int,
+    session: schemas.SessionCreate,
+    db: Session = Depends(get_db),
+    ):
+    # TODO finish implementation
+    pass
+
+@app.delete("/users/{user_id}/sessions/{session_id}")
+def delete_session(
+    user_id: str,
+    session_id: int,
+    session: schemas.SessionCreate,
+    db: Session = Depends(get_db),
+    ):
+    # TODO finish implementation
+    pass
 
 @app.get("/users/{user_id}/sessions/{session_id}", response_model=schemas.Session)
 def get_session(user_id: str, session_id: int, db: Session = Depends(get_db)):
@@ -36,6 +57,9 @@ def get_session(user_id: str, session_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Session not found")
     return db_session
 
+########################################################
+# Message Routes
+########################################################
 
 @app.post(
     "/users/{user_id}/sessions/{session_id}/messages/", response_model=schemas.Message
@@ -48,6 +72,9 @@ def create_message_for_session(
 ):
     return crud.create_message(db, message, session_id)
 
+########################################################
+# Metacognition Routes
+########################################################
 
 @app.get(
     "/users/{user_id}/sessions/{session_id}/messages/{message_id}/metacognitions/",

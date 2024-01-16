@@ -1,8 +1,11 @@
 from langchain.prompts import ChatPromptTemplate
-from langchain_community.chat_models import ChatOllama
+# from langchain_community.chat_models import ChatOllama
+from langchain_community.chat_models.fake import FakeListChatModel
 from langchain.schema import HumanMessage, SystemMessage, AIMessage 
 
-llm = ChatOllama(model="phi")
+# llm = ChatOllama(model="phi")
+responses = ["Fake LLM Response :)"]
+llm = FakeListChatModel(responses=responses)
 system = SystemMessage(content="You are world class technical documentation writer. Be as concise as possible")
 
 memory = []
@@ -21,6 +24,7 @@ def chat():
             ])
         chain = prompt | llm 
         response = chain.invoke({})
+        print(type(response))
         print(f"AI: {response.content}")
         memory.append(HumanMessage(content=user_input))
         memory.append(response)

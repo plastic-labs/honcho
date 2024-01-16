@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "example"
+name = "honcho-cli-example"
 version = "0.1.0"
 description = ""
 authors = ["Vineeth Voruganti <13438633+VVoruganti@users.noreply.github.com>"]
