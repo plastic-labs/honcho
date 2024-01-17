@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "honcho-sdk"
+name = "honcho"
 version = "0.1.0"
 description = "Python Client SDK for Honcho"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
@@ -9,7 +9,6 @@ packages = [{include = "honcho"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-python-dotenv = "^1.0.0"
 requests = "^2.31.0"
 
 
