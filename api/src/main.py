@@ -128,5 +128,3 @@ def get_messages_for_session(
 # ):
 #     return crud.create_metacognition(db, metacognition, message_id)
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
