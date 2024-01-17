@@ -27,6 +27,10 @@ class SessionCreate(SessionBase):
     session_data: dict | None = None
 
 
+class SessionUpdate(SessionBase):
+    session_data: dict | None = None
+
+
 class Session(SessionBase):
     id: int
     messages: list[Message]

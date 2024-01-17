@@ -21,6 +21,9 @@ class Session(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     messages = relationship("Message", back_populates="session")
 
+    def __repr__(self) -> str:
+        return f"Session(id={self.id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at})"
+
 
 class Message(Base):
     __tablename__ = "messages"
@@ -35,6 +38,8 @@ class Message(Base):
 
     session = relationship("Session", back_populates="messages")
     metacognitions = relationship("Metacognitions", back_populates="message")
+    def __repr__(self) -> str:
+        return f"Message(id={self.id}, session_id={self.session_id}, is_user={self.is_user}, content={self.content[10:]})"
 
 
 # TODO: add metacognitive data to messages
@@ -49,3 +54,6 @@ class Metacognitions(Base):
     # content = Column(String)
 
     message = relationship("Message", back_populates="metacognitions")
+
+    def __repr__(self) -> str:
+        return f"Metacognitions(id={self.id}, message_id={self.message_id}, metacognition_type={self.metacognition_type}, content={self.content[10:]})"
