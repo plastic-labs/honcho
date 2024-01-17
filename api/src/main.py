@@ -70,7 +70,7 @@ def get_session(user_id: str, session_id: int, db: Session = Depends(get_db)):
 ########################################################
 
 @app.post(
-    "/users/{user_id}/sessions/{session_id}/messages/",
+    "/users/{user_id}/sessions/{session_id}/messages",
     response_model=schemas.Message
 )
 def create_message_for_session(
@@ -85,7 +85,7 @@ def create_message_for_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
 @app.get(
-    "/users/{user_id}/sessions/{session_id}/messages/", 
+    "/users/{user_id}/sessions/{session_id}/messages", 
     response_model=list[schemas.Message]
 )
 def get_messages_for_session(
