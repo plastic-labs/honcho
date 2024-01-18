@@ -76,6 +76,20 @@ docker build -t honcho-api .
 docker run --env-file .env -p 8000:8000 honcho-api:latest
 ```
 
+#### Deploy on Fly
+
+The API can also be deployed on fly.io with the following commands:
+
+```bash
+cd honcho/api
+fly launch
+```
+
+You can also add your secrets with the following shortcut command:
+```bash
+cat .env | fly secrets import
+```
+
 ### Client SDK
 
 Install the honcho client sdk from a python project with the following command:
