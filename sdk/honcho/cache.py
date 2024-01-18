@@ -10,6 +10,7 @@ class LRUCache:
         self.cache = OrderedDict()
 
     def get(self, key: str):
+        """Get a value from the cache"""
         if key not in self.cache:
             return None
 
@@ -18,6 +19,7 @@ class LRUCache:
         return self.cache[key]
 
     def put(self, key: str, value):
+        """Put a value in the cache"""
         if key in self.cache:
             # If the key already exists, move it to the end and update the value
             self.cache.move_to_end(key)
