@@ -1,3 +1,5 @@
+api2/sql_db.sqlite
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -60,6 +62,7 @@ cover/
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
+*.sqlite
 
 # Flask stuff:
 instance/

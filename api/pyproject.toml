@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "honcho"
+version = "0.1.0"
+description = ""
+authors = ["Plastic Labs <hello@plasticlabs.ai>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.8"
+fastapi = "^0.105.0"
+uvicorn = "^0.24.0.post1"
+python-dotenv = "^1.0.0"
+sqlalchemy = "^2.0.25"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
