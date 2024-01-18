@@ -1,2 +1,2 @@
-from .client import HonchoClient
+from .client import Client
 from .cache import LRUCache

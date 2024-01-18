@@ -22,7 +22,9 @@ def get_db():
 ########################################################
 
 @app.get("/users/{user_id}/sessions", response_model=list[schemas.Session])
-def get_sessions(user_id: str, db: Session = Depends(get_db)):
+def get_sessions(user_id: str, location_id: str, db: Session = Depends(get_db)):
+    if location_id is not None:
+        return crud.get_sessions(db, user_id, location_id)
     return crud.get_sessions(db, user_id)
 
 
