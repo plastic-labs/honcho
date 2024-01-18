@@ -1,4 +1,5 @@
 from fastapi import Depends, FastAPI, HTTPException
+from typing import Optional
 from sqlalchemy.orm import Session
 import uvicorn
 
@@ -22,7 +23,7 @@ def get_db():
 ########################################################
 
 @app.get("/users/{user_id}/sessions", response_model=list[schemas.Session])
-def get_sessions(user_id: str, location_id: str, db: Session = Depends(get_db)):
+def get_sessions(user_id: str, location_id: Optional[str] = None, db: Session = Depends(get_db)):
     """Get All Sessions for a User
 
     Args:

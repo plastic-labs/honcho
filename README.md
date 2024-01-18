@@ -1,9 +1,9 @@
 # Honcho
 ![Static Badge](https://img.shields.io/badge/Version-0.0.1-blue)
-![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)
+[![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
-![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)
+[![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)](https://twitter.com/plastic_labs)
 
 A User context management solution for building AI Agents and LLM powered
 applications.
@@ -39,26 +39,27 @@ specifying the appropriate environment variables.
 1. Create a virtualenv and install the API's dependencies
 
 ```bash
-cd honcho/api/
-source $(poetry run poetry env info --path)/bin/activate
-poetry install
+cd honcho/api/ # change to the api directory
+poetry shell # Activate virutal environment
+poetry install # install dependencies
 ```
 
-2. Edit the `.env.template` file to specify the type of database and
-   connection_uri. For testing sqlite is fine. 
+2. Copy the `.env.template` file and specify the type of database and
+   connection_uri. For testing sqlite is fine. The below example uses an
+   in-memory sqlite database. 
 
 > Honcho has been tested with Postgresql and SQLite
 
 ```env
 DATABASE_TYPE=sqlite
-CONNECTION_URI=sqlite:///./honcho.db
+CONNECTION_URI=sqlite://
 ```
 
 3. Run the API via uvicorn
 
 ```bash
-cd honcho/api
-source $(poetry run poetry env info --path)/bin/activate
+cd honcho/api # change to the api directory
+poetry shell # Activate virtual environment if not already enabled
 python -m uvicorn src.main:app --reload
 ```
 
@@ -78,16 +79,18 @@ docker run --env-file .env -p 8000:8000 honcho-api:latest
 
 #### Deploy on Fly
 
-The API can also be deployed on fly.io with the following commands:
+The API can also be deployed on fly.io. Follow the [Fly.io
+Docs](https://fly.io/docs/getting-started/) to setup your environment and the
+`flyctl`. 
+
+
+Once `flyctl` is set up use the the following commands to launch the application:
 
 ```bash
 cd honcho/api
-fly launch
-```
-
-You can also add your secrets with the following shortcut command:
-```bash
-cat .env | fly secrets import
+flyctl launch --no-deploy # Follow the prompts and edit as you see fit
+cat .env | flyctl secrets import # Load in your secrets
+flyctl deploy # Deploy with appropriate environment variables
 ```
 
 ### Client SDK
