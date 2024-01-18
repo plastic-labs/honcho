@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "honcho-discord-example"
+version = "0.1.0"
+description = ""
+authors = ["Vineeth Voruganti <13438633+VVoruganti@users.noreply.github.com>"]
+readme = "README.md"
+packages = [{include = "honcho_discord_example"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+langchain = "^0.1.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
