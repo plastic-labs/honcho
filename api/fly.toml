@@ -1,18 +1,19 @@
-# fly.toml app configuration file generated for honcho on 2023-09-11T10:58:33-04:00
+# fly.toml app configuration file generated for honcho-restless-dew-484 on 2024-01-18T08:20:57-08:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
 app = "honcho"
-primary_region = "bos"
 kill_signal = "SIGINT"
 kill_timeout = "5s"
 
 [experimental]
   auto_rollback = true
 
+[build]
+
 [processes]
-api = "python -m uvicorn main:app --host 0.0.0.0 --port 8000"
+  api = "python -m uvicorn src.main:app --host 0.0.0.0 --port 8000"
 
 [http_service]
   internal_port = 8000
@@ -22,5 +23,11 @@ api = "python -m uvicorn main:app --host 0.0.0.0 --port 8000"
   processes = ["api"]
   [http_service.concurrency]
     type = "requests"
-    soft_limit = 200
     hard_limit = 250
+    soft_limit = 200
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+  processes = ["api"]
