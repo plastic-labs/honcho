@@ -1,7 +1,7 @@
 from typing import Dict
 import requests
 
-class HonchoClient:
+class Client:
     def __init__(self, base_url):
         self.base_url = base_url
 
@@ -12,6 +12,11 @@ class HonchoClient:
 
     def get_session(self, user_id: str, session_id: int):
         url = f"{self.base_url}/users/{user_id}/sessions/{session_id}"
+        response = requests.get(url)
+        return response.json()
+
+    def get_sessions_by_location(self, user_id: str, location_id: str):
+        url = f"{self.base_url}/users/{user_id}/sessions?location_id={location_id}"
         response = requests.get(url)
         return response.json()
 
