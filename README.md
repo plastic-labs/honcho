@@ -45,7 +45,9 @@ poetry install
 ```
 
 2. Edit the `.env.template` file to specify the type of database and
-   connection_uri. For testing sqlite is fine
+   connection_uri. For testing sqlite is fine. 
+
+> Honcho has been tested with Postgresql and SQLite
 
 ```env
 DATABASE_TYPE=sqlite
