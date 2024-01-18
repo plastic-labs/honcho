@@ -12,7 +12,10 @@ from collections.abc import AsyncIterator
 from cache import Conversation
 from typing import List
 
-# import sentry_sdk
+
+from openai import BadRequestError
+
+import sentry_sdk
 
 load_dotenv()
 
@@ -96,20 +99,14 @@ class BloomChain:
         )
         chain = thought_prompt | cls.llm
 
-        cache.add_message("thought", HumanMessage(content=input))
 
+        def save_new_messages(ai_response):
+            cache.add_message("thought", HumanMessage(content=input))
+            cache.add_message("thought", AIMessage(content=ai_response))
+        
         return Streamable(
-            chain.astream(
-                {},
-                {
-                    "tags": ["thought"],
-                    "metadata": {
-                        "session_id": cache.session_id,
-                        "user_id": cache.user_id,
-                    },
-                },
-            ),
-            lambda thought: cache.add_message("thought", AIMessage(content=thought)),
+            chain.astream({}, {"tags": ["thought"], "metadata": {"conversation_id": cache.conversation_id, "user_id": cache.user_id}}),
+            save_new_messages 
         )
 
     @classmethod
@@ -130,25 +127,13 @@ class BloomChain:
         )
         chain = messages | cls.llm
 
-        cache.add_message("thought_revision", HumanMessage(content=input))
+        def save_new_messages(ai_response):
+            cache.add_message("thought_revision", HumanMessage(content=input))
+            cache.add_message("thought_revision", AIMessage(content=ai_response))
 
         return Streamable(
-            chain.astream(
-                {
-                    "thought": thought,
-                    "retrieved_vectors": "\n".join(doc.page_content for doc in docs),
-                },
-                {
-                    "tags": ["thought_revision"],
-                    "metadata": {
-                        "conversation_id": cache.conversation_id,
-                        "user_id": cache.user_id,
-                    },
-                },
-            ),
-            lambda thought_revision: cache.add_message(
-                "thought_revision", AIMessage(content=thought_revision)
-            ),  # add the revised thought to thought memory
+            chain.astream({ "thought": thought, "retrieved_vectors": "\n".join(doc.page_content for doc in docs)}, {"tags": ["thought_revision"], "metadata": {"conversation_id": cache.conversation_id, "user_id": cache.user_id}}),
+            save_new_messages
         )
 
     @classmethod
@@ -164,20 +149,13 @@ class BloomChain:
         )
         chain = response_prompt | cls.llm
 
-        cache.add_message("response", HumanMessage(content=input))
+        def save_new_messages(ai_response):
+            cache.add_message("response", HumanMessage(content=input))
+            cache.add_message("response", AIMessage(content=ai_response))
 
         return Streamable(
-            chain.astream(
-                {"thought": thought},
-                {
-                    "tags": ["response"],
-                    "metadata": {
-                        "conversation_id": cache.conversation_id,
-                        "user_id": cache.user_id,
-                    },
-                },
-            ),
-            lambda response: cache.add_message("response", AIMessage(content=response)),
+            chain.astream({ "thought": thought }, {"tags": ["response"], "metadata": {"conversation_id": cache.conversation_id, "user_id": cache.user_id}}),
+            save_new_messages
         )
 
     @classmethod
@@ -460,6 +438,12 @@ class Streamable:
         except StopAsyncIteration as e:
             self.callback(self.content)
             raise StopAsyncIteration
+        except BadRequestError as e:
+            if e.code == "content_filter":
+                self.stream_error = True
+                self.message = "Sorry, your message was flagged as inappropriate. Please try again."
+
+                return self.message
         except Exception as e:
             raise e
 
