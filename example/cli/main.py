@@ -4,7 +4,7 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_community.chat_models.fake import FakeListChatModel
 
-from honcho.client import HonchoClient
+from honcho import Client as HonchoClient
 # from client import HonchoClient
 
 honcho = HonchoClient(base_url="http://localhost:8000")

@@ -1,4 +1,4 @@
-api2/sql_db.sqlite
+.vscode/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
