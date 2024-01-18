@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho-ai"
-version = "0.0.1"
+version = "0.0.0.dev1"
 description = "Python Client SDK for Honcho"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 license = "AGPL-3.0"
@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{include = "honcho"}]
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.10"
 requests = "^2.31.0"
 
 [build-system]
