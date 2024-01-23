@@ -1,0 +1,29 @@
+[project]
+name = "metacognition-sdk"
+version = "0.1.0"
+description = ""
+authors = ["Plastic Labs <hello@plasticlabs.ai>"]
+readme = "README.md"
+
+[tool.poetry]
+name = "metacognition-sdk"
+version = "0.1.0"
+description = ""
+authors = ["Plastic Labs <hello@plasticlabs.ai>"]
+readme = "README.md"
+packages = [{include = "metacognition_sdk"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+langchain = "^0.1.2"
+tqdm = "^4.66.1"
+rich = "^13.7.0"
+
+
+[tool.poetry.group.dev.dependencies]
+python-dotenv = "^1.0.1"
+langchain-openai = "^0.0.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
