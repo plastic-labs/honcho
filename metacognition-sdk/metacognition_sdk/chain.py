@@ -1,8 +1,7 @@
-from langchain.chat_models.base import BaseChatModel
 from enum import Enum
 
 from metacognition_sdk.steps import Step
-from metacognition_sdk.user_model import UserRewardModel
+from metacognition_sdk.user_model import UserRewardModel, LlmAdapter
 
 
 class Event(Enum):
@@ -52,7 +51,7 @@ class MetacognitionChain:
         chain_dict: dict,
         user_model: UserRewardModel,
         tools: dict,
-        llm: BaseChatModel,
+        llm: LlmAdapter,
     ):
         # load metadata
         event = chain_dict["event"].upper()

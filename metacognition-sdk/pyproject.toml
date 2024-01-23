@@ -14,15 +14,15 @@ readme = "README.md"
 packages = [{include = "metacognition_sdk"}]
 
 [tool.poetry.dependencies]
-python = "^3.10"
-langchain = "^0.1.2"
+python = "^3.8"
 tqdm = "^4.66.1"
 rich = "^13.7.0"
+openai = "^1.9.0"
+pyyaml = "^6.0.1"
 
 
 [tool.poetry.group.dev.dependencies]
 python-dotenv = "^1.0.1"
-langchain-openai = "^0.0.3"
 
 [build-system]
 requires = ["poetry-core"]
