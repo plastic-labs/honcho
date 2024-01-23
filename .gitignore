@@ -1,3 +1,5 @@
+api/**/*.db
+
 .vscode/
 
 # Byte-compiled / optimized / DLL files
