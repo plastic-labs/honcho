@@ -9,9 +9,9 @@ packages = [{include = "honcho_discord_example"}]
 [tool.poetry.dependencies]
 python = "^3.11"
 langchain = "^0.1.0"
-honcho-ai = "^0.0.0.dev1"
 py-cord = "^2.4.1"
 python-dotenv = "^1.0.0"
+honcho-ai = {path = "../../sdk"}
 
 
 [build-system]
