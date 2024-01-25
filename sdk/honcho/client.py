@@ -155,6 +155,8 @@ class Session:
             Dict: The Message object of the added message
 
         """
+        if not self.is_active:
+            raise Exception("Session is inactive")
         data = {"is_user": is_user, "content": content}
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}/messages"
         response = requests.post(url, json=data)
