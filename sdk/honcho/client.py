@@ -31,22 +31,8 @@ class Client:
             session_data=data["session_data"],
         )
 
-    def get_sessions(self, user_id: str):
+    def get_sessions(self, user_id: str, location_id: str | None = None):
         """Return sessions associated with a user
-
-        Args:
-            user_id (str): The User ID representing the user, managed by the user
-
-        Returns:
-            list[Dict]: List of Session objects
-
-        """
-        url = f"{self.base_url}/users/{user_id}/sessions"
-        response = requests.get(url)
-        return [Session(self, **session) for session in response.json()]
-
-    def get_sessions_by_location(self, user_id: str, location_id: str):
-        """Get all sessions for a user for a specific location
 
         Args:
             user_id (str): The User ID representing the user, managed by the user
@@ -56,9 +42,21 @@ class Client:
             list[Dict]: List of Session objects
 
         """
-        url = f"{self.base_url}/users/{user_id}/sessions?location_id={location_id}"
+        url = f"{self.base_url}/users/{user_id}/sessions" + (
+            f"?location_id={location_id}" if location_id else ""
+        )
         response = requests.get(url)
-        return [Session(self, **session) for session in response.json()]
+        return [
+            Session(
+                client=self,
+                id=session["id"],
+                user_id=session["user_id"],
+                location_id=session["location_id"],
+                is_active=session["is_active"],
+                session_data=session["session_data"],
+            )
+            for session in response.json()
+        ]
 
     def create_session(
         self, user_id: str, location_id: str = "default", session_data: Dict = {}
@@ -86,39 +84,6 @@ class Client:
             session_data=session_data,
             is_active=data["is_active"],
         )
-
-    # def update_session(self, user_id: str, session_id: int, session_data: Dict):
-    #     """Update the metadata of a session
-
-    #     Args:
-    #         user_id (str): The User ID representing the user, managed by the user
-    #         session_id (int): The ID of the Session to update
-    #         session_data (Dict): The Session object containing any new metadata
-
-    #     Returns:
-    #         Dict: The Session object of the updated Session
-
-    #     """
-    #     data = {"session_data": session_data}
-    #     url = f"{self.base_url}/users/{user_id}/sessions/{session_id}"
-    #     response = requests.put(url, json=data)
-    #     return Session(self, **response.json())
-
-    # def delete_session(self, user_id: str, session_id: int):
-    #     """Delete a session by marking it as inactive
-
-    #     Args:
-    #         user_id (str): The User ID representing the user, managed by the user
-    #         session_id (int): The ID of the Session to delete
-
-    #     Returns:
-    #         Bool: Whether the session was successfully deleted
-
-    #     """
-    #     url = f"{self.base_url}/users/{user_id}/sessions/{session_id}"
-    #     response = requests.delete(url)
-    #     success = response.status_code != 404
-    #     return success
 
 
 class Session:

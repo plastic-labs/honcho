@@ -1,4 +1,5 @@
 from honcho import Client
+from uuid import uuid1
 
 
 def test_session_creation_retrieval():
@@ -9,6 +10,17 @@ def test_session_creation_retrieval():
     assert retrieved_session.is_active == True
     assert retrieved_session.location_id == "default"
     assert retrieved_session.session_data == {}
+
+
+def test_session_multiple_retrieval():
+    client = Client("http://localhost:8000")
+    user = str(uuid1())
+    created_session_1 = client.create_session(user)
+    created_session_2 = client.create_session(user)
+    retrieved_sessions = client.get_sessions(user)
+    assert len(retrieved_sessions) == 2
+    assert retrieved_sessions[0].id == created_session_1.id
+    assert retrieved_sessions[1].id == created_session_2.id
 
 
 def test_session_update():
