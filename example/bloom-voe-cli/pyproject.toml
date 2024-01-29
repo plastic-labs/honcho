@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "bloom-voe-cli"
+version = "0.1.0"
+description = ""
+authors = ["Jacob Van Meter <jacobvm04@gmail.com>"]
+readme = "README.md"
+packages = [{include = "bloom_voe_cli"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
