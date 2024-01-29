@@ -1,12 +1,13 @@
 import yaml
 
-from metacognition_sdk.chain import (
+from .chain import (
     MetacognitionChain,
     Event,
     Output,
 )
-from metacognition_sdk.user_model import UserRewardModel, LlmAdapter
-from metacognition_sdk.messages import ConversationHistory
+from ..user_model import UserRewardModel
+from .interfaces import LlmAdapter
+from .messages import ConversationHistory
 
 from tqdm.rich import tqdm
 from rich import print

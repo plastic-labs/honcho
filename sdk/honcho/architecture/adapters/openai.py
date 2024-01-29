@@ -1,7 +1,7 @@
 from typing import Union
 
-from metacognition_sdk.interfaces import LlmAdapter
-from metacognition_sdk.messages import ConversationHistory
+from ..interfaces import LlmAdapter
+from ..messages import ConversationHistory
 
 from openai import AsyncOpenAI
 

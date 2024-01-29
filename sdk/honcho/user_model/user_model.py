@@ -1,4 +1,5 @@
-from metacognition_sdk.interfaces import UserModelStorageAdapter, LlmAdapter
+from .interfaces import UserModelStorageAdapter
+from ..architecture.interfaces import LlmAdapter
 
 
 class UserRewardModel:

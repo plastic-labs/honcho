@@ -10,6 +10,9 @@ packages = [{include = "honcho"}]
 [tool.poetry.dependencies]
 python = "^3.10"
 requests = "^2.31.0"
+tqdm = "^4.66.1"
+rich = "^13.7.0"
+pyyaml = "^6.0.1"
 
 [build-system]
 requires = ["poetry-core"]

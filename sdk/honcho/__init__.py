@@ -1,2 +1,2 @@
-from .client import Client
-from .cache import LRUCache
+from .core.client import Client
+from .core.cache import LRUCache

@@ -8,6 +8,10 @@ packages = [{include = "bloom_voe_cli"}]
 
 [tool.poetry.dependencies]
 python = "^3.11"
+honcho-ai = {path = "../../sdk", develop = true}
+python-dotenv = "^1.0.1"
+openai = "^1.10.0"
+py-cord = "^2.4.1"
 
 
 [build-system]

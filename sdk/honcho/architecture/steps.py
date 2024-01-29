@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Callable, Awaitable
 
-from metacognition_sdk.user_model import UserRewardModel
-from metacognition_sdk.interfaces import LlmAdapter
+from ..user_model import UserRewardModel
+from .interfaces import LlmAdapter
 
 
 class Step(ABC):

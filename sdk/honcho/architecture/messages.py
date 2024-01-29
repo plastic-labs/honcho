@@ -39,6 +39,18 @@ class ConversationHistory:
         """
         self.messages = messages if messages is not None else []
 
+    @classmethod
+    def from_honcho_dicts(cls, messages: list[dict[str, str]]):
+        messages = [
+            {
+                "role": "User" if message["is_user"] else "Assistant",
+                "content": message["content"],
+            }
+            for message in messages
+        ]
+
+        return cls(messages)
+
     def __getitem__(
         self, key: Union[slice, int]
     ) -> Union[ConversationHistory, Message]:

@@ -1,1 +1,0 @@
-# Metacognition SDK

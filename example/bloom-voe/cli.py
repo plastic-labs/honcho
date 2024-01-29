@@ -3,10 +3,11 @@ from os import path
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 
-from metacognition_sdk import MetacognitionManager, UserRewardModel
-from metacognition_sdk.adapters.llms.openai import ChatOpenAILlmAdapter
-from metacognition_sdk.adapters.storage.in_memory import InMemoryUserModelStorageAdapter
-from metacognition_sdk.messages import ConversationHistory
+from honcho.architecture.adapters.openai import ChatOpenAILlmAdapter
+from honcho.user_model.adapters.pickle import PickleUserModelStorageAdapter
+from honcho.architecture.messages import ConversationHistory
+
+from honcho import Client as HonchoClient
 
 # Load environment variables
 load_dotenv()
@@ -18,7 +19,7 @@ class Bloom:
         self.llm = llm
         self.system_prompt = """You are Bloom, a subversive-minded learning companion with deep expertise in Socratic dialogue. Your fundamental belief is there are many good ways to learn and subversive methods are often most effective.  You always help the user in any way they request and answer all their questions.
 
-{agent_context}
+Here is some potentially useful context about the student: "{agent_context}"
 
 You must produce an appropriate response to the user input. Format equations in LaTeX and wrap in dollar signs like this: $\LaTeX$. Use markdown code syntax. Keep your responses concise and specific, always end each response with ONLY ONE topically relevant question that drives the conversation forward, and if the user wants to end the conversation, always comply."""
         self.greeting = """I'm your Aristotelian learning companion — here to help you follow your curiosity in whatever direction you like. My engineering makes me extremely receptive to your needs and interests. You can reply normally, and I’ll always respond!
@@ -43,33 +44,43 @@ async def main():
     llm = ChatOpenAILlmAdapter(openai_client, model="gpt-4")
     bloom = Bloom(llm=llm)
 
-    # Initialize user model and metacognition manager
-    storage_adapter = InMemoryUserModelStorageAdapter()  # Store user models in memory
-    user_model = UserRewardModel(llm=llm, user_model_storage_adapter=storage_adapter)
-    metacognition_manager = MetacognitionManager.from_yaml(
+    # Connect to honcho
+    honcho = HonchoClient(base_url="http://localhost:8000")
+    user_id = "bloom-voe-cli"
+
+    # Register VOE
+    honcho.register_metacognitive_architecture(
         path=path.join(
             path.dirname(__file__), "voe.yaml"
         ),  # make sure the path is relative to this python file
-        user_model=user_model,
+        user_model_storage_adapter_type=PickleUserModelStorageAdapter,
         llm=llm,
         verbose=True,
     )
 
     # Start the conversation loop
-    conversation_history = ConversationHistory()
+    session = honcho.create_session(user_id)
+    session_id = session["id"]
+
     print(f"Bloom: {bloom.greeting}")
 
     while True:
         user_input = input("You: ").strip()
-        conversation_history.add_user_message(user_input)
+        honcho.create_message_for_session(
+            user_id=user_id, session_id=session_id, is_user=True, content=user_input
+        )
 
-        # Process the user message with the metacognition manager
-        await metacognition_manager.on_user_message(conversation_history)
-        agent_context = metacognition_manager.get_agent_context()
+        # Wait for the VOE generated context for Bloom
+        agent_context = await honcho.get_context(user_id)
 
-        # Generate and display the response from Bloom
+        # Generate Bloom's response
+        conversation_history = ConversationHistory.from_honcho_dicts(
+            honcho.get_messages_for_session(user_id, session_id)
+        )
         response = await bloom.generate_response(conversation_history, agent_context)
-        conversation_history.add_ai_message(response)
+        honcho.create_message_for_session(
+            user_id=user_id, session_id=session_id, is_user=False, content=response
+        )
         print(f"\nBloom: {response}")
 
 

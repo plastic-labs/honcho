@@ -1,7 +1,8 @@
 from enum import Enum
 
-from metacognition_sdk.steps import Step
-from metacognition_sdk.user_model import UserRewardModel, LlmAdapter
+from .steps import Step
+from ..user_model import UserRewardModel
+from ..architecture.interfaces import LlmAdapter
 
 
 class Event(Enum):
