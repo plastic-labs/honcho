@@ -28,10 +28,11 @@ RUN poetry config virtualenvs.create false \
 WORKDIR /app
 
 RUN addgroup --system app && adduser --system --group app
+RUN chown -R app:app /app
 USER app
 
-COPY src/ src/
+COPY --chown=app:app src/ /app/src/
 
 # https://stackoverflow.com/questions/29663459/python-app-does-not-print-anything-when-running-detached-in-docker
 CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
-#
+
