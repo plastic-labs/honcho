@@ -37,23 +37,23 @@ class Message(Base):
     content: Mapped[str] # TODO add a max message length
 
     session = relationship("Session", back_populates="messages")
-    metacognitions = relationship("Metacognitions", back_populates="message")
+    metamessages = relationship("Metamessages", back_populates="message")
     def __repr__(self) -> str:
         return f"Message(id={self.id}, session_id={self.session_id}, is_user={self.is_user}, content={self.content[10:]})"
 
 
-# TODO: add metacognitive data to messages
-class Metacognitions(Base):
-    __tablename__ = "metacognitions"
+# TODO: add metamessages data to messages
+class Metamessages(Base):
+    __tablename__ = "metamessages"
     id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
-    metacognition_type: Mapped[str] # TODO add a max metacognition type length
+    metamessage_type: Mapped[str] # TODO add a max metamessages type length
     content: Mapped[str]
     # id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     message_id = Column(Integer, ForeignKey("messages.id"))
     # metacognition_type = Column(String, index=True)
     # content = Column(String)
 
-    message = relationship("Message", back_populates="metacognitions")
+    message = relationship("Message", back_populates="metamessages")
 
     def __repr__(self) -> str:
-        return f"Metacognitions(id={self.id}, message_id={self.message_id}, metacognition_type={self.metacognition_type}, content={self.content[10:]})"
+        return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
