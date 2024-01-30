@@ -40,16 +40,16 @@ class Session(SessionBase):
         orm_mode = True
 
 
-class MetacognitionsBase(BaseModel):
-    metacognition_type: str
+class MetamessagesBase(BaseModel):
+    metamessage_type: str
     content: str
 
 
-class MetacognitionsCreate(MetacognitionsBase):
+class MetamessagesCreate(MetamessagesBase):
     pass
 
 
-class Metacognitions(MetacognitionsBase):
+class Metamessages(MetamessagesBase):
     id: int
 
     class Config:
