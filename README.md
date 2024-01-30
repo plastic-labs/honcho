@@ -52,7 +52,7 @@ poetry install # install dependencies
 
 ```env
 DATABASE_TYPE=sqlite
-CONNECTION_URI=sqlite://
+CONNECTION_URI=sqlite:///api.db
 ```
 
 3. Run the API via uvicorn
