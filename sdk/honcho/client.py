@@ -104,10 +104,14 @@ class Session:
         self.session_data = (
             session_data if isinstance(session_data, dict) else json.loads(session_data)
         )
-        self.is_active = is_active
+        self._is_active = is_active
 
     def __str__(self):
         return f"Session(id={self.id}, user_id={self.user_id}, location_id={self.location_id}, session_data={self.session_data}, is_active={self.is_active})"
+
+    @property
+    def is_active(self):
+        return self._is_active
 
     def create_message(self, is_user: bool, content: str):
         """Adds a message to the session
@@ -173,7 +177,7 @@ class Session:
         """Delete a session by marking it as inactive"""
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}"
         response = requests.delete(url)
-        self.is_active = False
+        self._is_active = False
 
 
 class Message:
