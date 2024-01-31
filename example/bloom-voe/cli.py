@@ -1,9 +1,10 @@
 import asyncio
 from os import path
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 
-from honcho.architecture.adapters.openai import ChatOpenAILlmAdapter
+from langchain_openai import ChatOpenAI
+
+from honcho.architecture.adapters.langchain import LangchainAdapter
 from honcho.user_model.adapters.pickle import PickleUserModelStorageAdapter
 from honcho.architecture.messages import ConversationHistory
 
@@ -15,7 +16,7 @@ load_dotenv()
 
 # Define the Bloom class to handle responses
 class Bloom:
-    def __init__(self, llm: ChatOpenAILlmAdapter):
+    def __init__(self, llm: LangchainAdapter):
         self.llm = llm
         self.system_prompt = """You are Bloom, a subversive-minded learning companion with deep expertise in Socratic dialogue. Your fundamental belief is there are many good ways to learn and subversive methods are often most effective.  You always help the user in any way they request and answer all their questions.
 
@@ -39,9 +40,8 @@ Need to leave or just done chatting? Let me know! I’m conversational by design
 
 
 async def main():
-    # Initialize the OpenAI client and Bloom instance
-    openai_client = AsyncOpenAI()
-    llm = ChatOpenAILlmAdapter(openai_client, model="gpt-4")
+    # Initialize the the LLM and Bloom instance
+    llm = LangchainAdapter(ChatOpenAI(model="gpt-4"))
     bloom = Bloom(llm=llm)
 
     # Connect to honcho
