@@ -1,6 +1,6 @@
 from honcho import Client
 from uuid import uuid1
-
+import pytest
 
 def test_session_creation_retrieval():
     client = Client("test", "http://localhost:8000")
@@ -59,3 +59,13 @@ def test_messages():
     assert user_message.is_user is True
     assert ai_message.content == "Hi"
     assert ai_message.is_user is False
+
+def test_rate_limit():
+    print("test_rate_limit")
+    user_id = str(uuid1())
+    client = Client("test", "http://localhost:8000")
+    created_session = client.create_session(user_id)
+    with pytest.raises(Exception):
+        for _ in range(10):
+            created_session.create_message(is_user=True, content="Hello")
+            created_session.create_message(is_user=False, content="Hi")
