@@ -1,14 +1,15 @@
 import json
 from typing import Dict
-import requests
+import httpx
 
 
 class Client:
     def __init__(self, base_url):
         """Constructor for Client"""
         self.base_url = base_url  # Base URL for the instance of the Honcho API
+        self.client = httpx.AsyncClient()
 
-    def get_session(self, user_id: str, session_id: int):
+    async def get_session(self, user_id: str, session_id: int):
         """Get a specific session for a user by ID
 
         Args:
@@ -20,7 +21,7 @@ class Client:
 
         """
         url = f"{self.base_url}/users/{user_id}/sessions/{session_id}"
-        response = requests.get(url)
+        response = await self.client.get(url)
         data = response.json()
         return Session(
             client=self,
@@ -31,7 +32,7 @@ class Client:
             session_data=data["session_data"],
         )
 
-    def get_sessions(self, user_id: str, location_id: str | None = None):
+    async def get_sessions(self, user_id: str, location_id: str | None = None):
         """Return sessions associated with a user
 
         Args:
@@ -45,7 +46,7 @@ class Client:
         url = f"{self.base_url}/users/{user_id}/sessions" + (
             f"?location_id={location_id}" if location_id else ""
         )
-        response = requests.get(url)
+        response = await self.client.get(url)
         return [
             Session(
                 client=self,
@@ -58,7 +59,7 @@ class Client:
             for session in response.json()
         ]
 
-    def create_session(
+    async def create_session(
         self, user_id: str, location_id: str = "default", session_data: Dict = {}
     ):
         """Create a session for a user
@@ -74,7 +75,7 @@ class Client:
         """
         data = {"location_id": location_id, "session_data": session_data}
         url = f"{self.base_url}/users/{user_id}/sessions"
-        response = requests.post(url, json=data)
+        response = await self.client.post(url, json=data)
         data = response.json()
         return Session(
             self,
@@ -98,6 +99,7 @@ class Session:
     ):
         """Constructor for Session"""
         self.base_url = client.base_url
+        self.client = client.client
         self.id = id
         self.user_id = user_id
         self.location_id = location_id
@@ -113,7 +115,7 @@ class Session:
     def is_active(self):
         return self._is_active
 
-    def create_message(self, is_user: bool, content: str):
+    async def create_message(self, is_user: bool, content: str):
         """Adds a message to the session
 
         Args:
@@ -128,11 +130,11 @@ class Session:
             raise Exception("Session is inactive")
         data = {"is_user": is_user, "content": content}
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}/messages"
-        response = requests.post(url, json=data)
+        response = await self.client.post(url, json=data)
         data = response.json()
         return Message(self, id=data["id"], is_user=is_user, content=content)
 
-    def get_messages(self):
+    async def get_messages(self):
         """Get all messages for a session
 
         Args:
@@ -144,7 +146,7 @@ class Session:
 
         """
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}/messages"
-        response = requests.get(url)
+        response = await self.client.get(url)
         data = response.json()
         return [
             Message(
@@ -156,7 +158,7 @@ class Session:
             for message in data
         ]
 
-    def update(self, session_data: Dict):
+    async def update(self, session_data: Dict):
         """Update the metadata of a session
 
         Args:
@@ -168,15 +170,15 @@ class Session:
         """
         info = {"session_data": session_data}
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}"
-        response = requests.put(url, json=info)
+        response = await self.client.put(url, json=info)
         success = response.status_code < 400
         self.session_data = session_data
         return success
 
-    def delete(self):
+    async def delete(self):
         """Delete a session by marking it as inactive"""
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}"
-        response = requests.delete(url)
+        response = await self.client.delete(url)
         self._is_active = False
 
 
