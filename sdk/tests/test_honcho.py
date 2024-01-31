@@ -3,18 +3,18 @@ from uuid import uuid1
 
 
 def test_session_creation_retrieval():
-    client = Client("http://localhost:8000")
+    client = Client("test", "http://localhost:8000")
     user_id = str(uuid1())
     created_session = client.create_session(user_id)
     retrieved_session = client.get_session(user_id, created_session.id)
     assert retrieved_session.id == created_session.id
-    assert retrieved_session.is_active == True
+    assert retrieved_session.is_active is True
     assert retrieved_session.location_id == "default"
     assert retrieved_session.session_data == {}
 
 
 def test_session_multiple_retrieval():
-    client = Client("http://localhost:8000")
+    client = Client("test", "http://localhost:8000")
     user_id = str(uuid1())
     created_session_1 = client.create_session(user_id)
     created_session_2 = client.create_session(user_id)
@@ -26,7 +26,7 @@ def test_session_multiple_retrieval():
 
 def test_session_update():
     user_id = str(uuid1())
-    client = Client("http://localhost:8000")
+    client = Client("test", "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.update({"foo": "bar"})
     retrieved_session = client.get_session(user_id, created_session.id)
@@ -35,19 +35,19 @@ def test_session_update():
 
 def test_session_deletion():
     user_id = str(uuid1())
-    client = Client("http://localhost:8000")
+    client = Client("test", "http://localhost:8000")
     created_session = client.create_session(user_id)
-    assert created_session.is_active == True
+    assert created_session.is_active is True
     created_session.delete()
-    assert created_session.is_active == False
+    assert created_session.is_active is False
     retrieved_session = client.get_session(user_id, created_session.id)
-    assert retrieved_session.is_active == False
+    assert retrieved_session.is_active is False
     assert retrieved_session.id == created_session.id
 
 
 def test_messages():
     user_id = str(uuid1())
-    client = Client("http://localhost:8000")
+    client = Client("test", "http://localhost:8000")
     created_session = client.create_session(user_id)
     created_session.create_message(is_user=True, content="Hello")
     created_session.create_message(is_user=False, content="Hi")
@@ -56,6 +56,6 @@ def test_messages():
     assert len(messages) == 2
     user_message, ai_message = messages
     assert user_message.content == "Hello"
-    assert user_message.is_user == True
+    assert user_message.is_user is True
     assert ai_message.content == "Hi"
-    assert ai_message.is_user == False
+    assert ai_message.is_user is False
