@@ -1,14 +1,28 @@
-from fastapi import Depends, FastAPI, HTTPException, APIRouter
+from fastapi import Depends, FastAPI, HTTPException, APIRouter, Request
 from typing import Optional
 from sqlalchemy.orm import Session
-import uvicorn
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+# import uvicorn
 
 from . import crud, models, schemas
 from .db import SessionLocal, engine
 
 models.Base.metadata.create_all(bind=engine) # Scaffold Database if not already done
 
+app = FastAPI()
+
 router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
+
+# Create a Limiter instance
+limiter = Limiter(key_func=get_remote_address, default_limits=["5/minute"])
+
+# Add SlowAPI middleware to the application
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 
 def get_db():
@@ -24,7 +38,7 @@ def get_db():
 ########################################################
 
 @router.get("/sessions", response_model=list[schemas.Session])
-def get_sessions(app_id: str, user_id: str, location_id: Optional[str] = None, db: Session = Depends(get_db)):
+def get_sessions(request: Request, app_id: str, user_id: str, location_id: Optional[str] = None, db: Session = Depends(get_db)):
     """Get All Sessions for a User
 
     Args:
@@ -43,7 +57,7 @@ def get_sessions(app_id: str, user_id: str, location_id: Optional[str] = None, d
 
 @router.post("/sessions", response_model=schemas.Session)
 def create_session(
-        app_id: str, user_id: str, session: schemas.SessionCreate, db: Session = Depends(get_db)
+        request: Request, app_id: str, user_id: str, session: schemas.SessionCreate, db: Session = Depends(get_db)
 ):
     """Create a Session for a User
         
@@ -60,6 +74,7 @@ def create_session(
 
 @router.put("/sessions/{session_id}", response_model=schemas.Session)
 def update_session(
+    request: Request, 
     app_id: str,
     user_id: str,
     session_id: int,
@@ -87,6 +102,7 @@ def update_session(
 
 @router.delete("/sessions/{session_id}")
 def delete_session(
+    request: Request, 
     app_id: str,
     user_id: str,
     session_id: int,
@@ -113,7 +129,7 @@ def delete_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
 @router.get("/sessions/{session_id}", response_model=schemas.Session)
-def get_session(app_id: str, user_id: str, session_id: int, db: Session = Depends(get_db)):
+def get_session(request: Request, app_id: str, user_id: str, session_id: int, db: Session = Depends(get_db)):
     """Get a specific session for a user by ID
 
     Args:
@@ -141,6 +157,7 @@ def get_session(app_id: str, user_id: str, session_id: int, db: Session = Depend
     response_model=schemas.Message
 )
 def create_message_for_session(
+    request: Request, 
     app_id: str,
     user_id: str,
     session_id: int,
@@ -172,6 +189,7 @@ def create_message_for_session(
     response_model=list[schemas.Message]
 )
 def get_messages_for_session(
+    request: Request, 
     app_id: str,
     user_id: str,
     session_id: int,
@@ -197,7 +215,6 @@ def get_messages_for_session(
         raise HTTPException(status_code=404, detail="Session not found")
 
 
-app = FastAPI()
 
 app.include_router(router)
 ########################################################
