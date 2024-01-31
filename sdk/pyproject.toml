@@ -11,6 +11,9 @@ packages = [{include = "honcho"}]
 python = "^3.10"
 requests = "^2.31.0"
 
+[tool.poetry.group.test.dependencies]
+pytest = "^7.4.4"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
