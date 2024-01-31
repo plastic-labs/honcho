@@ -14,6 +14,7 @@ class Session(Base):
     # session_data = Column(String)
     # created_at = Column(DateTime, default=datetime.datetime.utcnow)
     id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
+    app_id: Mapped[str] = mapped_column(index=True)
     user_id: Mapped[str] = mapped_column(index=True)
     location_id: Mapped[str] = mapped_column(index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -22,7 +23,7 @@ class Session(Base):
     messages = relationship("Message", back_populates="session")
 
     def __repr__(self) -> str:
-        return f"Session(id={self.id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at})"
+        return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at})"
 
 
 class Message(Base):

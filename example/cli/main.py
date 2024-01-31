@@ -1,4 +1,5 @@
 from typing import List
+from uuid import uuid4
 
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
@@ -6,9 +7,9 @@ from langchain_community.chat_models.fake import FakeListChatModel
 
 from honcho import Client as HonchoClient
 
-# from client import HonchoClient
+app_id = str(uuid4())
 
-honcho = HonchoClient(base_url="http://localhost:8000")
+honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000")
 
 responses = ["Fake LLM Response :)"]
 llm = FakeListChatModel(responses=responses)
