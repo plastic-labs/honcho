@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "honcho-cli-example"
 version = "0.1.0"
-description = ""
+description = "CLI example for honcho"
 authors = ["Vineeth Voruganti <13438633+VVoruganti@users.noreply.github.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-honcho-ai = {path = "../../sdk/dist/honcho_ai-0.0.1-py3-none-any.whl"}
+honcho-ai = {path = "../../sdk"}
 
 [tool.poetry.group.dev.dependencies]
 langchain = "^0.1.0"

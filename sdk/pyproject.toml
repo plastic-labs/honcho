@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho-ai"
-version = "0.0.0.dev1"
+version = "0.0.1"
 description = "Python Client SDK for Honcho"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 license = "AGPL-3.0"
@@ -10,6 +10,9 @@ packages = [{include = "honcho"}]
 [tool.poetry.dependencies]
 python = "^3.10"
 requests = "^2.31.0"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.4.4"
 
 [build-system]
 requires = ["poetry-core"]

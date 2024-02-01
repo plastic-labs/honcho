@@ -35,21 +35,25 @@ class Session(SessionBase):
     id: int
     messages: list[Message]
     is_active: bool
+    user_id: str
+    location_id: str
+    app_id: str
+    session_data: str
 
     class Config:
         orm_mode = True
 
 
-class MetacognitionsBase(BaseModel):
-    metacognition_type: str
+class MetamessagesBase(BaseModel):
+    metamessage_type: str
     content: str
 
 
-class MetacognitionsCreate(MetacognitionsBase):
+class MetamessagesCreate(MetamessagesBase):
     pass
 
 
-class Metacognitions(MetacognitionsBase):
+class Metamessages(MetamessagesBase):
     id: int
 
     class Config:
