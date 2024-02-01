@@ -12,6 +12,7 @@ uvicorn = "^0.24.0.post1"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.25"
 psycopg2-binary = "^2.9.9"
+slowapi = "^0.1.8"
 
 
 [build-system]
