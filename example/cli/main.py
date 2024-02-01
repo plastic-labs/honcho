@@ -40,7 +40,7 @@ def chat():
                 *langchain_history,
                 user_message
             ])
-        chain = prompt | llm 
+        chain = prompt | llm
         response = chain.invoke({})
         print(type(response))
         print(f"AI: {response.content}")

@@ -14,6 +14,7 @@ tqdm = "^4.66.1"
 rich = "^13.7.0"
 pyyaml = "^6.0.1"
 langchain = "^0.1.4"
+pydantic = "^2.6.0"
 
 [build-system]
 requires = ["poetry-core"]
