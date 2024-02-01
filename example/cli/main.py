@@ -9,7 +9,7 @@ from honcho import Client as HonchoClient
 
 app_id = str(uuid4())
 
-honcho = HonchoClient(app_id=app_id)
+honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000")
 
 responses = ["Fake LLM Response :)"]
 llm = FakeListChatModel(responses=responses)
