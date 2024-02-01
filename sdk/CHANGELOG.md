@@ -11,10 +11,13 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 * Rate limiting of 10/minute
+* Application level scoping
 
 ### Changed
 
 * Client uses object oriented interface
+* Client has a default connection string pointing towards
+https://demo.honcho.dev
 
 ### Removed
 

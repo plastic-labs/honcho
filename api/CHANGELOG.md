@@ -9,4 +9,5 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 * Rate limiting of 10 requests for minute
+* Application level scoping
 
