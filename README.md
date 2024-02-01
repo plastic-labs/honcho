@@ -10,6 +10,8 @@ applications.
 
 Read about the motivation of this project [here](https://blog.plasticlabs.ai).
 
+Read the user documenation [here](https://docs.honcho.dev)
+
 ## Project Structure
 
 The Honcho repo is a monorepo containing the server/API that manages database
