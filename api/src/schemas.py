@@ -37,6 +37,7 @@ class Session(SessionBase):
     is_active: bool
     user_id: str
     location_id: str
+    app_id: str
     session_data: str
 
     class Config:
