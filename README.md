@@ -111,23 +111,16 @@ poetry add honcho-ai
 
 checkout the [example folder](./example/) for examples of how to use the sdk
 
-#### Build Locally
+#### Use Locally
 
-For local development of the sdk you can build the sdk using poetry with the
-following commands.
-
-```bash
-cd honcho/sdk
-poetry build
-```
-
-This will generate a `dist/` folder within the `honcho/sdk` directory. The
-`dist/` will contain a wheel file. You can install the sdk in another local
-project by specifiying the path to the wheel file in your installation command.
+For local development of the sdk you can add the local directory as a package
+using poetry with the following commands.
 
 ```bash
-pip install ./dist/honcho-ai-0.0.1-py3-none-any.whl
+poetry add --editable ./{path_to_honcho}/honcho/sdk
 ```
+
+See more information [here](https://python-poetry.org/docs/cli/#add)
 
 ## Contributing
 
