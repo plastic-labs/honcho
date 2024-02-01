@@ -142,7 +142,7 @@ class Session:
         data = response.json()
         return Message(self, id=data["id"], is_user=is_user, content=content)
 
-    def get_messages(self, user_id: str, session_id: int):
+    def get_messages(self):
         """Get all messages for a session
 
         Args:
