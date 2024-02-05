@@ -3,19 +3,28 @@ from uuid import uuid4
 
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
-from langchain_community.chat_models.fake import FakeListChatModel
+from langchain_openai.chat_models import ChatOpenAI
 
 from honcho import Client as HonchoClient
+from honcho.user_model import ParagraphInMemory
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 app_id = str(uuid4())
 
 honcho = HonchoClient(app_id=app_id)
 
 responses = ["Fake LLM Response :)"]
-llm = FakeListChatModel(responses=responses)
+# llm = FakeListChatModel(responses=responses)
+llm = ChatOpenAI(model="gpt-4")
 system = SystemMessage(
     content="You are world class technical documentation writer. Be as concise as possible"
 )
+
+# Register paragraph user model
+honcho.register_user_model("paragraph_v1", user_model_type=ParagraphInMemory, llm=llm)
 
 user = "CLI-Test"
 session = honcho.create_session(user_id=user)

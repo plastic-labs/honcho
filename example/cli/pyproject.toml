@@ -7,7 +7,9 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-honcho-ai = {path = "../../sdk"}
+honcho-ai = {path = "../../sdk", develop=true}
+langchain-openai = "^0.0.5"
+python-dotenv = "^1.0.1"
 
 [tool.poetry.group.dev.dependencies]
 langchain = "^0.1.0"
