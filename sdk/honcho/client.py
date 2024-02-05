@@ -1,13 +1,18 @@
 import json
 from typing import Dict
+from honcho.user_model import UserModel
 import requests
+
+from langchain.chains import LLMChain
 
 
 class Client:
     def __init__(self, app_id: str, base_url: str = "https://demo.honcho.dev"):
         """Constructor for Client"""
         self.base_url = base_url  # Base URL for the instance of the Honcho API
-        self.app_id = app_id # Representing ID of the client application
+        self.app_id = app_id  # Representing ID of the client application
+
+        self.user_models = {}  # Contains registered user model
 
     @property
     def common_prefix(self):
@@ -90,6 +95,22 @@ class Client:
             is_active=data["is_active"],
         )
 
+    def get_user(self, user_id: str):
+        """Retrieve a user's information and return a User object
+
+        Args:
+            user_id (str): The User ID of the user to retrieve
+
+        Returns:
+            User: The User object
+        """
+
+        # TODO: Validate the user id
+        return User(user_id=user_id, client=self)
+
+    def register_user_model(self, name: str, user_model_type: UserModel, llm: LLMChain):
+        self.user_models[name] = (user_model_type, llm)
+
 
 class Session:
     def __init__(
@@ -106,6 +127,7 @@ class Session:
         self.app_id = client.app_id
         self.id = id
         self.user_id = user_id
+        self.user = User(user_id=user_id, client=client)
         self.location_id = location_id
         self.session_data = (
             session_data if isinstance(session_data, dict) else json.loads(session_data)
@@ -188,6 +210,28 @@ class Session:
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
         response = requests.delete(url)
         self._is_active = False
+
+
+class User:
+    def __init__(self, user_id: str, client: Client):
+        """Constructor for User"""
+        self.user_id = user_id
+        self.client = client
+
+    def get_user_model(self, model_name: str):
+        """Retrieve the user model for a given user ID.
+
+        Args:
+            user_id (str): The ID of the user for whom to retrieve the model.
+
+        Returns:
+            UserModel: The user model
+        """
+        if model_name not in self.client.user_models:
+            raise ValueError("Model name not found in user models.")
+
+        model_type, llm = self.client.user_models[model_name]
+        return model_type(llm, self.user_id)
 
 
 class Message:
