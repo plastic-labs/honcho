@@ -33,7 +33,7 @@ class SessionUpdate(SessionBase):
 
 class Session(SessionBase):
     id: int
-    messages: list[Message]
+    # messages: list[Message]
     is_active: bool
     user_id: str
     location_id: str

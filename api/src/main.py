@@ -5,6 +5,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+
+from fastapi_pagination import Page, add_pagination
+from fastapi_pagination.ext.sqlalchemy import paginate
 # import uvicorn
 
 from . import crud, models, schemas
@@ -17,13 +20,15 @@ app = FastAPI()
 router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
 
 # Create a Limiter instance
-limiter = Limiter(key_func=get_remote_address, default_limits=["5/minute"])
+limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
 # Add SlowAPI middleware to the application
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
+
+add_pagination(app)
 
 def get_db():
     """FastAPI Dependency Generator for Database"""
@@ -37,7 +42,7 @@ def get_db():
 # Session Routes
 ########################################################
 
-@router.get("/sessions", response_model=list[schemas.Session])
+@router.get("/sessions", response_model=Page[schemas.Session])
 def get_sessions(request: Request, app_id: str, user_id: str, location_id: Optional[str] = None, db: Session = Depends(get_db)):
     """Get All Sessions for a User
 
@@ -50,9 +55,11 @@ def get_sessions(request: Request, app_id: str, user_id: str, location_id: Optio
         list[schemas.Session]: List of Session objects 
 
     """
-    if location_id is not None:
-        return crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id)
-    return crud.get_sessions(db, app_id=app_id, user_id=user_id)
+    # if location_id is not None:
+        # return paginate(db, crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id))
+    #     return crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id)
+    return paginate(db, crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id))
+    # return crud.get_sessions(db, app_id=app_id, user_id=user_id)
 
 
 @router.post("/sessions", response_model=schemas.Session)
@@ -186,7 +193,7 @@ def create_message_for_session(
 
 @router.get(
     "/sessions/{session_id}/messages", 
-    response_model=list[schemas.Message]
+    response_model=Page[schemas.Message]
 )
 def get_messages_for_session(
     request: Request, 
@@ -210,13 +217,13 @@ def get_messages_for_session(
 
     """
     try: 
-        return crud.get_messages(db, app_id=app_id, user_id=user_id, session_id=session_id)
+        return paginate(db, crud.get_messages(db, app_id=app_id, user_id=user_id, session_id=session_id))
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
 
 
-
 app.include_router(router)
+
 ########################################################
 # Metacognition Routes
 ########################################################
