@@ -7,7 +7,9 @@ from langchain.memory import ChatMessageHistory
 from langchain.schema.messages import SystemMessage, HumanMessage, AIMessage
 
 from honcho import Client as HonchoClient
-from honcho.user_model import UserModel, ParagraphInMemory
+from honcho.user_model import UserModel
+
+from paragraph_user_model import ParagraphInMemory
 
 # Load environment variables
 load_dotenv()
