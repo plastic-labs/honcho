@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "bloom_user_model"
+version = "0.1.0"
+description = ""
+authors = ["Jacob Van Meter <jacobvm04@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+langchain = "^0.1.5"
+langchain-openai = "^0.0.5"
+python-dotenv = "^1.0.1"
+honcho-ai = {path = "../../sdk", develop = true}
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
