@@ -1,7 +1,7 @@
 import json
 from typing import Sequence, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, Select
 from sqlalchemy.orm import Session
 
 from . import models, schemas
@@ -18,7 +18,7 @@ def get_session(db: Session, app_id: str, session_id: int, user_id: Optional[str
 
 def get_sessions(
         db: Session, app_id: str, user_id: str, location_id: str | None = None
-) -> Sequence[schemas.Session]:
+) -> Select:
     stmt = (
         select(models.Session)
         .where(models.Session.app_id == app_id)
@@ -29,7 +29,8 @@ def get_sessions(
     if location_id is not None:
         stmt = stmt.where(models.Session.location_id == location_id)
 
-    return db.scalars(stmt).all()
+    return stmt
+    # return db.scalars(stmt).all()
 
     # filtered_by_user = db.query(models.Session).filter(
     #     models.Session.user_id == user_id
@@ -110,12 +111,13 @@ def create_message(
 
 def get_messages(
     db: Session, app_id: str, user_id: str, session_id: int
-) -> Sequence[schemas.Message]:
+) -> Select:
     session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
     if session is None:
         raise ValueError("Session not found or does not belong to user")
     stmt = select(models.Message).where(models.Message.session_id == session_id)
-    return db.scalars(stmt).all()
+    return stmt
+    # return db.scalars(stmt).all()
     # return (
     #     db.query(models.Message)
     #     .filter(models.Message.session_id == session_id)

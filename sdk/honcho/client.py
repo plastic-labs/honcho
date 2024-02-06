@@ -1,6 +1,54 @@
 import json
-from typing import Dict
+from typing import Dict, Optional 
 import requests
+
+class GetSessionResponse:
+    def __init__(self, client, response: Dict):
+        self.client = client
+        self.total = response["total"]
+        self.page = response["page"]
+        self.page_size = response["size"]
+        self.pages = response["pages"]
+        self.sessions = [
+            Session(
+                client=client,
+                id=session["id"],
+                user_id=session["user_id"],
+                location_id=session["location_id"],
+                is_active=session["is_active"],
+                session_data=session["session_data"],
+            )
+            for session in response["items"]
+        ]
+       
+    def next(self):
+        if self.page >= self.pages:
+            return None
+        user_id = self.sessions[0].user_id
+        location_id = self.sessions[0].location_id
+        return self.client.get_sessions(user_id, location_id, self.page + 1, self.page_size)
+
+class GetMessageResponse:
+    def __init__(self, session, response: Dict):
+        self.session = session
+        self.total = response["total"]
+        self.page = response["page"]
+        self.page_size = response["size"]
+        self.pages = response["pages"]
+        self.messages = [
+                Message(
+                session=session,
+                id=message["id"],
+                is_user=message["is_user"],
+                content=message["content"],
+            )
+            for message in response["items"]
+        ]
+
+    def next(self):
+        if self.page >= self.pages:
+            return None
+        return self.session.get_messages((self.page + 1), self.page_size)
 
 
 class Client:
@@ -36,7 +84,7 @@ class Client:
             session_data=data["session_data"],
         )
 
-    def get_sessions(self, user_id: str, location_id: str | None = None):
+    def get_sessions(self, user_id: str, location_id: Optional[str] = None, page: int = 1, page_size: int = 50):
         """Return sessions associated with a user
 
         Args:
@@ -47,21 +95,39 @@ class Client:
             list[Dict]: List of Session objects
 
         """
-        url = f"{self.common_prefix}/users/{user_id}/sessions" + (
-            f"?location_id={location_id}" if location_id else ""
+        url = f"{self.common_prefix}/users/{user_id}/sessions?page={page}&size={page_size}" + (
+            f"&location_id={location_id}" if location_id else ""
         )
-        response = requests.get(url)
-        return [
-            Session(
-                client=self,
-                id=session["id"],
-                user_id=session["user_id"],
-                location_id=session["location_id"],
-                is_active=session["is_active"],
-                session_data=session["session_data"],
-            )
-            for session in response.json()
-        ]
+        response = requests.get(url) # TODO add validation and error handling
+        response.raise_for_status()
+        return GetSessionResponse(self, response.json())
+        # [
+        #     Session(
+        #         client=self,
+        #         id=session["id"],
+        #         user_id=session["user_id"],
+        #         location_id=session["location_id"],
+        #         is_active=session["is_active"],
+        #         session_data=session["session_data"],
+        #     )
+        #     for session in response.json()
+        # ]
+
+    def get_session_generator(self, user_id: str, location_id: Optional[str] = None):
+        page = 1
+        page_size = 50
+        get_session_response = self.get_sessions(user_id, location_id, page, page_size)
+        while True:
+            # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
+            for session in get_session_response.sessions:
+                yield session
+
+            new_sessions = get_session_response.next()
+            if not new_sessions:
+                break
+           
+            get_session_response = new_sessions
+
 
     def create_session(
         self, user_id: str, location_id: str = "default", session_data: Dict = {}
@@ -142,7 +208,7 @@ class Session:
         data = response.json()
         return Message(self, id=data["id"], is_user=is_user, content=content)
 
-    def get_messages(self):
+    def get_messages(self, page: int = 1, page_size: int = 50):
         """Get all messages for a session
 
         Args:
@@ -153,18 +219,35 @@ class Session:
             list[Dict]: List of Message objects
 
         """
-        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages?page={page}&size={page_size}"
         response = requests.get(url)
+        response.raise_for_status()
         data = response.json()
-        return [
-            Message(
-                self,
-                id=message["id"],
-                is_user=message["is_user"],
-                content=message["content"],
-            )
-            for message in data
-        ]
+        return GetMessageResponse(self, data)
+        # return [
+        #     Message(
+        #         self,
+        #         id=message["id"],
+        #         is_user=message["is_user"],
+        #         content=message["content"],
+        #     )
+        #     for message in data
+        # ]
+    def get_messages_generator(self):
+        page = 1
+        page_size = 50
+        get_messages_response = self.get_messages(page, page_size)
+        while True:
+            # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
+            for message in get_messages_response.messages:
+                yield message
+
+            new_messages = get_messages_response.next()
+            if not new_messages:
+                break
+           
+            get_messages_response = new_messages
+
 
     def update(self, session_data: Dict):
         """Update the metadata of a session
