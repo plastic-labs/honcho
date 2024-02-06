@@ -1,4 +1,4 @@
-from langchain.chains import LLMChain
+from langchain.chat_models.base import BaseChatModel
 
 from abc import ABC, abstractmethod
 
@@ -11,7 +11,21 @@ class UserModel(ABC):
     """
 
     @abstractmethod
-    def revise(self, insight: str) -> None:
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        user_id: str,
+    ):
+        """
+        Initializes the UserModel
+
+        Args:
+            llm (LLMChain): The language chain to use for inference.
+            user_id (str): The ID of the user for this model.
+        """
+
+    @abstractmethod
+    async def revise(self, insight: str) -> None:
         """
         Abstract method to revise the user's context based on new insights.
 
@@ -21,7 +35,7 @@ class UserModel(ABC):
         raise NotImplementedError("Must implement revise_context method.")
 
     @abstractmethod
-    def query(self, query: str) -> str:
+    async def query(self, query: str) -> str:
         """
         Abstract method to respond to queries about the user's context.
 
@@ -76,7 +90,7 @@ Now write a concise response to the query using the information in the user cont
 
     def __init__(
         self,
-        llm: LLMChain,
+        llm: BaseChatModel,
         user_id: str,
     ):
         """
@@ -89,7 +103,9 @@ Now write a concise response to the query using the information in the user cont
         self.llm = llm
         self.user_id = user_id
         if user_id not in paragraph_user_models:
-            paragraph_user_models[user_id] = ""  # Initialize user model if not present
+            paragraph_user_models[user_id] = (
+                "none, new user"  # Initialize user model if not present
+            )
 
     async def revise(self, insight: str):
         """
@@ -101,7 +117,7 @@ Now write a concise response to the query using the information in the user cont
         Returns:
             None
         """
-        revised_context_message = await self.llm.inference(
+        revised_context_message = await self.llm.ainvoke(
             self.reward_revision_prompt.format(
                 user_context=paragraph_user_models[self.user_id],
                 insight=insight,
@@ -109,7 +125,7 @@ Now write a concise response to the query using the information in the user cont
         )
 
         paragraph_user_models[self.user_id] = (
-            revised_context_message  # Update the global user model
+            revised_context_message.content  # Update the global user model
         )
 
     async def query(self, query: str):
@@ -122,10 +138,11 @@ Now write a concise response to the query using the information in the user cont
         Returns:
             str: The response to the query, based on the current user context description.
         """
-        response = await self.llm.inference(
+        response_message = await self.llm.ainvoke(
             self.reward_query_prompt.format(
                 user_context=paragraph_user_models[self.user_id],
                 query=query,
             )
         )
-        return response
+
+        return response_message.content
