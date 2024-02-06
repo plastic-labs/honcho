@@ -222,7 +222,7 @@ class User:
         """Retrieve the user model for a given user ID.
 
         Args:
-            user_id (str): The ID of the user for whom to retrieve the model.
+            model_name (str): TODO: update description here
 
         Returns:
             UserModel: The user model
