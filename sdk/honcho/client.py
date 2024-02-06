@@ -100,7 +100,8 @@ class Client:
         )
         response = requests.get(url) # TODO add validation and error handling
         response.raise_for_status()
-        return GetSessionResponse(self, response.json())
+        data = response.json()
+        return GetSessionResponse(self, data)
         # [
         #     Session(
         #         client=self,
@@ -113,7 +114,7 @@ class Client:
         #     for session in response.json()
         # ]
 
-    def get_session_generator(self, user_id: str, location_id: Optional[str] = None):
+    def get_sessions_generator(self, user_id: str, location_id: Optional[str] = None):
         page = 1
         page_size = 50
         get_session_response = self.get_sessions(user_id, location_id, page, page_size)

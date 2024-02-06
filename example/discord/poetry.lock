@@ -357,13 +357,13 @@ files = [
 
 [[package]]
 name = "honcho-ai"
-version = "0.0.0.dev1"
+version = "0.0.2"
 description = "Python Client SDK for Honcho"
 category = "main"
 optional = false
 python-versions = "^3.10"
 files = []
-develop = false
+develop = true
 
 [package.dependencies]
 requests = "^2.31.0"
@@ -649,4 +649,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "159adce2e4b4e405c0e57a5b9a27ddc384184dd308d6b12ddb5db6fbe81c3c6b"
+content-hash = "56228d417333540e3191575720739ae6fff9490b68e9ddaae2cb6fe44b4bf611"

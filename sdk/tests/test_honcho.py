@@ -1,4 +1,4 @@
-from honcho import Client, GetSessionResponse, GetMessageResponse
+from honcho import Client, GetSessionResponse, GetMessageResponse, Session, Message
 from uuid import uuid1
 import pytest
 
@@ -117,6 +117,41 @@ def test_paginated_sessions():
     assert next_page is None
 
 
+def test_paginated_sessions_generator():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Client(app_id, "http://localhost:8000")
+    for i in range(3):
+        client.create_session(user_id)
+
+    gen = client.get_sessions_generator(user_id)
+    # print(type(gen))
+
+    item = next(gen)
+    assert item.user_id == user_id
+    assert isinstance(item, Session)
+    assert next(gen) is not None
+    assert next(gen) is not None
+    with pytest.raises(StopIteration):
+        next(gen)
+
+def test_paginated_out_of_bounds():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Client(app_id, "http://localhost:8000")
+    for i in range(3):
+        client.create_session(user_id)
+    page = 2
+    page_size = 50
+    get_session_response = client.get_sessions(user_id, page=page, page_size=page_size)
+
+    assert get_session_response.pages == 1
+    assert get_session_response.page == 2
+    assert get_session_response.page_size == 50
+    assert get_session_response.total == 3
+    assert len(get_session_response.sessions) == 0 
+
+
 def test_paginated_messages():
     app_id = str(uuid1())
     user_id = str(uuid1())
@@ -148,4 +183,23 @@ def test_paginated_messages():
     assert next_page is None
 
 
+def test_paginated_messages_generator():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Client(app_id, "http://localhost:8000")
+    created_session = client.create_session(user_id)
+    created_session.create_message(is_user=True, content="Hello")
+    created_session.create_message(is_user=False, content="Hi")
+    gen = created_session.get_messages_generator()
+
+    item = next(gen)
+    assert isinstance(item, Message)
+    assert item.content == "Hello"
+    assert item.is_user is True
+    item2 = next(gen)
+    assert item2 is not None
+    assert item2.content == "Hi"
+    assert item2.is_user is False
+    with pytest.raises(StopIteration):
+        next(gen)
 
