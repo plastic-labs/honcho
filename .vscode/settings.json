@@ -1,0 +1,8 @@
+{
+  "python.analysis.typeCheckingMode": "basic",
+  "files.exclude": {
+    "sdk": true,
+    "api": true,
+    "example": true
+  }
+}

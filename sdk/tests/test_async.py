@@ -5,7 +5,8 @@ from uuid import uuid1
 
 @pytest.mark.asyncio
 async def test_session_creation_retrieval():
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     user_id = str(uuid1())
     created_session = await client.create_session(user_id)
     retrieved_session = await client.get_session(user_id, created_session.id)
@@ -17,7 +18,8 @@ async def test_session_creation_retrieval():
 
 @pytest.mark.asyncio
 async def test_session_multiple_retrieval():
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     user_id = str(uuid1())
     created_session_1 = await client.create_session(user_id)
     created_session_2 = await client.create_session(user_id)
@@ -30,7 +32,8 @@ async def test_session_multiple_retrieval():
 @pytest.mark.asyncio
 async def test_session_update():
     user_id = str(uuid1())
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     created_session = await client.create_session(user_id)
     assert await created_session.update({"foo": "bar"})
     retrieved_session = await client.get_session(user_id, created_session.id)
@@ -40,7 +43,8 @@ async def test_session_update():
 @pytest.mark.asyncio
 async def test_session_deletion():
     user_id = str(uuid1())
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     created_session = await client.create_session(user_id)
     assert created_session.is_active == True
     await created_session.delete()
@@ -53,7 +57,8 @@ async def test_session_deletion():
 @pytest.mark.asyncio
 async def test_messages():
     user_id = str(uuid1())
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     created_session = await client.create_session(user_id)
     await created_session.create_message(is_user=True, content="Hello")
     await created_session.create_message(is_user=False, content="Hi")

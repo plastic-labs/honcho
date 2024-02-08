@@ -5,10 +5,15 @@ from .schemas import Message
 
 
 class Client:
-    def __init__(self, base_url):
+    def __init__(self, app_id: str, base_url: str = "https://demo.honcho.dev"):
         """Constructor for Client"""
         self.base_url = base_url  # Base URL for the instance of the Honcho API
+        self.app_id = app_id # Representing ID of the client application
         self.client = httpx.Client()
+
+    @property
+    def common_prefix(self):
+        return f"{self.base_url}/apps/{self.app_id}"
 
     def get_session(self, user_id: str, session_id: int):
         """Get a specific session for a user by ID
@@ -21,7 +26,7 @@ class Client:
             Dict: The Session object of the requested Session
 
         """
-        url = f"{self.base_url}/users/{user_id}/sessions/{session_id}"
+        url = f"{self.common_prefix}/users/{user_id}/sessions/{session_id}"
         response = self.client.get(url)
         data = response.json()
         return Session(
@@ -44,7 +49,7 @@ class Client:
             list[Dict]: List of Session objects
 
         """
-        url = f"{self.base_url}/users/{user_id}/sessions" + (
+        url = f"{self.common_prefix}/users/{user_id}/sessions" + (
             f"?location_id={location_id}" if location_id else ""
         )
         response = self.client.get(url)
@@ -75,7 +80,7 @@ class Client:
 
         """
         data = {"location_id": location_id, "session_data": session_data}
-        url = f"{self.base_url}/users/{user_id}/sessions"
+        url = f"{self.common_prefix}/users/{user_id}/sessions"
         response = self.client.post(url, json=data)
         data = response.json()
         return Session(
@@ -101,6 +106,7 @@ class Session:
         """Constructor for Session"""
         self.base_url = client.base_url
         self.client = client.client
+        self.app_id = client.app_id
         self.id = id
         self.user_id = user_id
         self.location_id = location_id
@@ -109,8 +115,12 @@ class Session:
         )
         self._is_active = is_active
 
+    @property
+    def common_prefix(self):
+        return f"{self.base_url}/apps/{self.app_id}"
+
     def __str__(self):
-        return f"Session(id={self.id}, user_id={self.user_id}, location_id={self.location_id}, session_data={self.session_data}, is_active={self.is_active})"
+        return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, session_data={self.session_data}, is_active={self.is_active})"
 
     @property
     def is_active(self):
@@ -130,7 +140,7 @@ class Session:
         if not self.is_active:
             raise Exception("Session is inactive")
         data = {"is_user": is_user, "content": content}
-        url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}/messages"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
         response = self.client.post(url, json=data)
         data = response.json()
         return Message(session_id=self.id, id=data["id"], is_user=is_user, content=content)
@@ -146,7 +156,7 @@ class Session:
             list[Dict]: List of Message objects
 
         """
-        url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}/messages"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
         response = self.client.get(url)
         data = response.json()
         return [
@@ -170,7 +180,7 @@ class Session:
             boolean: Whether the session was successfully updated
         """
         info = {"session_data": session_data}
-        url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
         response = self.client.put(url, json=info)
         success = response.status_code < 400
         self.session_data = session_data
@@ -178,7 +188,7 @@ class Session:
 
     def delete(self):
         """Delete a session by marking it as inactive"""
-        url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
         response = self.client.delete(url)
         self._is_active = False
 
