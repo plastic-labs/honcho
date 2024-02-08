@@ -1,7 +1,55 @@
 import json
-from typing import Dict
+from typing import Dict, Optional 
 import httpx
 from .schemas import Message
+
+class AsyncGetSessionResponse:
+    def __init__(self, client, response: Dict):
+        self.client = client
+        self.total = response["total"]
+        self.page = response["page"]
+        self.page_size = response["size"]
+        self.pages = response["pages"]
+        self.sessions = [
+            AsyncSession(
+                client=client,
+                id=session["id"],
+                user_id=session["user_id"],
+                location_id=session["location_id"],
+                is_active=session["is_active"],
+                session_data=session["session_data"],
+            )
+            for session in response["items"]
+        ]
+       
+    async def next(self):
+        if self.page >= self.pages:
+            return None
+        user_id = self.sessions[0].user_id
+        location_id = self.sessions[0].location_id
+        return await self.client.get_sessions(user_id, location_id, self.page + 1, self.page_size)
+
+class AsyncGetMessageResponse:
+    def __init__(self, session, response: Dict):
+        self.session = session
+        self.total = response["total"]
+        self.page = response["page"]
+        self.page_size = response["size"]
+        self.pages = response["pages"]
+        self.messages = [
+                Message(
+                session_id=session.id,
+                id=message["id"],
+                is_user=message["is_user"],
+                content=message["content"],
+            )
+            for message in response["items"]
+        ]
+
+    async def next(self):
+        if self.page >= self.pages:
+            return None
+        return await self.session.get_messages((self.page + 1), self.page_size)
 
 
 class AsyncClient:
@@ -38,7 +86,7 @@ class AsyncClient:
             session_data=data["session_data"],
         )
 
-    async def get_sessions(self, user_id: str, location_id: str | None = None):
+    async def get_sessions(self, user_id: str, location_id: Optional[str] = None, page: int = 1, page_size: int = 50):
         """Return sessions associated with a user
 
         Args:
@@ -49,21 +97,28 @@ class AsyncClient:
             list[Dict]: List of Session objects
 
         """
-        url = f"{self.common_prefix}/users/{user_id}/sessions" + (
-            f"?location_id={location_id}" if location_id else ""
+        url = f"{self.common_prefix}/users/{user_id}/sessions?page={page}&size={page_size}" + (
+            f"&location_id={location_id}" if location_id else ""
         )
         response = await self.client.get(url)
-        return [
-            AsyncSession(
-                client=self,
-                id=session["id"],
-                user_id=session["user_id"],
-                location_id=session["location_id"],
-                is_active=session["is_active"],
-                session_data=session["session_data"],
-            )
-            for session in response.json()
-        ]
+        response.raise_for_status()
+        data = response.json()
+        return AsyncGetSessionResponse(self, data)
+
+    async def get_sessions_generator(self, user_id: str, location_id: Optional[str] = None):
+        page = 1
+        page_size = 50
+        get_session_response = await self.get_sessions(user_id, location_id, page, page_size)
+        while True:
+            # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
+            for session in get_session_response.sessions:
+                yield session
+
+            new_sessions = await get_session_response.next()
+            if not new_sessions:
+                break
+           
+            get_session_response = new_sessions
 
     async def create_session(
         self, user_id: str, location_id: str = "default", session_data: Dict = {}
@@ -145,7 +200,7 @@ class AsyncSession:
         data = response.json()
         return Message(session_id=self.id, id=data["id"], is_user=is_user, content=content)
 
-    async def get_messages(self):
+    async def get_messages(self, page: int = 1, page_size: int = 50) -> AsyncGetMessageResponse:
         """Get all messages for a session
 
         Args:
@@ -156,19 +211,35 @@ class AsyncSession:
             list[Dict]: List of Message objects
 
         """
-        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages?page={page}&size={page_size}"
         response = await self.client.get(url)
+        response.raise_for_status()
         data = response.json()
-        return [
-            Message(
-                session_id=self.id,
-                id=message["id"],
-                is_user=message["is_user"],
-                content=message["content"],
-            )
-            for message in data
-        ]
+        return AsyncGetMessageResponse(self, data)
+        # return [
+        #     Message(
+        #         self,
+        #         id=message["id"],
+        #         is_user=message["is_user"],
+        #         content=message["content"],
+        #     )
+        #     for message in data
+        # ]
+    async def get_messages_generator(self):
+        page = 1
+        page_size = 50
+        get_messages_response = await self.get_messages(page, page_size)
+        while True:
+            # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
+            for message in get_messages_response.messages:
+                yield message
 
+            new_messages = await get_messages_response.next()
+            if not new_messages:
+                break
+           
+            get_messages_response = new_messages
+        
     async def update(self, session_data: Dict):
         """Update the metadata of a session
 

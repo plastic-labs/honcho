@@ -13,7 +13,9 @@ intents.message_content = True
 
 app_id = str(uuid4())
 
-honcho = HonchoClient(app_id=app_id, "http://localhost:8000")
+# honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
+honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
+
 bot = discord.Bot(intents=intents)
 
 
@@ -30,7 +32,7 @@ async def on_message(message):
     user_id = f"discord_{str(message.author.id)}"
     location_id = str(message.channel.id)
 
-    sessions = honcho.get_sessions(user_id, location_id)
+    sessions = list(honcho.get_sessions_generator(user_id, location_id))
     if len(sessions) > 0:
         session = sessions[0]
     else:
@@ -49,7 +51,7 @@ async def on_message(message):
 async def restart(ctx):
     user_id = f"discord_{str(ctx.author.id)}"
     location_id = str(ctx.channel_id)
-    sessions = honcho.get_sessions(user_id, location_id)
+    sessions = list(honcho.get_sessions_generator(user_id, location_id))
     sessions[0].delete() if len(sessions) > 0 else None
 
     await ctx.respond(
