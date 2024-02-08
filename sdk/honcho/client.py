@@ -16,9 +16,11 @@ class AsyncGetPage:
         pass
 
 class AsyncGetSessionPage(AsyncGetPage):
-    def __init__(self, client, response: Dict):
+    def __init__(self, client, options: Dict, response: Dict):
         super().__init__(response)
         self.client = client
+        self.user_id = options["user_id"]
+        self.location_id = options["location_id"]
         # self.total = response["total"]
         # self.page = response["page"]
         # self.page_size = response["size"]
@@ -38,9 +40,9 @@ class AsyncGetSessionPage(AsyncGetPage):
     async def next(self):
         if self.page >= self.pages:
             return None
-        user_id = self.items[0].user_id
-        location_id = self.items[0].location_id
-        return await self.client.get_sessions(user_id, location_id, self.page + 1, self.page_size)
+        # user_id = self.items[0].user_id
+        # location_id = self.items[0].location_id
+        return await self.client.get_sessions(self.user_id, self.location_id, self.page + 1, self.page_size)
 
 class AsyncGetMessagePage(AsyncGetPage):
     def __init__(self, session, response: Dict):
@@ -67,9 +69,11 @@ class AsyncGetMessagePage(AsyncGetPage):
         return await self.session.get_messages((self.page + 1), self.page_size)
 
 class AsyncGetMetamessagePage(AsyncGetPage):
-    def __init__(self, session, response: Dict) -> None:
+    def __init__(self, session, options: Dict, response: Dict) -> None:
         super().__init__(response)
         self.session = session
+        self.message_id = options["message_id"]
+        self.metamessage_type = options["metamessage_type"]
         self.items = [
                 Metamessage(
                     id=metamessage["id"],
@@ -84,7 +88,7 @@ class AsyncGetMetamessagePage(AsyncGetPage):
     async def next(self):
         if self.page >= self.pages:
             return None
-        return await self.session.get_metamessages((self.page + 1), self.page_size)
+        return await self.session.get_metamessages(metamessage_type=self.metamessage_type, message=self.message_id, page=(self.page + 1), page_size=self.page_size)
 
 
 
@@ -140,7 +144,11 @@ class AsyncClient:
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetSessionPage(self, data)
+        options = {
+                "location_id": location_id,
+                "user_id": user_id
+                }
+        return AsyncGetSessionPage(self, options, data)
 
     async def get_sessions_generator(self, user_id: str, location_id: Optional[str] = None):
         page = 1
@@ -287,6 +295,27 @@ class AsyncSession:
            
             get_messages_page = new_messages
 
+    async def create_metamessage(self, message: Message, metamessage_type: str, content: str):
+        """Adds a metamessage to the session
+
+        Args:
+            is_user (bool): Whether the message is from the user
+            content (str): The content of the message
+
+        Returns:
+            Dict: The Message object of the added message
+
+        """
+        if not self.is_active:
+            raise Exception("Session is inactive")
+        data = {"metamessage_type": metamessage_type, "content": content, "message_id": message.id}
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/metamessages"
+        response = await self.client.post(url, json=data)
+        response.raise_for_status()
+        data = response.json()
+        return Metamessage(id=data["id"], message_id=message.id, metamessage_type=metamessage_type, content=content, created_at=data["created_at"])
+
+
     async def get_metamessage(self, metamessage_id: uuid.UUID) -> Metamessage:
         """Get a specific message for a session based on ID
 
@@ -303,7 +332,7 @@ class AsyncSession:
         data = response.json()
         return Metamessage(id=data["id"], message_id=data["message_id"], metamessage_type=data["metamessage_type"], content=data["content"], created_at=data["created_at"])
 
-    async def get_metamessages(self, page: int = 1, page_size: int = 50) -> AsyncGetMetamessagePage:
+    async def get_metamessages(self, metamessage_type: Optional[str] = None, message: Optional[Message] = None, page: int = 1, page_size: int = 50) -> AsyncGetMetamessagePage:
         """Get all messages for a session
 
         Args:
@@ -314,26 +343,34 @@ class AsyncSession:
             list[Dict]: List of Message objects
 
         """
-        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages?page={page}&size={page_size}"
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/metamessages?page={page}&size={page_size}"
+        if metamessage_type:
+            url += f"&metamessage_type={metamessage_type}"
+        if message:
+            url += f"&message_id={message.id}"
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetMetamessagePage(self, data)
+        options = {
+                "metamessage_type": metamessage_type,
+                "message_id": message.id if message else None
+                }
+        return AsyncGetMetamessagePage(self, options, data)
         
-    async def get_metamessages_generator(self):
+    async def get_metamessages_generator(self, metamessage_type: Optional[str] = None, message: Optional[Message] = None):
         page = 1
         page_size = 50
-        get_messages_response = await self.get_metamessages(page, page_size)
+        get_metamessages_page = await self.get_metamessages(metamessage_type=metamessage_type, message=message, page=page, page_size=page_size)
         while True:
             # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
-            for message in get_messages_response.items:
-                yield message
+            for metamessage in get_metamessages_page.items:
+                yield metamessage
 
-            new_messages = await get_messages_response.next()
+            new_messages = await get_metamessages_page.next()
             if not new_messages:
                 break
            
-            get_messages_response = new_messages
+            get_metamessages_page = new_messages
 
         
     async def update(self, session_data: Dict):

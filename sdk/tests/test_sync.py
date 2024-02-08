@@ -1,4 +1,4 @@
-from honcho import GetSessionPage, GetMessagePage, Session, Message
+from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, Session, Message, Metamessage
 from honcho import Client as Honcho
 from uuid import uuid1
 import pytest
@@ -203,4 +203,59 @@ def test_paginated_messages_generator():
     assert item2.is_user is False
     with pytest.raises(StopIteration):
         next(gen)
+
+
+def test_paginated_metamessages():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    created_session = client.create_session(user_id)
+    message = created_session.create_message(is_user=True, content="Hello")
+    for i in range(10):
+        created_session.create_metamessage(message=message, metamessage_type="thought", content=f"Test {i}")
+        created_session.create_metamessage(message=message, metamessage_type="reflect", content=f"Test {i}")
+
+    page_size = 7
+    page = created_session.get_metamessages(page=1, page_size=page_size)
+
+    assert page is not None
+    assert isinstance(page, GetMetamessagePage)
+    assert len(page.items) == page_size
+
+    new_page = page.next()
+    
+    assert new_page is not None
+    assert isinstance(new_page, GetMetamessagePage)
+    assert len(new_page.items) == page_size
+
+    final_page = created_session.get_metamessages(page=3, page_size=page_size)
+
+    assert len(final_page.items) == 20 - ((3-1) * 7)
+
+    next_page = final_page.next()
+
+    assert next_page is None
+
+def test_paginated_metamessages_generator():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    created_session = client.create_session(user_id)
+    message = created_session.create_message(is_user=True, content="Hello")
+    created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 1")
+    created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 2")
+    gen = created_session.get_metamessages_generator()
+
+    item = next(gen)
+    assert isinstance(item, Metamessage)
+    assert item.content == "Test 1"
+    assert item.metamessage_type == "thought"
+    item2 = next(gen)
+    assert item2 is not None
+    assert item2.content == "Test 2"
+    assert item2.metamessage_type == "thought"
+    with pytest.raises(StopIteration):
+        next(gen)
+
+
 
