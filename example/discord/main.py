@@ -1,17 +1,19 @@
 import os
+from uuid import uuid4
 import discord
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from honcho import Client as HonchoClient
+
+load_dotenv()
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 
+app_id = str(uuid4())
 
-honcho = HonchoClient("http://localhost:8000")
+honcho = HonchoClient(app_id=app_id, "http://localhost:8000")
 bot = discord.Bot(intents=intents)
 
 

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho"
-version = "0.1.0"
+version = "0.0.1"
 description = ""
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
@@ -12,6 +12,7 @@ uvicorn = "^0.24.0.post1"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.25"
 psycopg2-binary = "^2.9.9"
+slowapi = "^0.1.8"
 
 
 [build-system]

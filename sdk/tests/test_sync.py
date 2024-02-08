@@ -1,21 +1,23 @@
 import pytest
 from honcho import Client as Honcho
 from uuid import uuid1
-
+import pytest
 
 def test_session_creation_retrieval():
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     user_id = str(uuid1())
     created_session = client.create_session(user_id)
     retrieved_session = client.get_session(user_id, created_session.id)
     assert retrieved_session.id == created_session.id
-    assert retrieved_session.is_active == True
+    assert retrieved_session.is_active is True
     assert retrieved_session.location_id == "default"
     assert retrieved_session.session_data == {}
 
 
 def test_session_multiple_retrieval():
-    client = Honcho("http://localhost:8000")
+    app_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
     user_id = str(uuid1())
     created_session_1 = client.create_session(user_id)
     created_session_2 = client.create_session(user_id)
@@ -26,8 +28,9 @@ def test_session_multiple_retrieval():
 
 
 def test_session_update():
+    app_id = str(uuid1())
     user_id = str(uuid1())
-    client = Honcho("http://localhost:8000")
+    client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.update({"foo": "bar"})
     retrieved_session = client.get_session(user_id, created_session.id)
@@ -35,20 +38,22 @@ def test_session_update():
 
 
 def test_session_deletion():
+    app_id = str(uuid1())
     user_id = str(uuid1())
-    client = Honcho("http://localhost:8000")
+    client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
-    assert created_session.is_active == True
+    assert created_session.is_active is True
     created_session.delete()
-    assert created_session.is_active == False
+    assert created_session.is_active is False
     retrieved_session = client.get_session(user_id, created_session.id)
-    assert retrieved_session.is_active == False
+    assert retrieved_session.is_active is False
     assert retrieved_session.id == created_session.id
 
 
 def test_messages():
+    app_id = str(uuid1())
     user_id = str(uuid1())
-    client = Honcho("http://localhost:8000")
+    client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     created_session.create_message(is_user=True, content="Hello")
     created_session.create_message(is_user=False, content="Hi")
@@ -57,6 +62,29 @@ def test_messages():
     assert len(messages) == 2
     user_message, ai_message = messages
     assert user_message.content == "Hello"
-    assert user_message.is_user == True
+    assert user_message.is_user is True
     assert ai_message.content == "Hi"
-    assert ai_message.is_user == False
+    assert ai_message.is_user is False
+
+def test_rate_limit():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    created_session = client.create_session(user_id)
+    with pytest.raises(Exception):
+        for _ in range(10):
+            created_session.create_message(is_user=True, content="Hello")
+            created_session.create_message(is_user=False, content="Hi")
+
+def test_app_id_security():
+    app_id_1 = str(uuid1())
+    app_id_2 = str(uuid1())
+    user_id = str(uuid1())
+    client_1 = Honcho(app_id_1, "http://localhost:8000")
+    client_2 = Honcho(app_id_2, "http://localhost:8000")
+    created_session = client_1.create_session(user_id)
+    created_session.create_message(is_user=True, content="Hello")
+    created_session.create_message(is_user=False, content="Hi")
+    with pytest.raises(Exception):
+        client_2.get_session(user_id, created_session.id)
+
