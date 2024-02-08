@@ -1,5 +1,5 @@
 import pytest
-from honcho import AsyncGetSessionResponse, AsyncGetMessageResponse, AsyncSession, Message
+from honcho import AsyncGetSessionPage, AsyncGetMessagePage, AsyncSession, Message
 from honcho import AsyncClient as Honcho
 from uuid import uuid1
 
@@ -25,7 +25,7 @@ async def test_session_multiple_retrieval():
     created_session_1 = await client.create_session(user_id)
     created_session_2 = await client.create_session(user_id)
     response = await client.get_sessions(user_id)
-    retrieved_sessions = response.sessions
+    retrieved_sessions = response.items
 
     assert len(retrieved_sessions) == 2
     assert retrieved_sessions[0].id == created_session_1.id
@@ -50,7 +50,7 @@ async def test_session_deletion():
     client = Honcho(app_id, "http://localhost:8000")
     created_session = await client.create_session(user_id)
     assert created_session.is_active is True
-    await created_session.delete()
+    await created_session.close()
     assert created_session.is_active is False
     retrieved_session = await client.get_session(user_id, created_session.id)
     assert retrieved_session.is_active is False
@@ -67,7 +67,7 @@ async def test_messages():
     await created_session.create_message(is_user=False, content="Hi")
     retrieved_session = await client.get_session(user_id, created_session.id)
     response = await retrieved_session.get_messages()
-    messages = response.messages
+    messages = response.items
     assert len(messages) == 2
     user_message, ai_message = messages
     assert user_message.content == "Hello"
@@ -111,18 +111,18 @@ async def test_paginated_sessions():
     page = 1
     page_size = 2
     get_session_response = await client.get_sessions(user_id, page=page, page_size=page_size)
-    assert len(get_session_response.sessions) == page_size
+    assert len(get_session_response.items) == page_size
 
     assert get_session_response.pages == 5
 
     new_session_response = await get_session_response.next()
     assert new_session_response is not None
-    assert isinstance(new_session_response, AsyncGetSessionResponse)
-    assert len(new_session_response.sessions) == page_size
+    assert isinstance(new_session_response, AsyncGetSessionPage)
+    assert len(new_session_response.items) == page_size
 
     final_page = await client.get_sessions(user_id, page=5, page_size=page_size)
 
-    assert len(final_page.sessions) == 2
+    assert len(final_page.items) == 2
     next_page = await final_page.next()
     assert next_page is None
 
@@ -161,7 +161,7 @@ async def test_paginated_out_of_bounds():
     assert get_session_response.page == 2
     assert get_session_response.page_size == 50
     assert get_session_response.total == 3
-    assert len(get_session_response.sessions) == 0 
+    assert len(get_session_response.items) == 0 
 
 
 @pytest.mark.asyncio
@@ -178,18 +178,18 @@ async def test_paginated_messages():
     get_message_response = await created_session.get_messages(page=1, page_size=page_size)
 
     assert get_message_response is not None
-    assert isinstance(get_message_response, AsyncGetMessageResponse)
-    assert len(get_message_response.messages) == page_size
+    assert isinstance(get_message_response, AsyncGetMessagePage)
+    assert len(get_message_response.items) == page_size
 
     new_message_response = await get_message_response.next()
     
     assert new_message_response is not None
-    assert isinstance(new_message_response, AsyncGetMessageResponse)
-    assert len(new_message_response.messages) == page_size
+    assert isinstance(new_message_response, AsyncGetMessagePage)
+    assert len(new_message_response.items) == page_size
 
     final_page = await created_session.get_messages(page=3, page_size=page_size)
 
-    assert len(final_page.messages) == 20 - ((3-1) * 7)
+    assert len(final_page.items) == 20 - ((3-1) * 7)
 
     next_page = await final_page.next()
 

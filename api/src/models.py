@@ -1,4 +1,5 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime, Uuid
+import uuid
 import datetime
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -7,18 +8,12 @@ from .db import Base
 
 class Session(Base):
     __tablename__ = "sessions"
-    # id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    # user_id = Column(String, index=True)
-    # location_id = Column(String, index=True)
-    # is_active = Column(Boolean, default=True)
-    # session_data = Column(String)
-    # created_at = Column(DateTime, default=datetime.datetime.utcnow)
-    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
-    app_id: Mapped[str] = mapped_column(index=True)
-    user_id: Mapped[str] = mapped_column(index=True)
-    location_id: Mapped[str] = mapped_column(index=True)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
+    app_id: Mapped[str] = mapped_column(String(512), index=True)
+    user_id: Mapped[str] = mapped_column(String(512), index=True)
+    location_id: Mapped[str] = mapped_column(String(512), index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    session_data: Mapped[str]
+    session_data: Mapped[str] 
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     messages = relationship("Message", back_populates="session")
 
@@ -28,33 +23,27 @@ class Session(Base):
 
 class Message(Base):
     __tablename__ = "messages"
-    # id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    # session_id = Column(Integer, ForeignKey("sessions.id"))
-    # is_user = Column(Boolean)
-    # content = Column(String)
-    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
-    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"))
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"))
     is_user: Mapped[bool]
-    content: Mapped[str] # TODO add a max message length
+    content: Mapped[str]  = mapped_column(String(65535)) 
 
+    created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     session = relationship("Session", back_populates="messages")
-    metamessages = relationship("Metamessages", back_populates="message")
+    metamessages = relationship("Metamessage", back_populates="message")
     def __repr__(self) -> str:
         return f"Message(id={self.id}, session_id={self.session_id}, is_user={self.is_user}, content={self.content[10:]})"
 
 
-# TODO: add metamessages data to messages
-class Metamessages(Base):
+class Metamessage(Base):
     __tablename__ = "metamessages"
-    id: Mapped[int] = mapped_column(primary_key=True, index=True, autoincrement=True)
-    metamessage_type: Mapped[str] # TODO add a max metamessages type length
-    content: Mapped[str]
-    # id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    message_id = Column(Integer, ForeignKey("messages.id"))
-    # metacognition_type = Column(String, index=True)
-    # content = Column(String)
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
+    metamessage_type: Mapped[str] = mapped_column(String(512), index=True) 
+    content: Mapped[str] = mapped_column(String(65535)) 
+    message_id = Column(Uuid, ForeignKey("messages.id"))
 
     message = relationship("Message", back_populates="metamessages")
+    created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
 
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"

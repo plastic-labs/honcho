@@ -1,4 +1,4 @@
-from honcho import GetSessionResponse, GetMessageResponse, Session, Message
+from honcho import GetSessionPage, GetMessagePage, Session, Message
 from honcho import Client as Honcho
 from uuid import uuid1
 import pytest
@@ -22,7 +22,7 @@ def test_session_multiple_retrieval():
     created_session_1 = client.create_session(user_id)
     created_session_2 = client.create_session(user_id)
     response = client.get_sessions(user_id)
-    retrieved_sessions = response.sessions
+    retrieved_sessions = response.items
 
     assert len(retrieved_sessions) == 2
     assert retrieved_sessions[0].id == created_session_1.id
@@ -45,7 +45,7 @@ def test_session_deletion():
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.is_active is True
-    created_session.delete()
+    created_session.close()
     assert created_session.is_active is False
     retrieved_session = client.get_session(user_id, created_session.id)
     assert retrieved_session.is_active is False
@@ -61,7 +61,7 @@ def test_messages():
     created_session.create_message(is_user=False, content="Hi")
     retrieved_session = client.get_session(user_id, created_session.id)
     response = retrieved_session.get_messages()
-    messages = response.messages
+    messages = response.items
     assert len(messages) == 2
     user_message, ai_message = messages
     assert user_message.content == "Hello"
@@ -102,18 +102,18 @@ def test_paginated_sessions():
     page = 1
     page_size = 2
     get_session_response = client.get_sessions(user_id, page=page, page_size=page_size)
-    assert len(get_session_response.sessions) == page_size
+    assert len(get_session_response.items) == page_size
 
     assert get_session_response.pages == 5
 
     new_session_response = get_session_response.next()
     assert new_session_response is not None
-    assert isinstance(new_session_response, GetSessionResponse)
-    assert len(new_session_response.sessions) == page_size
+    assert isinstance(new_session_response, GetSessionPage)
+    assert len(new_session_response.items) == page_size
 
     final_page = client.get_sessions(user_id, page=5, page_size=page_size)
 
-    assert len(final_page.sessions) == 2
+    assert len(final_page.items) == 2
     next_page = final_page.next()
     assert next_page is None
 
@@ -150,7 +150,7 @@ def test_paginated_out_of_bounds():
     assert get_session_response.page == 2
     assert get_session_response.page_size == 50
     assert get_session_response.total == 3
-    assert len(get_session_response.sessions) == 0 
+    assert len(get_session_response.items) == 0 
 
 
 def test_paginated_messages():
@@ -166,18 +166,18 @@ def test_paginated_messages():
     get_message_response = created_session.get_messages(page=1, page_size=page_size)
 
     assert get_message_response is not None
-    assert isinstance(get_message_response, GetMessageResponse)
-    assert len(get_message_response.messages) == page_size
+    assert isinstance(get_message_response, GetMessagePage)
+    assert len(get_message_response.items) == page_size
 
     new_message_response = get_message_response.next()
     
     assert new_message_response is not None
-    assert isinstance(new_message_response, GetMessageResponse)
-    assert len(new_message_response.messages) == page_size
+    assert isinstance(new_message_response, GetMessagePage)
+    assert len(new_message_response.items) == page_size
 
     final_page = created_session.get_messages(page=3, page_size=page_size)
 
-    assert len(final_page.messages) == 20 - ((3-1) * 7)
+    assert len(final_page.items) == 20 - ((3-1) * 7)
 
     next_page = final_page.next()
 

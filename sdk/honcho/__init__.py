@@ -1,4 +1,4 @@
-from .client import AsyncClient, AsyncSession, AsyncGetSessionResponse, AsyncGetMessageResponse
-from .sync_client import Client, Session, GetSessionResponse, GetMessageResponse
-from .schemas import Message
+from .client import AsyncClient, AsyncSession, AsyncGetSessionPage, AsyncGetMessagePage
+from .sync_client import Client, Session, GetSessionPage, GetMessagePage
+from .schemas import Message, Metamessage
 from .cache import LRUCache
