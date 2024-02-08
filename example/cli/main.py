@@ -36,7 +36,7 @@ def chat():
     while True:
         user_input = input("User: ")
         if user_input == "exit":
-            session.delete()
+            session.close()
             break
         user_message = HumanMessage(content=user_input)
         history = list(session.get_messages_generator())
