@@ -1,5 +1,6 @@
 import json
-from typing import Sequence, Optional
+import uuid
+from typing import Optional
 
 from sqlalchemy import select, Select
 from sqlalchemy.orm import Session
@@ -7,7 +8,7 @@ from sqlalchemy.orm import Session
 from . import models, schemas
 
 
-def get_session(db: Session, app_id: str, session_id: int, user_id: Optional[str] = None):
+def get_session(db: Session, app_id: str, session_id: uuid.UUID, user_id: Optional[str] = None) -> Optional[models.Session]:
     stmt = select(models.Session).where(models.Session.app_id == app_id).where(models.Session.id == session_id)
     if user_id is not None:
         stmt = stmt.where(models.Session.user_id == user_id)
@@ -24,6 +25,7 @@ def get_sessions(
         .where(models.Session.app_id == app_id)
         .where(models.Session.user_id == user_id)
         .where(models.Session.is_active.is_(True))
+        .order_by(models.Session.created_at)
     )
 
     if location_id is not None:
@@ -31,21 +33,6 @@ def get_sessions(
 
     return stmt
     # return db.scalars(stmt).all()
-
-    # filtered_by_user = db.query(models.Session).filter(
-    #     models.Session.user_id == user_id
-    # )
-    # filtered_by_location = (
-    #     filtered_by_user.filter(models.Session.location_id == location_id)
-    #     if location_id is not None
-    #     else filtered_by_user
-    # )
-    # return (
-    #     filtered_by_location.filter(models.Session.is_active.is_(True))
-    #     .order_by(models.Session.created_at.desc())
-    #     .all()
-    # )
-
 
 def create_session(
     db: Session, app_id: str, user_id: str, session: schemas.SessionCreate
@@ -62,11 +49,8 @@ def create_session(
     return honcho_session
 
 
-def update_session(db: Session, app_id: str, user_id: str, session_id: int, session_data: dict) -> bool:
-    # stmt = select(models.Session).where(models.Session.id == session_id).where(models.Session.user_id == user_id)
-    # honcho_session = db.scalars(stmt).one_or_none()
+def update_session(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, session_data: dict) -> bool:
     honcho_session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
-    # honcho_session = db.get(models.Session, session_id)
     if honcho_session is None:
         raise ValueError("Session not found or does not belong to user")
     honcho_session.session_data = json.dumps(session_data)
@@ -75,7 +59,7 @@ def update_session(db: Session, app_id: str, user_id: str, session_id: int, sess
     return honcho_session
 
 
-def delete_session(db: Session, app_id: str, user_id: str, session_id: int) -> bool:
+def delete_session(db: Session, app_id: str, user_id: str, session_id: uuid.UUID) -> bool:
     stmt = (
         select(models.Session)
         .where(models.Session.id == session_id)
@@ -83,7 +67,6 @@ def delete_session(db: Session, app_id: str, user_id: str, session_id: int) -> b
         .where(models.Session.user_id == user_id)
     )
     honcho_session = db.scalars(stmt).one_or_none()
-    # honcho_session = db.get(models.Session, session_id)
     if honcho_session is None:
         return False
     honcho_session.is_active = False
@@ -92,7 +75,7 @@ def delete_session(db: Session, app_id: str, user_id: str, session_id: int) -> b
 
 
 def create_message(
-        db: Session, message: schemas.MessageCreate, app_id: str, user_id: str, session_id: int
+        db: Session, message: schemas.MessageCreate, app_id: str, user_id: str, session_id: uuid.UUID
 ) -> models.Message:
     honcho_session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
     if honcho_session is None:
@@ -110,12 +93,19 @@ def create_message(
 
 
 def get_messages(
-    db: Session, app_id: str, user_id: str, session_id: int
+    db: Session, app_id: str, user_id: str, session_id: uuid.UUID
 ) -> Select:
-    session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
-    if session is None:
-        raise ValueError("Session not found or does not belong to user")
-    stmt = select(models.Message).where(models.Message.session_id == session_id)
+    # session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    # if session is None:
+    #     raise ValueError("Session not found or does not belong to user")
+    stmt = (
+        select(models.Message)
+        .join(models.Session, models.Session.id == models.Message.session_id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Message.created_at)
+    )
     return stmt
     # return db.scalars(stmt).all()
     # return (
@@ -124,23 +114,74 @@ def get_messages(
     #     .all()
     # )
 
+def get_message(
+        db: Session, app_id: str, user_id: str, session_id: uuid.UUID, message_id: uuid.UUID     
+) -> Optional[models.Message]:
+    # session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    # if session is None:
+    #     raise ValueError("Session not found or does not belong to user")
+    stmt = (
+        select(models.Message)
+        .join(models.Session, models.Session.id == models.Message.session_id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .where(models.Message.id == message_id)
 
-# def get_metacognitions(db: Session, message_id: int):
-#     return (
-#         db.query(models.Metacognitions)
-#         .filter(models.Metacognitions.message_id == message_id)
-#         .all()
-#     )
+    )
+    return db.scalars(stmt).one_or_none()
 
-# def create_metacognition(
-#     db: Session, metacognition: schemas.MetacognitionsCreate, message_id: int
-# ):
-#     honcho_metacognition = models.Metacognitions(
-#         message_id=message_id,
-#         metacognition_type=metacognition.metacognition_type,
-#         content=metacognition.content,
-#     )
-#     db.add(honcho_metacognition)
-#     db.commit()
-#     db.refresh(honcho_metacognition)
-#     return honcho_metacognition
+
+def get_metamessages(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, message_id: Optional[uuid.UUID], metamessage_type: Optional[str] = None) -> Select:
+    stmt = (
+        select(models.Metamessage)
+        .join(models.Message, models.Message.id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Metamessage.created_at)
+    )
+    if message_id is not None:
+        stmt = stmt.where(models.Metamessage.message_id == message_id)
+    if metamessage_type is not None:
+        stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
+    return stmt
+
+def get_metamessage(
+        db: Session, app_id: str, user_id: str, session_id: uuid.UUID, message_id: uuid.UUID, metamessage_id: uuid.UUID
+) -> Optional[models.Metamessage]: 
+    stmt = (
+         select(models.Metamessage)
+        .join(models.Message, models.Message.id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .where(models.Metamessage.message_id == message_id)
+        .where(models.Metamessage.id == metamessage_id)
+       
+    )
+    return db.scalars(stmt).one_or_none()
+
+def create_metamessage(
+    db: Session,
+    metamessage: schemas.MetamessageCreate,
+    app_id: str,
+    user_id: str,
+    session_id: uuid.UUID,
+):
+    message = get_message(db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=metamessage.message_id)
+    if message is None:
+        raise ValueError("Session not found or does not belong to user")
+
+    honcho_metamessage = models.Metamessage(
+        message_id=metamessage.message_id,
+        metamessage_type=metamessage.metamessage_type,
+        content=metamessage.content,
+    )
+
+    db.add(honcho_metamessage)
+    db.commit()
+    db.refresh(honcho_metamessage)
+    return honcho_metamessage
