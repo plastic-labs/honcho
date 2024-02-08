@@ -52,7 +52,7 @@ async def restart(ctx):
     user_id = f"discord_{str(ctx.author.id)}"
     location_id = str(ctx.channel_id)
     sessions = list(honcho.get_sessions_generator(user_id, location_id))
-    sessions[0].delete() if len(sessions) > 0 else None
+    sessions[0].close() if len(sessions) > 0 else None
 
     await ctx.respond(
         "Great! The conversation has been restarted. What would you like to talk about?"
