@@ -4,7 +4,7 @@ from typing import Dict, Optional
 import httpx
 from .schemas import Message, Metamessage
 
-class AsyncGetPage:
+class GetPage:
     """Base class for receiving Paginated API results"""
     def __init__(self, response: Dict) -> None:
         """Constructor for Page with relevant information about the results and pages
@@ -18,18 +18,18 @@ class AsyncGetPage:
         self.pages = response["pages"]
         self.items =[]
 
-    async def next(self):
+    def next(self):
         """Shortcut method to Get the next page of results"""
         pass
 
-class AsyncGetSessionPage(AsyncGetPage):
+class GetSessionPage(GetPage):
     """Paginated Results for Get Session Requests"""
 
     def __init__(self, client, options: Dict, response: Dict):
         """Constructor for Page Result from Session Get Request
         
         Args:
-            client (AsyncClient): Honcho Client
+            client (Client): Honcho Client
             options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are user_id which is required and location_id which is optional
             response (Dict): Response from API with pagination information
         """
@@ -38,7 +38,7 @@ class AsyncGetSessionPage(AsyncGetPage):
         self.user_id = options["user_id"]
         self.location_id = options["location_id"]
         self.items = [
-            AsyncSession(
+            Session(
                 client=client,
                 id=session["id"],
                 user_id=session["user_id"],
@@ -49,23 +49,23 @@ class AsyncGetSessionPage(AsyncGetPage):
             for session in response["items"]
         ]
        
-    async def next(self):
+    def next(self):
         """Get the next page of results
         Returns:
-            AsyncGetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
+            GetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
-        return await self.client.get_sessions(self.user_id, self.location_id, self.page + 1, self.page_size)
+        return self.client.get_sessions(self.user_id, self.location_id, self.page + 1, self.page_size)
 
-class AsyncGetMessagePage(AsyncGetPage):
+class GetMessagePage(GetPage):
     """Paginated Results for Get Session Requests"""
 
     def __init__(self, session, response: Dict):
         """Constructor for Page Result from Session Get Request
         
         Args:
-            session (AsyncSession): Session the returned messages are associated with
+            session (Session): Session the returned messages are associated with
             response (Dict): Response from API with pagination information
         """
         super().__init__(response)
@@ -81,22 +81,22 @@ class AsyncGetMessagePage(AsyncGetPage):
             for message in response["items"]
         ]
 
-    async def next(self):
+    def next(self):
         """Get the next page of results
         Returns:
-            AsyncGetMessagePage | None: Next Page of Results or None if there are no more messages to retreive from a query
+            GetMessagePage | None: Next Page of Results or None if there are no more messages to retreive from a query
         """
         if self.page >= self.pages:
             return None
-        return await self.session.get_messages((self.page + 1), self.page_size)
+        return self.session.get_messages((self.page + 1), self.page_size)
 
-class AsyncGetMetamessagePage(AsyncGetPage):
+class GetMetamessagePage(GetPage):
     
     def __init__(self, session, options: Dict, response: Dict) -> None:
         """Constructor for Page Result from Metamessage Get Request
         
         Args:
-            session (AsyncSession): Session the returned messages are associated with
+            session (Session): Session the returned messages are associated with
             options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are message_id and metamessage_type which are both required
             response (Dict): Response from API with pagination information
         """
@@ -115,32 +115,32 @@ class AsyncGetMetamessagePage(AsyncGetPage):
                 for metamessage in response["items"]
         ]
 
-    async def next(self):
+    def next(self):
         """Get the next page of results
         Returns:
-            AsyncGetMetamessagePage | None: Next Page of Results or None if there are no more metamessages to retreive from a query
+            GetMetamessagePage | None: Next Page of Results or None if there are no more metamessages to retreive from a query
         """
         if self.page >= self.pages:
             return None
-        return await self.session.get_metamessages(metamessage_type=self.metamessage_type, message=self.message_id, page=(self.page + 1), page_size=self.page_size)
+        return self.session.get_metamessages(metamessage_type=self.metamessage_type, message=self.message_id, page=(self.page + 1), page_size=self.page_size)
 
 
 
-class AsyncClient:
+class Client:
     """Honcho API Client Object"""
 
     def __init__(self, app_id: str, base_url: str = "https://demo.honcho.dev"):
         """Constructor for Client"""
         self.base_url = base_url  # Base URL for the instance of the Honcho API
         self.app_id = app_id # Representing ID of the client application
-        self.client = httpx.AsyncClient()
+        self.client = httpx.Client()
 
     @property
     def common_prefix(self):
         """Shorcut for common API prefix. made a property to prevent tampering"""
         return f"{self.base_url}/apps/{self.app_id}"
 
-    async def get_session(self, user_id: str, session_id: uuid.UUID):
+    def get_session(self, user_id: str, session_id: uuid.UUID):
         """Get a specific session for a user by ID
 
         Args:
@@ -148,14 +148,14 @@ class AsyncClient:
             session_id (uuid.UUID): The ID of the Session to retrieve
 
         Returns:
-            AsyncSession: The Session object of the requested Session
+            Session: The Session object of the requested Session
 
         """
         url = f"{self.common_prefix}/users/{user_id}/sessions/{session_id}"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         response.raise_for_status()
         data = response.json()
-        return AsyncSession(
+        return Session(
             client=self,
             id=data["id"],
             user_id=data["user_id"],
@@ -164,7 +164,7 @@ class AsyncClient:
             session_data=data["session_data"],
         )
 
-    async def get_sessions(self, user_id: str, location_id: Optional[str] = None, page: int = 1, page_size: int = 50):
+    def get_sessions(self, user_id: str, location_id: Optional[str] = None, page: int = 1, page_size: int = 50):
         """Return sessions associated with a user paginated
 
         Args:
@@ -174,22 +174,22 @@ class AsyncClient:
             page_size (int, optional): The number of results to return
 
         Returns:
-            AsyncGetSessionPage: Page or results for get_sessions query
+            GetSessionPage: Page or results for get_sessions query
 
         """
         url = f"{self.common_prefix}/users/{user_id}/sessions?page={page}&size={page_size}" + (
             f"&location_id={location_id}" if location_id else ""
         )
-        response = await self.client.get(url)
+        response = self.client.get(url)
         response.raise_for_status()
         data = response.json()
         options = {
                 "location_id": location_id,
                 "user_id": user_id
                 }
-        return AsyncGetSessionPage(self, options, data)
+        return GetSessionPage(self, options, data)
 
-    async def get_sessions_generator(self, user_id: str, location_id: Optional[str] = None):
+    def get_sessions_generator(self, user_id: str, location_id: Optional[str] = None):
         """Shortcut Generator for get_sessions. Generator to iterate through all sessions for a user in an app
 
         Args:
@@ -197,24 +197,24 @@ class AsyncClient:
             location_id (str, optional): Optional Location ID representing the location of a session
 
         Yields:
-            AsyncSession: The Session object of the requested Session
+            Session: The Session object of the requested Session
 
         """
         page = 1
         page_size = 50
-        get_session_response = await self.get_sessions(user_id, location_id, page, page_size)
+        get_session_response = self.get_sessions(user_id, location_id, page, page_size)
         while True:
             # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
             for session in get_session_response.items:
                 yield session
 
-            new_sessions = await get_session_response.next()
+            new_sessions = get_session_response.next()
             if not new_sessions:
                 break
            
             get_session_response = new_sessions
 
-    async def create_session(
+    def create_session(
         self, user_id: str, location_id: str = "default", session_data: Dict = {}
     ):
         """Create a session for a user
@@ -225,15 +225,15 @@ class AsyncClient:
             session_data (Dict, optional): Optional session metadata
 
         Returns:
-            AsyncSession: The Session object of the new Session
+            Session: The Session object of the new Session
 
         """
         data = {"location_id": location_id, "session_data": session_data}
         url = f"{self.common_prefix}/users/{user_id}/sessions"
-        response = await self.client.post(url, json=data)
+        response = self.client.post(url, json=data)
         response.raise_for_status()
         data = response.json()
-        return AsyncSession(
+        return Session(
             self,
             id=data["id"],
             user_id=user_id,
@@ -243,12 +243,12 @@ class AsyncClient:
         )
 
 
-class AsyncSession:
+class Session:
     """Represents a single session for a user in an app"""
 
     def __init__(
         self,
-        client: AsyncClient,
+        client: Client,
         id: uuid.UUID,
         user_id: str,
         location_id: str,
@@ -274,14 +274,14 @@ class AsyncSession:
 
     def __str__(self):
         """String representation of Session"""
-        return f"AsyncSession(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, session_data={self.session_data}, is_active={self.is_active})"
+        return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, session_data={self.session_data}, is_active={self.is_active})"
 
     @property
     def is_active(self):
         """Returns whether the session is active - made property to prevent tampering"""
         return self._is_active
 
-    async def create_message(self, is_user: bool, content: str):
+    def create_message(self, is_user: bool, content: str):
         """Adds a message to the session
 
         Args:
@@ -296,12 +296,12 @@ class AsyncSession:
             raise Exception("Session is inactive")
         data = {"is_user": is_user, "content": content}
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
-        response = await self.client.post(url, json=data)
+        response = self.client.post(url, json=data)
         response.raise_for_status()
         data = response.json()
         return Message(session_id=self.id, id=data["id"], is_user=is_user, content=content, created_at=data["created_at"])
 
-    async def get_message(self, message_id: uuid.UUID) -> Message:
+    def get_message(self, message_id: uuid.UUID) -> Message:
         """Get a specific message for a session based on ID
 
         Args:
@@ -312,12 +312,12 @@ class AsyncSession:
 
         """
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages/{message_id}"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         response.raise_for_status()
         data = response.json()
         return Message(session_id=self.id, id=data["id"], is_user=data["is_user"], content=data["content"], created_at=data["created_at"])
 
-    async def get_messages(self, page: int = 1, page_size: int = 50) -> AsyncGetMessagePage:
+    def get_messages(self, page: int = 1, page_size: int = 50) -> GetMessagePage:
         """Get all messages for a session
 
         Args:
@@ -325,16 +325,16 @@ class AsyncSession:
             page_size (int, optional): The number of results to return per page
 
         Returns:
-            AsyncGetMessagePage: Page of Message objects
+            GetMessagePage: Page of Message objects
 
         """
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages?page={page}&size={page_size}"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetMessagePage(self, data)
+        return GetMessagePage(self, data)
         
-    async def get_messages_generator(self):
+    def get_messages_generator(self):
         """Shortcut Generator for get_messages. Generator to iterate through all messages for a session in an app
 
         Yields:
@@ -343,19 +343,19 @@ class AsyncSession:
         """
         page = 1
         page_size = 50
-        get_messages_page= await self.get_messages(page, page_size)
+        get_messages_page= self.get_messages(page, page_size)
         while True:
             # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
             for message in get_messages_page.items:
                 yield message
 
-            new_messages = await get_messages_page.next()
+            new_messages = get_messages_page.next()
             if not new_messages:
                 break
            
             get_messages_page = new_messages
 
-    async def create_metamessage(self, message: Message, metamessage_type: str, content: str):
+    def create_metamessage(self, message: Message, metamessage_type: str, content: str):
         """Adds a metamessage to a session and links it to a specific message
 
         Args:
@@ -371,13 +371,13 @@ class AsyncSession:
             raise Exception("Session is inactive")
         data = {"metamessage_type": metamessage_type, "content": content, "message_id": message.id}
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/metamessages"
-        response = await self.client.post(url, json=data)
+        response = self.client.post(url, json=data)
         response.raise_for_status()
         data = response.json()
         return Metamessage(id=data["id"], message_id=message.id, metamessage_type=metamessage_type, content=content, created_at=data["created_at"])
 
 
-    async def get_metamessage(self, metamessage_id: uuid.UUID) -> Metamessage:
+    def get_metamessage(self, metamessage_id: uuid.UUID) -> Metamessage:
         """Get a specific metamessage
 
         Args:
@@ -388,12 +388,12 @@ class AsyncSession:
 
         """
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/metamessages/{metamessage_id}"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         response.raise_for_status()
         data = response.json()
         return Metamessage(id=data["id"], message_id=data["message_id"], metamessage_type=data["metamessage_type"], content=data["content"], created_at=data["created_at"])
 
-    async def get_metamessages(self, metamessage_type: Optional[str] = None, message: Optional[Message] = None, page: int = 1, page_size: int = 50) -> AsyncGetMetamessagePage:
+    def get_metamessages(self, metamessage_type: Optional[str] = None, message: Optional[Message] = None, page: int = 1, page_size: int = 50) -> GetMetamessagePage:
         """Get all messages for a session
 
         Args:
@@ -409,16 +409,16 @@ class AsyncSession:
             url += f"&metamessage_type={metamessage_type}"
         if message:
             url += f"&message_id={message.id}"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         response.raise_for_status()
         data = response.json()
         options = {
                 "metamessage_type": metamessage_type,
                 "message_id": message.id if message else None
                 }
-        return AsyncGetMetamessagePage(self, options, data)
+        return GetMetamessagePage(self, options, data)
         
-    async def get_metamessages_generator(self, metamessage_type: Optional[str] = None, message: Optional[Message] = None):
+    def get_metamessages_generator(self, metamessage_type: Optional[str] = None, message: Optional[Message] = None):
         """Shortcut Generator for get_metamessages. Generator to iterate through all metamessages for a session in an app
 
         Args:
@@ -431,20 +431,20 @@ class AsyncSession:
         """
         page = 1
         page_size = 50
-        get_metamessages_page = await self.get_metamessages(metamessage_type=metamessage_type, message=message, page=page, page_size=page_size)
+        get_metamessages_page = self.get_metamessages(metamessage_type=metamessage_type, message=message, page=page, page_size=page_size)
         while True:
             # get_session_response = self.get_sessions(user_id, location_id, page, page_size)
             for metamessage in get_metamessages_page.items:
                 yield metamessage
 
-            new_messages = await get_metamessages_page.next()
+            new_messages = get_metamessages_page.next()
             if not new_messages:
                 break
            
             get_metamessages_page = new_messages
 
         
-    async def update(self, session_data: Dict):
+    def update(self, session_data: Dict):
         """Update the session_data of a session
 
         Args:
@@ -456,15 +456,15 @@ class AsyncSession:
         """
         info = {"session_data": session_data}
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
-        response = await self.client.put(url, json=info)
+        response = self.client.put(url, json=info)
         success = response.status_code < 400
         self.session_data = session_data
         return success
 
-    async def close(self):
+    def close(self):
         """Closes a session by marking it as inactive"""
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
-        response = await self.client.delete(url)
+        response = self.client.delete(url)
         response.raise_for_status()
         self._is_active = False
 
