@@ -9,7 +9,7 @@ readme = "README.md"
 python = "^3.11"
 py-cord = "^2.4.1"
 python-dotenv = "^1.0.0"
-honcho-ai = {path = "../../sdk"}
+honcho-ai = {path = "../../../sdk", develop = true}
 
 
 [build-system]

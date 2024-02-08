@@ -9,7 +9,8 @@ from honcho import Client as HonchoClient
 
 app_id = str(uuid4())
 
-honcho = HonchoClient(app_id=app_id)
+# honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
+honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
 
 responses = ["Fake LLM Response :)"]
 llm = FakeListChatModel(responses=responses)
@@ -35,10 +36,10 @@ def chat():
     while True:
         user_input = input("User: ")
         if user_input == "exit":
-            session.delete()
+            session.close()
             break
         user_message = HumanMessage(content=user_input)
-        history = session.get_messages()
+        history = list(session.get_messages_generator())
         langchain_history = langchain_message_converter(history)
         prompt = ChatPromptTemplate.from_messages(
             [system, *langchain_history, user_message]
