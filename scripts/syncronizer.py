@@ -13,6 +13,6 @@ sync_code = re.sub(r"await\s", "", sync_code)
 sync_code = re.sub(r"Async", "", sync_code)
 
 # Write the modified code to the destination file
-destination_file_path = os.path.join(this_dir, "../sdk/honcho/syncclient.py")
+destination_file_path = os.path.join(this_dir, "../sdk/honcho/sync_client.py")
 with open(destination_file_path, "w") as destination_file:
     destination_file.write(sync_code)
