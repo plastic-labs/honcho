@@ -1,4 +1,6 @@
 from pydantic import BaseModel
+import datetime
+import uuid
 
 
 class MessageBase(BaseModel):
@@ -11,8 +13,9 @@ class MessageCreate(MessageBase):
 
 
 class Message(MessageBase):
-    session_id: int
-    id: int
+    session_id: uuid.UUID
+    id: uuid.UUID
+    created_at: datetime.datetime
 
     class Config:
         orm_mode = True
@@ -32,29 +35,32 @@ class SessionUpdate(SessionBase):
 
 
 class Session(SessionBase):
-    id: int
+    id: uuid.UUID
     # messages: list[Message]
     is_active: bool
     user_id: str
     location_id: str
     app_id: str
     session_data: str
+    created_at: datetime.datetime
 
     class Config:
         orm_mode = True
 
 
-class MetamessagesBase(BaseModel):
+class MetamessageBase(BaseModel):
     metamessage_type: str
     content: str
 
 
-class MetamessagesCreate(MetamessagesBase):
+class MetamessageCreate(MetamessageBase):
     pass
 
 
-class Metamessages(MetamessagesBase):
-    id: int
+class Metamessage(MetamessageBase):
+    id: uuid.UUID
+    message_id: uuid.UUID
+    created_at: datetime.datetime
 
     class Config:
         orm_mode = True
