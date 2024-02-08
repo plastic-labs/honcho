@@ -4,18 +4,18 @@ import httpx
 from .schemas import Message
 
 
-class AsyncClient:
+class Client:
     def __init__(self, app_id: str, base_url: str = "https://demo.honcho.dev"):
         """Constructor for Client"""
         self.base_url = base_url  # Base URL for the instance of the Honcho API
         self.app_id = app_id # Representing ID of the client application
-        self.client = httpx.AsyncClient()
+        self.client = httpx.Client()
 
     @property
     def common_prefix(self):
         return f"{self.base_url}/apps/{self.app_id}"
 
-    async def get_session(self, user_id: str, session_id: int):
+    def get_session(self, user_id: str, session_id: int):
         """Get a specific session for a user by ID
 
         Args:
@@ -27,9 +27,9 @@ class AsyncClient:
 
         """
         url = f"{self.common_prefix}/users/{user_id}/sessions/{session_id}"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         data = response.json()
-        return AsyncSession(
+        return Session(
             client=self,
             id=data["id"],
             user_id=data["user_id"],
@@ -38,7 +38,7 @@ class AsyncClient:
             session_data=data["session_data"],
         )
 
-    async def get_sessions(self, user_id: str, location_id: str | None = None):
+    def get_sessions(self, user_id: str, location_id: str | None = None):
         """Return sessions associated with a user
 
         Args:
@@ -52,9 +52,9 @@ class AsyncClient:
         url = f"{self.common_prefix}/users/{user_id}/sessions" + (
             f"?location_id={location_id}" if location_id else ""
         )
-        response = await self.client.get(url)
+        response = self.client.get(url)
         return [
-            AsyncSession(
+            Session(
                 client=self,
                 id=session["id"],
                 user_id=session["user_id"],
@@ -65,7 +65,7 @@ class AsyncClient:
             for session in response.json()
         ]
 
-    async def create_session(
+    def create_session(
         self, user_id: str, location_id: str = "default", session_data: Dict = {}
     ):
         """Create a session for a user
@@ -81,9 +81,9 @@ class AsyncClient:
         """
         data = {"location_id": location_id, "session_data": session_data}
         url = f"{self.common_prefix}/users/{user_id}/sessions"
-        response = await self.client.post(url, json=data)
+        response = self.client.post(url, json=data)
         data = response.json()
-        return AsyncSession(
+        return Session(
             self,
             id=data["id"],
             user_id=user_id,
@@ -93,10 +93,10 @@ class AsyncClient:
         )
 
 
-class AsyncSession:
+class Session:
     def __init__(
         self,
-        client: AsyncClient,
+        client: Client,
         id: int,
         user_id: str,
         location_id: str,
@@ -126,7 +126,7 @@ class AsyncSession:
     def is_active(self):
         return self._is_active
 
-    async def create_message(self, is_user: bool, content: str):
+    def create_message(self, is_user: bool, content: str):
         """Adds a message to the session
 
         Args:
@@ -141,11 +141,11 @@ class AsyncSession:
             raise Exception("Session is inactive")
         data = {"is_user": is_user, "content": content}
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
-        response = await self.client.post(url, json=data)
+        response = self.client.post(url, json=data)
         data = response.json()
         return Message(session_id=self.id, id=data["id"], is_user=is_user, content=content)
 
-    async def get_messages(self):
+    def get_messages(self):
         """Get all messages for a session
 
         Args:
@@ -157,7 +157,7 @@ class AsyncSession:
 
         """
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}/messages"
-        response = await self.client.get(url)
+        response = self.client.get(url)
         data = response.json()
         return [
             Message(
@@ -169,7 +169,7 @@ class AsyncSession:
             for message in data
         ]
 
-    async def update(self, session_data: Dict):
+    def update(self, session_data: Dict):
         """Update the metadata of a session
 
         Args:
@@ -181,20 +181,20 @@ class AsyncSession:
         """
         info = {"session_data": session_data}
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
-        response = await self.client.put(url, json=info)
+        response = self.client.put(url, json=info)
         success = response.status_code < 400
         self.session_data = session_data
         return success
 
-    async def delete(self):
+    def delete(self):
         """Delete a session by marking it as inactive"""
         url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
-        response = await self.client.delete(url)
+        response = self.client.delete(url)
         self._is_active = False
 
 
-# class AsyncMessage:
-#     def __init__(self, session: AsyncSession, id: int, is_user: bool, content: str):
+# class Message:
+#     def __init__(self, session: Session, id: int, is_user: bool, content: str):
 #         """Constructor for Message"""
 #         self.session = session
 #         self.id = id
