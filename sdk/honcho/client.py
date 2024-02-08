@@ -1,6 +1,7 @@
 import json
 from typing import Dict
 import httpx
+from .schemas import Message
 
 
 class AsyncClient:
@@ -132,7 +133,7 @@ class AsyncSession:
         url = f"{self.base_url}/users/{self.user_id}/sessions/{self.id}/messages"
         response = await self.client.post(url, json=data)
         data = response.json()
-        return AsyncMessage(self, id=data["id"], is_user=is_user, content=content)
+        return Message(session_id=self.id, id=data["id"], is_user=is_user, content=content)
 
     async def get_messages(self):
         """Get all messages for a session
@@ -149,8 +150,8 @@ class AsyncSession:
         response = await self.client.get(url)
         data = response.json()
         return [
-            AsyncMessage(
-                self,
+            Message(
+                session_id=self.id,
                 id=message["id"],
                 is_user=message["is_user"],
                 content=message["content"],
@@ -182,13 +183,13 @@ class AsyncSession:
         self._is_active = False
 
 
-class AsyncMessage:
-    def __init__(self, session: AsyncSession, id: int, is_user: bool, content: str):
-        """Constructor for Message"""
-        self.session = session
-        self.id = id
-        self.is_user = is_user
-        self.content = content
+# class AsyncMessage:
+#     def __init__(self, session: AsyncSession, id: int, is_user: bool, content: str):
+#         """Constructor for Message"""
+#         self.session = session
+#         self.id = id
+#         self.is_user = is_user
+#         self.content = content
 
-    def __str__(self):
-        return f"Message(id={self.id}, is_user={self.is_user}, content={self.content})"
+#     def __str__(self):
+#         return f"Message(id={self.id}, is_user={self.is_user}, content={self.content})"
