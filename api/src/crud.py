@@ -170,14 +170,13 @@ def create_metamessage(
     app_id: str,
     user_id: str,
     session_id: uuid.UUID,
-    message_id: uuid.UUID,
 ):
-    message = get_message(db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id)
+    message = get_message(db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=metamessage.message_id)
     if message is None:
         raise ValueError("Session not found or does not belong to user")
 
     honcho_metamessage = models.Metamessage(
-        message_id=message_id,
+        message_id=metamessage.message_id,
         metamessage_type=metamessage.metamessage_type,
         content=metamessage.content,
     )

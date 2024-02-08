@@ -78,13 +78,7 @@ def create_session(
         schemas.Session: The Session object of the new Session
         
     """
-    print("===============================")
-    print(request)
-    print("===============================")
     value = crud.create_session(db, app_id=app_id, user_id=user_id, session=session)
-    print("===============================")
-    print(value)
-    print("===============================")
     return value
 
 @router.put("/sessions/{session_id}", response_model=schemas.Session)
@@ -264,7 +258,6 @@ def create_metamessage(
     app_id: str,
     user_id: str,
     session_id: uuid.UUID,
-    message_id: uuid.UUID,
     metamessage: schemas.MetamessageCreate,
     db: Session = Depends(get_db),
 ):
@@ -283,8 +276,11 @@ def create_metamessage(
         HTTPException: If the session is not found
 
     """
+    print("=======================")
+    print(request)
+    print("=======================")
     try:
-        return crud.create_metamessage(db, metamessage=metamessage, app_id=app_id, user_id=user_id, session_id=session_id, message_id=message_id)
+        return crud.create_metamessage(db, metamessage=metamessage, app_id=app_id, user_id=user_id, session_id=session_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
 

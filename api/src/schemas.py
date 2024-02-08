@@ -54,7 +54,7 @@ class MetamessageBase(BaseModel):
 
 
 class MetamessageCreate(MetamessageBase):
-    pass
+    message_id: uuid.UUID
 
 
 class Metamessage(MetamessageBase):

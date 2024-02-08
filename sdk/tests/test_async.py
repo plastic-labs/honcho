@@ -1,5 +1,5 @@
 import pytest
-from honcho import AsyncGetSessionPage, AsyncGetMessagePage, AsyncSession, Message
+from honcho import AsyncGetSessionPage, AsyncGetMessagePage, AsyncGetMetamessagePage, AsyncSession, Message, Metamessage
 from honcho import AsyncClient as Honcho
 from uuid import uuid1
 
@@ -195,7 +195,6 @@ async def test_paginated_messages():
 
     assert next_page is None
 
-
 @pytest.mark.asyncio
 async def test_paginated_messages_generator():
     app_id = str(uuid1())
@@ -216,4 +215,60 @@ async def test_paginated_messages_generator():
     assert item2.is_user is False
     with pytest.raises(StopAsyncIteration):
         await gen.__anext__()
+
+@pytest.mark.asyncio
+async def test_paginated_metamessages():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    created_session = await client.create_session(user_id)
+    message = await created_session.create_message(is_user=True, content="Hello")
+    for i in range(10):
+        await created_session.create_metamessage(message=message, metamessage_type="thought", content=f"Test {i}")
+        await created_session.create_metamessage(message=message, metamessage_type="reflect", content=f"Test {i}")
+
+    page_size = 7
+    page = await created_session.get_metamessages(page=1, page_size=page_size)
+
+    assert page is not None
+    assert isinstance(page, AsyncGetMetamessagePage)
+    assert len(page.items) == page_size
+
+    new_page = await page.next()
+    
+    assert new_page is not None
+    assert isinstance(new_page, AsyncGetMetamessagePage)
+    assert len(new_page.items) == page_size
+
+    final_page = await created_session.get_metamessages(page=3, page_size=page_size)
+
+    assert len(final_page.items) == 20 - ((3-1) * 7)
+
+    next_page = await final_page.next()
+
+    assert next_page is None
+
+@pytest.mark.asyncio
+async def test_paginated_metamessages_generator():
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    created_session = await client.create_session(user_id)
+    message = await created_session.create_message(is_user=True, content="Hello")
+    await created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 1")
+    await created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 2")
+    gen = created_session.get_metamessages_generator()
+
+    item = await gen.__anext__()
+    assert isinstance(item, Metamessage)
+    assert item.content == "Test 1"
+    assert item.metamessage_type == "thought"
+    item2 = await gen.__anext__()
+    assert item2 is not None
+    assert item2.content == "Test 2"
+    assert item2.metamessage_type == "thought"
+    with pytest.raises(StopAsyncIteration):
+        await gen.__anext__()
+
+
 
