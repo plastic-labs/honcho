@@ -1,9 +1,12 @@
 # Honcho
+
 ![Static Badge](https://img.shields.io/badge/Version-0.0.2-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)](https://twitter.com/plastic_labs)
+
+[![Run Tests](https://github.com/plastic-labs/honcho/actions/workflows/api_testing.yml/badge.svg?branch=staging)](https://github.com/plastic-labs/honcho/actions/workflows/api_testing.yml)
 
 A User context management solution for building AI Agents and LLM powered
 applications.
@@ -48,7 +51,7 @@ poetry install # install dependencies
 
 2. Copy the `.env.template` file and specify the type of database and
    connection_uri. For testing sqlite is fine. The below example uses an
-   in-memory sqlite database. 
+   in-memory sqlite database.
 
 > Honcho has been tested with Postgresql and SQLite
 
@@ -83,8 +86,7 @@ docker run --env-file .env -p 8000:8000 honcho-api:latest
 
 The API can also be deployed on fly.io. Follow the [Fly.io
 Docs](https://fly.io/docs/getting-started/) to setup your environment and the
-`flyctl`. 
-
+`flyctl`.
 
 Once `flyctl` is set up use the the following commands to launch the application:
 
@@ -127,12 +129,12 @@ See more information [here](https://python-poetry.org/docs/cli/#add)
 This project is completely open source and welcomes any and all open source
 contributions. The workflow for contributing is to make a fork of the
 repository. You can claim an issue in the issues tab or start a new thread to
-indicate a feature or bug fix you are working on. 
+indicate a feature or bug fix you are working on.
 
 Once you have finished your contribution make a PR pointed at the `staging`
 branch, and it will be reviewed by a project manager. Feel free to join us in
 our [discord](http://discord.gg/plasticlabs) to discuss your changes or get
-help. 
+help.
 
 Once your changes are accepted and merged into staging they will undergo a
 period of live testing before entering the upstream into `main`
