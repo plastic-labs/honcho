@@ -32,7 +32,7 @@ jobs:
           cd sdk
           poetry install
           poetry run coverage run -m pytest
-          poetry run coverage xml coverage.xml
+          poetry run coverage xml -o coverage.xml
           cd ..
       - name: Code Coverage
         uses: irongut/CodeCoverageSummary@v1.3.0
