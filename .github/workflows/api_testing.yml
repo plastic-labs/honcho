@@ -19,6 +19,9 @@ jobs:
           poetry run uvicorn src.main:app &
           sleep 5
           cd ..
+        env:
+          DATABASE_TYPE: sqlite
+          CONNECTION_URI: sqlite:///api.db
       - name: Run Tests
         run: |
           cd sdk
