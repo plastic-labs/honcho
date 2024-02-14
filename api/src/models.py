@@ -7,13 +7,6 @@ from pgvector.sqlalchemy import Vector
 from .db import Base
 
 
-class User(Base):
-    __tablename__ = "users"
-    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
-    app_id: Mapped[str] = mapped_column(String(512), index=True)
-    user_id: Mapped[str] = mapped_column(String(512), index=True)
-    created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
-    vectors: Mapped[str] 
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -22,13 +15,12 @@ class Session(Base):
     user_id: Mapped[str] = mapped_column(String(512), index=True)
     location_id: Mapped[str] = mapped_column(String(512), index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    session_data: Mapped[str] 
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSON, default={}) 
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     messages = relationship("Message", back_populates="session")
 
     def __repr__(self) -> str:
         return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at})"
-
 
 class Message(Base):
     __tablename__ = "messages"
@@ -43,7 +35,6 @@ class Message(Base):
     def __repr__(self) -> str:
         return f"Message(id={self.id}, session_id={self.session_id}, is_user={self.is_user}, content={self.content[10:]})"
 
-
 class Metamessage(Base):
     __tablename__ = "metamessages"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
@@ -57,12 +48,25 @@ class Metamessage(Base):
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
 
+class VectorCollection(Base):
+    __tablename__ = "vectors"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(512), index=True)
+    app_id: Mapped[str] = mapped_column(String(512), index=True)
+    user_id: Mapped[str] = mapped_column(String(512), index=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
+    documents = relationship("Document", back_populates="vector")
+
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
-    user_id: Mapped[str] = mapped_column(String(512), index=True)
-    vector: Mapped[str] = mapped_column(String(512))
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSON, default={})
     content: Mapped[str] = mapped_column(String(65535))
-    metadata: Mapped[dict] 
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
+    
+    vector_id = Column(Uuid, ForeignKey("vectors.id"))
+    vector = relationship("VectorCollection", back_populates="documents")
+    # app_id: Mapped[str] = mapped_column(String(512), index=True)
+    # user_id: Mapped[str] = mapped_column(String(512), index=True)
+    # vector: Mapped[str] = mapped_column(String(512)) # The name of the collection of documents

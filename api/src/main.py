@@ -1,6 +1,7 @@
 import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, Request
 from typing import Optional
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
@@ -13,6 +14,21 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 
 from . import crud, models, schemas
 from .db import SessionLocal, engine
+
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
+# if os.environ["DATABASE_TYPE"] == "postgres":
+#     print("==================================================")
+#     print("Scaffolding Database")
+#     print("==================================================")
+#     db = SessionLocal()
+#     db.execute(text('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;'))
+#     # db.execute(text('create extension vector with schema extensions'))
+#     db.close()
+
 
 models.Base.metadata.create_all(bind=engine) # Scaffold Database if not already done
 
@@ -102,10 +118,10 @@ def update_session(
         schemas.Session: The Session object of the updated Session
 
     """
-    if session.session_data is None:
+    if session.metadata is None:
         raise HTTPException(status_code=400, detail="Session data cannot be empty") # TODO TEST if I can set the metadata to be blank with this 
     try:
-        return crud.update_session(db, app_id=app_id, user_id=user_id, session_id=session_id, session_data=session.session_data) 
+        return crud.update_session(db, app_id=app_id, user_id=user_id, session_id=session_id, metadata=session.metadata) 
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -341,43 +357,43 @@ def get_metamessage(request: Request, app_id: str, user_id: str, session_id: uui
 ########################################################
 
 @router.get("/vectors")
-def get_vectors():
+def get_vectors(request: Request):
     pass
 
 @router.get("/vectors/{vector_id}")
-def get_vector(vector_id):
+def get_vector(request: Request, vector_id):
     pass
 
 @router.post("/vectors/{vector_id}/")
-def create_vector(vector_id):
+def create_vector(request: Request, vector_id):
     pass
 
 @router.put("/vectors/{vector_id}")
-def update_vector(vector_id):
+def update_vector(request: Request, vector_id):
     pass
 
 @router.delete("/vectors/{vector_id}")
-def delete_vector(vector_id):
+def delete_vector(request: Request, vector_id):
     pass
 
 @router.get("/vectors/{vector_id}/documents")
-def get_vector_documents(vector_id):
+def get_documents(request: Request, vector_id):
     pass
 
 @router.get("/vectors/{vector_id}/query")
-def query_vector(vector_id):
+def query_documents(request: Request, vector_id):
     pass
 
 @router.post("/vectors/{vector_id}/documents")
-def create_vector_document(vector_id):
+def create_document(request: Request, vector_id):
     pass
 
 @router.put("/vectors/{vector_id}/documents/{document_id}")
-def update_vector_document(vector_id, document_id):
+def update_document(request: Request, vector_id, document_id):
     pass
 
 @router.delete("/vectors/{vector_id}/documents/{document_id}")
-def delete_vector_document(vector_id, document_id):
+def delete_document(request: Request, vector_id, document_id):
     pass
 
 app.include_router(router)
