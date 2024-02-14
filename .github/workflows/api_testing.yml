@@ -2,6 +2,8 @@ name: Run Tests
 on: [push, pull_request]
 jobs:
   test:
+    permissions:
+      pull-requests: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
