@@ -246,7 +246,7 @@ def get_message(
 
 
 ########################################################
-# Metacognition Routes
+# metamessage routes
 ########################################################
 
 @router.post(
@@ -336,5 +336,48 @@ def get_metamessage(request: Request, app_id: str, user_id: str, session_id: uui
         raise HTTPException(status_code=404, detail="Session not found")
     return honcho_metamessage
 
+########################################################
+# metamessage routes
+########################################################
+
+@router.get("/vectors")
+def get_vectors():
+    pass
+
+@router.get("/vectors/{vector_id}")
+def get_vector(vector_id):
+    pass
+
+@router.post("/vectors/{vector_id}/")
+def create_vector(vector_id):
+    pass
+
+@router.put("/vectors/{vector_id}")
+def update_vector(vector_id):
+    pass
+
+@router.delete("/vectors/{vector_id}")
+def delete_vector(vector_id):
+    pass
+
+@router.get("/vectors/{vector_id}/documents")
+def get_vector_documents(vector_id):
+    pass
+
+@router.get("/vectors/{vector_id}/query")
+def query_vector(vector_id):
+    pass
+
+@router.post("/vectors/{vector_id}/documents")
+def create_vector_document(vector_id):
+    pass
+
+@router.put("/vectors/{vector_id}/documents/{document_id}")
+def update_vector_document(vector_id, document_id):
+    pass
+
+@router.delete("/vectors/{vector_id}/documents/{document_id}")
+def delete_vector_document(vector_id, document_id):
+    pass
 
 app.include_router(router)

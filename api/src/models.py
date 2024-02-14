@@ -1,10 +1,19 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime, Uuid
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime, Uuid, JSON
 import uuid
 import datetime
 from sqlalchemy.orm import relationship, Mapped, mapped_column
+from pgvector.sqlalchemy import Vector
 
 from .db import Base
 
+
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
+    app_id: Mapped[str] = mapped_column(String(512), index=True)
+    user_id: Mapped[str] = mapped_column(String(512), index=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
+    vectors: Mapped[str] 
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -47,3 +56,13 @@ class Metamessage(Base):
 
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
+
+class Document(Base):
+    __tablename__ = "documents"
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
+    user_id: Mapped[str] = mapped_column(String(512), index=True)
+    vector: Mapped[str] = mapped_column(String(512))
+    content: Mapped[str] = mapped_column(String(65535))
+    metadata: Mapped[dict] 
+    embedding = mapped_column(Vector(1536))
+    created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
