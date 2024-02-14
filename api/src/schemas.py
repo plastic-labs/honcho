@@ -27,11 +27,11 @@ class SessionBase(BaseModel):
 
 class SessionCreate(SessionBase):
     location_id: str
-    session_data: dict | None = None
+    metadata: dict | None = None
 
 
 class SessionUpdate(SessionBase):
-    session_data: dict | None = None
+    metadata: dict | None = None
 
 
 class Session(SessionBase):
@@ -41,7 +41,7 @@ class Session(SessionBase):
     user_id: str
     location_id: str
     app_id: str
-    session_data: str
+    metadata: dict
     created_at: datetime.datetime
 
     class Config:
@@ -64,3 +64,42 @@ class Metamessage(MetamessageBase):
 
     class Config:
         orm_mode = True
+
+class VectorBase(BaseModel):
+    pass
+
+class VectorCreate(VectorBase):
+    name: str
+
+class VectorUpdate(VectorBase):
+    name: str
+
+class Vector(VectorBase):
+    id: uuid.UUID
+    name: str
+    app_id: str
+    user_id: str
+    created_at: datetime.datetime
+
+    class Config:
+        orm_mode = True
+
+class DocumentBase(BaseModel):
+    content: str
+    vector_id: uuid.UUID
+    vector_name: str
+    pass
+
+class DocumentCreate(DocumentBase):
+    metadata: dict | None = None
+    pass
+
+class Document(DocumentBase):
+    id: uuid.UUID
+    content: str
+    metadata: dict | None = None
+    created_at: datetime.datetime
+
+    class Config:
+        orm_mode = True
+

@@ -41,7 +41,7 @@ def create_session(
         app_id=app_id,
         user_id=user_id,
         location_id=session.location_id,
-        session_data=json.dumps(session.session_data),
+        h_metadata=session.metadata,
     )
     db.add(honcho_session)
     db.commit()
@@ -49,11 +49,11 @@ def create_session(
     return honcho_session
 
 
-def update_session(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, session_data: dict) -> bool:
+def update_session(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, metadata: dict) -> bool:
     honcho_session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
     if honcho_session is None:
         raise ValueError("Session not found or does not belong to user")
-    honcho_session.session_data = json.dumps(session_data)
+    honcho_session.h_metadata = metadata
     db.commit()
     db.refresh(honcho_session)
     return honcho_session
@@ -132,6 +132,10 @@ def get_message(
     return db.scalars(stmt).one_or_none()
 
 
+########################################################
+# metamessage methods
+########################################################
+
 def get_metamessages(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, message_id: Optional[uuid.UUID], metamessage_type: Optional[str] = None) -> Select:
     stmt = (
         select(models.Metamessage)
@@ -185,3 +189,138 @@ def create_metamessage(
     db.commit()
     db.refresh(honcho_metamessage)
     return honcho_metamessage
+
+
+########################################################
+# vector methods
+########################################################
+
+# Should be very similar to the session methods
+
+def get_vectors(db: Session, app_id: str, user_id: str,  ) -> Select:
+    """Get a distinct list of the names of vectors associated with a user"""
+    stmt = (
+        select(models.Metamessage)
+        .join(models.Message, models.Message.id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Metamessage.created_at)
+    )
+    if message_id is not None:
+        stmt = stmt.where(models.Metamessage.message_id == message_id)
+    if metamessage_type is not None:
+        stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
+    return stmt
+
+def get_vector(db: Session, app_id: str, session_id: uuid.UUID, user_id: Optional[str] = None) -> Optional[models.Session]:
+    stmt = select(models.Session).where(models.Session.app_id == app_id).where(models.Session.id == session_id)
+    if user_id is not None:
+        stmt = stmt.where(models.Session.user_id == user_id)
+    session = db.scalars(stmt).one_or_none()
+    return session
+
+def create_vector(
+    db: Session, app_id: str, user_id: str, session: schemas.SessionCreate
+) -> models.Session:
+    honcho_session = models.Session(
+        app_id=app_id,
+        user_id=user_id,
+        location_id=session.location_id,
+        h_metadata=session.metadata,
+    )
+    db.add(honcho_session)
+    db.commit()
+    db.refresh(honcho_session)
+    return honcho_session
+
+def update_vector(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, session_data: dict) -> bool:
+    honcho_session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    if honcho_session is None:
+        raise ValueError("Session not found or does not belong to user")
+    honcho_session.session_data = json.dumps(session_data)
+    db.commit()
+    db.refresh(honcho_session)
+    return honcho_session
+
+def delete_vector(db: Session, app_id: str, user_id: str, session_id: uuid.UUID) -> bool:
+    stmt = (
+        select(models.Session)
+        .where(models.Session.id == session_id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+    )
+    honcho_session = db.scalars(stmt).one_or_none()
+    if honcho_session is None:
+        return False
+    honcho_session.is_active = False
+    db.commit()
+    return True
+
+########################################################
+# document methods
+########################################################
+
+# Should be similar to the messages methods outside of query
+
+def get_documents(
+    db: Session, app_id: str, user_id: str, session_id: uuid.UUID
+) -> Select:
+    # session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    # if session is None:
+    #     raise ValueError("Session not found or does not belong to user")
+    stmt = (
+        select(models.Message)
+        .join(models.Session, models.Session.id == models.Message.session_id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Message.created_at)
+    )
+    return stmt
+
+def query_documents():
+    pass
+
+def create_document(
+        db: Session, message: schemas.MessageCreate, app_id: str, user_id: str, session_id: uuid.UUID
+) -> models.Message:
+    honcho_session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    if honcho_session is None:
+        raise ValueError("Session not found or does not belong to user")
+
+    honcho_message = models.Message(
+        session_id=session_id,
+        is_user=message.is_user,
+        content=message.content,
+    )
+    db.add(honcho_message)
+    db.commit()
+    db.refresh(honcho_message)
+    return honcho_message
+
+def update_document(db: Session, app_id: str, user_id: str, session_id: uuid.UUID, session_data: dict) -> bool:
+    honcho_session = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    if honcho_session is None:
+        raise ValueError("Session not found or does not belong to user")
+    honcho_session.session_data = json.dumps(session_data)
+    db.commit()
+    db.refresh(honcho_session)
+    return honcho_session
+
+def delete_document(db: Session, app_id: str, user_id: str, session_id: uuid.UUID) -> bool:
+    stmt = (
+        select(models.Session)
+        .where(models.Session.id == session_id)
+        .where(models.Session.app_id == app_id)
+        .where(models.Session.user_id == user_id)
+    )
+    honcho_session = db.scalars(stmt).one_or_none()
+    if honcho_session is None:
+        return False
+    honcho_session.is_active = False
+    db.commit()
+    return True
+
+
