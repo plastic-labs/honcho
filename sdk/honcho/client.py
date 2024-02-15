@@ -618,26 +618,23 @@ class AsyncCollection:
            
             get_documents_page = new_documents
 
-    
 
-        
     async def update(self, metadata: Dict, content: str):
         """Update the metadata of a document
 
         Args:
             metadata (Dict): The metadata of the document
             content (str): The content of the document
-            session_data (Dict): The Session object containing any new session_data
-
 
         Returns:
             boolean: Whether the session was successfully updated
         """
-        info = {"session_data": session_data}
-        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
+        info = {"metadata": metadata, "content": content}
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/documents/{self.id}"
         response = await self.client.put(url, json=info)
         success = response.status_code < 400
-        self.session_data = session_data
+        self.metadata = metadata
+        self.content = content
         return success
 
     async def close(self):
