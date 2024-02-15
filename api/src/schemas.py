@@ -65,16 +65,16 @@ class Metamessage(MetamessageBase):
     class Config:
         orm_mode = True
 
-class VectorBase(BaseModel):
+class CollectionBase(BaseModel):
     pass
 
-class VectorCreate(VectorBase):
+class CollectionCreate(CollectionBase):
     name: str
 
-class VectorUpdate(VectorBase):
+class CollectionUpdate(CollectionBase):
     name: str
 
-class Vector(VectorBase):
+class Collection(CollectionBase):
     id: uuid.UUID
     name: str
     app_id: str
@@ -86,13 +86,14 @@ class Vector(VectorBase):
 
 class DocumentBase(BaseModel):
     content: str
-    vector_id: uuid.UUID
+    collection_id: uuid.UUID
 
 class DocumentCreate(DocumentBase):
     metadata: dict | None = None
 
 class DocumentUpdate(DocumentBase):
     metadata: dict | None = None
+    content: str | None = None
 
 class Document(DocumentBase):
     id: uuid.UUID

@@ -1,6 +1,6 @@
 import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, Request
-from typing import Optional
+from typing import Optional, Sequence
 from sqlalchemy.orm import Session
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
@@ -108,9 +108,9 @@ def update_session(
 
     """
     if session.metadata is None:
-        raise HTTPException(status_code=400, detail="Session data cannot be empty") # TODO TEST if I can set the metadata to be blank with this 
+        raise HTTPException(status_code=400, detail="Session metadata cannot be empty") # TODO TEST if I can set the metadata to be blank with this 
     try:
-        return crud.update_session(db, app_id=app_id, user_id=user_id, session_id=session_id, metadata=session.metadata) 
+        return crud.update_session(db, app_id=app_id, user_id=user_id, session_id=session_id, session=session) 
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -281,9 +281,6 @@ def create_metamessage(
         HTTPException: If the session is not found
 
     """
-    print("=======================")
-    print(request)
-    print("=======================")
     try:
         return crud.create_metamessage(db, metamessage=metamessage, app_id=app_id, user_id=user_id, session_id=session_id)
     except ValueError:
@@ -342,108 +339,160 @@ def get_metamessage(request: Request, app_id: str, user_id: str, session_id: uui
     return honcho_metamessage
 
 ########################################################
-# vector routes
+# collection routes
 ########################################################
 
-@router.get("/vectors", response_model=Page[schemas.Vector])
-def get_vectors(
+@router.get("/collections", response_model=Page[schemas.Collection])
+def get_collections(
     request: Request,
     app_id: str,
     user_id: str,
     db: Session = Depends(get_db),
 ):
-    return paginate(db, crud.get_vectors(db, app_id=app_id, user_id=user_id))
+    return paginate(db, crud.get_collections(db, app_id=app_id, user_id=user_id))
 
-@router.get("/vectors/{vector_id}")
-def get_vector(
+@router.get("/collections/{collection_id}", response_model=schemas.Collection)
+def get_collection(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id: uuid.UUID,
+    collection_id: uuid.UUID,
     db: Session = Depends(get_db)
-) -> schemas.Vector:
-    honcho_vector = crud.get_vector(db, app_id=app_id, user_id=user_id, vector_id=vector_id)
-    if honcho_vector is None:
-        raise ValueError("vector not found or does not belong to user")
-    return honcho_vector
+) -> schemas.Collection:
+    honcho_collection = crud.get_collection(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    if honcho_collection is None:
+        raise ValueError("collection not found or does not belong to user")
+    return honcho_collection
 
-@router.post("/vectors/{vector_id}/", )
-def create_vector(
+@router.post("/collections/{collection_id}/", response_model=schemas.Collection)
+def create_collection(
     request: Request,
-    vector: schemas.VectorCreate,
     app_id: str,
     user_id: str,
+    collection: schemas.CollectionCreate,
     db: Session = Depends(get_db)
 ):
-    honcho_vector = crud.create_vector(db, vector=vector, app_id=app_id, user_id=user_id)
-    return honcho_vector
+    honcho_collection = crud.create_collection(db, collection=collection, app_id=app_id, user_id=user_id)
+    return honcho_collection
 
-@router.put("/vectors/{vector_id}")
-def update_vector(
+@router.put("/collections/{collection_id}", response_model=schemas.Collection)
+def update_collection(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id
+    collection_id: uuid.UUID,
+    collection: schemas.CollectionUpdate,
+    db: Session = Depends(get_db)
 ):
-    pass
+    if collection.name is None:
+        raise ValueError("name and metadata cannot both be None")
+    try:
+        honcho_collection = crud.update_collection(db, collection=collection, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+    return honcho_collection
 
-@router.delete("/vectors/{vector_id}")
-def delete_vector(
+@router.delete("/collections/{collection_id}")
+def delete_collection(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db)
 ):
-    pass
+    response = crud.delete_collection(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    if response:
+        return {"message": "Collection deleted successfully"}
+    else:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
 
 ########################################################
 # Document routes
 ########################################################
 
-@router.get("/vectors/{vector_id}/documents")
+@router.get("/collections/{collection_id}/documents", response_model=Page[schemas.Document])
 def get_documents(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db)
 ):
-    pass
+    try:
+        return paginate(db, crud.get_documents(db, app_id=app_id, user_id=user_id, collection_id=collection_id))
+    except ValueError: # TODO can probably remove this exception ok to return empty here
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
 
-@router.get("/vectors/{vector_id}/query")
+router.get("/collections/{collection_id}/documents/{document_id}", response_model=schemas.Document)
+def get_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    honcho_document = crud.get_document(db, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id)
+    if honcho_document is None:
+        raise HTTPException(status_code=404, detail="document not found or does not belong to user")
+    return honcho_document
+
+
+@router.get("/collections/{collection_id}/query", response_model=Sequence[schemas.Document])
 def query_documents(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id
+    collection_id: uuid.UUID,
+    query: str,
+    top_k: int = 5,
+    db: Session = Depends(get_db)
 ):
-    pass
+    if top_k is not None and top_k > 50:
+        top_k = 50 # TODO see if we need to paginate this 
+    return crud.query_documents(db=db, app_id=app_id, user_id=user_id, collection_id=collection_id, query=query, top_k=top_k)
 
-@router.post("/vectors/{vector_id}/documents")
+@router.post("/collections/{collection_id}/documents", response_model=schemas.Document)
 def create_document(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id
+    collection_id: uuid.UUID,
+    document: schemas.DocumentCreate,
+    db: Session = Depends(get_db)
 ):
-    pass
+    try:
+        return crud.create_document(db, document=document, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
 
-@router.put("/vectors/{vector_id}/documents/{document_id}")
+@router.put("/collections/{collection_id}/documents/{document_id}", response_model=schemas.Document)
 def update_document(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id,
-    document_id
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    document: schemas.DocumentUpdate,
+    db: Session = Depends(get_db)
 ):
-    pass
+   if document.content is None and document.metadata is None:
+        raise ValueError("content and metadata cannot both be None")
+   return crud.update_document(db, document=document, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id) 
 
-@router.delete("/vectors/{vector_id}/documents/{document_id}")
+@router.delete("/collections/{collection_id}/documents/{document_id}")
 def delete_document(
     request: Request,
     app_id: str,
     user_id: str,
-    vector_id, document_id
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db)
 ):
-    pass
+    response = crud.delete_document(db, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id)
+    if response:
+        return {"message": "Document deleted successfully"}
+    else:
+        raise HTTPException(status_code=404, detail="document not found or does not belong to user")
 
 app.include_router(router)

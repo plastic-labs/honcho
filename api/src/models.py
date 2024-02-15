@@ -56,14 +56,14 @@ class Metamessage(Base):
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
 
-class VectorCollection(Base):
-    __tablename__ = "vectors"
+class Collection(Base):
+    __tablename__ = "collections"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(512), index=True)
     app_id: Mapped[str] = mapped_column(String(512), index=True)
     user_id: Mapped[str] = mapped_column(String(512), index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
-    documents = relationship("Document", back_populates="vector", cascade="all, delete, delete-orphan")
+    documents = relationship("Document", back_populates="collection", cascade="all, delete, delete-orphan")
 
 class Document(Base):
     __tablename__ = "documents"
@@ -73,5 +73,5 @@ class Document(Base):
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     
-    vector_id = Column(Uuid, ForeignKey("vectors.id"))
-    vector = relationship("VectorCollection", back_populates="documents")
+    collection_id = Column(Uuid, ForeignKey("collections.id"))
+    collection = relationship("Collection", back_populates="documents")
