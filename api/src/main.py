@@ -355,7 +355,7 @@ def get_collection_by_id(
 ) -> schemas.Collection:
     honcho_collection = crud.get_collection_by_id(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
     if honcho_collection is None:
-        raise ValueError("collection not found or does not belong to user")
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
     return honcho_collection
 
 @router.get("/collections/name/{name}", response_model=schemas.Collection)
@@ -368,10 +368,10 @@ def get_collection_by_name(
 ) -> schemas.Collection:
     honcho_collection = crud.get_collection_by_name(db, app_id=app_id, user_id=user_id, name=name)
     if honcho_collection is None:
-        raise ValueError("collection not found or does not belong to user")
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
     return honcho_collection
 
-@router.post("/collections/", response_model=schemas.Collection)
+@router.post("/collections", response_model=schemas.Collection)
 def create_collection(
     request: Request,
     app_id: str,

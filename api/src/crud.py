@@ -1,4 +1,5 @@
 import uuid
+import datetime
 from typing import Optional, Sequence
 
 from openai import OpenAI
@@ -59,6 +60,7 @@ def update_session(
         honcho_session.h_metadata = session.metadata
     db.commit()
     db.refresh(honcho_session)
+    copy = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
     return honcho_session
 
 def delete_session(db: Session, app_id: str, user_id: str, session_id: uuid.UUID) -> bool:
@@ -219,7 +221,7 @@ def create_collection(
     honcho_collection = models.Collection(
         app_id=app_id,
         user_id=user_id,
-        location_id=collection.name,
+        name=collection.name,
     )
     try:
         db.add(honcho_collection)
@@ -312,7 +314,7 @@ def query_documents(db: Session, app_id: str, user_id: str, collection_id: uuid.
             .where(models.Collection.app_id == app_id)
             .where(models.Collection.user_id == user_id)
             .where(models.Document.collection_id == collection_id)
-            .order_by(models.Document.cosine_distance(embedding_query))
+            .order_by(models.Document.embedding.cosine_distance(embedding_query))
             .limit(top_k)
             )
     # if metadata is not None:
@@ -357,9 +359,9 @@ def update_document(
                     input=document.content, 
                     model="text-embedding-3-small"
             )
-
         embedding = response.data[0].embedding
         honcho_document.embedding = embedding
+        honcho_document.created_at = datetime.datetime.now()
 
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
@@ -370,8 +372,9 @@ def update_document(
 def delete_document(db: Session, app_id: str, user_id: str, collection_id: uuid.UUID, document_id: uuid.UUID) -> bool:
     stmt = (
         select(models.Document)
-        .where(models.Document.app_id == app_id)
-        .where(models.Document.user_id == user_id)
+        .join(models.Collection, models.Collection.id == models.Document.collection_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.id == document_id)
     )

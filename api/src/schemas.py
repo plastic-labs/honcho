@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import datetime
 import uuid
 
@@ -18,8 +18,7 @@ class Message(MessageBase):
     created_at: datetime.datetime
 
     class Config:
-        orm_mode = True
-
+        from_attributes = True
 
 class SessionBase(BaseModel):
     pass
@@ -27,12 +26,10 @@ class SessionBase(BaseModel):
 
 class SessionCreate(SessionBase):
     location_id: str
-    metadata: dict | None = None
-
-
+    metadata: dict | None = {}
+    
 class SessionUpdate(SessionBase):
     metadata: dict | None = None
-
 
 class Session(SessionBase):
     id: uuid.UUID
@@ -41,11 +38,21 @@ class Session(SessionBase):
     user_id: str
     location_id: str
     app_id: str
+    h_metadata: dict
     metadata: dict
     created_at: datetime.datetime
 
+    @validator('metadata', pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if 'h_metadata' in values:
+            return values['h_metadata']
+        return {}
+
     class Config:
-        orm_mode = True
+        from_attributes = True
+        schema_extra = {
+            "exclude": ["h_metadata"]
+        }
 
 
 class MetamessageBase(BaseModel):
@@ -86,10 +93,9 @@ class Collection(CollectionBase):
 
 class DocumentBase(BaseModel):
     content: str
-    collection_id: uuid.UUID
 
 class DocumentCreate(DocumentBase):
-    metadata: dict | None = None
+    metadata: dict | None = {}
 
 class DocumentUpdate(DocumentBase):
     metadata: dict | None = None
@@ -98,9 +104,20 @@ class DocumentUpdate(DocumentBase):
 class Document(DocumentBase):
     id: uuid.UUID
     content: str
-    metadata: dict | None = None
+    h_metadata: dict
+    metadata: dict
     created_at: datetime.datetime
+    collection_id: uuid.UUID
+
+    @validator('metadata', pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if 'h_metadata' in values:
+            return values['h_metadata']
+        return {}
 
     class Config:
-        orm_mode = True
+        from_attributes = True
+        schema_extra = {
+            "exclude": ["h_metadata"]
+        }
 

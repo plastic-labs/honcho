@@ -28,7 +28,7 @@ class Session(Base):
     messages = relationship("Message", back_populates="session")
 
     def __repr__(self) -> str:
-        return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at})"
+        return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 class Message(Base):
     __tablename__ = "messages"
@@ -66,7 +66,7 @@ class Collection(Base):
     documents = relationship("Document", back_populates="collection", cascade="all, delete, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint('name', 'app_id', 'user_id', name="unique_name_app_user")
+        UniqueConstraint('name', 'app_id', 'user_id', name="unique_name_app_user"),
     )
 
 class Document(Base):

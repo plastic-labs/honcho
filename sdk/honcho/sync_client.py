@@ -665,7 +665,7 @@ class Collection:
             boolean: Whether the session was successfully updated
         """
         info = {"name": name}
-        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/"
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}"
         response = self.client.put(url, json=info)
         response.raise_for_status()
         success = response.status_code < 400
@@ -762,13 +762,13 @@ class Collection:
             get_documents_page = new_documents
 
     def query(self, query: str, top_k: int = 5) -> List[Document]:
-        """
+        """query the documents by cosine distance 
         Args:
             query (str): The query to run
             top_k (int, optional): The number of results to return. Defaults to 5.
 
         Returns:
-            Dict: The response from the query
+            List[Document]: The response from the query with matching documents
         """
         url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/query?query={query}&top_k={top_k}"
         response = self.client.get(url)
@@ -785,3 +785,43 @@ class Collection:
         ]
         return data
 
+    def update_document(self, document: Document, metadata: Optional[Dict], content: Optional[str]) -> Document:
+        """Update a document in the collection
+
+        Args:
+            document (Document): The Document to update
+            metadata (Dict): The metadata of the document
+            content (str): The content of the document
+
+        Returns:
+            Document: The newly updated Document
+        """
+        if metadata is None and content is None:
+            raise ValueError("metadata and content cannot both be None")
+        data = {"metadata": metadata, "content": content}
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/documents/{document.id}"
+        response = self.client.put(url, json=data)
+        response.raise_for_status()
+        data = response.json()
+        return Document(
+            data["id"],
+            metadata=data["metadata"],
+            content=data["content"],
+            created_at=data["created_at"],
+            collection_id=data["collection_id"],
+        )
+
+    def delete_document(self, document: Document) -> bool:
+        """Delete a document from the collection
+
+        Args:
+            document (Document): The Document to delete
+
+        Returns:
+            boolean: Whether the document was successfully deleted
+        """
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/documents/{document.id}"
+        response = self.client.delete(url)
+        response.raise_for_status()
+        success = response.status_code < 400
+        return success
