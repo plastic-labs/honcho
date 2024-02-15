@@ -2,7 +2,7 @@ import json
 import uuid
 from typing import Dict, Optional 
 import httpx
-from .schemas import Message, Metamessage
+from .schemas import Message, Metamessage, Document
 
 class AsyncGetPage:
     """Base class for receiving Paginated API results"""
@@ -124,7 +124,57 @@ class AsyncGetMetamessagePage(AsyncGetPage):
             return None
         return await self.session.get_metamessages(metamessage_type=self.metamessage_type, message=self.message_id, page=(self.page + 1), page_size=self.page_size)
 
+class AsyncGetDocumentPage(AsyncGetPage):
+    """Paginated results for Get Document requests"""
+    def __init__(self, collection, response: Dict) -> None:
+        """Constructor for Page Result from Document Get Request
+        
+        Args:
+            collection (AsyncCollection): Collection the returned documents are associated with
+            response (Dict): Response from API with pagination information
+        """
+        super().__init__(response)
+        self.collection = collection
+        self.items = [
+            Document(
+                # TODO: fill in items here
+            )
+        ]
 
+class AsyncGetCollectionPage(AsyncGetPage):
+    """Paginated results for Get Collection requests"""
+
+    def __init__(self, client, options: Dict, response: Dict):
+        """Constructor for page result from Get Collection Request
+        
+        Args:
+            client (Async Client): Honcho Client
+            options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are user_id which is required and app_id which is optional
+            response (Dict): Response from API with pagination information
+        """
+        super().__init__(response)
+        self.client = client
+        self.user_id = options["user_id"]
+        self.app_id = options["app_id"]
+        self.items = [
+            AsyncCollection(
+                client=client,
+                id=collection["id"],
+                user_id=collection["user_id"],
+                name=collection["name"],
+                created_at=collection["created_at"],
+            )
+            for collection in response["items"]
+        ]
+       
+    async def next(self):
+        """Get the next page of results
+        Returns:
+            AsyncGetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
+        """
+        if self.page >= self.pages:
+            return None
+        return await self.client.get_collections(self.user_id, self.location_id, self.page + 1, self.page_size)
 
 class AsyncClient:
     """Honcho API Client Object"""
@@ -241,7 +291,6 @@ class AsyncClient:
             session_data=session_data,
             is_active=data["is_active"],
         )
-
 
 class AsyncSession:
     """Represents a single session for a user in an app"""
@@ -468,3 +517,132 @@ class AsyncSession:
         response.raise_for_status()
         self._is_active = False
 
+class AsyncCollection:
+    """Represents a single collection for a user in an app"""
+
+    def __init__(
+        self,
+        client: AsyncClient,
+        id: uuid.UUID,
+        user_id: str,
+        name: str, 
+        created_at: str, 
+    ):
+        """Constructor for Collection"""
+        self.base_url = client.base_url
+        self.client = client.client
+        self.app_id = client.app_id
+        self.id = id
+        self.user_id = user_id
+        self.name = name
+        self.created_at = created_at
+
+    @property
+    def common_prefix(self):
+        """Shortcut for common API prefix. made a property to prevent tampering"""
+        return f"{self.base_url}/apps/{self.app_id}"
+
+    def __str__(self):
+        """String representation of Collection"""
+        return f"AsyncCollection(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, name={self.name}, created_at={self.created_at})"
+
+    async def create_document(self, metadata: Dict, content: str):
+        """Adds a document to the collection
+
+        Args:
+            metadata (Dict): The metadata of the document
+            content (str): The content of the document
+
+        Returns:
+            Document: The Document object of the added document
+
+        """
+
+        data = {"metadata": metadata, "content": content}
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/documents"
+        response = await self.client.post(url, json=data)
+        response.raise_for_status()
+        data = response.json()
+        return Document(collection_id=self.id, id=data["id"], metadata=metadata, content=content, created_at=data["created_at"])
+
+    async def get_document(self, document_id: uuid.UUID) -> Document:
+        """Get a specific document for a collection based on ID
+
+        Args:
+            document_id (uuid.UUID): The ID of the Document to retrieve
+
+        Returns:
+            Document: The Document object
+
+        """
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/documents/{document_id}"
+        response = await self.client.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return Document(collection_id=self.id, id=data["id"], metadata=data["metadata"], content=data["content"], created_at=data["created_at"])
+
+    async def get_documents(self, page: int = 1, page_size: int = 50) -> AsyncGetDocumentPage:
+        """Get all documents for a collection
+
+        Args:
+            page (int, optional): The page of results to return
+            page_size (int, optional): The number of results to return per page
+
+        Returns:
+            AsyncGetDocumentPage: Page of Document objects
+
+        """
+        url = f"{self.common_prefix}/users/{self.user_id}/collections/{self.id}/documents?page={page}&size={page_size}"
+        response = await self.client.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return AsyncGetDocumentPage(self, data)
+        
+    async def get_documents_generator(self):
+        """Shortcut Generator for get_documents. Generator to iterate through all documents for a collection in an app
+
+        Yields:
+            Document: The Document object of the next Document
+
+        """
+        page = 1
+        page_size = 50
+        get_documents_page= await self.get_documents(page, page_size)
+        while True:
+            for document in get_documents_page.items:
+                yield document
+
+            new_documents = await get_documents_page.next()
+            if not new_documents:
+                break
+           
+            get_documents_page = new_documents
+
+    
+
+        
+    async def update(self, metadata: Dict, content: str):
+        """Update the metadata of a document
+
+        Args:
+            metadata (Dict): The metadata of the document
+            content (str): The content of the document
+            session_data (Dict): The Session object containing any new session_data
+
+
+        Returns:
+            boolean: Whether the session was successfully updated
+        """
+        info = {"session_data": session_data}
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
+        response = await self.client.put(url, json=info)
+        success = response.status_code < 400
+        self.session_data = session_data
+        return success
+
+    async def close(self):
+        """Closes a session by marking it as inactive"""
+        url = f"{self.common_prefix}/users/{self.user_id}/sessions/{self.id}"
+        response = await self.client.delete(url)
+        response.raise_for_status()
+        self._is_active = False
