@@ -1,5 +1,5 @@
 import os
-# from uuid import uuid4
+from uuid import uuid1
 import discord
 from honcho import Client as HonchoClient
 from chain import langchain_message_converter, LMChain
@@ -10,7 +10,7 @@ intents.messages = True
 intents.message_content = True
 intents.members = True
 
-app_id = str("demo-honcho-fact-memory")
+app_id = str(uuid1())
 
 #honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
 honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
