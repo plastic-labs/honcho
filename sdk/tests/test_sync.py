@@ -1,7 +1,8 @@
-from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, Session, Message, Metamessage
+import pytest
+from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, GetDocumentPage, Session, Message, Metamessage, Document
 from honcho import Client as Honcho
 from uuid import uuid1
-import pytest
+
 
 def test_session_creation_retrieval():
     app_id = str(uuid1())
@@ -12,7 +13,7 @@ def test_session_creation_retrieval():
     assert retrieved_session.id == created_session.id
     assert retrieved_session.is_active is True
     assert retrieved_session.location_id == "default"
-    assert retrieved_session.session_data == {}
+    assert retrieved_session.metadata == {}
 
 
 def test_session_multiple_retrieval():
@@ -30,18 +31,18 @@ def test_session_multiple_retrieval():
 
 
 def test_session_update():
-    app_id = str(uuid1())
     user_id = str(uuid1())
+    app_id = str(uuid1())
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.update({"foo": "bar"})
     retrieved_session = client.get_session(user_id, created_session.id)
-    assert retrieved_session.session_data == {"foo": "bar"}
+    assert retrieved_session.metadata == {"foo": "bar"}
 
 
 def test_session_deletion():
-    app_id = str(uuid1())
     user_id = str(uuid1())
+    app_id = str(uuid1())
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.is_active is True
@@ -53,8 +54,8 @@ def test_session_deletion():
 
 
 def test_messages():
-    app_id = str(uuid1())
     user_id = str(uuid1())
+    app_id = str(uuid1())
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     created_session.create_message(is_user=True, content="Hello")
@@ -128,13 +129,13 @@ def test_paginated_sessions_generator():
     gen = client.get_sessions_generator(user_id)
     # print(type(gen))
 
-    item = next(gen)
+    item = gen.__next__()
     assert item.user_id == user_id
     assert isinstance(item, Session)
-    assert next(gen) is not None
-    assert next(gen) is not None
+    assert gen.__next__() is not None
+    assert gen.__next__() is not None
     with pytest.raises(StopIteration):
-        next(gen)
+        gen.__next__()
 
 def test_paginated_out_of_bounds():
     app_id = str(uuid1())
@@ -183,7 +184,6 @@ def test_paginated_messages():
 
     assert next_page is None
 
-
 def test_paginated_messages_generator():
     app_id = str(uuid1())
     user_id = str(uuid1())
@@ -193,17 +193,16 @@ def test_paginated_messages_generator():
     created_session.create_message(is_user=False, content="Hi")
     gen = created_session.get_messages_generator()
 
-    item = next(gen)
+    item = gen.__next__()
     assert isinstance(item, Message)
     assert item.content == "Hello"
     assert item.is_user is True
-    item2 = next(gen)
+    item2 = gen.__next__()
     assert item2 is not None
     assert item2.content == "Hi"
     assert item2.is_user is False
     with pytest.raises(StopIteration):
-        next(gen)
-
+        gen.__next__()
 
 def test_paginated_metamessages():
     app_id = str(uuid1())
@@ -246,16 +245,107 @@ def test_paginated_metamessages_generator():
     created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 2")
     gen = created_session.get_metamessages_generator()
 
-    item = next(gen)
+    item = gen.__next__()
     assert isinstance(item, Metamessage)
     assert item.content == "Test 1"
     assert item.metamessage_type == "thought"
-    item2 = next(gen)
+    item2 = gen.__next__()
     assert item2 is not None
     assert item2.content == "Test 2"
     assert item2.metamessage_type == "thought"
     with pytest.raises(StopIteration):
-        next(gen)
+        gen.__next__()
 
 
+def test_collections():
+    col_name = str(uuid1())
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    # Make a collection
+    collection = client.create_collection(user_id, col_name)
+
+    # Add documents
+    doc1 = collection.create_document(content="This is a test of documents - 1", metadata={"foo": "bar"})
+    doc2 = collection.create_document(content="This is a test of documents - 2", metadata={})
+    doc3 = collection.create_document(content="This is a test of documents - 3", metadata={})
+
+    # Get all documents
+    page = collection.get_documents(page=1, page_size=3)
+    # Verify size
+    assert page is not None
+    assert isinstance(page, GetDocumentPage)
+    assert len(page.items) == 3
+    # delete a doc
+    result = collection.delete_document(doc1)
+    assert result is True
+    # Get all documents with a generator this time
+    gen = collection.get_documents_generator()
+    # Verfy size
+    item = gen.__next__()
+    item2 = gen.__next__()
+    with pytest.raises(StopIteration):
+        gen.__next__()
+    # delete the collection
+    result = collection.delete()
+    # confirm documents are gone
+    with pytest.raises(Exception):
+        new_col = client.get_collection(user_id, "test")
+
+def test_collection_name_collision():
+    col_name = str(uuid1())
+    new_col_name = str(uuid1())
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    # Make a collection
+    collection = client.create_collection(user_id, col_name)
+    # Make another collection
+    with pytest.raises(Exception):
+        client.create_collection(user_id, col_name)
+
+    # Change the name of original collection
+    result = collection.update(new_col_name)
+    assert result is True
+    
+    # Try again to add another collection
+    collection2 = client.create_collection(user_id, col_name)
+    assert collection2 is not None
+    assert collection2.name == col_name
+    assert collection.name == new_col_name
+
+    # Get all collections
+    page = client.get_collections(user_id)
+    assert page is not None
+    assert len(page.items) == 2
+
+def test_collection_query():
+    col_name = str(uuid1())
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    # Make a collection
+    collection = client.create_collection(user_id, col_name)
+
+    # Add documents
+    doc1 = collection.create_document(content="The user loves puppies", metadata={})
+    doc2 = collection.create_document(content="The user owns a dog", metadata={})
+    doc3 = collection.create_document(content="The user is a doctor", metadata={})
+
+    result = collection.query(query="does the user own pets", top_k=2)
+
+    assert result is not None
+    assert len(result) == 2
+    assert isinstance(result[0], Document)
+
+    doc3 = collection.update_document(doc3, metadata={"test": "test"}, content="the user has owned pets in the past")
+    assert doc3 is not None
+    assert doc3.metadata == {"test": "test"}
+    assert doc3.content == "the user has owned pets in the past"
+
+    result = collection.query(query="does the user own pets", top_k=2)
+
+    assert result is not None
+    assert len(result) == 2
+    assert isinstance(result[0], Document)
 
