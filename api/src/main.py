@@ -1,7 +1,6 @@
 import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, Request
 from typing import Optional
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
@@ -10,25 +9,9 @@ from slowapi.errors import RateLimitExceeded
 
 from fastapi_pagination import Page, add_pagination
 from fastapi_pagination.ext.sqlalchemy import paginate
-# import uvicorn
 
 from . import crud, models, schemas
 from .db import SessionLocal, engine
-
-from dotenv import load_dotenv
-import os
-
-load_dotenv()
-
-# if os.environ["DATABASE_TYPE"] == "postgres":
-#     print("==================================================")
-#     print("Scaffolding Database")
-#     print("==================================================")
-#     db = SessionLocal()
-#     db.execute(text('CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;'))
-#     # db.execute(text('create extension vector with schema extensions'))
-#     db.close()
-
 
 models.Base.metadata.create_all(bind=engine) # Scaffold Database if not already done
 
@@ -60,7 +43,13 @@ def get_db():
 ########################################################
 
 @router.get("/sessions", response_model=Page[schemas.Session])
-def get_sessions(request: Request, app_id: str, user_id: str, location_id: Optional[str] = None, db: Session = Depends(get_db)):
+def get_sessions(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    location_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     """Get All Sessions for a User
 
     Args:
@@ -353,47 +342,108 @@ def get_metamessage(request: Request, app_id: str, user_id: str, session_id: uui
     return honcho_metamessage
 
 ########################################################
-# metamessage routes
+# vector routes
 ########################################################
 
-@router.get("/vectors")
-def get_vectors(request: Request):
-    pass
+@router.get("/vectors", response_model=Page[schemas.Vector])
+def get_vectors(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    db: Session = Depends(get_db),
+):
+    return paginate(db, crud.get_vectors(db, app_id=app_id, user_id=user_id))
 
 @router.get("/vectors/{vector_id}")
-def get_vector(request: Request, vector_id):
-    pass
+def get_vector(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id: uuid.UUID,
+    db: Session = Depends(get_db)
+) -> schemas.Vector:
+    honcho_vector = crud.get_vector(db, app_id=app_id, user_id=user_id, vector_id=vector_id)
+    if honcho_vector is None:
+        raise ValueError("vector not found or does not belong to user")
+    return honcho_vector
 
-@router.post("/vectors/{vector_id}/")
-def create_vector(request: Request, vector_id):
-    pass
+@router.post("/vectors/{vector_id}/", )
+def create_vector(
+    request: Request,
+    vector: schemas.VectorCreate,
+    app_id: str,
+    user_id: str,
+    db: Session = Depends(get_db)
+):
+    honcho_vector = crud.create_vector(db, vector=vector, app_id=app_id, user_id=user_id)
+    return honcho_vector
 
 @router.put("/vectors/{vector_id}")
-def update_vector(request: Request, vector_id):
+def update_vector(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id
+):
     pass
 
 @router.delete("/vectors/{vector_id}")
-def delete_vector(request: Request, vector_id):
+def delete_vector(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id
+):
     pass
 
+########################################################
+# Document routes
+########################################################
+
 @router.get("/vectors/{vector_id}/documents")
-def get_documents(request: Request, vector_id):
+def get_documents(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id
+):
     pass
 
 @router.get("/vectors/{vector_id}/query")
-def query_documents(request: Request, vector_id):
+def query_documents(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id
+):
     pass
 
 @router.post("/vectors/{vector_id}/documents")
-def create_document(request: Request, vector_id):
+def create_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id
+):
     pass
 
 @router.put("/vectors/{vector_id}/documents/{document_id}")
-def update_document(request: Request, vector_id, document_id):
+def update_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id,
+    document_id
+):
     pass
 
 @router.delete("/vectors/{vector_id}/documents/{document_id}")
-def delete_document(request: Request, vector_id, document_id):
+def delete_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    vector_id, document_id
+):
     pass
 
 app.include_router(router)
