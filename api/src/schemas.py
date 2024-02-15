@@ -87,12 +87,12 @@ class Vector(VectorBase):
 class DocumentBase(BaseModel):
     content: str
     vector_id: uuid.UUID
-    vector_name: str
-    pass
 
 class DocumentCreate(DocumentBase):
     metadata: dict | None = None
-    pass
+
+class DocumentUpdate(DocumentBase):
+    metadata: dict | None = None
 
 class Document(DocumentBase):
     id: uuid.UUID

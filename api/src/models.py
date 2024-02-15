@@ -1,12 +1,20 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, DateTime, Uuid, JSON
-import uuid
 import datetime
-from sqlalchemy.orm import relationship, Mapped, mapped_column
+import os
+import uuid
+
+from dotenv import load_dotenv
 from pgvector.sqlalchemy import Vector
+from sqlalchemy import JSON, Column, ForeignKey, String, Uuid
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 
+load_dotenv()
 
+DATABASE_TYPE = os.getenv("DATABASE_TYPE", 'postgres')
+
+ColumnType = JSONB if DATABASE_TYPE == 'postgres' else JSON
 
 class Session(Base):
     __tablename__ = "sessions"
@@ -15,7 +23,7 @@ class Session(Base):
     user_id: Mapped[str] = mapped_column(String(512), index=True)
     location_id: Mapped[str] = mapped_column(String(512), index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSON, default={}) 
+    h_metadata: Mapped[dict] = mapped_column("metadata", ColumnType, default={}) 
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     messages = relationship("Message", back_populates="session")
 
@@ -55,18 +63,15 @@ class VectorCollection(Base):
     app_id: Mapped[str] = mapped_column(String(512), index=True)
     user_id: Mapped[str] = mapped_column(String(512), index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
-    documents = relationship("Document", back_populates="vector")
+    documents = relationship("Document", back_populates="vector", cascade="all, delete, delete-orphan")
 
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True, default=uuid.uuid4)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSON, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", ColumnType, default={})
     content: Mapped[str] = mapped_column(String(65535))
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     
     vector_id = Column(Uuid, ForeignKey("vectors.id"))
     vector = relationship("VectorCollection", back_populates="documents")
-    # app_id: Mapped[str] = mapped_column(String(512), index=True)
-    # user_id: Mapped[str] = mapped_column(String(512), index=True)
-    # vector: Mapped[str] = mapped_column(String(512)) # The name of the collection of documents
