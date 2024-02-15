@@ -4,7 +4,7 @@ import uuid
 
 from dotenv import load_dotenv
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, Column, ForeignKey, String, Uuid
+from sqlalchemy import JSON, Column, ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -64,6 +64,10 @@ class Collection(Base):
     user_id: Mapped[str] = mapped_column(String(512), index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(default=datetime.datetime.utcnow)
     documents = relationship("Document", back_populates="collection", cascade="all, delete, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint('name', 'app_id', 'user_id', name="unique_name_app_user")
+    )
 
 class Document(Base):
     __tablename__ = "documents"

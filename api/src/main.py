@@ -61,11 +61,7 @@ def get_sessions(
         list[schemas.Session]: List of Session objects 
 
     """
-    # if location_id is not None:
-        # return paginate(db, crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id))
-    #     return crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id)
     return paginate(db, crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id))
-    # return crud.get_sessions(db, app_id=app_id, user_id=user_id)
 
 
 @router.post("/sessions", response_model=schemas.Session)
@@ -248,8 +244,6 @@ def get_message(
         raise HTTPException(status_code=404, detail="Session not found")
     return honcho_message
 
-
-
 ########################################################
 # metamessage routes
 ########################################################
@@ -342,7 +336,7 @@ def get_metamessage(request: Request, app_id: str, user_id: str, session_id: uui
 # collection routes
 ########################################################
 
-@router.get("/collections", response_model=Page[schemas.Collection])
+@router.get("/collections/all", response_model=Page[schemas.Collection])
 def get_collections(
     request: Request,
     app_id: str,
@@ -351,20 +345,33 @@ def get_collections(
 ):
     return paginate(db, crud.get_collections(db, app_id=app_id, user_id=user_id))
 
-@router.get("/collections/{collection_id}", response_model=schemas.Collection)
-def get_collection(
+@router.get("/collections/id/{collection_id}", response_model=schemas.Collection)
+def get_collection_by_id(
     request: Request,
     app_id: str,
     user_id: str,
     collection_id: uuid.UUID,
     db: Session = Depends(get_db)
 ) -> schemas.Collection:
-    honcho_collection = crud.get_collection(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    honcho_collection = crud.get_collection_by_id(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
     if honcho_collection is None:
         raise ValueError("collection not found or does not belong to user")
     return honcho_collection
 
-@router.post("/collections/{collection_id}/", response_model=schemas.Collection)
+@router.get("/collections/name/{name}", response_model=schemas.Collection)
+def get_collection_by_name(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    name: str,
+    db: Session = Depends(get_db)
+) -> schemas.Collection:
+    honcho_collection = crud.get_collection_by_name(db, app_id=app_id, user_id=user_id, name=name)
+    if honcho_collection is None:
+        raise ValueError("collection not found or does not belong to user")
+    return honcho_collection
+
+@router.post("/collections/", response_model=schemas.Collection)
 def create_collection(
     request: Request,
     app_id: str,
@@ -372,8 +379,10 @@ def create_collection(
     collection: schemas.CollectionCreate,
     db: Session = Depends(get_db)
 ):
-    honcho_collection = crud.create_collection(db, collection=collection, app_id=app_id, user_id=user_id)
-    return honcho_collection
+    try:
+        return crud.create_collection(db, collection=collection, app_id=app_id, user_id=user_id)
+    except ValueError:
+        raise HTTPException(status_code=406, detail="Error invalid collection configuration - name may already exist")
 
 @router.put("/collections/{collection_id}", response_model=schemas.Collection)
 def update_collection(
@@ -385,11 +394,11 @@ def update_collection(
     db: Session = Depends(get_db)
 ):
     if collection.name is None:
-        raise ValueError("name and metadata cannot both be None")
+        raise HTTPException(status_code=400, detail="invalid request - name cannot be None")
     try:
         honcho_collection = crud.update_collection(db, collection=collection, app_id=app_id, user_id=user_id, collection_id=collection_id)
     except ValueError:
-        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+        raise HTTPException(status_code=406, detail="Error invalid collection configuration - name may already exist")
     return honcho_collection
 
 @router.delete("/collections/{collection_id}")
@@ -477,7 +486,7 @@ def update_document(
     db: Session = Depends(get_db)
 ):
    if document.content is None and document.metadata is None:
-        raise ValueError("content and metadata cannot both be None")
+        raise HTTPException(status_code=400, detail="content and metadata cannot both be None")
    return crud.update_document(db, document=document, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id) 
 
 @router.delete("/collections/{collection_id}/documents/{document_id}")

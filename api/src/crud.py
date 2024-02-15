@@ -5,6 +5,7 @@ from openai import OpenAI
 
 from sqlalchemy import select, Select
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from . import models, schemas
 
@@ -192,17 +193,23 @@ def get_collections(db: Session, app_id: str, user_id: str) -> Select:
     )
     return stmt
 
-def get_collection(db: Session, app_id: str, user_id: str, collection_id: uuid.UUID, name: Optional[str] = None ) -> Optional[models.Collection]:
+def get_collection_by_id(db: Session, app_id: str, user_id: str, collection_id: uuid.UUID) -> Optional[models.Collection]:
     stmt = ( 
         select(models.Collection)
         .where(models.Collection.app_id == app_id)
         .where(models.Collection.user_id == user_id)
         .where(models.Collection.id == collection_id)
     )
-    # TODO determine if indexing by name or id is better 
-    if name is not None:
-        stmt = stmt.where(models.Collection.name == name)
+    collection = db.scalars(stmt).one_or_none()
+    return collection
 
+def get_collection_by_name(db: Session, app_id: str, user_id: str, name: str) -> Optional[models.Collection]:
+    stmt = ( 
+        select(models.Collection)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
+        .where(models.Collection.name == name)
+    )
     collection = db.scalars(stmt).one_or_none()
     return collection
 
@@ -214,19 +221,27 @@ def create_collection(
         user_id=user_id,
         location_id=collection.name,
     )
-    db.add(honcho_collection)
-    db.commit()
+    try:
+        db.add(honcho_collection)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError("Collection already exists")
     db.refresh(honcho_collection)
     return honcho_collection
 
 def update_collection(
         db: Session, collection: schemas.CollectionUpdate, app_id: str, user_id: str, collection_id: uuid.UUID
 ) -> models.Collection:
-    honcho_collection = get_collection(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    honcho_collection = get_collection_by_id(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
     if honcho_collection is None:
         raise ValueError("collection not found or does not belong to user")
-    honcho_collection.name = collection.name
-    db.commit()
+    try:
+        honcho_collection.name = collection.name
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise ValueError("Collection already exists")
     db.refresh(honcho_collection)
     return honcho_collection
 
@@ -308,7 +323,7 @@ def create_document(
         db: Session, document: schemas.DocumentCreate, app_id: str, user_id: str, collection_id: uuid.UUID
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
-    collection = get_collection(db, app_id=app_id, collection_id=collection_id, user_id=user_id)
+    collection = get_collection_by_id(db, app_id=app_id, collection_id=collection_id, user_id=user_id)
     if collection is None:
         raise ValueError("Session not found or does not belong to user")
 
