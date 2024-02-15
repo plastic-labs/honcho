@@ -434,6 +434,7 @@ class AsyncSession:
         """String representation of Session"""
         return f"AsyncSession(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, metadata={self.metadata}, is_active={self.is_active})"
 
+
     @property
     def is_active(self):
         """Returns whether the session is active - made property to prevent tampering"""
@@ -607,7 +608,6 @@ class AsyncSession:
 
         Args:
             metadata (Dict): The Session object containing any new metadata
-
 
         Returns:
             boolean: Whether the session was successfully updated

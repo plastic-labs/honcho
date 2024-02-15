@@ -1,5 +1,5 @@
 import pytest
-from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, Session, Message, Metamessage, GetDocumentPage, Document
+from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, GetDocumentPage, Session, Message, Metamessage, Document
 from honcho import Client as Honcho
 from uuid import uuid1
 
@@ -348,3 +348,4 @@ def test_collection_query():
     assert result is not None
     assert len(result) == 2
     assert isinstance(result[0], Document)
+

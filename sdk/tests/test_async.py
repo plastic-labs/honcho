@@ -365,3 +365,4 @@ async def test_collection_query():
     assert result is not None
     assert len(result) == 2
     assert isinstance(result[0], Document)
+
