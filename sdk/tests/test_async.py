@@ -1,5 +1,5 @@
 import pytest
-from honcho import AsyncGetSessionPage, AsyncGetMessagePage, AsyncGetMetamessagePage, AsyncSession, Message, Metamessage
+from honcho import AsyncGetSessionPage, AsyncGetMessagePage, AsyncGetMetamessagePage, AsyncGetDocumentPage, AsyncSession, Message, Metamessage, Document
 from honcho import AsyncClient as Honcho
 from uuid import uuid1
 
@@ -14,7 +14,7 @@ async def test_session_creation_retrieval():
     assert retrieved_session.id == created_session.id
     assert retrieved_session.is_active is True
     assert retrieved_session.location_id == "default"
-    assert retrieved_session.session_data == {}
+    assert retrieved_session.metadata == {}
 
 
 @pytest.mark.asyncio
@@ -40,7 +40,7 @@ async def test_session_update():
     created_session = await client.create_session(user_id)
     assert await created_session.update({"foo": "bar"})
     retrieved_session = await client.get_session(user_id, created_session.id)
-    assert retrieved_session.session_data == {"foo": "bar"}
+    assert retrieved_session.metadata == {"foo": "bar"}
 
 
 @pytest.mark.asyncio
@@ -271,4 +271,98 @@ async def test_paginated_metamessages_generator():
         await gen.__anext__()
 
 
+@pytest.mark.asyncio
+async def test_collections():
+    col_name = str(uuid1())
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    # Make a collection
+    collection = await client.create_collection(user_id, col_name)
+
+    # Add documents
+    doc1 = await collection.create_document(content="This is a test of documents - 1", metadata={"foo": "bar"})
+    doc2 = await collection.create_document(content="This is a test of documents - 2", metadata={})
+    doc3 = await collection.create_document(content="This is a test of documents - 3", metadata={})
+
+    # Get all documents
+    page = await collection.get_documents(page=1, page_size=3)
+    # Verify size
+    assert page is not None
+    assert isinstance(page, AsyncGetDocumentPage)
+    assert len(page.items) == 3
+    # delete a doc
+    result = await collection.delete_document(doc1)
+    assert result is True
+    # Get all documents with a generator this time
+    gen = collection.get_documents_generator()
+    # Verfy size
+    item = await gen.__anext__()
+    item2 = await gen.__anext__()
+    with pytest.raises(StopAsyncIteration):
+        await gen.__anext__()
+    # delete the collection
+    result = await collection.delete()
+    # confirm documents are gone
+    with pytest.raises(Exception):
+        new_col = await client.get_collection(user_id, "test")
+
+@pytest.mark.asyncio
+async def test_collection_name_collision():
+    col_name = str(uuid1())
+    new_col_name = str(uuid1())
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    # Make a collection
+    collection = await client.create_collection(user_id, col_name)
+    # Make another collection
+    with pytest.raises(Exception):
+        await client.create_collection(user_id, col_name)
+
+    # Change the name of original collection
+    result = await collection.update(new_col_name)
+    assert result is True
+    
+    # Try again to add another collection
+    collection2 = await client.create_collection(user_id, col_name)
+    assert collection2 is not None
+    assert collection2.name == col_name
+    assert collection.name == new_col_name
+
+    # Get all collections
+    page = await client.get_collections(user_id)
+    assert page is not None
+    assert len(page.items) == 2
+
+@pytest.mark.asyncio
+async def test_collection_query():
+    col_name = str(uuid1())
+    app_id = str(uuid1())
+    user_id = str(uuid1())
+    client = Honcho(app_id, "http://localhost:8000")
+    # Make a collection
+    collection = await client.create_collection(user_id, col_name)
+
+    # Add documents
+    doc1 = await collection.create_document(content="The user loves puppies", metadata={})
+    doc2 = await collection.create_document(content="The user owns a dog", metadata={})
+    doc3 = await collection.create_document(content="The user is a doctor", metadata={})
+
+    result = await collection.query(query="does the user own pets", top_k=2)
+
+    assert result is not None
+    assert len(result) == 2
+    assert isinstance(result[0], Document)
+
+    doc3 = await collection.update_document(doc3, metadata={"test": "test"}, content="the user has owned pets in the past")
+    assert doc3 is not None
+    assert doc3.metadata == {"test": "test"}
+    assert doc3.content == "the user has owned pets in the past"
+
+    result = await collection.query(query="does the user own pets", top_k=2)
+
+    assert result is not None
+    assert len(result) == 2
+    assert isinstance(result[0], Document)
 

@@ -2,6 +2,8 @@
 
 The goal of this repo is to demonstrate how to deploy an LLM application using Honcho to manage user data. Here we've implemented a simple Discord bot that interacts with OpenAI's GPT-3.5-Turbo model via LangChain. Oh, and also, it's prompted to roast you.
 
+***This demo is live -- join our Discord server and the bot will DM you to start the conversation***
+
 To run locally, follow these steps:
 
 ### Clone the Repository
