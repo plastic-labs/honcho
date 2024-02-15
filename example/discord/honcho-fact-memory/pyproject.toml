@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "honcho-fact-memory"
+version = "0.1.0"
+description = ""
+authors = ["vintro <vince@plasticlabs.ai>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+langchain-core = "^0.1.23"
+langchain-community = "^0.0.20"
+openai = "^1.12.0"
+py-cord = "^2.4.1"
+python-dotenv = "^1.0.1"
+langchain-openai = "^0.0.6"
+honcho-ai = "0.0.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
