@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 import datetime
 import uuid
 
@@ -18,8 +18,7 @@ class Message(MessageBase):
     created_at: datetime.datetime
 
     class Config:
-        orm_mode = True
-
+        from_attributes = True
 
 class SessionBase(BaseModel):
     pass
@@ -27,12 +26,10 @@ class SessionBase(BaseModel):
 
 class SessionCreate(SessionBase):
     location_id: str
-    session_data: dict | None = None
-
-
+    metadata: dict | None = {}
+    
 class SessionUpdate(SessionBase):
-    session_data: dict | None = None
-
+    metadata: dict | None = None
 
 class Session(SessionBase):
     id: uuid.UUID
@@ -41,11 +38,21 @@ class Session(SessionBase):
     user_id: str
     location_id: str
     app_id: str
-    session_data: str
+    h_metadata: dict
+    metadata: dict
     created_at: datetime.datetime
 
+    @validator('metadata', pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if 'h_metadata' in values:
+            return values['h_metadata']
+        return {}
+
     class Config:
-        orm_mode = True
+        from_attributes = True
+        schema_extra = {
+            "exclude": ["h_metadata"]
+        }
 
 
 class MetamessageBase(BaseModel):
@@ -64,3 +71,53 @@ class Metamessage(MetamessageBase):
 
     class Config:
         orm_mode = True
+
+class CollectionBase(BaseModel):
+    pass
+
+class CollectionCreate(CollectionBase):
+    name: str
+
+class CollectionUpdate(CollectionBase):
+    name: str
+
+class Collection(CollectionBase):
+    id: uuid.UUID
+    name: str
+    app_id: str
+    user_id: str
+    created_at: datetime.datetime
+
+    class Config:
+        orm_mode = True
+
+class DocumentBase(BaseModel):
+    content: str
+
+class DocumentCreate(DocumentBase):
+    metadata: dict | None = {}
+
+class DocumentUpdate(DocumentBase):
+    metadata: dict | None = None
+    content: str | None = None
+
+class Document(DocumentBase):
+    id: uuid.UUID
+    content: str
+    h_metadata: dict
+    metadata: dict
+    created_at: datetime.datetime
+    collection_id: uuid.UUID
+
+    @validator('metadata', pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if 'h_metadata' in values:
+            return values['h_metadata']
+        return {}
+
+    class Config:
+        from_attributes = True
+        schema_extra = {
+            "exclude": ["h_metadata"]
+        }
+

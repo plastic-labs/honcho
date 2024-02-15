@@ -1,6 +1,6 @@
 import uuid
 from fastapi import Depends, FastAPI, HTTPException, APIRouter, Request
-from typing import Optional
+from typing import Optional, Sequence
 from sqlalchemy.orm import Session
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.middleware import SlowAPIMiddleware
@@ -9,7 +9,6 @@ from slowapi.errors import RateLimitExceeded
 
 from fastapi_pagination import Page, add_pagination
 from fastapi_pagination.ext.sqlalchemy import paginate
-# import uvicorn
 
 from . import crud, models, schemas
 from .db import SessionLocal, engine
@@ -44,7 +43,13 @@ def get_db():
 ########################################################
 
 @router.get("/sessions", response_model=Page[schemas.Session])
-def get_sessions(request: Request, app_id: str, user_id: str, location_id: Optional[str] = None, db: Session = Depends(get_db)):
+def get_sessions(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    location_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     """Get All Sessions for a User
 
     Args:
@@ -56,11 +61,7 @@ def get_sessions(request: Request, app_id: str, user_id: str, location_id: Optio
         list[schemas.Session]: List of Session objects 
 
     """
-    # if location_id is not None:
-        # return paginate(db, crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id))
-    #     return crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id)
     return paginate(db, crud.get_sessions(db, app_id=app_id, user_id=user_id, location_id=location_id))
-    # return crud.get_sessions(db, app_id=app_id, user_id=user_id)
 
 
 @router.post("/sessions", response_model=schemas.Session)
@@ -102,10 +103,10 @@ def update_session(
         schemas.Session: The Session object of the updated Session
 
     """
-    if session.session_data is None:
-        raise HTTPException(status_code=400, detail="Session data cannot be empty") # TODO TEST if I can set the metadata to be blank with this 
+    if session.metadata is None:
+        raise HTTPException(status_code=400, detail="Session metadata cannot be empty") # TODO TEST if I can set the metadata to be blank with this 
     try:
-        return crud.update_session(db, app_id=app_id, user_id=user_id, session_id=session_id, session_data=session.session_data) 
+        return crud.update_session(db, app_id=app_id, user_id=user_id, session_id=session_id, session=session) 
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -243,10 +244,8 @@ def get_message(
         raise HTTPException(status_code=404, detail="Session not found")
     return honcho_message
 
-
-
 ########################################################
-# Metacognition Routes
+# metamessage routes
 ########################################################
 
 @router.post(
@@ -276,9 +275,6 @@ def create_metamessage(
         HTTPException: If the session is not found
 
     """
-    print("=======================")
-    print(request)
-    print("=======================")
     try:
         return crud.create_metamessage(db, metamessage=metamessage, app_id=app_id, user_id=user_id, session_id=session_id)
     except ValueError:
@@ -336,5 +332,176 @@ def get_metamessage(request: Request, app_id: str, user_id: str, session_id: uui
         raise HTTPException(status_code=404, detail="Session not found")
     return honcho_metamessage
 
+########################################################
+# collection routes
+########################################################
+
+@router.get("/collections/all", response_model=Page[schemas.Collection])
+def get_collections(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    db: Session = Depends(get_db),
+):
+    return paginate(db, crud.get_collections(db, app_id=app_id, user_id=user_id))
+
+@router.get("/collections/id/{collection_id}", response_model=schemas.Collection)
+def get_collection_by_id(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db)
+) -> schemas.Collection:
+    honcho_collection = crud.get_collection_by_id(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    if honcho_collection is None:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+    return honcho_collection
+
+@router.get("/collections/name/{name}", response_model=schemas.Collection)
+def get_collection_by_name(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    name: str,
+    db: Session = Depends(get_db)
+) -> schemas.Collection:
+    honcho_collection = crud.get_collection_by_name(db, app_id=app_id, user_id=user_id, name=name)
+    if honcho_collection is None:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+    return honcho_collection
+
+@router.post("/collections", response_model=schemas.Collection)
+def create_collection(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection: schemas.CollectionCreate,
+    db: Session = Depends(get_db)
+):
+    try:
+        return crud.create_collection(db, collection=collection, app_id=app_id, user_id=user_id)
+    except ValueError:
+        raise HTTPException(status_code=406, detail="Error invalid collection configuration - name may already exist")
+
+@router.put("/collections/{collection_id}", response_model=schemas.Collection)
+def update_collection(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    collection: schemas.CollectionUpdate,
+    db: Session = Depends(get_db)
+):
+    if collection.name is None:
+        raise HTTPException(status_code=400, detail="invalid request - name cannot be None")
+    try:
+        honcho_collection = crud.update_collection(db, collection=collection, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    except ValueError:
+        raise HTTPException(status_code=406, detail="Error invalid collection configuration - name may already exist")
+    return honcho_collection
+
+@router.delete("/collections/{collection_id}")
+def delete_collection(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    response = crud.delete_collection(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    if response:
+        return {"message": "Collection deleted successfully"}
+    else:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+
+########################################################
+# Document routes
+########################################################
+
+@router.get("/collections/{collection_id}/documents", response_model=Page[schemas.Document])
+def get_documents(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    try:
+        return paginate(db, crud.get_documents(db, app_id=app_id, user_id=user_id, collection_id=collection_id))
+    except ValueError: # TODO can probably remove this exception ok to return empty here
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+
+router.get("/collections/{collection_id}/documents/{document_id}", response_model=schemas.Document)
+def get_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    honcho_document = crud.get_document(db, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id)
+    if honcho_document is None:
+        raise HTTPException(status_code=404, detail="document not found or does not belong to user")
+    return honcho_document
+
+
+@router.get("/collections/{collection_id}/query", response_model=Sequence[schemas.Document])
+def query_documents(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    query: str,
+    top_k: int = 5,
+    db: Session = Depends(get_db)
+):
+    if top_k is not None and top_k > 50:
+        top_k = 50 # TODO see if we need to paginate this 
+    return crud.query_documents(db=db, app_id=app_id, user_id=user_id, collection_id=collection_id, query=query, top_k=top_k)
+
+@router.post("/collections/{collection_id}/documents", response_model=schemas.Document)
+def create_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    document: schemas.DocumentCreate,
+    db: Session = Depends(get_db)
+):
+    try:
+        return crud.create_document(db, document=document, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="collection not found or does not belong to user")
+
+@router.put("/collections/{collection_id}/documents/{document_id}", response_model=schemas.Document)
+def update_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    document: schemas.DocumentUpdate,
+    db: Session = Depends(get_db)
+):
+   if document.content is None and document.metadata is None:
+        raise HTTPException(status_code=400, detail="content and metadata cannot both be None")
+   return crud.update_document(db, document=document, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id) 
+
+@router.delete("/collections/{collection_id}/documents/{document_id}")
+def delete_document(
+    request: Request,
+    app_id: str,
+    user_id: str,
+    collection_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    response = crud.delete_document(db, app_id=app_id, user_id=user_id, collection_id=collection_id, document_id=document_id)
+    if response:
+        return {"message": "Document deleted successfully"}
+    else:
+        raise HTTPException(status_code=404, detail="document not found or does not belong to user")
 
 app.include_router(router)

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho"
-version = "0.0.2"
+version = "0.0.3"
 description = "Honcho Server"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
@@ -14,6 +14,8 @@ sqlalchemy = "^2.0.25"
 psycopg2-binary = "^2.9.9"
 slowapi = "^0.1.8"
 fastapi-pagination = "^0.12.14"
+pgvector = "^0.2.5"
+openai = "^1.12.0"
 
 
 [build-system]
