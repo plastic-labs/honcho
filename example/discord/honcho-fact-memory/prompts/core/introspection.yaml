@@ -1,0 +1,10 @@
+_type: prompt
+input_variables:
+    ["chat_history", "user_input"]
+template: >
+    Given the conversation history and user input, use your theory of mind skills to list out questions you'd like to know about the user in order to best respond to them. 
+    
+    Chat history: ```{chat_history}```
+    User input: ```{user_input}```
+    
+    Output the questions as a numbered list.
