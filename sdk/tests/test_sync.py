@@ -1,7 +1,8 @@
+import pytest
 from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, Session, Message, Metamessage, GetDocumentPage, Document
 from honcho import Client as Honcho
 from uuid import uuid1
-import pytest
+
 
 def test_session_creation_retrieval():
     app_id = str(uuid1())
@@ -30,8 +31,8 @@ def test_session_multiple_retrieval():
 
 
 def test_session_update():
-    app_id = str(uuid1())
     user_id = str(uuid1())
+    app_id = str(uuid1())
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.update({"foo": "bar"})
@@ -40,8 +41,8 @@ def test_session_update():
 
 
 def test_session_deletion():
-    app_id = str(uuid1())
     user_id = str(uuid1())
+    app_id = str(uuid1())
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     assert created_session.is_active is True
@@ -53,8 +54,8 @@ def test_session_deletion():
 
 
 def test_messages():
-    app_id = str(uuid1())
     user_id = str(uuid1())
+    app_id = str(uuid1())
     client = Honcho(app_id, "http://localhost:8000")
     created_session = client.create_session(user_id)
     created_session.create_message(is_user=True, content="Hello")
@@ -128,13 +129,13 @@ def test_paginated_sessions_generator():
     gen = client.get_sessions_generator(user_id)
     # print(type(gen))
 
-    item = next(gen)
+    item = gen.__next__()
     assert item.user_id == user_id
     assert isinstance(item, Session)
-    assert next(gen) is not None
-    assert next(gen) is not None
+    assert gen.__next__() is not None
+    assert gen.__next__() is not None
     with pytest.raises(StopIteration):
-        next(gen)
+        gen.__next__()
 
 def test_paginated_out_of_bounds():
     app_id = str(uuid1())
@@ -183,7 +184,6 @@ def test_paginated_messages():
 
     assert next_page is None
 
-
 def test_paginated_messages_generator():
     app_id = str(uuid1())
     user_id = str(uuid1())
@@ -193,17 +193,16 @@ def test_paginated_messages_generator():
     created_session.create_message(is_user=False, content="Hi")
     gen = created_session.get_messages_generator()
 
-    item = next(gen)
+    item = gen.__next__()
     assert isinstance(item, Message)
     assert item.content == "Hello"
     assert item.is_user is True
-    item2 = next(gen)
+    item2 = gen.__next__()
     assert item2 is not None
     assert item2.content == "Hi"
     assert item2.is_user is False
     with pytest.raises(StopIteration):
-        next(gen)
-
+        gen.__next__()
 
 def test_paginated_metamessages():
     app_id = str(uuid1())
@@ -246,16 +245,16 @@ def test_paginated_metamessages_generator():
     created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 2")
     gen = created_session.get_metamessages_generator()
 
-    item = next(gen)
+    item = gen.__next__()
     assert isinstance(item, Metamessage)
     assert item.content == "Test 1"
     assert item.metamessage_type == "thought"
-    item2 = next(gen)
+    item2 = gen.__next__()
     assert item2 is not None
     assert item2.content == "Test 2"
     assert item2.metamessage_type == "thought"
     with pytest.raises(StopIteration):
-        next(gen)
+        gen.__next__()
 
 
 def test_collections():
