@@ -98,13 +98,13 @@ class GetMetamessagePage(GetPage):
         
         Args:
             session (Session): Session the returned messages are associated with
-            options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are message_id and metamessage_type which are both required
+            options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are message_id and metamessage_type which are both optional
             response (Dict): Response from API with pagination information
         """
         super().__init__(response)
         self.session = session
-        self.message_id = options["message_id"]
-        self.metamessage_type = options["metamessage_type"]
+        self.message_id = options["message_id"] if "message_id" in options else None
+        self.metamessage_type = options["metamessage_type"] if "metamessage_type" in options else None
         self.items = [
                 Metamessage(
                     id=metamessage["id"],
@@ -150,7 +150,7 @@ class GetDocumentPage(GetPage):
     def next(self):
         """Get the next page of results
         Returns:
-            GetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
+            GetDocumentPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
@@ -184,7 +184,7 @@ class GetCollectionPage(GetPage):
     def next(self):
         """Get the next page of results
         Returns:
-            GetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
+            GetCollectionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
@@ -309,7 +309,7 @@ class Client:
         )
 
     def create_collection(
-        self, user_id, name: str,
+            self, user_id: str, name: str,
     ):
         """Create a collection for a user
 
@@ -335,7 +335,7 @@ class Client:
         )
 
     def get_collection(self, user_id: str, name: str):
-        """Get a specific collection for a user by ID
+        """Get a specific collection for a user by name
 
         Args:
             user_id (str): The User ID representing the user, managed by the user
@@ -361,7 +361,7 @@ class Client:
         """Return collections associated with a user paginated
 
         Args:
-            user_id (str): The User ID representing the user
+            user_id (str): The User ID representing the user to get the collection for
             page (int, optional): The page of results to return
             page_size (int, optional): The number of results to return
 
@@ -412,7 +412,7 @@ class Session:
         location_id: str,
         metadata: dict,
         is_active: bool,
-        created_at
+        created_at: datetime.datetime
     ):
         """Constructor for Session"""
         self.base_url: str = client.base_url
@@ -433,6 +433,7 @@ class Session:
     def __str__(self):
         """String representation of Session"""
         return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, metadata={self.metadata}, is_active={self.is_active})"
+
 
     @property
     def is_active(self):
@@ -518,7 +519,7 @@ class Session:
 
         Args:
             message (Message): A message to associate the metamessage with
-            metamessage_type (str): The type of the metamessage arbitrary itentifier
+            metamessage_type (str): The type of the metamessage arbitrary identifier
             content (str): The content of the metamessage
 
         Returns:
@@ -608,7 +609,6 @@ class Session:
         Args:
             metadata (Dict): The Session object containing any new metadata
 
-
         Returns:
             boolean: Whether the session was successfully updated
         """
@@ -682,8 +682,8 @@ class Collection:
         """Adds a document to the collection
 
         Args:
-            metadata (Dict): The metadata of the document
             content (str): The content of the document
+            metadata (Dict): The metadata of the document
 
         Returns:
             Document: The Document object of the added document
@@ -764,8 +764,8 @@ class Collection:
     def query(self, query: str, top_k: int = 5) -> List[Document]:
         """query the documents by cosine distance 
         Args:
-            query (str): The query to run
-            top_k (int, optional): The number of results to return. Defaults to 5.
+            query (str): The query string to compare other embeddings too
+            top_k (int, optional): The number of results to return. Defaults to 5 max 50
 
         Returns:
             List[Document]: The response from the query with matching documents
@@ -785,7 +785,7 @@ class Collection:
         ]
         return data
 
-    def update_document(self, document: Document, metadata: Optional[Dict], content: Optional[str]) -> Document:
+    def update_document(self, document: Document, content: Optional[str], metadata: Optional[Dict]) -> Document:
         """Update a document in the collection
 
         Args:

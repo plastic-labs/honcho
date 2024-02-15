@@ -36,3 +36,4 @@ class Document:
 
     def __str__(self) -> str:
         return f"Document(id={self.id}, metadata={self.metadata}, content={self.content}, created_at={self.created_at})"
+

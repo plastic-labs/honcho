@@ -60,7 +60,6 @@ def update_session(
         honcho_session.h_metadata = session.metadata
     db.commit()
     db.refresh(honcho_session)
-    copy = get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
     return honcho_session
 
 def delete_session(db: Session, app_id: str, user_id: str, session_id: uuid.UUID) -> bool:
@@ -384,5 +383,4 @@ def delete_document(db: Session, app_id: str, user_id: str, collection_id: uuid.
     db.delete(document)
     db.commit()
     return True
-
 
