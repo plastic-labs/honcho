@@ -177,76 +177,76 @@ def create_metamessage(
     return honcho_metamessage
 
 ########################################################
-# vector methods
+# collection methods
 ########################################################
 
 # Should be very similar to the session methods
 
-def get_vectors(db: Session, app_id: str, user_id: str) -> Select:
-    """Get a distinct list of the names of vectors associated with a user"""
+def get_collections(db: Session, app_id: str, user_id: str) -> Select:
+    """Get a distinct list of the names of collections associated with a user"""
     stmt = (
-        select(models.VectorCollection)
-        .where(models.VectorCollection.app_id == app_id)
-        .where(models.VectorCollection.user_id == user_id)
-        .order_by(models.VectorCollection.created_at)
+        select(models.Collection)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
+        .order_by(models.Collection.created_at)
     )
     return stmt
 
-def get_vector(db: Session, app_id: str, user_id: str, vector_id: uuid.UUID, name: Optional[str] = None ) -> Optional[models.VectorCollection]:
+def get_collection(db: Session, app_id: str, user_id: str, collection_id: uuid.UUID, name: Optional[str] = None ) -> Optional[models.Collection]:
     stmt = ( 
-        select(models.VectorCollection)
-        .where(models.VectorCollection.app_id == app_id)
-        .where(models.VectorCollection.user_id == user_id)
-        .where(models.VectorCollection.id == vector_id)
+        select(models.Collection)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
+        .where(models.Collection.id == collection_id)
     )
     # TODO determine if indexing by name or id is better 
     if name is not None:
-        stmt = stmt.where(models.VectorCollection.name == name)
+        stmt = stmt.where(models.Collection.name == name)
 
-    vector = db.scalars(stmt).one_or_none()
-    return vector
+    collection = db.scalars(stmt).one_or_none()
+    return collection
 
-def create_vector(
-    db: Session, vector: schemas.VectorCreate, app_id: str, user_id: str
-) -> models.VectorCollection:
-    honcho_vector = models.VectorCollection(
+def create_collection(
+    db: Session, collection: schemas.CollectionCreate, app_id: str, user_id: str
+) -> models.Collection:
+    honcho_collection = models.Collection(
         app_id=app_id,
         user_id=user_id,
-        location_id=vector.name,
+        location_id=collection.name,
     )
-    db.add(honcho_vector)
+    db.add(honcho_collection)
     db.commit()
-    db.refresh(honcho_vector)
-    return honcho_vector
+    db.refresh(honcho_collection)
+    return honcho_collection
 
-def update_vector(
-        db: Session, vector: schemas.VectorUpdate, app_id: str, user_id: str, vector_id: uuid.UUID
-) -> models.VectorCollection:
-    honcho_vector = get_vector(db, app_id=app_id, user_id=user_id, vector_id=vector_id)
-    if honcho_vector is None:
-        raise ValueError("vector not found or does not belong to user")
-    honcho_vector.name = vector.name
+def update_collection(
+        db: Session, collection: schemas.CollectionUpdate, app_id: str, user_id: str, collection_id: uuid.UUID
+) -> models.Collection:
+    honcho_collection = get_collection(db, app_id=app_id, user_id=user_id, collection_id=collection_id)
+    if honcho_collection is None:
+        raise ValueError("collection not found or does not belong to user")
+    honcho_collection.name = collection.name
     db.commit()
-    db.refresh(honcho_vector)
-    return honcho_vector
+    db.refresh(honcho_collection)
+    return honcho_collection
 
-def delete_vector(
-    db: Session, app_id: str, user_id: str, vector_id: uuid.UUID
+def delete_collection(
+    db: Session, app_id: str, user_id: str, collection_id: uuid.UUID
 ) -> bool:
     """
-    Delete a Vector Collection and all documents associated with it. Takes advantage of
+    Delete a Collection and all documents associated with it. Takes advantage of
     the orm cascade feature
     """
     stmt = (
-        select(models.VectorCollection)
-        .where(models.VectorCollection.id == vector_id)
-        .where(models.VectorCollection.app_id == app_id)
-        .where(models.VectorCollection.user_id == user_id)
+        select(models.Collection)
+        .where(models.Collection.id == collection_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
     )
-    honcho_vector = db.scalars(stmt).one_or_none()
-    if honcho_vector is None:
+    honcho_collection = db.scalars(stmt).one_or_none()
+    if honcho_collection is None:
         return False
-    db.delete(honcho_vector)
+    db.delete(honcho_collection)
     db.commit()
     return True
 
@@ -257,35 +257,35 @@ def delete_vector(
 # Should be similar to the messages methods outside of query
 
 def get_documents(
-    db: Session, app_id: str, user_id: str, vector_id: uuid.UUID
+    db: Session, app_id: str, user_id: str, collection_id: uuid.UUID
 ) -> Select:
     stmt = (
         select(models.Document)
-        .join(models.VectorCollection, models.VectorCollection.id == models.Document.vector_id)
-        .where(models.VectorCollection.app_id == app_id)
-        .where(models.VectorCollection.user_id == user_id)
-        .where(models.Document.vector_id == vector_id)
+        .join(models.Collection, models.Collection.id == models.Document.collection_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
+        .where(models.Document.collection_id == collection_id)
         .order_by(models.Document.created_at)
     )
     return stmt
 
 def get_document(
-        db: Session, app_id: str, user_id: str, vector_id: uuid.UUID, document_id: uuid.UUID 
+        db: Session, app_id: str, user_id: str, collection_id: uuid.UUID, document_id: uuid.UUID 
 ) -> Optional[models.Document]:
     stmt = ( 
         select(models.Document)
-        .join(models.VectorCollection, models.VectorCollection.id == models.Document.vector_id)
-        .where(models.VectorCollection.app_id == app_id)
-        .where(models.VectorCollection.user_id == user_id)
-        .where(models.Document.vector_id == vector_id)
+        .join(models.Collection, models.Collection.id == models.Document.collection_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
+        .where(models.Document.collection_id == collection_id)
         .where(models.Document.id == document_id)
     )
 
-    vector = db.scalars(stmt).one_or_none()
-    return vector
+    document = db.scalars(stmt).one_or_none()
+    return document
 
 
-def query_documents(db: Session, app_id: str, user_id: str, vector_id: uuid.UUID, query: str, top_k: int = 5) -> Sequence[models.Document]:
+def query_documents(db: Session, app_id: str, user_id: str, collection_id: uuid.UUID, query: str, top_k: int = 5) -> Sequence[models.Document]:
     response = openai_client.embeddings.create(
         input=query,
         model="text-embedding-3-small"
@@ -293,10 +293,10 @@ def query_documents(db: Session, app_id: str, user_id: str, vector_id: uuid.UUID
     embedding_query = response.data[0].embedding
     stmt = (
             select(models.Document)
-            .join(models.VectorCollection, models.VectorCollection.id == models.Document.vector_id)
-            .where(models.VectorCollection.app_id == app_id)
-            .where(models.VectorCollection.user_id == user_id)
-            .where(models.Document.vector_id == vector_id)
+            .join(models.Collection, models.Collection.id == models.Document.collection_id)
+            .where(models.Collection.app_id == app_id)
+            .where(models.Collection.user_id == user_id)
+            .where(models.Document.collection_id == collection_id)
             .order_by(models.Document.cosine_distance(embedding_query))
             .limit(top_k)
             )
@@ -305,11 +305,11 @@ def query_documents(db: Session, app_id: str, user_id: str, vector_id: uuid.UUID
     return db.scalars(stmt).all()
 
 def create_document(
-        db: Session, document: schemas.DocumentCreate, app_id: str, user_id: str, vector_id: uuid.UUID
+        db: Session, document: schemas.DocumentCreate, app_id: str, user_id: str, collection_id: uuid.UUID
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
-    vector = get_vector(db, app_id=app_id, vector_id=vector_id, user_id=user_id)
-    if vector is None:
+    collection = get_collection(db, app_id=app_id, collection_id=collection_id, user_id=user_id)
+    if collection is None:
         raise ValueError("Session not found or does not belong to user")
 
     response = openai_client.embeddings.create(
@@ -320,7 +320,7 @@ def create_document(
     embedding = response.data[0].embedding
 
     honcho_document = models.Document(
-        vector_id=vector_id,
+        collection_id=collection_id,
         content=document.content,
         h_metadata=document.metadata,
         embedding=embedding
@@ -331,9 +331,9 @@ def create_document(
     return honcho_document
 
 def update_document(
-        db: Session, document: schemas.DocumentUpdate, app_id: str, user_id: str, vector_id: uuid.UUID, document_id: uuid.UUID
+        db: Session, document: schemas.DocumentUpdate, app_id: str, user_id: str, collection_id: uuid.UUID, document_id: uuid.UUID
 ) -> bool:
-    honcho_document = get_document(db, app_id=app_id, vector_id=vector_id, user_id=user_id, document_id=document_id)
+    honcho_document = get_document(db, app_id=app_id, collection_id=collection_id, user_id=user_id, document_id=document_id)
     if honcho_document is None:
         raise ValueError("Session not found or does not belong to user")
     if document.content is not None:
@@ -352,12 +352,12 @@ def update_document(
     db.refresh(honcho_document)
     return honcho_document
 
-def delete_document(db: Session, app_id: str, user_id: str, vector_id: uuid.UUID, document_id: uuid.UUID) -> bool:
+def delete_document(db: Session, app_id: str, user_id: str, collection_id: uuid.UUID, document_id: uuid.UUID) -> bool:
     stmt = (
         select(models.Document)
         .where(models.Document.app_id == app_id)
         .where(models.Document.user_id == user_id)
-        .where(models.Document.vector_id == vector_id)
+        .where(models.Document.collection_id == collection_id)
         .where(models.Document.id == document_id)
     )
     document = db.scalars(stmt).one_or_none()
