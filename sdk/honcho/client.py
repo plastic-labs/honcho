@@ -98,13 +98,13 @@ class AsyncGetMetamessagePage(AsyncGetPage):
         
         Args:
             session (AsyncSession): Session the returned messages are associated with
-            options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are message_id and metamessage_type which are both required
+            options (Dict): Options for the request used mainly for next() to filter queries. The two parameters available are message_id and metamessage_type which are both optional
             response (Dict): Response from API with pagination information
         """
         super().__init__(response)
         self.session = session
-        self.message_id = options["message_id"]
-        self.metamessage_type = options["metamessage_type"]
+        self.message_id = options["message_id"] if "message_id" in options else None
+        self.metamessage_type = options["metamessage_type"] if "metamessage_type" in options else None
         self.items = [
                 Metamessage(
                     id=metamessage["id"],
@@ -150,7 +150,7 @@ class AsyncGetDocumentPage(AsyncGetPage):
     async def next(self):
         """Get the next page of results
         Returns:
-            AsyncGetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
+            AsyncGetDocumentPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
@@ -184,7 +184,7 @@ class AsyncGetCollectionPage(AsyncGetPage):
     async def next(self):
         """Get the next page of results
         Returns:
-            AsyncGetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
+            AsyncGetCollectionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
@@ -309,7 +309,7 @@ class AsyncClient:
         )
 
     async def create_collection(
-        self, user_id, name: str,
+            self, user_id: str, name: str,
     ):
         """Create a collection for a user
 
@@ -335,7 +335,7 @@ class AsyncClient:
         )
 
     async def get_collection(self, user_id: str, name: str):
-        """Get a specific collection for a user by ID
+        """Get a specific collection for a user by name
 
         Args:
             user_id (str): The User ID representing the user, managed by the user
@@ -361,7 +361,7 @@ class AsyncClient:
         """Return collections associated with a user paginated
 
         Args:
-            user_id (str): The User ID representing the user
+            user_id (str): The User ID representing the user to get the collection for
             page (int, optional): The page of results to return
             page_size (int, optional): The number of results to return
 
@@ -412,7 +412,7 @@ class AsyncSession:
         location_id: str,
         metadata: dict,
         is_active: bool,
-        created_at
+        created_at: datetime.datetime
     ):
         """Constructor for Session"""
         self.base_url: str = client.base_url
@@ -518,7 +518,7 @@ class AsyncSession:
 
         Args:
             message (Message): A message to associate the metamessage with
-            metamessage_type (str): The type of the metamessage arbitrary itentifier
+            metamessage_type (str): The type of the metamessage arbitrary identifier
             content (str): The content of the metamessage
 
         Returns:
@@ -678,12 +678,12 @@ class AsyncCollection:
         response = await self.client.delete(url)
         response.raise_for_status()
 
-    async def create_document(self, metadata: Dict, content: str):
+    async def create_document(self, content: str, metadata: Dict = {}):
         """Adds a document to the collection
 
         Args:
-            metadata (Dict): The metadata of the document
             content (str): The content of the document
+            metadata (Dict): The metadata of the document
 
         Returns:
             Document: The Document object of the added document
@@ -764,8 +764,8 @@ class AsyncCollection:
     async def query(self, query: str, top_k: int = 5) -> List[Document]:
         """query the documents by cosine distance 
         Args:
-            query (str): The query to run
-            top_k (int, optional): The number of results to return. Defaults to 5.
+            query (str): The query string to compare other embeddings too
+            top_k (int, optional): The number of results to return. Defaults to 5 max 50
 
         Returns:
             List[Document]: The response from the query with matching documents
@@ -785,7 +785,7 @@ class AsyncCollection:
         ]
         return data
 
-    async def update_document(self, document: Document, metadata: Optional[Dict], content: Optional[str]) -> Document:
+    async def update_document(self, document: Document, content: Optional[str], metadata: Optional[Dict]) -> Document:
         """Update a document in the collection
 
         Args:

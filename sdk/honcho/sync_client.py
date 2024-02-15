@@ -678,7 +678,7 @@ class Collection:
         response = self.client.delete(url)
         response.raise_for_status()
 
-    def create_document(self, metadata: Dict, content: str):
+    def create_document(self, content: str, metadata: Dict = {}):
         """Adds a document to the collection
 
         Args:
