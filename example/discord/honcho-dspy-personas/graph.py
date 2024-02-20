@@ -4,6 +4,7 @@ from typing import List
 from dspy.teleprompt import BootstrapFewShot
 from dotenv import load_dotenv
 from chain import StateExtractor, format_chat_history
+from response_metric import metric
 
 from honcho import Message, Session
 
@@ -47,37 +48,39 @@ class ChatWithThought(dspy.Module):
     
 user_state_storage = {}
 async def chat(user_message: Message, session: Session, chat_history: List[Message], input: str, optimization_threshold=5):
-    # first we need to take the user input and determine the user's state/dimension/persona
-    is_state_new, user_state = await StateExtractor.generate_state(chat_history, input)
+    # first we need to see if the user has any existing states
+    existing_states = list(user_state_storage.keys())
+    
+    # then we need to take the user input and determine the user's state/dimension/persona
+    is_state_new, user_state = await StateExtractor.generate_state(existing_states=existing_states, chat_history=chat_history, input=input)
+    print(f"USER STATE: {user_state}")
+    print(f"IS STATE NEW: {is_state_new}")
+
+    user_chat_module = ChatWithThought()
 
     # Save the user_state if it's new
     if is_state_new:
         user_state_storage[user_state] = {
-            "chat_module": ChatWithThought(),
+            "chat_module": {},
             "examples": []
         }
 
-    # then, we need to select the pipeline for that derived state/dimension/persona
-        # way this would work is to define the optimizer and optimize a chain once examples in a certain dimension exceed a threshold
-        # need a way to store the optimized chain and call it given a state/dimension/persona
-        # this is the reward model for a user within a state/dimension/persona
     user_state_data = user_state_storage[user_state]
 
     # Optimize the state's chat module if we've reached the optimization threshold
     examples = user_state_data["examples"]
     if len(examples) >= optimization_threshold:
-        metric = None # TODO: Define this
-
         # Optimize chat module
         optimizer = BootstrapFewShot(metric=metric)
-        compiled_chat_module = optimizer.compile(trainset=examples)
+        compiled_chat_module = optimizer.compile(user_chat_module, trainset=examples)
 
-        user_state_data["chat_module"] = compiled_chat_module
+        user_state_data["chat_module"] = compiled_chat_module.dump_state()
+        user_chat_module = compiled_chat_module
+
 
     # use that pipeline to generate a response
-    chat_module = user_state_data["chat_module"]
     chat_input = format_chat_history(chat_history, user_input=input)
 
-    response = chat_module(user_message=user_message, session=session, input=chat_input)
+    response = user_chat_module(user_message=user_message, session=session, chat_input=chat_input)
 
     return response
