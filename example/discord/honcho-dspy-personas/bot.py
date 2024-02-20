@@ -2,15 +2,16 @@ import os
 from uuid import uuid1
 import discord
 from honcho import Client as HonchoClient
-from graph import langchain_message_converter, chat
-
+from graph import chat
+from chain import langchain_message_converter
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.members = True
 
-app_id = "vince/dspy-personas"
+# app_id = str(uuid1())
+app_id = "vince-dspy-personas"
 
 #honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
 honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
@@ -49,7 +50,7 @@ async def on_message(message):
     else:
         session = honcho.create_session(user_id, location_id)
 
-    history = list(session.get_messages(page_size=10))
+    history = list(session.get_messages_generator())
     chat_history = langchain_message_converter(history)
 
     inp = message.content

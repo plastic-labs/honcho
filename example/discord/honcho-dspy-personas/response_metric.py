@@ -10,7 +10,8 @@ class MessageResponseAssess(dspy.Signature):
     assessment_answer = dspy.OutputField(desc="Good or not")
 
 
-def assess_response_quality(user_message, ai_response, assessment_dimension):
+def metric(user_message, ai_response, assessment_dimension):
+    """Assess the quality of a response along the specified dimension."""
     with dspy.context(lm=gpt4T):
         assessment_result = dspy.Predict(MessageResponseAssess)(
             user_message=user_message, 
