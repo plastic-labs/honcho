@@ -36,9 +36,9 @@ class StateExtractor:
     """Wrapper class for all the DSPy and LangChain code for user state labeling and pipeline optimization"""
     lc_gpt_4: ChatOpenAI = ChatOpenAI(model_name = "gpt-4")
     lc_gpt_turbo: ChatOpenAI = ChatOpenAI(model_name = "gpt-3.5-turbo")
-    system_state_commentary: SystemMessagePromptTemplate = SystemMessagePromptTemplate(SYSTEM_STATE_COMMENTARY)
-    system_state_labeling: SystemMessagePromptTemplate = SystemMessagePromptTemplate(SYSTEM_STATE_LABELING)
-    system_state_check: SystemMessagePromptTemplate = SystemMessagePromptTemplate(SYSTEM_STATE_CHECK)
+    system_state_commentary: SystemMessagePromptTemplate = SystemMessagePromptTemplate(prompt=SYSTEM_STATE_COMMENTARY)
+    system_state_labeling: SystemMessagePromptTemplate = SystemMessagePromptTemplate(prompt=SYSTEM_STATE_LABELING)
+    system_state_check: SystemMessagePromptTemplate = SystemMessagePromptTemplate(prompt=SYSTEM_STATE_CHECK)
 
     def __init__(self) -> None:
         pass
@@ -61,7 +61,7 @@ class StateExtractor:
         return response.content
     
     @classmethod
-    async def generate_state_label(cls, state_commetary: str) -> str:
+    async def generate_state_label(cls, state_commentary: str) -> str:
         """Generate a state label from a commetary on the user's state"""
         # format prompt
         state_labeling = ChatPromptTemplate.from_messages([
@@ -71,7 +71,7 @@ class StateExtractor:
         chain = state_labeling | cls.lc_gpt_4
         # inference
         response = await chain.ainvoke({
-            "state_commetary": state_commetary
+            "state_commentary": state_commentary
         })
         # return output
         return response.content
@@ -95,20 +95,24 @@ class StateExtractor:
             "state": state,
         })
         # return output
-        return response.output
+        return response.content
 
     @classmethod
     async def generate_state(cls, existing_states: List[str], chat_history: List[Message], input: str):
         """"Determine the user's state from the current conversation state"""
 
         # Generate label
-        state_commetary = cls.generate_state_commentary(chat_history, input)
-        state_label = cls.generate_state_label(state_commetary)
+        state_commentary = await cls.generate_state_commentary(chat_history, input)
+        state_label = await cls.generate_state_label(state_commentary)
 
         # Determine if state is new
-        existing_state = cls.check_state_exists(existing_states, state_label)
-        is_state_new = existing_state is None
+        # if True, it doesn't exist, state is new
+        # if False, it does exist, state is not new, existing_state was returned
+        existing_state = await cls.check_state_exists(existing_states, state_label)
+        is_state_new = existing_state == "None"  
 
         # return existing state if we found one
-        return is_state_new, existing_state or state_label 
-    
+        if is_state_new:
+            return is_state_new, state_label
+        else:
+            return is_state_new, existing_state

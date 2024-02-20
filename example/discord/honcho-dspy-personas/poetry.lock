@@ -814,19 +814,19 @@ files = [
 
 [[package]]
 name = "langchain-core"
-version = "0.1.23"
+version = "0.1.24"
 description = "Building applications with LLMs through composability"
 optional = false
 python-versions = ">=3.8.1,<4.0"
 files = [
-    {file = "langchain_core-0.1.23-py3-none-any.whl", hash = "sha256:d42fac013c39a8b0bcd7e337a4cb6c17c16046c60d768f89df582ad73ec3c5cb"},
-    {file = "langchain_core-0.1.23.tar.gz", hash = "sha256:34359cc8b6f8c3d45098c54a6a9b35c9f538ef58329cd943a2249d6d7b4e5806"},
+    {file = "langchain_core-0.1.24-py3-none-any.whl", hash = "sha256:1887bb2e0c12e0d94c1e805eb56d08dbb670232daf0906761f726bd507324319"},
+    {file = "langchain_core-0.1.24.tar.gz", hash = "sha256:ce70f4b97695eb55637e00ee33d480fffc6db1f95726f99b076b55cb1a42927d"},
 ]
 
 [package.dependencies]
 anyio = ">=3,<5"
 jsonpatch = ">=1.33,<2.0"
-langsmith = ">=0.0.87,<0.0.88"
+langsmith = ">=0.1.0,<0.2.0"
 packaging = ">=23.2,<24.0"
 pydantic = ">=1,<3"
 PyYAML = ">=5.3"
@@ -855,13 +855,13 @@ tiktoken = ">=0.5.2,<1"
 
 [[package]]
 name = "langsmith"
-version = "0.0.87"
+version = "0.1.3"
 description = "Client library to connect to the LangSmith LLM Tracing and Evaluation Platform."
 optional = false
 python-versions = ">=3.8.1,<4.0"
 files = [
-    {file = "langsmith-0.0.87-py3-none-any.whl", hash = "sha256:8903d3811b9fc89eb18f5961c8e6935fbd2d0f119884fbf30dc70b8f8f4121fc"},
-    {file = "langsmith-0.0.87.tar.gz", hash = "sha256:36c4cc47e5b54be57d038036a30fb19ce6e4c73048cd7a464b8f25b459694d34"},
+    {file = "langsmith-0.1.3-py3-none-any.whl", hash = "sha256:b290f951d1ebff9abe2b52cc09d63acea75a9ca6e003a617310fb024eaf00f63"},
+    {file = "langsmith-0.1.3.tar.gz", hash = "sha256:197bd1f5baa83db69a0eab644bab1eba8dcdf0c2d8b7c900a45916f7b3dd50ab"},
 ]
 
 [package.dependencies]
@@ -2188,4 +2188,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "86f366fc87ad2958cf4b80fc161a0c5eb374c34119d938c78821ad2fabdb2e72"
+content-hash = "85bddbf515ca00359d2b25db6dc48e2943a136e3b65a9ed8a9537ad79bfd4eec"
