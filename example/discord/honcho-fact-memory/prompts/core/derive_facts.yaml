@@ -1,0 +1,10 @@
+_type: prompt
+input_variables:
+    ["chat_history", "user_input"]
+template: >
+    You are tasked with deriving discrete facts about the user based on their input. The goal is to only extract absolute facts from the message, do not make inferences beyond the text provided.
+
+    chat history: ```{chat_history}```
+    user input: ```{user_input}```
+
+    Output the facts as a numbered list.

@@ -1,0 +1,6 @@
+_type: prompt
+input_variables:
+    ["facts"]
+template: >
+    You are a helpful assistant. Craft a useful response based on the context provided in the conversation history and the facts we know about the user:
+    ```{facts}```
