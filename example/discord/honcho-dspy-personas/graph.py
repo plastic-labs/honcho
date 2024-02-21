@@ -34,15 +34,12 @@ class ChatWithThought(dspy.Module):
     generate_response = dspy.Predict(Response)
 
     def forward(self, user_message: Message, session: Session, chat_input: str):
-        session.create_message(is_user=True, content=chat_input)
-
         # call the thought predictor
         thought = self.generate_thought(user_input=chat_input)
         session.create_metamessage(user_message, metamessage_type="thought", content=thought.thought)
 
         # call the response predictor
         response = self.generate_response(user_input=chat_input, thought=thought.thought)
-        session.create_message(is_user=False, content=response.response)
 
         return response.response
     
