@@ -50,7 +50,7 @@ async def on_message(message):
     else:
         session = honcho.create_session(user_id, location_id)
 
-    history = list(session.get_messages_generator())
+    history = list(session.get_messages_generator())[:5]
     chat_history = langchain_message_converter(history)
 
     inp = message.content
