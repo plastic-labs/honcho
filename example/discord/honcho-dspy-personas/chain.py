@@ -54,7 +54,7 @@ class StateExtractor:
         chain = state_commentary | cls.lc_gpt_4
         # inference
         response = await chain.ainvoke({
-            "chat_history": format_chat_history(chat_history, user_input=input),
+            "chat_history": chat_history,
             "user_input": input
         })
         # return output
