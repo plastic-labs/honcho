@@ -295,7 +295,24 @@ class AsyncHoncho:
     @property
     def base_url(self):
         """Shorcut for common API prefix. made a property to prevent tampering"""
-        return f"{self.server_url}/apps/{self.app_id}/users"
+        return f"{self.server_url}/apps/{self.app_id}"
+
+    async def update(self, metadata: dict):
+        """Update the metadata of the app associated with this instance of the Honcho
+        client
+
+        Args:
+            metadata (dict): The metadata to update
+
+        Returns:
+            boolean: Whether the metadata was successfully updated
+        """
+        data = {"metadata": metadata}
+        url = f"{self.base_url}"
+        response = await self.client.put(url, json=data)
+        success = response.status_code < 400
+        self.metadata = metadata
+        return success
 
     async def create_user(self, name: str, metadata: Optional[dict] = None):
         """Create a new user by name
@@ -309,7 +326,7 @@ class AsyncHoncho:
         """
         if metadata is None:
             metadata = {}
-        url = f"{self.base_url}"
+        url = f"{self.base_url}/users"
         response = await self.client.post(
             url, json={"name": name, "metadata": metadata}
         )
@@ -331,7 +348,7 @@ class AsyncHoncho:
         Returns:
             AsyncUser: The User object
         """
-        url = f"{self.base_url}/{name}"
+        url = f"{self.base_url}/users/{name}"
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
@@ -351,7 +368,7 @@ class AsyncHoncho:
         Returns:
             AsyncUser: The User object
         """
-        url = f"{self.base_url}/get_or_create/{name}"
+        url = f"{self.base_url}/users/get_or_create/{name}"
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
@@ -370,7 +387,7 @@ class AsyncHoncho:
         Returns:
             AsyncGetUserPage: Paginated list of users
         """
-        url = f"{self.base_url}?page={page}&size={page_size}&reverse={reverse}"
+        url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
@@ -439,13 +456,13 @@ class AsyncUser:
     @property
     def base_url(self):
         """Shortcut for common API prefix. made a property to prevent tampering"""
-        return f"{self.honcho.base_url}/{self.id}"
+        return f"{self.honcho.base_url}/users/{self.id}"
 
     def __str__(self):
         """String representation of User"""
         return f"AsyncUser(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
 
-    async def update_user(self, metadata: dict):
+    async def update(self, metadata: dict):
         """Updates a user's metadata
 
         Args:

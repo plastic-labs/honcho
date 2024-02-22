@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.4] — 2024-02-22
+
+### Added
+
+* A User object for global user level metadat and more object oriented interface
+* Reverse Pagination support to get recent messages, sessions, etc. more easily
+* Linting Rules
+
+### Changed
+
+* Get sessions method returns all sessions including inactive
+* using timestampz instead of timestamp 
+* `Client` renamed to `Honcho`
+* `Honcho` takes in `app_name` instead of `app_id`. `app_name` needs to be a
+  unique identifier
+* `Honcho` object requires an `initialize()` call to be used
+
 
 ## [0.0.3] — 2024-02-15
 
