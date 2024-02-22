@@ -545,6 +545,7 @@ class AsyncUser:
         self,
         location_id: Optional[str] = None,
         reverse: bool = False,
+        is_active: bool = False,
     ):
         """Shortcut Generator for get_sessions. Generator to iterate through
         all sessions for a user in an app
@@ -560,7 +561,7 @@ class AsyncUser:
         page = 1
         page_size = 50
         get_session_response = await self.get_sessions(
-            location_id, page, page_size, reverse
+            location_id, page, page_size, reverse, is_active
         )
         while True:
             for session in get_session_response.items:
