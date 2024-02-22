@@ -1,12 +1,11 @@
-import uuid
 import datetime
+import uuid
 from typing import Optional, Sequence
 
 from openai import OpenAI
-
-from sqlalchemy import select, Select
-from sqlalchemy.orm import Session
+from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 from . import models, schemas
 
@@ -18,18 +17,13 @@ openai_client = OpenAI()
 
 
 def get_app(db: Session, app_id: uuid.UUID) -> Optional[models.App]:
-    stmt = (
-        select(models.App)
-        .where(models.App.id == app_id)
-    )
+    stmt = select(models.App).where(models.App.id == app_id)
     app = db.scalars(stmt).one_or_none()
     return app
 
+
 def get_app_by_name(db: Session, app_name: str) -> Optional[models.App]:
-    stmt = (
-        select(models.App)
-        .where(models.App.name == app_name)
-    )
+    stmt = select(models.App).where(models.App.name == app_name)
     app = db.scalars(stmt).one_or_none()
     return app
 
@@ -37,15 +31,14 @@ def get_app_by_name(db: Session, app_name: str) -> Optional[models.App]:
 # def get_apps(db: Session) -> Sequence[models.App]:
 #     return db.query(models.App).all()
 
+
 def create_app(db: Session, app: schemas.AppCreate) -> models.App:
-    honcho_app = models.App(
-        name=app.name,
-        h_metadata=app.metadata
-    )
+    honcho_app = models.App(name=app.name, h_metadata=app.metadata)
     db.add(honcho_app)
     db.commit()
     db.refresh(honcho_app)
     return honcho_app
+
 
 def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models.App:
     honcho_app = get_app(db, app_id)
@@ -60,6 +53,7 @@ def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models
     db.refresh(honcho_app)
     return honcho_app
 
+
 # def delete_app(db: Session, app_id: uuid.UUID) -> bool:
 #     existing_app = get_app(db, app_id)
 #     if existing_app is None:
@@ -73,7 +67,10 @@ def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models
 # user methods
 ########################################################
 
-def create_user(db: Session, app_id: uuid.UUID, user: schemas.UserCreate) -> models.User:
+
+def create_user(
+    db: Session, app_id: uuid.UUID, user: schemas.UserCreate
+) -> models.User:
     honcho_user = models.User(
         app_id=app_id,
         name=user.name,
@@ -84,24 +81,44 @@ def create_user(db: Session, app_id: uuid.UUID, user: schemas.UserCreate) -> mod
     db.refresh(honcho_user)
     return honcho_user
 
-def get_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID) -> Optional[models.User]:
+
+def get_user(
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID
+) -> Optional[models.User]:
     stmt = (
         select(models.User)
         .where(models.User.app_id == app_id)
         .where(models.User.id == user_id)
-
     )
     user = db.scalars(stmt).one_or_none()
     return user
 
-def get_users(db: Session, app_id: uuid.UUID) -> Select:
+
+def get_user_by_name(
+    db: Session, app_id: uuid.UUID, name: str
+) -> Optional[models.User]:
     stmt = (
         select(models.User)
         .where(models.User.app_id == app_id)
+        .where(models.User.name == name)
     )
+    user = db.scalars(stmt).one_or_none()
+    return user
+
+
+def get_users(db: Session, app_id: uuid.UUID, reverse: bool = False) -> Select:
+    stmt = select(models.User).where(models.User.app_id == app_id)
+    if reverse:
+        stmt = stmt.order_by(models.User.created_at.desc())
+    else:
+        stmt = stmt.order_by(models.User.created_at)
+
     return stmt
 
-def update_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID, user: schemas.UserUpdate) -> models.User:
+
+def update_user(
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, user: schemas.UserUpdate
+) -> models.User:
     honcho_user = get_user(db, app_id, user_id)
     if honcho_user is None:
         raise ValueError("User not found")
@@ -113,6 +130,7 @@ def update_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID, user: schema
     db.commit()
     db.refresh(honcho_user)
     return honcho_user
+
 
 # def delete_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID) -> bool:
 #     existing_user = get_user(db, app_id, user_id)
@@ -126,8 +144,12 @@ def update_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID, user: schema
 # session methods
 ########################################################
 
+
 def get_session(
-    db: Session, app_id: uuid.UUID, session_id: uuid.UUID, user_id: Optional[uuid.UUID] = None
+    db: Session,
+    app_id: uuid.UUID,
+    session_id: uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
 ) -> Optional[models.Session]:
     stmt = (
         select(models.Session)
@@ -139,6 +161,7 @@ def get_session(
         stmt = stmt.where(models.Session.user_id == user_id)
     session = db.scalars(stmt).one_or_none()
     return session
+
 
 def get_sessions(
     db: Session,
@@ -152,7 +175,7 @@ def get_sessions(
         .join(models.User, models.User.id == models.Session.user_id)
         .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
-#        .where(models.Session.is_active.is_(True))
+        #        .where(models.Session.is_active.is_(True))
     )
 
     if reverse:
@@ -192,7 +215,9 @@ def update_session(
     )
     if honcho_session is None:
         raise ValueError("Session not found or does not belong to user")
-    if session.metadata is not None:  # Need to explicitly be there won't make it empty by default
+    if (
+        session.metadata is not None
+    ):  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
     db.commit()
     db.refresh(honcho_session)
@@ -216,9 +241,11 @@ def delete_session(
     db.commit()
     return True
 
+
 ########################################################
 # Message Methods
 ########################################################
+
 
 def create_message(
     db: Session,
@@ -270,7 +297,11 @@ def get_messages(
 
 
 def get_message(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID, message_id: uuid.UUID
+    db: Session,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
@@ -284,9 +315,11 @@ def get_message(
     )
     return db.scalars(stmt).one_or_none()
 
+
 ########################################################
 # metamessage methods
 ########################################################
+
 
 def create_metamessage(
     db: Session,
@@ -315,6 +348,7 @@ def create_metamessage(
     db.commit()
     db.refresh(honcho_metamessage)
     return honcho_metamessage
+
 
 def get_metamessages(
     db: Session,
@@ -428,7 +462,10 @@ def get_collection_by_name(
 
 
 def create_collection(
-    db: Session, collection: schemas.CollectionCreate, app_id: uuid.UUID, user_id: uuid.UUID
+    db: Session,
+    collection: schemas.CollectionCreate,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
 ) -> models.Collection:
     honcho_collection = models.Collection(
         user_id=user_id,

@@ -1,15 +1,28 @@
-import pytest
-from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, GetDocumentPage, Session, Message, Metamessage, Document
-from honcho import Client as Honcho
 from uuid import uuid1
+
+import pytest
+
+from honcho import (
+    GetDocumentPage,
+    GetMessagePage,
+    GetMetamessagePage,
+    GetSessionPage,
+    Session,
+    Document,
+    Message,
+    Metamessage,
+)
+from honcho import Honcho as Honcho
 
 
 def test_session_creation_retrieval():
-    app_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    user_id = str(uuid1())
-    created_session = client.create_session(user_id)
-    retrieved_session = client.get_session(user_id, created_session.id)
+    app_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user_name = str(uuid1())
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
+    retrieved_session = user.get_session(created_session.id)
     assert retrieved_session.id == created_session.id
     assert retrieved_session.is_active is True
     assert retrieved_session.location_id == "default"
@@ -17,12 +30,14 @@ def test_session_creation_retrieval():
 
 
 def test_session_multiple_retrieval():
-    app_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    user_id = str(uuid1())
-    created_session_1 = client.create_session(user_id)
-    created_session_2 = client.create_session(user_id)
-    response = client.get_sessions(user_id)
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session_1 = user.create_session()
+    created_session_2 = user.create_session()
+    response = user.get_sessions()
     retrieved_sessions = response.items
 
     assert len(retrieved_sessions) == 2
@@ -31,36 +46,42 @@ def test_session_multiple_retrieval():
 
 
 def test_session_update():
-    user_id = str(uuid1())
-    app_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    user_name = str(uuid1())
+    app_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     assert created_session.update({"foo": "bar"})
-    retrieved_session = client.get_session(user_id, created_session.id)
+    retrieved_session = user.get_session(created_session.id)
     assert retrieved_session.metadata == {"foo": "bar"}
 
 
 def test_session_deletion():
-    user_id = str(uuid1())
-    app_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    user_name = str(uuid1())
+    app_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     assert created_session.is_active is True
     created_session.close()
     assert created_session.is_active is False
-    retrieved_session = client.get_session(user_id, created_session.id)
+    retrieved_session = user.get_session(created_session.id)
     assert retrieved_session.is_active is False
     assert retrieved_session.id == created_session.id
 
 
 def test_messages():
-    user_id = str(uuid1())
-    app_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    user_name = str(uuid1())
+    app_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     created_session.create_message(is_user=True, content="Hello")
     created_session.create_message(is_user=False, content="Hi")
-    retrieved_session = client.get_session(user_id, created_session.id)
+    retrieved_session = user.get_session(created_session.id)
     response = retrieved_session.get_messages()
     messages = response.items
     assert len(messages) == 2
@@ -70,39 +91,49 @@ def test_messages():
     assert ai_message.content == "Hi"
     assert ai_message.is_user is False
 
+
 def test_rate_limit():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     with pytest.raises(Exception):
         for _ in range(105):
             created_session.create_message(is_user=True, content="Hello")
             created_session.create_message(is_user=False, content="Hi")
 
-def test_app_id_security():
-    app_id_1 = str(uuid1())
-    app_id_2 = str(uuid1())
-    user_id = str(uuid1())
-    client_1 = Honcho(app_id_1, "http://localhost:8000")
-    client_2 = Honcho(app_id_2, "http://localhost:8000")
-    created_session = client_1.create_session(user_id)
+
+def test_app_name_security():
+    app_name_1 = str(uuid1())
+    app_name_2 = str(uuid1())
+    user_name = str(uuid1())
+    honcho_1 = Honcho(app_name_1, "http://localhost:8000")
+    honcho_1.initialize()
+    honcho_2 = Honcho(app_name_2, "http://localhost:8000")
+    honcho_2.initialize()
+    user_1 = honcho_1.create_user(user_name)
+    user_2 = honcho_2.create_user(user_name)
+    created_session = user_1.create_session()
     created_session.create_message(is_user=True, content="Hello")
     created_session.create_message(is_user=False, content="Hi")
     with pytest.raises(Exception):
-        client_2.get_session(user_id, created_session.id)
+        user_2.get_session(created_session.id)
 
 
 def test_paginated_sessions():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
     for i in range(10):
-        client.create_session(user_id)
-    
+        user.create_session()
+
     page = 1
     page_size = 2
-    get_session_response = client.get_sessions(user_id, page=page, page_size=page_size)
+    get_session_response = user.get_sessions(page=page, page_size=page_size)
     assert len(get_session_response.items) == page_size
 
     assert get_session_response.pages == 5
@@ -112,7 +143,7 @@ def test_paginated_sessions():
     assert isinstance(new_session_response, GetSessionPage)
     assert len(new_session_response.items) == page_size
 
-    final_page = client.get_sessions(user_id, page=5, page_size=page_size)
+    final_page = user.get_sessions(page=5, page_size=page_size)
 
     assert len(final_page.items) == 2
     next_page = final_page.next()
@@ -120,75 +151,87 @@ def test_paginated_sessions():
 
 
 def test_paginated_sessions_generator():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
     for i in range(3):
-        client.create_session(user_id)
+        user.create_session()
 
-    gen = client.get_sessions_generator(user_id)
+    gen = user.get_sessions_generator()
     # print(type(gen))
 
     item = gen.__next__()
-    assert item.user_id == user_id
+    assert item.user.id == user.id
     assert isinstance(item, Session)
     assert gen.__next__() is not None
     assert gen.__next__() is not None
     with pytest.raises(StopIteration):
         gen.__next__()
 
+
 def test_paginated_out_of_bounds():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
     for i in range(3):
-        client.create_session(user_id)
+        user.create_session()
     page = 2
     page_size = 50
-    get_session_response = client.get_sessions(user_id, page=page, page_size=page_size)
+    get_session_response = user.get_sessions(page=page, page_size=page_size)
 
     assert get_session_response.pages == 1
     assert get_session_response.page == 2
     assert get_session_response.page_size == 50
     assert get_session_response.total == 3
-    assert len(get_session_response.items) == 0 
+    assert len(get_session_response.items) == 0
 
 
 def test_paginated_messages():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     for i in range(10):
         created_session.create_message(is_user=True, content="Hello")
         created_session.create_message(is_user=False, content="Hi")
 
     page_size = 7
-    get_message_response = created_session.get_messages(page=1, page_size=page_size)
+    get_message_response = created_session.get_messages(
+        page=1, page_size=page_size
+    )
 
     assert get_message_response is not None
     assert isinstance(get_message_response, GetMessagePage)
     assert len(get_message_response.items) == page_size
 
     new_message_response = get_message_response.next()
-    
+
     assert new_message_response is not None
     assert isinstance(new_message_response, GetMessagePage)
     assert len(new_message_response.items) == page_size
 
     final_page = created_session.get_messages(page=3, page_size=page_size)
 
-    assert len(final_page.items) == 20 - ((3-1) * 7)
+    assert len(final_page.items) == 20 - ((3 - 1) * 7)
 
     next_page = final_page.next()
 
     assert next_page is None
 
+
 def test_paginated_messages_generator():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     created_session.create_message(is_user=True, content="Hello")
     created_session.create_message(is_user=False, content="Hi")
     gen = created_session.get_messages_generator()
@@ -204,15 +247,22 @@ def test_paginated_messages_generator():
     with pytest.raises(StopIteration):
         gen.__next__()
 
+
 def test_paginated_metamessages():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     message = created_session.create_message(is_user=True, content="Hello")
     for i in range(10):
-        created_session.create_metamessage(message=message, metamessage_type="thought", content=f"Test {i}")
-        created_session.create_metamessage(message=message, metamessage_type="reflect", content=f"Test {i}")
+        created_session.create_metamessage(
+            message=message, metamessage_type="thought", content=f"Test {i}"
+        )
+        created_session.create_metamessage(
+            message=message, metamessage_type="reflect", content=f"Test {i}"
+        )
 
     page_size = 7
     page = created_session.get_metamessages(page=1, page_size=page_size)
@@ -222,27 +272,34 @@ def test_paginated_metamessages():
     assert len(page.items) == page_size
 
     new_page = page.next()
-    
+
     assert new_page is not None
     assert isinstance(new_page, GetMetamessagePage)
     assert len(new_page.items) == page_size
 
     final_page = created_session.get_metamessages(page=3, page_size=page_size)
 
-    assert len(final_page.items) == 20 - ((3-1) * 7)
+    assert len(final_page.items) == 20 - ((3 - 1) * 7)
 
     next_page = final_page.next()
 
     assert next_page is None
 
+
 def test_paginated_metamessages_generator():
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
-    created_session = client.create_session(user_id)
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    created_session = user.create_session()
     message = created_session.create_message(is_user=True, content="Hello")
-    created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 1")
-    created_session.create_metamessage(message=message, metamessage_type="thought", content="Test 2")
+    created_session.create_metamessage(
+        message=message, metamessage_type="thought", content="Test 1"
+    )
+    created_session.create_metamessage(
+        message=message, metamessage_type="thought", content="Test 2"
+    )
     gen = created_session.get_metamessages_generator()
 
     item = gen.__next__()
@@ -259,16 +316,24 @@ def test_paginated_metamessages_generator():
 
 def test_collections():
     col_name = str(uuid1())
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
     # Make a collection
-    collection = client.create_collection(user_id, col_name)
+    collection = user.create_collection(col_name)
 
     # Add documents
-    doc1 = collection.create_document(content="This is a test of documents - 1", metadata={"foo": "bar"})
-    doc2 = collection.create_document(content="This is a test of documents - 2", metadata={})
-    doc3 = collection.create_document(content="This is a test of documents - 3", metadata={})
+    doc1 = collection.create_document(
+        content="This is a test of documents - 1", metadata={"foo": "bar"}
+    )
+    doc2 = collection.create_document(
+        content="This is a test of documents - 2", metadata={}
+    )
+    doc3 = collection.create_document(
+        content="This is a test of documents - 3", metadata={}
+    )
 
     # Get all documents
     page = collection.get_documents(page=1, page_size=3)
@@ -290,45 +355,53 @@ def test_collections():
     result = collection.delete()
     # confirm documents are gone
     with pytest.raises(Exception):
-        new_col = client.get_collection(user_id, "test")
+        new_col = user.get_collection(col_name)
+
 
 def test_collection_name_collision():
     col_name = str(uuid1())
     new_col_name = str(uuid1())
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
     # Make a collection
-    collection = client.create_collection(user_id, col_name)
+    collection = user.create_collection(col_name)
     # Make another collection
     with pytest.raises(Exception):
-        client.create_collection(user_id, col_name)
+        user.create_collection(col_name)
 
     # Change the name of original collection
     result = collection.update(new_col_name)
     assert result is True
-    
+
     # Try again to add another collection
-    collection2 = client.create_collection(user_id, col_name)
+    collection2 = user.create_collection(col_name)
     assert collection2 is not None
     assert collection2.name == col_name
     assert collection.name == new_col_name
 
     # Get all collections
-    page = client.get_collections(user_id)
+    page = user.get_collections()
     assert page is not None
     assert len(page.items) == 2
 
+
 def test_collection_query():
     col_name = str(uuid1())
-    app_id = str(uuid1())
-    user_id = str(uuid1())
-    client = Honcho(app_id, "http://localhost:8000")
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
     # Make a collection
-    collection = client.create_collection(user_id, col_name)
+    collection = user.create_collection(col_name)
 
     # Add documents
-    doc1 = collection.create_document(content="The user loves puppies", metadata={})
+    doc1 = collection.create_document(
+        content="The user loves puppies", metadata={}
+    )
     doc2 = collection.create_document(content="The user owns a dog", metadata={})
     doc3 = collection.create_document(content="The user is a doctor", metadata={})
 
@@ -338,7 +411,9 @@ def test_collection_query():
     assert len(result) == 2
     assert isinstance(result[0], Document)
 
-    doc3 = collection.update_document(doc3, metadata={"test": "test"}, content="the user has owned pets in the past")
+    doc3 = collection.update_document(
+        doc3, metadata={"test": "test"}, content="the user has owned pets in the past"
+    )
     assert doc3 is not None
     assert doc3.metadata == {"test": "test"}
     assert doc3.content == "the user has owned pets in the past"
@@ -348,4 +423,3 @@ def test_collection_query():
     assert result is not None
     assert len(result) == 2
     assert isinstance(result[0], Document)
-
