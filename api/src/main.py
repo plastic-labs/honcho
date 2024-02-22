@@ -265,6 +265,7 @@ def get_sessions(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     location_id: Optional[str] = None,
+    is_active: Optional[bool] = False,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
 ):
@@ -282,7 +283,12 @@ def get_sessions(
     return paginate(
         db,
         crud.get_sessions(
-            db, app_id=app_id, user_id=user_id, location_id=location_id, reverse=reverse
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            location_id=location_id,
+            reverse=reverse,
+            is_active=is_active,
         ),
     )
 

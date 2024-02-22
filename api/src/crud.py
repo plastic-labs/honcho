@@ -169,14 +169,17 @@ def get_sessions(
     user_id: uuid.UUID,
     location_id: Optional[str] = None,
     reverse: Optional[bool] = False,
+    is_active: Optional[bool] = False,
 ) -> Select:
     stmt = (
         select(models.Session)
         .join(models.User, models.User.id == models.Session.user_id)
         .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
-        #        .where(models.Session.is_active.is_(True))
     )
+
+    if is_active:
+        stmt = stmt.where(models.Session.is_active.is_(True))
 
     if reverse:
         stmt = stmt.order_by(models.Session.created_at.desc())
