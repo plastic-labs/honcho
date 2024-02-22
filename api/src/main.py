@@ -103,10 +103,10 @@ def create_app(
     return crud.create_app(db, app=app)
 
 
-@app.get("/apps/get_or_create/{app_name}", response_model=schemas.App)
+@app.get("/apps/get_or_create/{name}", response_model=schemas.App)
 def get_or_create_app(
     request: Request,
-    app_name: str,
+    name: str,
     db: Session = Depends(get_db),
 ):
     """Get or Create an App
@@ -118,9 +118,9 @@ def get_or_create_app(
         schemas.App: App object
 
     """
-    app = crud.get_app_by_name(db, app_name=app_name)
+    app = crud.get_app_by_name(db, name=name)
     if app is None:
-        app = crud.create_app(db, app=schemas.AppCreate(name=app_name))
+        app = crud.create_app(db, app=schemas.AppCreate(name=name))
     return app
 
 
@@ -210,6 +210,26 @@ def get_user_by_name(
 
     """
     return crud.get_user_by_name(db, app_id=app_id, name=name)
+
+
+@app.get("/apps/{app_id}/users/get_or_create/{name}", response_model=schemas.User)
+def get_or_create_user(
+    request: Request, app_id: uuid.UUID, name: str, db: Session = Depends(get_db)
+):
+    """Get or Create a User
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (str): The User ID representing the user, managed by the user
+
+    Returns:
+        schemas.User: User object
+
+    """
+    user = crud.get_user_by_name(db, app_id=app_id, name=name)
+    if user is None:
+        user = crud.create_user(db, app_id=app_id, user=schemas.UserCreate(name=name))
+    return user
 
 
 @app.put("/apps/{app_id}/users/{user_id}", response_model=schemas.User)
