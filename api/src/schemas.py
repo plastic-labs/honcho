@@ -2,6 +2,65 @@ from pydantic import BaseModel, validator
 import datetime
 import uuid
 
+class AppBase(BaseModel):
+    pass
+
+class AppCreate(AppBase):
+    name: str
+    metadata: dict | None = {}
+
+class AppUpdate(AppBase):
+    name: str | None = None
+    metadata: dict | None = None
+
+class App(AppBase):
+    id: uuid.UUID
+    name: str
+    h_metadata: dict
+    metadata: dict
+    created_at: datetime.datetime
+
+    @validator('metadata', pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if 'h_metadata' in values:
+            return values['h_metadata']
+        return {}
+
+    class Config:
+        from_attributes = True
+        schema_extra ={
+            "exclude": ["h_metadata"]
+        }
+
+class UserBase(BaseModel):
+    pass
+
+class UserCreate(UserBase):
+    name: str
+    metadata: dict | None = {}
+
+class UserUpdate(UserBase):
+    name: str | None = None
+    metadata: dict | None = None
+
+class User(UserBase):
+    id: uuid.UUID
+    app_id: uuid.UUID
+    created_at: datetime.datetime
+    h_metadata: dict
+    metadata: dict
+    
+    @validator('metadata', pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if 'h_metadata' in values:
+            return values['h_metadata']
+        return {}
+
+    class Config:
+        from_attributes = True
+        schema_extra = {
+            "exclude": ["h_metadata"]
+        }
 
 class MessageBase(BaseModel):
     content: str
@@ -37,7 +96,6 @@ class Session(SessionBase):
     is_active: bool
     user_id: str
     location_id: str
-    app_id: str
     h_metadata: dict
     metadata: dict
     created_at: datetime.datetime
@@ -70,7 +128,7 @@ class Metamessage(MetamessageBase):
     created_at: datetime.datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class CollectionBase(BaseModel):
     pass
@@ -84,12 +142,11 @@ class CollectionUpdate(CollectionBase):
 class Collection(CollectionBase):
     id: uuid.UUID
     name: str
-    app_id: str
     user_id: str
     created_at: datetime.datetime
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class DocumentBase(BaseModel):
     content: str

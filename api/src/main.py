@@ -39,6 +39,175 @@ def get_db():
     finally:
         db.close()
 
+########################################################
+# App Routes
+########################################################
+@app.get("/apps/{app_id}", response_model=schemas.App)
+def get_app(
+    request: Request,
+    app_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Get an App by ID
+
+    Args:
+        app_id (uuid.UUID): The ID of the app
+
+    Returns:
+        schemas.App: App object
+
+    """
+    app = crud.get_app(db, app_id=app_id)
+    if app is None:
+        raise HTTPException(status_code=404, detail="App not found")
+    return app
+
+@app.get("/apps/name/{app_name}", response_model=schemas.App)
+def get_app_by_name(
+    request: Request,
+    app_name: str,
+    db: Session = Depends(get_db),
+):
+    """Get an App by Name
+
+    Args:
+        app_name (str): The name of the app
+
+    Returns:
+        schemas.App: App object
+
+    """
+    app = crud.get_app_by_name(db, app_name=app_name)
+    if app is None:
+        raise HTTPException(status_code=404, detail="App not found")
+    return app
+
+
+@app.post("/apps", response_model=schemas.App)
+def create_app(
+    request: Request,
+    app: schemas.AppCreate,
+    db: Session = Depends(get_db),
+):
+    """Create an App
+
+    Args:
+        app (schemas.AppCreate): The App object containing any metadata
+
+    Returns:
+        schemas.App: Created App object
+
+    """
+    return crud.create_app(db, app=app)
+
+
+@app.put("/apps/{app_id}", response_model=schemas.App)
+def update_app(
+    request: Request,
+    app_id: uuid.UUID,
+    app: schemas.AppUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update an App
+
+    Args:
+        app_id (uuid.UUID): The ID of the app to update
+        app (schemas.AppUpdate): The App object containing any new metadata
+
+    Returns:
+        schemas.App: The App object of the updated App
+
+    """
+    honcho_app = crud.update_app(db, app_id=app_id, app=app)
+    if honcho_app is None:
+        raise HTTPException(status_code=404, detail="App not found")
+    return honcho_app
+
+
+########################################################
+# User Routes
+########################################################
+
+
+@app.post("/apps/{app_id}/users", response_model=schemas.User)
+def create_user(
+    request: Request,
+    app_id: uuid.UUID,
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db),
+):
+    """Create a User
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user (schemas.UserCreate): The User object containing any metadata
+
+    Returns:
+        schemas.User: Created User object
+
+    """
+    return crud.create_user(db, app_id=app_id, user=user)
+
+
+@router.get("/apps/{app_id}/users", response_model=Page[schemas.User])
+def get_users(
+    request: Request,
+    app_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Get All Users for an App
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+
+    Returns:
+        list[schemas.User]: List of User objects
+
+    """
+    return paginate(db, crud.get_users(db, app_id=app_id))
+
+
+@router.get("/apps/{app_id}/users/{user_id}", response_model=schemas.User)
+def get_user(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+):
+    """Get a User
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (str): The User ID representing the user, managed by the user
+
+    Returns:
+        schemas.User: User object
+
+    """
+    return crud.get_user(db, app_id=app_id, user_id=user_id)
+
+
+@router.put("/users/{user_id}", response_model=schemas.User)
+def update_user(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    user: schemas.UserCreate,
+    db: Session = Depends(get_db),
+):
+    """Update a User
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (str): The User ID representing the user, managed by the user
+        user (schemas.UserCreate): The User object containing any metadata
+
+    Returns:
+        schemas.User: Updated User object
+
+    """
+    return crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
+
 
 ########################################################
 # Session Routes
@@ -48,8 +217,8 @@ def get_db():
 @router.get("/sessions", response_model=Page[schemas.Session])
 def get_sessions(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     location_id: Optional[str] = None,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
@@ -57,8 +226,8 @@ def get_sessions(
     """Get All Sessions for a User
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
-        user_id (str): The User ID representing the user, managed by the user
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (uuid.UUID): The User ID representing the user, managed by the user
         location_id (str, optional): Optional Location ID representing the location of a session
 
     Returns:
@@ -76,16 +245,16 @@ def get_sessions(
 @router.post("/sessions", response_model=schemas.Session)
 def create_session(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session: schemas.SessionCreate,
     db: Session = Depends(get_db),
 ):
     """Create a Session for a User
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
-        user_id (str): The User ID representing the user, managed by the user
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (uuid.UUID): The User ID representing the user, managed by the user
         session (schemas.SessionCreate): The Session object containing any metadata and a location ID
 
     Returns:
@@ -99,8 +268,8 @@ def create_session(
 @router.put("/sessions/{session_id}", response_model=schemas.Session)
 def update_session(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     session: schemas.SessionUpdate,
     db: Session = Depends(get_db),
@@ -108,9 +277,9 @@ def update_session(
     """Update the metadata of a Session
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session_id (int): The ID of the Session to update
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (uuid.UUID): The User ID representing the user, managed by the user
+        session_id (uuid.UUID): The ID of the Session to update
         session (schemas.SessionUpdate): The Session object containing any new metadata
 
     Returns:
@@ -132,17 +301,17 @@ def update_session(
 @router.delete("/sessions/{session_id}")
 def delete_session(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     db: Session = Depends(get_db),
 ):
     """Delete a session by marking it as inactive
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session_id (int): The ID of the Session to delete
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (uuid.UUID): The User ID representing the user, managed by the user
+        session_id (uuid.UUID): The ID of the Session to delete
 
     Returns:
         dict: A message indicating that the session was deleted
@@ -163,17 +332,17 @@ def delete_session(
 @router.get("/sessions/{session_id}", response_model=schemas.Session)
 def get_session(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     db: Session = Depends(get_db),
 ):
     """Get a specific session for a user by ID
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session_id (int): The ID of the Session to retrieve
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (uuid.UUID): The User ID representing the user, managed by the user
+        session_id (uuid.UUID): The ID of the Session to retrieve
 
     Returns:
         schemas.Session: The Session object of the requested Session
@@ -197,8 +366,8 @@ def get_session(
 @router.post("/sessions/{session_id}/messages", response_model=schemas.Message)
 def create_message_for_session(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     message: schemas.MessageCreate,
     db: Session = Depends(get_db),
@@ -206,7 +375,7 @@ def create_message_for_session(
     """Adds a message to a session
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
         message (schemas.MessageCreate): The Message object to add containing the message content and type
@@ -229,8 +398,8 @@ def create_message_for_session(
 @router.get("/sessions/{session_id}/messages", response_model=Page[schemas.Message])
 def get_messages(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
@@ -238,7 +407,7 @@ def get_messages(
     """Get all messages for a session
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
         reverse (bool): Whether to reverse the order of the messages
@@ -270,8 +439,8 @@ def get_messages(
 )
 def get_message(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     message_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -293,8 +462,8 @@ def get_message(
 @router.post("/sessions/{session_id}/metamessages", response_model=schemas.Metamessage)
 def create_metamessage(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     metamessage: schemas.MetamessageCreate,
     db: Session = Depends(get_db),
@@ -302,7 +471,7 @@ def create_metamessage(
     """Adds a message to a session
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
         message (schemas.MessageCreate): The Message object to add containing the message content and type
@@ -331,8 +500,8 @@ def create_metamessage(
 )
 def get_metamessages(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     message_id: Optional[uuid.UUID] = None,
     metamessage_type: Optional[str] = None,
@@ -342,7 +511,7 @@ def get_metamessages(
     """Get all messages for a session
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
         reverse (bool): Whether to reverse the order of the metamessages
@@ -377,8 +546,8 @@ def get_metamessages(
 )
 def get_metamessage(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     message_id: uuid.UUID,
     metamessage_id: uuid.UUID,
@@ -387,7 +556,7 @@ def get_metamessage(
     """Get a specific session for a user by ID
 
     Args:
-        app_id (str): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
 
@@ -418,8 +587,8 @@ def get_metamessage(
 @router.get("/collections/all", response_model=Page[schemas.Collection])
 def get_collections(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
 ):
@@ -431,8 +600,8 @@ def get_collections(
 @router.get("/collections/id/{collection_id}", response_model=schemas.Collection)
 def get_collection_by_id(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     db: Session = Depends(get_db),
 ) -> schemas.Collection:
@@ -449,8 +618,8 @@ def get_collection_by_id(
 @router.get("/collections/name/{name}", response_model=schemas.Collection)
 def get_collection_by_name(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     name: str,
     db: Session = Depends(get_db),
 ) -> schemas.Collection:
@@ -467,8 +636,8 @@ def get_collection_by_name(
 @router.post("/collections", response_model=schemas.Collection)
 def create_collection(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection: schemas.CollectionCreate,
     db: Session = Depends(get_db),
 ):
@@ -486,8 +655,8 @@ def create_collection(
 @router.put("/collections/{collection_id}", response_model=schemas.Collection)
 def update_collection(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     collection: schemas.CollectionUpdate,
     db: Session = Depends(get_db),
@@ -515,8 +684,8 @@ def update_collection(
 @router.delete("/collections/{collection_id}")
 def delete_collection(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     db: Session = Depends(get_db),
 ):
@@ -541,8 +710,8 @@ def delete_collection(
 )
 def get_documents(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
@@ -574,8 +743,8 @@ router.get(
 
 def get_document(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -599,8 +768,8 @@ def get_document(
 )
 def query_documents(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     query: str,
     top_k: int = 5,
@@ -621,8 +790,8 @@ def query_documents(
 @router.post("/collections/{collection_id}/documents", response_model=schemas.Document)
 def create_document(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document: schemas.DocumentCreate,
     db: Session = Depends(get_db),
@@ -647,8 +816,8 @@ def create_document(
 )
 def update_document(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
     document: schemas.DocumentUpdate,
@@ -671,8 +840,8 @@ def update_document(
 @router.delete("/collections/{collection_id}/documents/{document_id}")
 def delete_document(
     request: Request,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
     db: Session = Depends(get_db),

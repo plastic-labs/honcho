@@ -12,13 +12,127 @@ from . import models, schemas
 
 openai_client = OpenAI()
 
+########################################################
+# app methods
+########################################################
+
+
+def get_app(db: Session, app_id: uuid.UUID) -> Optional[models.App]:
+    stmt = (
+        select(models.App)
+        .where(models.App.id == app_id)
+    )
+    app = db.scalars(stmt).one_or_none()
+    return app
+
+def get_app_by_name(db: Session, app_name: str) -> Optional[models.App]:
+    stmt = (
+        select(models.App)
+        .where(models.App.name == app_name)
+    )
+    app = db.scalars(stmt).one_or_none()
+    return app
+
+
+# def get_apps(db: Session) -> Sequence[models.App]:
+#     return db.query(models.App).all()
+
+def create_app(db: Session, app: schemas.AppCreate) -> models.App:
+    honcho_app = models.App(
+        name=app.name,
+        h_metadata=app.metadata
+    )
+    db.add(honcho_app)
+    db.commit()
+    db.refresh(honcho_app)
+    return honcho_app
+
+def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models.App:
+    honcho_app = get_app(db, app_id)
+    if honcho_app is None:
+        raise ValueError("App not found")
+    if app.name is not None:
+        honcho_app.content = app.name
+    if app.metadata is not None:
+        honcho_app.h_metadata = app.metadata
+
+    db.commit()
+    db.refresh(honcho_app)
+    return honcho_app
+
+# def delete_app(db: Session, app_id: uuid.UUID) -> bool:
+#     existing_app = get_app(db, app_id)
+#     if existing_app is None:
+#         return False
+#     db.delete(existing_app)
+#     db.commit()
+#     return True
+
+
+########################################################
+# user methods
+########################################################
+
+def create_user(db: Session, app_id: uuid.UUID, user: schemas.UserCreate) -> models.User:
+    honcho_user = models.User(
+        app_id=app_id,
+        name=user.name,
+        h_metadata=user.metadata,
+    )
+    db.add(honcho_user)
+    db.commit()
+    db.refresh(honcho_user)
+    return honcho_user
+
+def get_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID) -> Optional[models.User]:
+    stmt = (
+        select(models.User)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
+
+    )
+    user = db.scalars(stmt).one_or_none()
+    return user
+
+def get_users(db: Session, app_id: uuid.UUID) -> Select:
+    stmt = (
+        select(models.User)
+        .where(models.User.app_id == app_id)
+    )
+    return stmt
+
+def update_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID, user: schemas.UserUpdate) -> models.User:
+    honcho_user = get_user(db, app_id, user_id)
+    if honcho_user is None:
+        raise ValueError("User not found")
+    if user.name is not None:
+        honcho_user.content = user.name
+    if user.metadata is not None:
+        honcho_user.h_metadata = user.metadata
+
+    db.commit()
+    db.refresh(honcho_user)
+    return honcho_user
+
+# def delete_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+#     existing_user = get_user(db, app_id, user_id)
+#     if existing_user is None:
+#         return False
+#     db.delete(existing_user)
+#     db.commit()
+#     return True
+
+########################################################
+# session methods
+########################################################
 
 def get_session(
-    db: Session, app_id: str, session_id: uuid.UUID, user_id: Optional[str] = None
+    db: Session, app_id: uuid.UUID, session_id: uuid.UUID, user_id: Optional[uuid.UUID] = None
 ) -> Optional[models.Session]:
     stmt = (
         select(models.Session)
-        .where(models.Session.app_id == app_id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .where(models.User.app_id == app_id)
         .where(models.Session.id == session_id)
     )
     if user_id is not None:
@@ -26,19 +140,19 @@ def get_session(
     session = db.scalars(stmt).one_or_none()
     return session
 
-
 def get_sessions(
     db: Session,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     location_id: Optional[str] = None,
     reverse: Optional[bool] = False,
 ) -> Select:
     stmt = (
         select(models.Session)
-        .where(models.Session.app_id == app_id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
-        .where(models.Session.is_active.is_(True))
+#        .where(models.Session.is_active.is_(True))
     )
 
     if reverse:
@@ -53,10 +167,9 @@ def get_sessions(
 
 
 def create_session(
-    db: Session, session: schemas.SessionCreate, app_id: str, user_id: str
+    db: Session, session: schemas.SessionCreate, app_id: uuid.UUID, user_id: uuid.UUID
 ) -> models.Session:
     honcho_session = models.Session(
-        app_id=app_id,
         user_id=user_id,
         location_id=session.location_id,
         h_metadata=session.metadata,
@@ -70,8 +183,8 @@ def create_session(
 def update_session(
     db: Session,
     session: schemas.SessionUpdate,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
 ) -> bool:
     honcho_session = get_session(
@@ -79,9 +192,7 @@ def update_session(
     )
     if honcho_session is None:
         raise ValueError("Session not found or does not belong to user")
-    if (
-        session.metadata is not None
-    ):  # Need to explicitly be there won't make it empty by default
+    if session.metadata is not None:  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
     db.commit()
     db.refresh(honcho_session)
@@ -89,12 +200,13 @@ def update_session(
 
 
 def delete_session(
-    db: Session, app_id: str, user_id: str, session_id: uuid.UUID
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
 ) -> bool:
     stmt = (
         select(models.Session)
+        .join(models.User, models.User.id == models.Session.user_id)
         .where(models.Session.id == session_id)
-        .where(models.Session.app_id == app_id)
+        .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
     )
     honcho_session = db.scalars(stmt).one_or_none()
@@ -104,12 +216,15 @@ def delete_session(
     db.commit()
     return True
 
+########################################################
+# Message Methods
+########################################################
 
 def create_message(
     db: Session,
     message: schemas.MessageCreate,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
 ) -> models.Message:
     honcho_session = get_session(
@@ -131,16 +246,18 @@ def create_message(
 
 def get_messages(
     db: Session,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
     reverse: Optional[bool] = False,
 ) -> Select:
     stmt = (
         select(models.Message)
         .join(models.Session, models.Session.id == models.Message.session_id)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.user_id == user_id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.App, models.App.id == models.User.app_id)
+        .where(models.App.id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Message.session_id == session_id)
     )
 
@@ -153,82 +270,29 @@ def get_messages(
 
 
 def get_message(
-    db: Session, app_id: str, user_id: str, session_id: uuid.UUID, message_id: uuid.UUID
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID, message_id: uuid.UUID
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
         .join(models.Session, models.Session.id == models.Message.session_id)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.user_id == user_id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.App, models.App.id == models.User.app_id)
+        .where(models.App.id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Message.session_id == session_id)
         .where(models.Message.id == message_id)
     )
     return db.scalars(stmt).one_or_none()
 
-
 ########################################################
 # metamessage methods
 ########################################################
 
-
-def get_metamessages(
-    db: Session,
-    app_id: str,
-    user_id: str,
-    session_id: uuid.UUID,
-    message_id: Optional[uuid.UUID],
-    metamessage_type: Optional[str] = None,
-    reverse: Optional[bool] = False,
-) -> Select:
-    stmt = (
-        select(models.Metamessage)
-        .join(models.Message, models.Message.id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.id)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.user_id == user_id)
-        .where(models.Message.session_id == session_id)
-    )
-
-    if message_id is not None:
-        stmt = stmt.where(models.Metamessage.message_id == message_id)
-
-    if metamessage_type is not None:
-        stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
-
-    if reverse:
-        stmt = stmt.order_by(models.Metamessage.created_at.desc())
-    else:
-        stmt = stmt.order_by(models.Metamessage.created_at)
-
-    return stmt
-
-
-def get_metamessage(
-    db: Session,
-    app_id: str,
-    user_id: str,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
-    metamessage_id: uuid.UUID,
-) -> Optional[models.Metamessage]:
-    stmt = (
-        select(models.Metamessage)
-        .join(models.Message, models.Message.id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.id)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.user_id == user_id)
-        .where(models.Message.session_id == session_id)
-        .where(models.Metamessage.message_id == message_id)
-        .where(models.Metamessage.id == metamessage_id)
-    )
-    return db.scalars(stmt).one_or_none()
-
-
 def create_metamessage(
     db: Session,
     metamessage: schemas.MetamessageCreate,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     session_id: uuid.UUID,
 ):
     message = get_message(
@@ -252,6 +316,62 @@ def create_metamessage(
     db.refresh(honcho_metamessage)
     return honcho_metamessage
 
+def get_metamessages(
+    db: Session,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    message_id: Optional[uuid.UUID],
+    metamessage_type: Optional[str] = None,
+    reverse: Optional[bool] = False,
+) -> Select:
+    stmt = (
+        select(models.Metamessage)
+        .join(models.Message, models.Message.id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.App, models.App.id == models.User.app_id)
+        .where(models.App.id == app_id)
+        .where(models.User.id == user_id)
+        .where(models.Message.session_id == session_id)
+    )
+
+    if message_id is not None:
+        stmt = stmt.where(models.Metamessage.message_id == message_id)
+
+    if metamessage_type is not None:
+        stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
+
+    if reverse:
+        stmt = stmt.order_by(models.Metamessage.created_at.desc())
+    else:
+        stmt = stmt.order_by(models.Metamessage.created_at)
+
+    return stmt
+
+
+def get_metamessage(
+    db: Session,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+    metamessage_id: uuid.UUID,
+) -> Optional[models.Metamessage]:
+    stmt = (
+        select(models.Metamessage)
+        .join(models.Message, models.Message.id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.App, models.App.id == models.User.app_id)
+        .where(models.App.id == app_id)
+        .where(models.User.id == user_id)
+        .where(models.Message.session_id == session_id)
+        .where(models.Metamessage.message_id == message_id)
+        .where(models.Metamessage.id == metamessage_id)
+    )
+    return db.scalars(stmt).one_or_none()
+
 
 ########################################################
 # collection methods
@@ -261,13 +381,14 @@ def create_metamessage(
 
 
 def get_collections(
-    db: Session, app_id: str, user_id: str, reverse: Optional[bool] = False
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, reverse: Optional[bool] = False
 ) -> Select:
     """Get a distinct list of the names of collections associated with a user"""
     stmt = (
         select(models.Collection)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
     )
 
     if reverse:
@@ -279,12 +400,13 @@ def get_collections(
 
 
 def get_collection_by_id(
-    db: Session, app_id: str, user_id: str, collection_id: uuid.UUID
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
 ) -> Optional[models.Collection]:
     stmt = (
         select(models.Collection)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Collection.id == collection_id)
     )
     collection = db.scalars(stmt).one_or_none()
@@ -292,12 +414,13 @@ def get_collection_by_id(
 
 
 def get_collection_by_name(
-    db: Session, app_id: str, user_id: str, name: str
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, name: str
 ) -> Optional[models.Collection]:
     stmt = (
         select(models.Collection)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Collection.name == name)
     )
     collection = db.scalars(stmt).one_or_none()
@@ -305,10 +428,9 @@ def get_collection_by_name(
 
 
 def create_collection(
-    db: Session, collection: schemas.CollectionCreate, app_id: str, user_id: str
+    db: Session, collection: schemas.CollectionCreate, app_id: uuid.UUID, user_id: uuid.UUID
 ) -> models.Collection:
     honcho_collection = models.Collection(
-        app_id=app_id,
         user_id=user_id,
         name=collection.name,
     )
@@ -325,8 +447,8 @@ def create_collection(
 def update_collection(
     db: Session,
     collection: schemas.CollectionUpdate,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
 ) -> models.Collection:
     honcho_collection = get_collection_by_id(
@@ -345,7 +467,7 @@ def update_collection(
 
 
 def delete_collection(
-    db: Session, app_id: str, user_id: str, collection_id: uuid.UUID
+    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
 ) -> bool:
     """
     Delete a Collection and all documents associated with it. Takes advantage of
@@ -353,9 +475,10 @@ def delete_collection(
     """
     stmt = (
         select(models.Collection)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Collection.id == collection_id)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
     )
     honcho_collection = db.scalars(stmt).one_or_none()
     if honcho_collection is None:
@@ -374,16 +497,17 @@ def delete_collection(
 
 def get_documents(
     db: Session,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     reverse: Optional[bool] = False,
 ) -> Select:
     stmt = (
         select(models.Document)
         .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Document.collection_id == collection_id)
     )
 
@@ -397,16 +521,17 @@ def get_documents(
 
 def get_document(
     db: Session,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
 ) -> Optional[models.Document]:
     stmt = (
         select(models.Document)
         .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.id == document_id)
     )
@@ -417,8 +542,8 @@ def get_document(
 
 def query_documents(
     db: Session,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     query: str,
     top_k: int = 5,
@@ -430,8 +555,9 @@ def query_documents(
     stmt = (
         select(models.Document)
         .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Document.collection_id == collection_id)
         .order_by(models.Document.embedding.cosine_distance(embedding_query))
         .limit(top_k)
@@ -444,8 +570,8 @@ def query_documents(
 def create_document(
     db: Session,
     document: schemas.DocumentCreate,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
@@ -476,8 +602,8 @@ def create_document(
 def update_document(
     db: Session,
     document: schemas.DocumentUpdate,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
 ) -> bool:
@@ -497,7 +623,7 @@ def update_document(
         )
         embedding = response.data[0].embedding
         honcho_document.embedding = embedding
-        honcho_document.created_at = datetime.datetime.now()
+        honcho_document.created_at = datetime.datetime.utcnow()
 
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
@@ -508,16 +634,17 @@ def update_document(
 
 def delete_document(
     db: Session,
-    app_id: str,
-    user_id: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
 ) -> bool:
     stmt = (
         select(models.Document)
         .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .join(models.User, models.User.id == models.Collection.user_id)
+        .where(models.User.app_id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.id == document_id)
     )
