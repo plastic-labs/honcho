@@ -1,5 +1,6 @@
 import pytest
 from honcho import GetSessionPage, GetMessagePage, GetMetamessagePage, GetDocumentPage, Session, Message, Metamessage, Document
+
 from honcho import Client as Honcho
 from uuid import uuid1
 
@@ -342,6 +343,7 @@ def test_collection_query():
     assert doc3 is not None
     assert doc3.metadata == {"test": "test"}
     assert doc3.content == "the user has owned pets in the past"
+
 
     result = collection.query(query="does the user own pets", top_k=2)
 

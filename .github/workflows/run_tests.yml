@@ -1,0 +1,38 @@
+name: Run Tests
+on: [push, pull_request]
+jobs:
+  test:
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - name: Install poetry
+        run: |
+          pip install poetry
+      - name: Syncify Client
+        run: |
+          python scripts/syncronizer.py
+      - name: Start Server
+        run: |
+          cd api
+          poetry install --no-root
+          poetry run uvicorn src.main:app &
+          sleep 5
+          cd ..
+        env:
+          DATABASE_TYPE: sqlite
+          CONNECTION_URI: sqlite:///api.db
+      - name: Run Tests
+        run: |
+          cd sdk
+          poetry install
+          poetry run pytest
+          cd ..
+      - name: Stop Server
+        run: |
+          kill $(jobs -p) || true
