@@ -44,8 +44,10 @@ class StateExtractor:
         pass
 
     @classmethod
-    async def generate_state_commentary(cls, chat_history: List[Message], input: str) -> str:
+    async def generate_state_commentary(cls, existing_states: List[str], chat_history: List[Message], input: str) -> str:
         """Generate a commentary on the current state of the user"""
+        # format existing states
+        existing_states = "\n".join(existing_states)
         # format prompt
         state_commentary = ChatPromptTemplate.from_messages([
             cls.system_state_commentary
@@ -55,23 +57,27 @@ class StateExtractor:
         # inference
         response = await chain.ainvoke({
             "chat_history": chat_history,
-            "user_input": input
+            "user_input": input,
+            "existing_states": existing_states,
         })
         # return output
         return response.content
     
     @classmethod
-    async def generate_state_label(cls, state_commentary: str) -> str:
+    async def generate_state_label(cls, existing_states: List[str],  state_commentary: str) -> str:
         """Generate a state label from a commetary on the user's state"""
+        # format existing states
+        existing_states = "\n".join(existing_states)
         # format prompt
         state_labeling = ChatPromptTemplate.from_messages([
-            cls.system_state_labeling
+            cls.system_state_labeling,
         ])
         # LCEL
         chain = state_labeling | cls.lc_gpt_4
         # inference
         response = await chain.ainvoke({
-            "state_commentary": state_commentary
+            "state_commentary": state_commentary,
+            "existing_states": existing_states,
         })
         # return output
         return response.content
@@ -102,8 +108,8 @@ class StateExtractor:
         """"Determine the user's state from the current conversation state"""
 
         # Generate label
-        state_commentary = await cls.generate_state_commentary(chat_history, input)
-        state_label = await cls.generate_state_label(state_commentary)
+        state_commentary = await cls.generate_state_commentary(existing_states, chat_history, input)
+        state_label = await cls.generate_state_label(existing_states, state_commentary)
 
         # Determine if state is new
         # if True, it doesn't exist, state is new

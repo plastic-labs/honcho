@@ -9,6 +9,7 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.members = True
+intents.reactions = True  # Enable reactions intent
 
 # app_id = str(uuid1())
 app_id = "vince-dspy-personas"
@@ -17,6 +18,9 @@ app_id = "vince-dspy-personas"
 honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
 
 bot = discord.Bot(intents=intents)
+
+thumbs_up_messages = []  
+thumbs_down_messages = []  
 
 @bot.event
 async def on_ready():
@@ -66,6 +70,28 @@ async def on_message(message):
         await message.channel.send(response)
 
     session.create_message(is_user=False, content=response)
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    # Ensure the bot does not react to its own reactions
+    if user == bot.user:
+        return
+    
+    user_id = f"discord_{str(reaction.message.author.id)}"
+    location_id = str(reaction.message.channel.id)
+
+    # Check if the reaction is a thumbs up
+    if str(reaction.emoji) == '👍':
+        thumbs_up_messages.append(reaction.message.content)
+        print(f"Added to thumbs up: {reaction.message.content}")
+    # Check if the reaction is a thumbs down
+    elif str(reaction.emoji) == '👎':
+        thumbs_down_messages.append(reaction.message.content)
+        print(f"Added to thumbs down: {reaction.message.content}")
+
+    # TODO: we need to append these to the examples list within the user state json object
+
+
 
 @bot.slash_command(name = "restart", description = "Restart the Conversation")
 async def restart(ctx):
