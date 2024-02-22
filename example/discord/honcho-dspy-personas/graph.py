@@ -61,6 +61,7 @@ async def chat(user_message: Message, session: Session, chat_history: List[Messa
 
     user_chat_module = ChatWithThought()
 
+    # TODO: you'd want to initialize user state object from Honcho
     # Save the user_state if it's new
     if is_state_new:
         user_state_storage[user_state] = {
@@ -71,6 +72,7 @@ async def chat(user_message: Message, session: Session, chat_history: List[Messa
     user_state_data = user_state_storage[user_state]
 
     # Optimize the state's chat module if we've reached the optimization threshold
+    # TODO: read in examples from Honcho User Object
     examples = user_state_data["examples"]
     print(f"Num examples: {len(examples)}")
     
@@ -90,10 +92,5 @@ async def chat(user_message: Message, session: Session, chat_history: List[Messa
     chat_input = format_chat_history(chat_history, user_input=input)
     response = user_chat_module(user_message=user_message, session=session, chat_input=chat_input)
     dspy_gpt4.inspect_history(n=2)
-
-    # append example
-    example = Example(chat_input=chat_input, assessment_dimension=user_state, response=response).with_inputs('chat_input')
-    examples.append(example)
-    user_state_storage[user_state]["examples"] = examples
 
     return response

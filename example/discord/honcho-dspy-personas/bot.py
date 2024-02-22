@@ -90,7 +90,10 @@ async def on_reaction_add(reaction, user):
         print(f"Added to thumbs down: {reaction.message.content}")
 
     # TODO: we need to append these to the examples list within the user state json object
-
+    # append example
+    # example = Example(chat_input=chat_input, assessment_dimension=user_state, response=response).with_inputs('chat_input')
+    # examples.append(example)
+    # user_state_storage[user_state]["examples"] = examples
 
 
 @bot.slash_command(name = "restart", description = "Restart the Conversation")
