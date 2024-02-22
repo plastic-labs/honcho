@@ -1,7 +1,7 @@
 import os
 from uuid import uuid1
 import discord
-from honcho import Client as HonchoClient
+from honcho import Honcho
 from chain import langchain_message_converter, LMChain
 
 
@@ -10,17 +10,19 @@ intents.messages = True
 intents.message_content = True
 intents.members = True
 
-app_id = str(uuid1())
+app_name = str(uuid1())
 
-#honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
-honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
+# honcho = Honcho(app_name=app_name, base_url="http://localhost:8000") # uncomment to use local
+honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+honcho.initialize()
 
 bot = discord.Bot(intents=intents)
 
 
 @bot.event
 async def on_ready():
-    print(f'We have logged in as {bot.user}')
+    print(f"We have logged in as {bot.user}")
+
 
 @bot.event
 async def on_member_join(member):
@@ -33,26 +35,27 @@ async def on_member_join(member):
         "*If you have any questions or feedback, feel free to ask in the #honcho channel.* "
         "*Enjoy!*"
     )
-    
-    
+
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user or message.guild is not None:
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    location_id=str(message.channel.id)
+    user = honcho.get_or_create(user_id)
+    location_id = str(message.channel.id)
 
-    sessions = list(honcho.get_sessions_generator(user_id, location_id))
+    sessions = list(user.get_sessions_generator(location_id))
     try:
-        collection = honcho.get_collection(user_id=user_id, name="discord")
+        collection = user.get_collection(user_id=user_id, name="discord")
     except Exception:
-        collection = honcho.create_collection(user_id=user_id, name="discord")
+        collection = user.create_collection(user_id=user_id, name="discord")
 
     if len(sessions) > 0:
         session = sessions[0]
     else:
-        session = honcho.create_session(user_id, location_id)
+        session = user.create_session(location_id)
 
     history = list(session.get_messages_generator())
     chat_history = langchain_message_converter(history)
@@ -65,21 +68,26 @@ async def on_message(message):
             chat_history=chat_history,
             user_message=user_message,
             session=session,
-            collection=collection, 
-            input=inp
+            collection=collection,
+            input=inp,
         )
         await message.channel.send(response)
 
     session.create_message(is_user=False, content=response)
 
-@bot.slash_command(name = "restart", description = "Restart the Conversation")
+
+@bot.slash_command(name="restart", description="Restart the Conversation")
 async def restart(ctx):
-    user_id=f"discord_{str(ctx.author.id)}"
-    location_id=str(ctx.channel_id)
-    sessions = list(honcho.get_sessions_generator(user_id, location_id))
+    user_id = f"discord_{str(ctx.author.id)}"
+    user = honcho.get_or_create_user(user_id)
+    location_id = str(ctx.channel_id)
+    sessions = list(user.get_sessions_generator(location_id))
     sessions[0].close() if len(sessions) > 0 else None
 
-    msg = "Great! The conversation has been restarted. What would you like to talk about?"
+    msg = (
+        "Great! The conversation has been restarted. What would you like to talk about?"
+    )
     await ctx.respond(msg)
+
 
 bot.run(os.environ["BOT_TOKEN"])

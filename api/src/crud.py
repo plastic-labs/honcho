@@ -22,8 +22,8 @@ def get_app(db: Session, app_id: uuid.UUID) -> Optional[models.App]:
     return app
 
 
-def get_app_by_name(db: Session, app_name: str) -> Optional[models.App]:
-    stmt = select(models.App).where(models.App.name == app_name)
+def get_app_by_name(db: Session, name: str) -> Optional[models.App]:
+    stmt = select(models.App).where(models.App.name == name)
     app = db.scalars(stmt).one_or_none()
     return app
 
