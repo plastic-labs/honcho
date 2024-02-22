@@ -1,14 +1,14 @@
 import uuid
-from fastapi import Depends, FastAPI, HTTPException, APIRouter, Request
 from typing import Optional, Sequence
-from sqlalchemy.orm import Session
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi_pagination import Page, add_pagination
 from fastapi_pagination.ext.sqlalchemy import paginate
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .db import SessionLocal, engine
@@ -39,6 +39,7 @@ def get_db():
     finally:
         db.close()
 
+
 ########################################################
 # App Routes
 ########################################################
@@ -61,6 +62,7 @@ def get_app(
     if app is None:
         raise HTTPException(status_code=404, detail="App not found")
     return app
+
 
 @app.get("/apps/name/{app_name}", response_model=schemas.App)
 def get_app_by_name(
@@ -99,6 +101,27 @@ def create_app(
 
     """
     return crud.create_app(db, app=app)
+
+
+@app.get("/apps/get_or_create/{app_name}", response_model=schemas.App)
+def get_or_create_app(
+    request: Request,
+    app_name: str,
+    db: Session = Depends(get_db),
+):
+    """Get or Create an App
+
+    Args:
+        app_name (str): The name of the app
+
+    Returns:
+        schemas.App: App object
+
+    """
+    app = crud.get_app_by_name(db, app_name=app_name)
+    if app is None:
+        app = crud.create_app(db, app=schemas.AppCreate(name=app_name))
+    return app
 
 
 @app.put("/apps/{app_id}", response_model=schemas.App)
@@ -149,29 +172,31 @@ def create_user(
     return crud.create_user(db, app_id=app_id, user=user)
 
 
-@router.get("/apps/{app_id}/users", response_model=Page[schemas.User])
+@app.get("/apps/{app_id}/users", response_model=Page[schemas.User])
 def get_users(
     request: Request,
     app_id: uuid.UUID,
+    reverse: bool = False,
     db: Session = Depends(get_db),
 ):
     """Get All Users for an App
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client
+        application using honcho
 
     Returns:
         list[schemas.User]: List of User objects
 
     """
-    return paginate(db, crud.get_users(db, app_id=app_id))
+    return paginate(db, crud.get_users(db, app_id=app_id, reverse=reverse))
 
 
-@router.get("/apps/{app_id}/users/{user_id}", response_model=schemas.User)
-def get_user(
+@app.get("/apps/{app_id}/users/{name}", response_model=schemas.User)
+def get_user_by_name(
     request: Request,
     app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    name: str,
     db: Session = Depends(get_db),
 ):
     """Get a User
@@ -184,15 +209,15 @@ def get_user(
         schemas.User: User object
 
     """
-    return crud.get_user(db, app_id=app_id, user_id=user_id)
+    return crud.get_user_by_name(db, app_id=app_id, name=name)
 
 
-@router.put("/users/{user_id}", response_model=schemas.User)
+@app.put("/apps/{app_id}/users/{user_id}", response_model=schemas.User)
 def update_user(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    user: schemas.UserCreate,
+    user: schemas.UserUpdate,
     db: Session = Depends(get_db),
 ):
     """Update a User
@@ -253,9 +278,11 @@ def create_session(
     """Create a Session for a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client
+        application using honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
-        session (schemas.SessionCreate): The Session object containing any metadata and a location ID
+        session (schemas.SessionCreate): The Session object containing any
+        metadata and a location ID
 
     Returns:
         schemas.Session: The Session object of the new Session
@@ -584,7 +611,7 @@ def get_metamessage(
 ########################################################
 
 
-@router.get("/collections/all", response_model=Page[schemas.Collection])
+@router.get("/collections", response_model=Page[schemas.Collection])
 def get_collections(
     request: Request,
     app_id: uuid.UUID,
@@ -597,25 +624,25 @@ def get_collections(
     )
 
 
-@router.get("/collections/id/{collection_id}", response_model=schemas.Collection)
-def get_collection_by_id(
-    request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    db: Session = Depends(get_db),
-) -> schemas.Collection:
-    honcho_collection = crud.get_collection_by_id(
-        db, app_id=app_id, user_id=user_id, collection_id=collection_id
-    )
-    if honcho_collection is None:
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        )
-    return honcho_collection
+# @router.get("/collections/id/{collection_id}", response_model=schemas.Collection)
+# def get_collection_by_id(
+#     request: Request,
+#     app_id: uuid.UUID,
+#     user_id: uuid.UUID,
+#     collection_id: uuid.UUID,
+#     db: Session = Depends(get_db),
+# ) -> schemas.Collection:
+#     honcho_collection = crud.get_collection_by_id(
+#         db, app_id=app_id, user_id=user_id, collection_id=collection_id
+#     )
+#     if honcho_collection is None:
+#         raise HTTPException(
+#             status_code=404, detail="collection not found or does not belong to user"
+#         )
+#     return honcho_collection
 
 
-@router.get("/collections/name/{name}", response_model=schemas.Collection)
+@router.get("/collections/{name}", response_model=schemas.Collection)
 def get_collection_by_name(
     request: Request,
     app_id: uuid.UUID,

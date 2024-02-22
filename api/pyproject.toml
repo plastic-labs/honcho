@@ -17,6 +17,23 @@ fastapi-pagination = "^0.12.14"
 pgvector = "^0.2.5"
 openai = "^1.12.0"
 
+[tool.ruff.lint]
+# from https://docs.astral.sh/ruff/linter/#rule-selection example
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+
 
 [build-system]
 requires = ["poetry-core"]
