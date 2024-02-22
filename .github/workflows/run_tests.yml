@@ -17,6 +17,11 @@ jobs:
       - name: Syncify Client
         run: |
           python scripts/syncronizer.py
+      - name: Start Database
+        run: |
+          cd api/local
+          docker compose up --wait
+          cd ../..
       - name: Start Server
         run: |
           cd api
@@ -25,14 +30,19 @@ jobs:
           sleep 5
           cd ..
         env:
-          DATABASE_TYPE: sqlite
-          CONNECTION_URI: sqlite:///api.db
+          DATABASE_TYPE: postgres
+          CONNECTION_URI: postgresql://testuser:testpwd@localhost:5432/honcho
       - name: Run Tests
         run: |
           cd sdk
           poetry install
           poetry run pytest
           cd ..
+      - name: Stop Database
+        run: |
+          cd api/local
+          docker compose down
+          cd ../..
       - name: Stop Server
         run: |
           kill $(jobs -p) || true
