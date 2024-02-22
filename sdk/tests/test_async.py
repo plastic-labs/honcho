@@ -16,6 +16,19 @@ from honcho import AsyncHoncho as Honcho
 
 
 @pytest.mark.asyncio
+async def test_user_update():
+    user_name = str(uuid1())
+    app_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    await honcho.initialize()
+    user = await honcho.create_user(user_name)
+    assert user.metadata == {}
+    assert await user.update({"foo": "bar"})
+    retrieved_user = await honcho.get_user(user_name)
+    assert retrieved_user.metadata == {"foo": "bar"}
+
+
+@pytest.mark.asyncio
 async def test_session_creation_retrieval():
     app_name = str(uuid1())
     honcho = Honcho(app_name, "http://localhost:8000")
