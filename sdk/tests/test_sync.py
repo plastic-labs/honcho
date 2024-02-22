@@ -15,6 +15,18 @@ from honcho import (
 from honcho import Honcho as Honcho
 
 
+def test_user_update():
+    user_name = str(uuid1())
+    app_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    assert user.metadata == {}
+    assert user.update({"foo": "bar"})
+    retrieved_user = honcho.get_user(user_name)
+    assert retrieved_user.metadata == {"foo": "bar"}
+
+
 def test_session_creation_retrieval():
     app_name = str(uuid1())
     honcho = Honcho(app_name, "http://localhost:8000")

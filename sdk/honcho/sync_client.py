@@ -394,6 +394,11 @@ class Honcho:
     ):
         """Get Paginated list of users
 
+        Args:
+            page (int, optional): The page of results to return
+            page_size (int, optional): The number of results to return
+            reverse (bool): Whether to reverse the order of the results
+
         Returns:
             GetUserPage: Paginated list of users
         """
@@ -482,11 +487,14 @@ class User:
             User: The updated User object
 
         """
+        data = {"metadata": metadata}
         url = f"{self.base_url}"
-        response = self.honcho.client.put(url, json=metadata)
+        response = self.honcho.client.put(url, json=data)
         response.raise_for_status()
+        success = response.status_code < 400
         data = response.json()
         self.metadata = data["metadata"]
+        return success
         # return User(self.honcho, **data)
 
     def get_session(self, session_id: uuid.UUID):
@@ -527,6 +535,8 @@ class User:
             location of a session
             page (int, optional): The page of results to return
             page_size (int, optional): The number of results to return
+            reverse (bool): Whether to reverse the order of the results
+            is_active (bool): Whether to only return active sessions
 
         Returns:
             GetSessionPage: Page or results for get_sessions query
@@ -553,6 +563,8 @@ class User:
         Args:
             location_id (str, optional): Optional Location ID representing the
             location of a session
+            reverse (bool): Whether to reverse the order of the results
+            is_active (bool): Whether to only return active sessions
 
         Yields:
             Session: The Session object of the requested Session
@@ -1029,7 +1041,6 @@ class Collection:
             metadata = {}
         data = {"metadata": metadata, "content": content}
         url = f"{self.base_url}/documents"
-        print(url)
         response = self.user.honcho.client.post(url, json=data)
         response.raise_for_status()
         data = response.json()
