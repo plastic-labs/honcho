@@ -394,6 +394,11 @@ class AsyncHoncho:
     ):
         """Get Paginated list of users
 
+        Args:
+            page (int, optional): The page of results to return
+            page_size (int, optional): The number of results to return
+            reverse (bool): Whether to reverse the order of the results
+
         Returns:
             AsyncGetUserPage: Paginated list of users
         """
@@ -482,11 +487,14 @@ class AsyncUser:
             AsyncUser: The updated User object
 
         """
+        data = {"metadata": metadata}
         url = f"{self.base_url}"
-        response = await self.honcho.client.put(url, json=metadata)
+        response = await self.honcho.client.put(url, json=data)
         response.raise_for_status()
+        success = response.status_code < 400
         data = response.json()
         self.metadata = data["metadata"]
+        return success
         # return AsyncUser(self.honcho, **data)
 
     async def get_session(self, session_id: uuid.UUID):
@@ -527,6 +535,8 @@ class AsyncUser:
             location of a session
             page (int, optional): The page of results to return
             page_size (int, optional): The number of results to return
+            reverse (bool): Whether to reverse the order of the results
+            is_active (bool): Whether to only return active sessions
 
         Returns:
             AsyncGetSessionPage: Page or results for get_sessions query
@@ -553,6 +563,8 @@ class AsyncUser:
         Args:
             location_id (str, optional): Optional Location ID representing the
             location of a session
+            reverse (bool): Whether to reverse the order of the results
+            is_active (bool): Whether to only return active sessions
 
         Yields:
             AsyncSession: The Session object of the requested Session
@@ -1029,7 +1041,6 @@ class AsyncCollection:
             metadata = {}
         data = {"metadata": metadata, "content": content}
         url = f"{self.base_url}/documents"
-        print(url)
         response = await self.user.honcho.client.post(url, json=data)
         response.raise_for_status()
         data = response.json()
