@@ -36,9 +36,9 @@ class AsyncGetUserPage(AsyncGetPage):
         """Constructor for Page Result from User Get Request
 
         Args:
+            response (dict): Response from API with pagination information
             honcho (AsyncHoncho): Honcho Client
             reverse (bool): Whether to reverse the order of the results or not
-            response (dict): Response from API with pagination information
         """
         super().__init__(response)
         self.honcho = honcho
@@ -65,20 +65,26 @@ class AsyncGetSessionPage(AsyncGetPage):
     """Paginated Results for Get Session Requests"""
 
     def __init__(
-        self, response: dict, user: AsyncUser, reverse: bool, location_id: Optional[str]
+        self,
+        response: dict,
+        user: AsyncUser,
+        reverse: bool,
+        location_id: Optional[str],
+        is_active: bool,
     ):
         """Constructor for Page Result from Session Get Request
 
         Args:
-            user (AsyncUser): Honcho User associated with the session
-            location_id (str): ID of the location associated with the session
-            reverse (bool): Whether to reverse the order of the results or not
             response (dict): Response from API with pagination information
+            user (AsyncUser): Honcho User associated with the session
+            reverse (bool): Whether to reverse the order of the results or not
+            location_id (str): ID of the location associated with the session
         """
         super().__init__(response)
         self.user = user
         self.location_id = location_id
         self.reverse = reverse
+        self.is_active = is_active
         self.items = [
             AsyncSession(
                 user=user,
@@ -104,6 +110,7 @@ class AsyncGetSessionPage(AsyncGetPage):
             page=(self.page + 1),
             page_size=self.page_size,
             reverse=self.reverse,
+            is_active=self.is_active,
         )
 
 
@@ -114,8 +121,9 @@ class AsyncGetMessagePage(AsyncGetPage):
         """Constructor for Page Result from Session Get Request
 
         Args:
-            session (AsyncSession): Session the returned messages are associated with
             response (dict): Response from API with pagination information
+            session (AsyncSession): Session the returned messages are associated with
+            reverse (bool): Whether to reverse the order of the results or not
         """
         super().__init__(response)
         self.session = session
@@ -160,6 +168,8 @@ class AsyncGetMetamessagePage(AsyncGetPage):
             session (AsyncSession): Session the returned messages are
             associated with
             reverse (bool): Whether to reverse the order of the results
+            message_id (Optional[str]): ID of the message associated with the
+            metamessage_type (Optional[str]): Type of the metamessage
         """
         super().__init__(response)
         self.session = session
@@ -508,6 +518,7 @@ class AsyncUser:
         page: int = 1,
         page_size: int = 50,
         reverse: bool = False,
+        is_active: bool = False,
     ):
         """Return sessions associated with a user paginated
 
@@ -522,13 +533,13 @@ class AsyncUser:
 
         """
         url = (
-            f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}"
+            f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
             + (f"&location_id={location_id}" if location_id else "")
         )
         response = await self.honcho.client.get(url)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetSessionPage(data, self, reverse, location_id)
+        return AsyncGetSessionPage(data, self, reverse, location_id, is_active)
 
     async def get_sessions_generator(
         self,
