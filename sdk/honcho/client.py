@@ -335,7 +335,32 @@ class AsyncHoncho:
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
-        return AsyncUser(self, **data)
+        return AsyncUser(
+            honcho=self,
+            id=data["id"],
+            metadata=data["metadata"],
+            created_at=data["created_at"],
+        )
+
+    async def get_or_create_user(self, name: str):
+        """Get or Create a user by name
+
+        Args:
+            name (str): The name of the user
+
+        Returns:
+            AsyncUser: The User object
+        """
+        url = f"{self.base_url}/get_or_create/{name}"
+        response = await self.client.get(url)
+        response.raise_for_status()
+        data = response.json()
+        return AsyncUser(
+            honcho=self,
+            id=data["id"],
+            metadata=data["metadata"],
+            created_at=data["created_at"],
+        )
 
     async def get_users(
         self, page: int = 1, page_size: int = 50, reverse: bool = False
@@ -420,7 +445,6 @@ class AsyncUser:
         """String representation of User"""
         return f"AsyncUser(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
 
-    # TODO method to update metadata
     async def update_user(self, metadata: dict):
         """Updates a user's metadata
 
@@ -436,7 +460,6 @@ class AsyncUser:
         response.raise_for_status()
         data = response.json()
         self.metadata = data["metadata"]
-        # TODO update this object's metadata field
         # return AsyncUser(self.honcho, **data)
 
     async def get_session(self, session_id: uuid.UUID):
