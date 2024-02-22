@@ -1,6 +1,6 @@
 # Honcho
 
-![Static Badge](https://img.shields.io/badge/Version-0.0.2-blue)
+![Static Badge](https://img.shields.io/badge/Version-0.0.3-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
@@ -53,14 +53,21 @@ poetry install # install dependencies
    connection_uri. For testing sqlite is fine. The below example uses an
    in-memory sqlite database.
 
-> Honcho has been tested with Postgresql and SQLite
+> Honcho has been tested with Postgresql and PGVector
 
 ```env
-DATABASE_TYPE=sqlite
-CONNECTION_URI=sqlite://
+DATABASE_TYPE=postgres
+CONNECTION_URI=postgresql://testuser:testpwd@localhost:5432/honcho
 ```
 
-3. Run the API via uvicorn
+3. launch a postgresd with pgvector enabled with docker-compose
+
+```bash
+cd honcho/api/local
+docker-compose up -d
+```
+
+4. Run the API via uvicorn
 
 ```bash
 cd honcho/api # change to the api directory
@@ -88,7 +95,7 @@ The API can also be deployed on fly.io. Follow the [Fly.io
 Docs](https://fly.io/docs/getting-started/) to setup your environment and the
 `flyctl`.
 
-Once `flyctl` is set up use the the following commands to launch the application:
+Once `flyctl` is set up use the following commands to launch the application:
 
 ```bash
 cd honcho/api
