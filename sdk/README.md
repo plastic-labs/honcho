@@ -31,12 +31,13 @@ by default if no other string is provided.
 
 ```python
 from uuid import uuid4
-from honcho import Client as HonchoClient
+from honcho import Honcho
 
-app_id = str(uuid4())
-honcho = HonchoClient(app_id=app_id)
-user_id = "test"
-session = honcho.create_session(user_id=user_id)
+app_name = str(uuid4())
+honcho = Honcho(app_name=app_name)
+user_name = "test"
+user = honcho.create_user(user_name)
+session = user.create_session()
 
 
 session.create_message(is_user=True, content="Hello I'm a human")

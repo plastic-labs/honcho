@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho-ai"
-version = "0.0.3"
+version = "0.0.4"
 description = "Python Client SDK for Honcho"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 license = "AGPL-3.0"
@@ -14,6 +14,25 @@ httpx = "^0.26.0"
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.4"
 pytest-asyncio = "^0.23.4"
+
+[tool.ruff.lint]
+# from https://docs.astral.sh/ruff/linter/#rule-selection example
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
+ignore = ["UP007"]
+
 
 [build-system]
 requires = ["poetry-core"]

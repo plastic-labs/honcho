@@ -1,0 +1,10 @@
+_type: prompt
+input_variables:
+    ["existing_states", "state"]
+template: >
+    Given the list of existing states, determine whether or not the new state is represented in the list of existing states.
+
+    existing states: """{existing_states}"""
+    new state: """{state}"""
+
+    If the new state is sufficiently similar to a value in the list of existing states, return that existing state value. If the new state is NOT sufficiently similar to anything in existing states, return "None". Output a single value only.

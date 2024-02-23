@@ -5,12 +5,13 @@ from langchain.prompts import ChatPromptTemplate
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_community.chat_models.fake import FakeListChatModel
 
-from honcho import Client as HonchoClient
+from honcho import Honcho
 
-app_id = str(uuid4())
+app_name = str(uuid4())
 
-# honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
-honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
+# honcho = Honcho(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
+honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+honcho.initialize()
 
 responses = ["Fake LLM Response :)"]
 llm = FakeListChatModel(responses=responses)
@@ -18,8 +19,9 @@ system = SystemMessage(
     content="You are world class technical documentation writer. Be as concise as possible"
 )
 
-user = "CLI-Test"
-session = honcho.create_session(user_id=user)
+user_name = "CLI-Test"
+user = honcho.create_user(user_name)
+session = user.create_session()
 
 
 def langchain_message_converter(messages: List):
