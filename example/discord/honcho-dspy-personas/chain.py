@@ -82,8 +82,11 @@ class StateExtractor:
             "state_commentary": state_commentary,
             "existing_states": existing_states,
         })
+
+        # strip anything that's not letters
+        clean_response =  ''.join(c for c in response.content if c.isalpha())
         # return output
-        return response.content
+        return clean_response
     
     @classmethod
     async def check_state_exists(cls, existing_states: List[str], state: str):

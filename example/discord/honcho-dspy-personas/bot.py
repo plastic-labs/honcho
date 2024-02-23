@@ -12,11 +12,10 @@ intents.message_content = True
 intents.members = True
 intents.reactions = True  # Enable reactions intent
 
-# app_id = str(uuid1())
-app_name = "vince-dspy-personas"
+app_name = str(uuid1())
 
-honcho = Honcho(app_name=app_name, base_url="http://localhost:8000") # uncomment to use local
-# honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+# honcho = Honcho(app_name=app_name, base_url="http://localhost:8000") # uncomment to use local
+honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
 honcho.initialize()
 
 bot = discord.Bot(intents=intents)

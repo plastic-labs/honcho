@@ -2,7 +2,7 @@ import os
 import dspy
 from dspy import Example
 from typing import List, Optional
-from dspy.teleprompt import BootstrapFewShotWithRandomSearch
+from dspy.teleprompt import BootstrapFewShot
 from dotenv import load_dotenv
 from chain import StateExtractor, format_chat_history
 from response_metric import metric
@@ -66,7 +66,7 @@ async def chat(
     session: Session,
     chat_history: List[Message],
     input: str,
-    optimization_threshold=5,
+    optimization_threshold=3,
 ):
     user_state_storage = dict(session.user.metadata)
     # first we need to see if the user has any existing states
@@ -87,7 +87,6 @@ async def chat(
 
     user_chat_module = ChatWithThought()
 
-    # TODO: you'd want to initialize user state object from Honcho
     # Save the user_state if it's new
     if is_state_new:
         user_state_storage[user_state] = {"chat_module": {}, "examples": []}
@@ -95,7 +94,6 @@ async def chat(
     user_state_data = user_state_storage[user_state]
 
     # Optimize the state's chat module if we've reached the optimization threshold
-    # TODO: read in examples from Honcho User Object
     examples = user_state_data["examples"]
     print(f"Num examples: {len(examples)}")
     session.user.update(metadata=user_state_storage)
@@ -106,31 +104,19 @@ async def chat(
         for example in examples:
             optimizer_example = Example(**example).with_inputs("chat_input", "response", "assessment_dimension")
             optimizer_examples.append(optimizer_example)
-            print(isinstance(optimizer_example, Example))
-            print(optimizer_example._store)
-        # examples = [dspy.Example(example).with_inputs("chat_input", "response", "assessment_dimension") for example in examples]
-        # print(examples)
-        # Splitting the examples list into train and validation sets
-        train_examples = examples[:-1]  # All but the last item for training
-        val_examples = examples[-1:]  # The last item for validation
 
         # Optimize chat module
-        optimizer = BootstrapFewShotWithRandomSearch(metric=metric, max_bootstrapped_demos=3, max_labeled_demos=3, num_candidate_programs=10, num_threads=4)
-        # optimizer = BootstrapFewShot(metric=metric, max_rounds=5)
+        optimizer = BootstrapFewShot(metric=metric, max_rounds=5)
 
-        compiled_chat_module = optimizer.compile(ChatWithThought(), trainset=train_examples, valset=val_examples)
-        # compiled_chat_module = optimizer.compile(user_chat_module, trainset=optimizer_examples)
+        compiled_chat_module = optimizer.compile(user_chat_module, trainset=optimizer_examples)
         print(f"COMPILED_CHAT_MODULE: {compiled_chat_module}")
 
-        # user_state_data["chat_module"] = compiled_chat_module.dump_state()
         user_state_storage[user_state][
             "chat_module"
         ] = compiled_chat_module.dump_state()
         print(f"DUMPED_STATE: {compiled_chat_module.dump_state()}")
         user_chat_module = compiled_chat_module
 
-        # save to file for debugging purposes
-        # compiled_chat_module.save("module.json")
         # Update User in Honcho
         session.user.update(metadata=user_state_storage)
 
