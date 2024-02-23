@@ -4,10 +4,10 @@ input_variables:
 template: >
     Your job is to label the state the user might be in. Some people might be conducting research, exploring a interest, or just asking questions for general inquiry.
 
-    commentary: ```{state_commentary}```
-    Prior states, from oldest to most recent: ```
+    commentary: """{state_commentary}"""
+    Prior states, from oldest to most recent:"""
     {existing_states}
-    ````
+    """
 
-    Take into account the user's prior states when making your prediction. Output your prediction as a concise, single word label. 
-
+    Take into account the user's prior states when making your prediction. Output your prediction as a concise, single word label.
+    

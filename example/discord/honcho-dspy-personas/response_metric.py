@@ -5,29 +5,60 @@ gpt4T = dspy.OpenAI(model='gpt-4-1106-preview', max_tokens=1000, model_type='cha
 class MessageResponseAssess(dspy.Signature):
     """Assess the quality of a response along the specified dimension."""
     chat_input = dspy.InputField()
+    assessment_dimension = dspy.InputField()  # user state
+    example_response = dspy.InputField()
+    example_label = dspy.InputField()
     ai_response = dspy.InputField()
-    gold_response = dspy.InputField()
-    assessment_dimension = dspy.InputField()
-    assessment_answer = dspy.OutputField(desc="Good or not")
+    ai_response_label = dspy.OutputField(desc="yes or no")
 
 
-def metric(example, ai_response, trace=None):
+def metric(example, pred, trace=None):
     """Assess the quality of a response along the specified dimension."""
 
-    assessment_dimension = example.assessment_dimension
     chat_input = example.chat_input
-    gold_response = example.response
+    assessment_dimension = f"The user is in the following state: {example.assessment_dimension}. Is the AI response appropriate for this state? Respond with Yes or No."
+    example_response = example.response
+    example_label = example.label
+    ai_response = pred
 
     with dspy.context(lm=gpt4T):
         assessment_result = dspy.Predict(MessageResponseAssess)(
             chat_input=chat_input, 
-            ai_response=ai_response, 
-            gold_response=gold_response,
-            assessment_dimension=assessment_dimension
+            assessment_dimension=assessment_dimension,
+            example_response=example_response,
+            example_label=example_label,
+            ai_response=ai_response,
         )
     
-    is_positive = assessment_result.assessment_answer.lower() == 'good'
+    is_appropriate = assessment_result.ai_response_label.lower() == 'yes'
 
     gpt4T.inspect_history(n=3)
     
-    return is_positive
+    return is_appropriate
+
+
+
+
+
+
+# def metric(example, ai_response, trace=None):
+#     """Assess the quality of a response along the specified dimension."""
+#     example = dspy.Example(**example).with_inputs("chat_input", "ai_response", "assessment_dimension")
+
+#     label = example.label
+#     chat_input = example.chat_input
+#     ai_response = example.ai_response
+#     assessment_dimension = example.assessment_dimension
+
+#     with dspy.context(lm=gpt4T):
+#         assessment_result = dspy.Predict(MessageResponseAssess)(
+#             chat_input=chat_input, 
+#             ai_response=ai_response,
+#             assessment_dimension=assessment_dimension
+#         )
+    
+#     is_positive = assessment_result.assessment_answer.lower() == 'positive'
+
+#     gpt4T.inspect_history(n=3)
+    
+#     return is_positive

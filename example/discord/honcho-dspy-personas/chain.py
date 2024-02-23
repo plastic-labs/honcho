@@ -1,10 +1,13 @@
 import os
 from typing import List, Union
+from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, load_prompt
 from langchain_core.messages import AIMessage, HumanMessage
 
 from honcho import Message
+
+load_dotenv()
 
 # langchain prompts
 SYSTEM_STATE_COMMENTARY = load_prompt(os.path.join(os.path.dirname(__file__), 'langchain_prompts/state_commentary.yaml'))
