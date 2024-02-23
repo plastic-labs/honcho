@@ -35,6 +35,7 @@ from honcho import Honcho
 
 app_name = str(uuid4())
 honcho = Honcho(app_name=app_name)
+honcho.initialize()
 user_name = "test"
 user = honcho.create_user(user_name)
 session = user.create_session()
