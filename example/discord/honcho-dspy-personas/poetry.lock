@@ -154,13 +154,13 @@ files = [
 
 [[package]]
 name = "anyio"
-version = "4.2.0"
+version = "4.3.0"
 description = "High level compatibility layer for multiple asynchronous event loop implementations"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "anyio-4.2.0-py3-none-any.whl", hash = "sha256:745843b39e829e108e518c489b31dc757de7d2131d53fac32bd8df268227bfee"},
-    {file = "anyio-4.2.0.tar.gz", hash = "sha256:e1875bb4b4e2de1669f4bc7869b6d3f54231cdced71605e6e64c9be77e3be50f"},
+    {file = "anyio-4.3.0-py3-none-any.whl", hash = "sha256:048e05d0f6caeed70d731f3db756d35dcc1f35747c8c403364a8332c630441b8"},
+    {file = "anyio-4.3.0.tar.gz", hash = "sha256:f75253795a87df48568485fd18cdd2a3fa5c4f7c5be8e5e36637733fce06fed6"},
 ]
 
 [package.dependencies]
@@ -676,27 +676,29 @@ files = [
 
 [[package]]
 name = "honcho-ai"
-version = "0.0.3"
+version = "0.0.4"
 description = "Python Client SDK for Honcho"
 optional = false
-python-versions = ">=3.10,<4.0"
-files = [
-    {file = "honcho_ai-0.0.3-py3-none-any.whl", hash = "sha256:a817ec62c4fd8dad1d629927511ce98a3f626f4bc55474187b80010e208e61ba"},
-    {file = "honcho_ai-0.0.3.tar.gz", hash = "sha256:ca52bb8c5036bfdbeee0c71ca754c580c672b28a4824240123b783f8679ca18e"},
-]
+python-versions = "^3.10"
+files = []
+develop = true
 
 [package.dependencies]
-httpx = ">=0.26.0,<0.27.0"
+httpx = "^0.26.0"
+
+[package.source]
+type = "directory"
+url = "../../../sdk"
 
 [[package]]
 name = "httpcore"
-version = "1.0.3"
+version = "1.0.4"
 description = "A minimal low-level HTTP client."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "httpcore-1.0.3-py3-none-any.whl", hash = "sha256:9a6a501c3099307d9fd76ac244e08503427679b1e81ceb1d922485e2f2462ad2"},
-    {file = "httpcore-1.0.3.tar.gz", hash = "sha256:5c0f9546ad17dac4d0772b0808856eb616eb8b48ce94f49ed819fd6982a8a544"},
+    {file = "httpcore-1.0.4-py3-none-any.whl", hash = "sha256:ac418c1db41bade2ad53ae2f3834a3a0f5ae76b56cf5aa497d2d033384fc7d73"},
+    {file = "httpcore-1.0.4.tar.gz", hash = "sha256:cb2839ccfcba0d2d3c1131d3c3e26dfc327326fbe7a5dc0dbfe9f6c9151bb022"},
 ]
 
 [package.dependencies]
@@ -707,7 +709,7 @@ h11 = ">=0.13,<0.15"
 asyncio = ["anyio (>=4.0,<5.0)"]
 http2 = ["h2 (>=3,<5)"]
 socks = ["socksio (==1.*)"]
-trio = ["trio (>=0.22.0,<0.24.0)"]
+trio = ["trio (>=0.22.0,<0.25.0)"]
 
 [[package]]
 name = "httpx"
@@ -814,13 +816,13 @@ files = [
 
 [[package]]
 name = "langchain-core"
-version = "0.1.24"
+version = "0.1.25"
 description = "Building applications with LLMs through composability"
 optional = false
 python-versions = ">=3.8.1,<4.0"
 files = [
-    {file = "langchain_core-0.1.24-py3-none-any.whl", hash = "sha256:1887bb2e0c12e0d94c1e805eb56d08dbb670232daf0906761f726bd507324319"},
-    {file = "langchain_core-0.1.24.tar.gz", hash = "sha256:ce70f4b97695eb55637e00ee33d480fffc6db1f95726f99b076b55cb1a42927d"},
+    {file = "langchain_core-0.1.25-py3-none-any.whl", hash = "sha256:ff0a0ad1ed877878e7b9c7601870cd12145abf3c814aae41995968d05ea6c09d"},
+    {file = "langchain_core-0.1.25.tar.gz", hash = "sha256:065ff8b4e383c5645d175b20ae44b258330ed06457b0fc0179efee310b6f2af6"},
 ]
 
 [package.dependencies]
@@ -855,13 +857,13 @@ tiktoken = ">=0.5.2,<1"
 
 [[package]]
 name = "langsmith"
-version = "0.1.3"
+version = "0.1.5"
 description = "Client library to connect to the LangSmith LLM Tracing and Evaluation Platform."
 optional = false
 python-versions = ">=3.8.1,<4.0"
 files = [
-    {file = "langsmith-0.1.3-py3-none-any.whl", hash = "sha256:b290f951d1ebff9abe2b52cc09d63acea75a9ca6e003a617310fb024eaf00f63"},
-    {file = "langsmith-0.1.3.tar.gz", hash = "sha256:197bd1f5baa83db69a0eab644bab1eba8dcdf0c2d8b7c900a45916f7b3dd50ab"},
+    {file = "langsmith-0.1.5-py3-none-any.whl", hash = "sha256:a1811821a923d90e53bcbacdd0988c3c366aff8f4c120d8777e7af8ecda06268"},
+    {file = "langsmith-0.1.5.tar.gz", hash = "sha256:aa7a2861aa3d9ae563a077c622953533800466c4e2e539b0d567b84d5fd5b157"},
 ]
 
 [package.dependencies]
@@ -1950,13 +1952,13 @@ files = [
 
 [[package]]
 name = "urllib3"
-version = "2.2.0"
+version = "2.2.1"
 description = "HTTP library with thread-safe connection pooling, file post, and more."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "urllib3-2.2.0-py3-none-any.whl", hash = "sha256:ce3711610ddce217e6d113a2732fafad960a03fd0318c91faa79481e35c11224"},
-    {file = "urllib3-2.2.0.tar.gz", hash = "sha256:051d961ad0c62a94e50ecf1af379c3aba230c66c710493493560c0c223c49f20"},
+    {file = "urllib3-2.2.1-py3-none-any.whl", hash = "sha256:450b20ec296a467077128bff42b73080516e71b56ff59a60a02bef2232c4fa9d"},
+    {file = "urllib3-2.2.1.tar.gz", hash = "sha256:d0570876c61ab9e520d776c38acbbb5b05a776d3f9ff98a5c8fd5162a444cf19"},
 ]
 
 [package.extras]
@@ -2188,4 +2190,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.11"
-content-hash = "85bddbf515ca00359d2b25db6dc48e2943a136e3b65a9ed8a9537ad79bfd4eec"
+content-hash = "f27a3578cc155c9eccf7d771fe3c47196500adaae5c92b0bbb55252ee338fa50"
