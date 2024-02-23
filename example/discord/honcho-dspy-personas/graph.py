@@ -42,7 +42,8 @@ class ChatWithThought(dspy.Module):
         chat_input: str,
         user_message: Optional[Message] = None,
         session: Optional[Session] = None,
-        assessment_dimension = None,
+        response: Optional[str] = None,
+        assessment_dimension: Optional[str] = None,
     ):
         # call the thought predictor
         thought = self.generate_thought(user_input=chat_input)
@@ -57,7 +58,7 @@ class ChatWithThought(dspy.Module):
             user_input=chat_input, thought=thought.thought
         )
 
-        return response
+        return response  # this is a prediction object
 
 
 async def chat(
@@ -65,7 +66,7 @@ async def chat(
     session: Session,
     chat_history: List[Message],
     input: str,
-    optimization_threshold=3,
+    optimization_threshold=5,
 ):
     user_state_storage = dict(session.user.metadata)
     # first we need to see if the user has any existing states
@@ -101,16 +102,24 @@ async def chat(
 
     if len(examples) >= optimization_threshold:
         # convert example from dicts to dspy Example objects
-        examples = [dspy.Example(**example).with_inputs("chat_input", "ai_response", "assessment_dimension") for example in examples]
-        print(examples)
+        optimizer_examples = []
+        for example in examples:
+            optimizer_example = Example(**example).with_inputs("chat_input", "response", "assessment_dimension")
+            optimizer_examples.append(optimizer_example)
+            print(isinstance(optimizer_example, Example))
+            print(optimizer_example._store)
+        # examples = [dspy.Example(example).with_inputs("chat_input", "response", "assessment_dimension") for example in examples]
+        # print(examples)
         # Splitting the examples list into train and validation sets
-        # train_examples = examples[:-1]  # All but the last item for training
-        # val_examples = examples[-1:]  # The last item for validation
+        train_examples = examples[:-1]  # All but the last item for training
+        val_examples = examples[-1:]  # The last item for validation
 
         # Optimize chat module
         optimizer = BootstrapFewShotWithRandomSearch(metric=metric, max_bootstrapped_demos=3, max_labeled_demos=3, num_candidate_programs=10, num_threads=4)
-        # compiled_chat_module = optimizer.compile(ChatWithThought(), trainset=train_examples, valset=val_examples)
-        compiled_chat_module = optimizer.compile(user_chat_module, trainset=examples)
+        # optimizer = BootstrapFewShot(metric=metric, max_rounds=5)
+
+        compiled_chat_module = optimizer.compile(ChatWithThought(), trainset=train_examples, valset=val_examples)
+        # compiled_chat_module = optimizer.compile(user_chat_module, trainset=optimizer_examples)
         print(f"COMPILED_CHAT_MODULE: {compiled_chat_module}")
 
         # user_state_data["chat_module"] = compiled_chat_module.dump_state()
@@ -132,6 +141,9 @@ async def chat(
     )
     # remove ai prefix
     response = response.response.replace("ai:", "").strip()
+
+    print("========== CHAT HISTORY ==========")
     dspy_gpt4.inspect_history(n=2)
+    print("======= END CHAT HISTORY =========")
 
     return response
