@@ -31,30 +31,3 @@ def metric(example, pred, trace=None):
     print("======== END OPTIMIZER HISTORY ========")
     
     return is_appropriate
-
-
-
-
-
-
-# def metric(example, ai_response, trace=None):
-#     """Assess the quality of a response along the specified dimension."""
-#     example = dspy.Example(**example).with_inputs("chat_input", "ai_response", "assessment_dimension")
-
-#     label = example.label
-#     chat_input = example.chat_input
-#     ai_response = example.ai_response
-#     assessment_dimension = example.assessment_dimension
-
-#     with dspy.context(lm=gpt4T):
-#         assessment_result = dspy.Predict(MessageResponseAssess)(
-#             chat_input=chat_input, 
-#             ai_response=ai_response,
-#             assessment_dimension=assessment_dimension
-#         )
-    
-#     is_positive = assessment_result.assessment_answer.lower() == 'positive'
-
-#     gpt4T.inspect_history(n=3)
-    
-#     return is_positive
