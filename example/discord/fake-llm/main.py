@@ -3,7 +3,7 @@ from uuid import uuid4
 import discord
 from dotenv import load_dotenv
 
-from honcho import Client as HonchoClient
+from honcho import Honcho
 
 load_dotenv()
 
@@ -11,10 +11,11 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 
-app_id = str(uuid4())
+app_name = str(uuid4())
 
-# honcho = HonchoClient(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
-honcho = HonchoClient(app_id=app_id) # uses demo server at https://demo.honcho.dev
+# honcho = Honcho(app_name=app_name, base_url="http://localhost:8000") # uncomment to use local
+honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+honcho.initialize()
 
 bot = discord.Bot(intents=intents)
 
@@ -30,13 +31,14 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
+    user = honcho.get_or_create_user(user_id)
     location_id = str(message.channel.id)
 
-    sessions = list(honcho.get_sessions_generator(user_id, location_id))
+    sessions = list(user.get_sessions_generator(location_id))
     if len(sessions) > 0:
         session = sessions[0]
     else:
-        session = honcho.create_session(user_id, location_id)
+        session = user.create_session(location_id)
 
     inp = message.content
     session.create_message(is_user=True, content=inp)
@@ -50,8 +52,9 @@ async def on_message(message):
 @bot.slash_command(name="restart", description="Restart the Conversation")
 async def restart(ctx):
     user_id = f"discord_{str(ctx.author.id)}"
+    user = honcho.get_or_create_user(user_id)
     location_id = str(ctx.channel_id)
-    sessions = list(honcho.get_sessions_generator(user_id, location_id))
+    sessions = list(user.get_sessions_generator(location_id))
     sessions[0].close() if len(sessions) > 0 else None
 
     await ctx.respond(

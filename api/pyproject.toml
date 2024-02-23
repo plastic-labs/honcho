@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "honcho"
-version = "0.0.3"
+version = "0.0.4"
 description = "Honcho Server"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-fastapi = "^0.105.0"
+fastapi = "^0.109.0"
 uvicorn = "^0.24.0.post1"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.25"
@@ -16,6 +16,23 @@ slowapi = "^0.1.8"
 fastapi-pagination = "^0.12.14"
 pgvector = "^0.2.5"
 openai = "^1.12.0"
+
+[tool.ruff.lint]
+# from https://docs.astral.sh/ruff/linter/#rule-selection example
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # isort
+    "I",
+]
 
 
 [build-system]

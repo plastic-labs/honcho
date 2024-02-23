@@ -1,0 +1,9 @@
+_type: prompt
+input_variables:
+    ["existing_states", "chat_history", "user_input"]
+template: >
+    Your job is to make a prediction about the task the user might be engaging in. Some people might be researching, exploring curiosities, or just asking questions for general inquiry. Provide commentary that would shed light on the "mode" the user might be in.
+
+    existing states: """{existing_states}"""
+    chat history: """{chat_history}"""
+    user input: """{user_input}"""
