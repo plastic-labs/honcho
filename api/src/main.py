@@ -1,6 +1,7 @@
 import uuid
 from typing import Optional, Sequence
 
+import sentry_sdk
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi_pagination import Page, add_pagination
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -12,6 +13,11 @@ from sqlalchemy.orm import Session
 
 from . import crud, models, schemas
 from .db import SessionLocal, engine
+
+sentry_sdk.init(
+    dsn="https://a09c69bf7b871a295a8af9a03aea3a84@o4505873635606528.ingest.sentry.io/4505903820570624",
+    enable_tracing=True,
+)
 
 models.Base.metadata.create_all(bind=engine)  # Scaffold Database if not already done
 
