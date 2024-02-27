@@ -16,6 +16,7 @@ slowapi = "^0.1.8"
 fastapi-pagination = "^0.12.14"
 pgvector = "^0.2.5"
 openai = "^1.12.0"
+sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^1.40.5"}
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
