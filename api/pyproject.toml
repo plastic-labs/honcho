@@ -23,6 +23,7 @@ opentelemetry-sdk = "^1.23.0"
 opentelemetry-exporter-otlp = "^1.23.0"
 opentelemetry-instrumentation-sqlalchemy = "^0.44b0"
 opentelemetry-instrumentation-logging = "^0.44b0"
+asyncpg = "^0.29.0"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
@@ -40,6 +41,8 @@ select = [
     # isort
     "I",
 ]
+[tool.ruff.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
 
 
 [build-system]
