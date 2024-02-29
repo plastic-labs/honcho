@@ -54,6 +54,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -205,20 +206,23 @@ limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
 
 # Add SlowAPI middleware to the application
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(
+    exc_class_or_status_code=RateLimitExceeded,
+    handler=_rate_limit_exceeded_handler,  # type: ignore
+)
 app.add_middleware(SlowAPIMiddleware)
 
 
 add_pagination(app)
 
 
-def get_db():
+async def get_db():
     """FastAPI Dependency Generator for Database"""
     db = SessionLocal()
     try:
         yield db
     finally:
-        db.close()
+        await db.close()
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -241,10 +245,10 @@ async def http_exception_handler(request, exc):
 # App Routes
 ########################################################
 @app.get("/apps/{app_id}", response_model=schemas.App)
-def get_app(
+async def get_app(
     request: Request,
     app_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get an App by ID
 
@@ -255,17 +259,17 @@ def get_app(
         schemas.App: App object
 
     """
-    app = crud.get_app(db, app_id=app_id)
+    app = await crud.get_app(db, app_id=app_id)
     if app is None:
         raise HTTPException(status_code=404, detail="App not found")
     return app
 
 
 @app.get("/apps/name/{name}", response_model=schemas.App)
-def get_app_by_name(
+async def get_app_by_name(
     request: Request,
     name: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get an App by Name
 
@@ -276,17 +280,17 @@ def get_app_by_name(
         schemas.App: App object
 
     """
-    app = crud.get_app_by_name(db, name=name)
+    app = await crud.get_app_by_name(db, name=name)
     if app is None:
         raise HTTPException(status_code=404, detail="App not found")
     return app
 
 
 @app.post("/apps", response_model=schemas.App)
-def create_app(
+async def create_app(
     request: Request,
     app: schemas.AppCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Create an App
 
@@ -297,14 +301,15 @@ def create_app(
         schemas.App: Created App object
 
     """
-    return crud.create_app(db, app=app)
+
+    return await crud.create_app(db, app=app)
 
 
 @app.get("/apps/get_or_create/{name}", response_model=schemas.App)
-def get_or_create_app(
+async def get_or_create_app(
     request: Request,
     name: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get or Create an App
 
@@ -315,18 +320,18 @@ def get_or_create_app(
         schemas.App: App object
 
     """
-    app = crud.get_app_by_name(db, name=name)
+    app = await crud.get_app_by_name(db, name=name)
     if app is None:
-        app = crud.create_app(db, app=schemas.AppCreate(name=name))
+        app = await crud.create_app(db, app=schemas.AppCreate(name=name))
     return app
 
 
 @app.put("/apps/{app_id}", response_model=schemas.App)
-def update_app(
+async def update_app(
     request: Request,
     app_id: uuid.UUID,
     app: schemas.AppUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update an App
 
@@ -338,7 +343,7 @@ def update_app(
         schemas.App: The App object of the updated App
 
     """
-    honcho_app = crud.update_app(db, app_id=app_id, app=app)
+    honcho_app = await crud.update_app(db, app_id=app_id, app=app)
     if honcho_app is None:
         raise HTTPException(status_code=404, detail="App not found")
     return honcho_app
@@ -350,31 +355,32 @@ def update_app(
 
 
 @app.post("/apps/{app_id}/users", response_model=schemas.User)
-def create_user(
+async def create_user(
     request: Request,
     app_id: uuid.UUID,
     user: schemas.UserCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user (schemas.UserCreate): The User object containing any metadata
 
     Returns:
         schemas.User: Created User object
 
     """
-    return crud.create_user(db, app_id=app_id, user=user)
+    return await crud.create_user(db, app_id=app_id, user=user)
 
 
 @app.get("/apps/{app_id}/users", response_model=Page[schemas.User])
-def get_users(
+async def get_users(
     request: Request,
     app_id: uuid.UUID,
     reverse: bool = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get All Users for an App
 
@@ -386,61 +392,66 @@ def get_users(
         list[schemas.User]: List of User objects
 
     """
-    return paginate(db, crud.get_users(db, app_id=app_id, reverse=reverse))
+    return paginate(db, await crud.get_users(db, app_id=app_id, reverse=reverse))
 
 
 @app.get("/apps/{app_id}/users/{name}", response_model=schemas.User)
-def get_user_by_name(
+async def get_user_by_name(
     request: Request,
     app_id: uuid.UUID,
     name: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
 
     Returns:
         schemas.User: User object
 
     """
-    return crud.get_user_by_name(db, app_id=app_id, name=name)
+    return await crud.get_user_by_name(db, app_id=app_id, name=name)
 
 
 @app.get("/apps/{app_id}/users/get_or_create/{name}", response_model=schemas.User)
-def get_or_create_user(
-    request: Request, app_id: uuid.UUID, name: str, db: Session = Depends(get_db)
+async def get_or_create_user(
+    request: Request, app_id: uuid.UUID, name: str, db: AsyncSession = Depends(get_db)
 ):
     """Get or Create a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
 
     Returns:
         schemas.User: User object
 
     """
-    user = crud.get_user_by_name(db, app_id=app_id, name=name)
+    user = await crud.get_user_by_name(db, app_id=app_id, name=name)
     if user is None:
-        user = crud.create_user(db, app_id=app_id, user=schemas.UserCreate(name=name))
+        user = await crud.create_user(
+            db, app_id=app_id, user=schemas.UserCreate(name=name)
+        )
     return user
 
 
 @app.put("/apps/{app_id}/users/{user_id}", response_model=schemas.User)
-def update_user(
+async def update_user(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     user: schemas.UserUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
         user (schemas.UserCreate): The User object containing any metadata
 
@@ -448,7 +459,7 @@ def update_user(
         schemas.User: Updated User object
 
     """
-    return crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
+    return await crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
 
 
 ########################################################
@@ -457,21 +468,23 @@ def update_user(
 
 
 @router.get("/sessions", response_model=Page[schemas.Session])
-def get_sessions(
+async def get_sessions(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     location_id: Optional[str] = None,
     is_active: Optional[bool] = False,
     reverse: Optional[bool] = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get All Sessions for a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
-        location_id (str, optional): Optional Location ID representing the location of a session
+        location_id (str, optional): Optional Location ID representing the location of a
+        session
 
     Returns:
         list[schemas.Session]: List of Session objects
@@ -479,7 +492,7 @@ def get_sessions(
     """
     return paginate(
         db,
-        crud.get_sessions(
+        await crud.get_sessions(
             db,
             app_id=app_id,
             user_id=user_id,
@@ -491,12 +504,12 @@ def get_sessions(
 
 
 @router.post("/sessions", response_model=schemas.Session)
-def create_session(
+async def create_session(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session: schemas.SessionCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Create a Session for a User
 
@@ -511,23 +524,26 @@ def create_session(
         schemas.Session: The Session object of the new Session
 
     """
-    value = crud.create_session(db, app_id=app_id, user_id=user_id, session=session)
+    value = await crud.create_session(
+        db, app_id=app_id, user_id=user_id, session=session
+    )
     return value
 
 
 @router.put("/sessions/{session_id}", response_model=schemas.Session)
-def update_session(
+async def update_session(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     session: schemas.SessionUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update the metadata of a Session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
         session_id (uuid.UUID): The ID of the Session to update
         session (schemas.SessionUpdate): The Session object containing any new metadata
@@ -541,25 +557,26 @@ def update_session(
             status_code=400, detail="Session metadata cannot be empty"
         )  # TODO TEST if I can set the metadata to be blank with this
     try:
-        return crud.update_session(
+        return await crud.update_session(
             db, app_id=app_id, user_id=user_id, session_id=session_id, session=session
         )
     except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @router.delete("/sessions/{session_id}")
-def delete_session(
+async def delete_session(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Delete a session by marking it as inactive
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
         session_id (uuid.UUID): The ID of the Session to delete
 
@@ -570,7 +587,7 @@ def delete_session(
         HTTPException: If the session is not found
 
     """
-    response = crud.delete_session(
+    response = await crud.delete_session(
         db, app_id=app_id, user_id=user_id, session_id=session_id
     )
     if response:
@@ -580,17 +597,18 @@ def delete_session(
 
 
 @router.get("/sessions/{session_id}", response_model=schemas.Session)
-def get_session(
+async def get_session(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a specific session for a user by ID
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
         session_id (uuid.UUID): The ID of the Session to retrieve
 
@@ -600,7 +618,7 @@ def get_session(
     Raises:
         HTTPException: If the session is not found
     """
-    honcho_session = crud.get_session(
+    honcho_session = await crud.get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
     if honcho_session is None:
@@ -614,21 +632,23 @@ def get_session(
 
 
 @router.post("/sessions/{session_id}/messages", response_model=schemas.Message)
-def create_message_for_session(
+async def create_message_for_session(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     message: schemas.MessageCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Adds a message to a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
-        message (schemas.MessageCreate): The Message object to add containing the message content and type
+        message (schemas.MessageCreate): The Message object to add containing the
+        message content and type
 
     Returns:
         schemas.Message: The Message object of the added message
@@ -638,26 +658,27 @@ def create_message_for_session(
 
     """
     try:
-        return crud.create_message(
+        return await crud.create_message(
             db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
         )
     except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @router.get("/sessions/{session_id}/messages", response_model=Page[schemas.Message])
-def get_messages(
+async def get_messages(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     reverse: Optional[bool] = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get all messages for a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
         reverse (bool): Whether to reverse the order of the messages
@@ -672,7 +693,7 @@ def get_messages(
     try:
         return paginate(
             db,
-            crud.get_messages(
+            await crud.get_messages(
                 db,
                 app_id=app_id,
                 user_id=user_id,
@@ -681,22 +702,22 @@ def get_messages(
             ),
         )
     except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @router.get(
     "sessions/{session_id}/messages/{message_id}", response_model=schemas.Message
 )
-def get_message(
+async def get_message(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     message_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """ """
-    honcho_message = crud.get_message(
+    honcho_message = await crud.get_message(
         db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
     )
     if honcho_message is None:
@@ -710,21 +731,23 @@ def get_message(
 
 
 @router.post("/sessions/{session_id}/metamessages", response_model=schemas.Metamessage)
-def create_metamessage(
+async def create_metamessage(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     metamessage: schemas.MetamessageCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Adds a message to a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
-        message (schemas.MessageCreate): The Message object to add containing the message content and type
+        message (schemas.MessageCreate): The Message object to add containing the
+        message content and type
 
     Returns:
         schemas.Message: The Message object of the added message
@@ -734,7 +757,7 @@ def create_metamessage(
 
     """
     try:
-        return crud.create_metamessage(
+        return await crud.create_metamessage(
             db,
             metamessage=metamessage,
             app_id=app_id,
@@ -742,13 +765,13 @@ def create_metamessage(
             session_id=session_id,
         )
     except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @router.get(
     "/sessions/{session_id}/metamessages", response_model=Page[schemas.Metamessage]
 )
-def get_metamessages(
+async def get_metamessages(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -756,12 +779,13 @@ def get_metamessages(
     message_id: Optional[uuid.UUID] = None,
     metamessage_type: Optional[str] = None,
     reverse: Optional[bool] = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get all messages for a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
         reverse (bool): Whether to reverse the order of the metamessages
@@ -776,7 +800,7 @@ def get_metamessages(
     try:
         return paginate(
             db,
-            crud.get_metamessages(
+            await crud.get_metamessages(
                 db,
                 app_id=app_id,
                 user_id=user_id,
@@ -787,26 +811,27 @@ def get_metamessages(
             ),
         )
     except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 @router.get(
     "/sessions/{session_id}/metamessages/{metamessage_id}",
     response_model=schemas.Metamessage,
 )
-def get_metamessage(
+async def get_metamessage(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     message_id: uuid.UUID,
     metamessage_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """Get a specific session for a user by ID
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
 
@@ -816,7 +841,7 @@ def get_metamessage(
     Raises:
         HTTPException: If the session is not found
     """
-    honcho_metamessage = crud.get_metamessage(
+    honcho_metamessage = await crud.get_metamessage(
         db,
         app_id=app_id,
         session_id=session_id,
@@ -835,15 +860,16 @@ def get_metamessage(
 
 
 @router.get("/collections", response_model=Page[schemas.Collection])
-def get_collections(
+async def get_collections(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     reverse: Optional[bool] = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     return paginate(
-        db, crud.get_collections(db, app_id=app_id, user_id=user_id, reverse=reverse)
+        db,
+        await crud.get_collections(db, app_id=app_id, user_id=user_id, reverse=reverse),
     )
 
 
@@ -853,7 +879,7 @@ def get_collections(
 #     app_id: uuid.UUID,
 #     user_id: uuid.UUID,
 #     collection_id: uuid.UUID,
-#     db: Session = Depends(get_db),
+#     db: AsyncSession = Depends(get_db),
 # ) -> schemas.Collection:
 #     honcho_collection = crud.get_collection_by_id(
 #         db, app_id=app_id, user_id=user_id, collection_id=collection_id
@@ -866,14 +892,14 @@ def get_collections(
 
 
 @router.get("/collections/{name}", response_model=schemas.Collection)
-def get_collection_by_name(
+async def get_collection_by_name(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     name: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ) -> schemas.Collection:
-    honcho_collection = crud.get_collection_by_name(
+    honcho_collection = await crud.get_collection_by_name(
         db, app_id=app_id, user_id=user_id, name=name
     )
     if honcho_collection is None:
@@ -884,39 +910,39 @@ def get_collection_by_name(
 
 
 @router.post("/collections", response_model=schemas.Collection)
-def create_collection(
+async def create_collection(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection: schemas.CollectionCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        return crud.create_collection(
+        return await crud.create_collection(
             db, collection=collection, app_id=app_id, user_id=user_id
         )
     except ValueError:
         raise HTTPException(
             status_code=406,
             detail="Error invalid collection configuration - name may already exist",
-        )
+        ) from None
 
 
 @router.put("/collections/{collection_id}", response_model=schemas.Collection)
-def update_collection(
+async def update_collection(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     collection: schemas.CollectionUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     if collection.name is None:
         raise HTTPException(
             status_code=400, detail="invalid request - name cannot be None"
         )
     try:
-        honcho_collection = crud.update_collection(
+        honcho_collection = await crud.update_collection(
             db,
             collection=collection,
             app_id=app_id,
@@ -927,19 +953,19 @@ def update_collection(
         raise HTTPException(
             status_code=406,
             detail="Error invalid collection configuration - name may already exist",
-        )
+        ) from None
     return honcho_collection
 
 
 @router.delete("/collections/{collection_id}")
-def delete_collection(
+async def delete_collection(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    response = crud.delete_collection(
+    response = await crud.delete_collection(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
     )
     if response:
@@ -958,18 +984,18 @@ def delete_collection(
 @router.get(
     "/collections/{collection_id}/documents", response_model=Page[schemas.Document]
 )
-def get_documents(
+async def get_documents(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     reverse: Optional[bool] = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     try:
         return paginate(
             db,
-            crud.get_documents(
+            await crud.get_documents(
                 db,
                 app_id=app_id,
                 user_id=user_id,
@@ -982,7 +1008,7 @@ def get_documents(
     ):  # TODO can probably remove this exception ok to return empty here
         raise HTTPException(
             status_code=404, detail="collection not found or does not belong to user"
-        )
+        ) from None
 
 
 router.get(
@@ -991,15 +1017,15 @@ router.get(
 )
 
 
-def get_document(
+async def get_document(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    honcho_document = crud.get_document(
+    honcho_document = await crud.get_document(
         db,
         app_id=app_id,
         user_id=user_id,
@@ -1016,18 +1042,18 @@ def get_document(
 @router.get(
     "/collections/{collection_id}/query", response_model=Sequence[schemas.Document]
 )
-def query_documents(
+async def query_documents(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     query: str,
     top_k: int = 5,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     if top_k is not None and top_k > 50:
         top_k = 50  # TODO see if we need to paginate this
-    return crud.query_documents(
+    return await crud.query_documents(
         db=db,
         app_id=app_id,
         user_id=user_id,
@@ -1038,16 +1064,16 @@ def query_documents(
 
 
 @router.post("/collections/{collection_id}/documents", response_model=schemas.Document)
-def create_document(
+async def create_document(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document: schemas.DocumentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     try:
-        return crud.create_document(
+        return await crud.create_document(
             db,
             document=document,
             app_id=app_id,
@@ -1057,27 +1083,27 @@ def create_document(
     except ValueError:
         raise HTTPException(
             status_code=404, detail="collection not found or does not belong to user"
-        )
+        ) from None
 
 
 @router.put(
     "/collections/{collection_id}/documents/{document_id}",
     response_model=schemas.Document,
 )
-def update_document(
+async def update_document(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
     document: schemas.DocumentUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     if document.content is None and document.metadata is None:
         raise HTTPException(
             status_code=400, detail="content and metadata cannot both be None"
         )
-    return crud.update_document(
+    return await crud.update_document(
         db,
         document=document,
         app_id=app_id,
@@ -1088,15 +1114,15 @@ def update_document(
 
 
 @router.delete("/collections/{collection_id}/documents/{document_id}")
-def delete_document(
+async def delete_document(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    response = crud.delete_document(
+    response = await crud.delete_document(
         db,
         app_id=app_id,
         user_id=user_id,
