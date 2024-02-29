@@ -69,15 +69,6 @@ DEBUG_LOG_OTEL_TO_CONSOLE = (
     os.getenv("DEBUG_LOG_OTEL_TO_CONSOLE", "False").lower() == "true"
 )
 
-# logging.getLogger().setLevel(logging.WARNING)
-
-# class FormattedLoggingHandler(LoggingHandler):
-#     def emit(self, record: logging.LogRecord) -> None:
-#         msg = self.format(record)
-#         record.msg = msg
-#         record.args = None
-#         self._logger.emit(self._translate(record))
-
 
 def otel_get_env_vars():
     otel_http_headers = {}
@@ -180,24 +171,31 @@ def otel_logging_init():
     logging.getLogger().addHandler(otel_log_handler)
 
 
-# Instrument SQLAlchemy
-otel_trace_init()
-otel_logging_init()
+OPENTELEMTRY_ENABLED = os.getenv("OPENTELEMETRY_ENABLED", "False").lower() == "true"
 
-SQLAlchemyInstrumentor().instrument(engine=engine)
+# Instrument SQLAlchemy
+if OPENTELEMTRY_ENABLED:
+    otel_trace_init()
+    otel_logging_init()
+
+    SQLAlchemyInstrumentor().instrument(engine=engine)
 
 # Sentry Setup
 
-sentry_sdk.init(
-    dsn=os.getenv("SENTRY_DSN"),
-    enable_tracing=True,
-)
+SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
+if SENTRY_ENABLED:
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        enable_tracing=True,
+    )
 
 models.Base.metadata.create_all(bind=engine)  # Scaffold Database if not already done
 
 
 app = FastAPI()
-FastAPIInstrumentor().instrument_app(app)
+
+if OPENTELEMTRY_ENABLED:
+    FastAPIInstrumentor().instrument_app(app)
 
 
 router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
