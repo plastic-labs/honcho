@@ -32,6 +32,7 @@ jobs:
         env:
           DATABASE_TYPE: postgres
           CONNECTION_URI: postgresql://testuser:testpwd@localhost:5432/honcho
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       - name: Run Tests
         run: |
           cd sdk
