@@ -14,9 +14,6 @@ jobs:
       - name: Install poetry
         run: |
           pip install poetry
-      - name: Syncify Client
-        run: |
-          python scripts/syncronizer.py
       - name: Start Database
         run: |
           cd api/local

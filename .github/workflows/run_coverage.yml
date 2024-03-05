@@ -14,9 +14,6 @@ jobs:
       - name: Install poetry
         run: |
           pip install poetry
-      - name: Syncify Client
-        run: |
-          python scripts/syncronizer.py
       - name: Start Database
         run: |
           cd api/local
@@ -38,20 +35,13 @@ jobs:
           cd sdk
           poetry install
           poetry run coverage run -m pytest
-          poetry run coverage xml -o coverage.xml
+          poetry run coverage report --format=markdown > coverage.md
           cd ..
-      - name: Code Coverage
-        uses: irongut/CodeCoverageSummary@v1.3.0
-        with:
-          filename: sdk/coverage.xml
-          badge: true
-          output: file
-          format: markdown
       - name: Add Coverage PR Comment
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           recreate: true
-          path: code-coverage-results.md
+          path: sdk/coverage.md
       - name: Stop Server
         run: |
           kill $(jobs -p) || true
