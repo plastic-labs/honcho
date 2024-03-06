@@ -1,0 +1,46 @@
+name: Run Tests
+on: [push, pull_request]
+jobs:
+  test:
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - name: Install poetry
+        run: |
+          pip install poetry
+      - name: Start Database
+        run: |
+          cd api/local
+          docker compose up --wait
+          cd ../..
+      - name: Start Server
+        run: |
+          cd api
+          poetry install --no-root
+          poetry run uvicorn src.main:app &
+          sleep 5
+          cd ..
+        env:
+          DATABASE_TYPE: postgres
+          CONNECTION_URI: postgresql://testuser:testpwd@localhost:5432/honcho
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Run Tests
+        run: |
+          cd sdk
+          poetry install
+          poetry run pytest
+          cd ..
+      - name: Stop Database
+        run: |
+          cd api/local
+          docker compose down
+          cd ../..
+      - name: Stop Server
+        run: |
+          kill $(jobs -p) || true
