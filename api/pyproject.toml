@@ -11,7 +11,6 @@ fastapi = "^0.109.0"
 uvicorn = "^0.24.0.post1"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.25"
-psycopg2-binary = "^2.9.9"
 slowapi = "^0.1.8"
 fastapi-pagination = "^0.12.14"
 pgvector = "^0.2.5"
@@ -23,7 +22,8 @@ opentelemetry-sdk = "^1.23.0"
 opentelemetry-exporter-otlp = "^1.23.0"
 opentelemetry-instrumentation-sqlalchemy = "^0.44b0"
 opentelemetry-instrumentation-logging = "^0.44b0"
-asyncpg = "^0.29.0"
+psycopg = "^3.1.18"
+greenlet = "^3.0.3"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
