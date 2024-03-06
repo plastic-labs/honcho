@@ -1,15 +1,11 @@
 import os
 
 from dotenv import load_dotenv
-
-# from sqlalchemy import create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.declarative import declarative_base
 
-# from sqlalchemy.orm import sessionmaker
-
 load_dotenv()
-
 
 connect_args = {}
 
@@ -24,3 +20,12 @@ engine = create_async_engine(
 
 SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+
+def scaffold_db():
+    """Use a Sync Engine for scaffolding the database. DDL operations are unavailable
+    with Async Engines
+    """
+    engine = create_engine(os.environ["CONNECTION_URI"], echo=True)
+    Base.metadata.create_all(bind=engine)
+    engine.dispose()

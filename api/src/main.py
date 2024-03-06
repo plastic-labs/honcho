@@ -2,8 +2,7 @@ import json
 import logging
 import os
 import uuid
-
-# from logging import LogRecord
+from contextlib import asynccontextmanager
 from typing import Optional, Sequence
 
 import sentry_sdk
@@ -58,8 +57,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import crud, models, schemas
-from .db import SessionLocal, engine
+from . import crud, schemas
+from .db import SessionLocal, engine, scaffold_db
 
 # Otel Setup
 
@@ -190,10 +189,15 @@ if SENTRY_ENABLED:
         enable_tracing=True,
     )
 
-models.Base.metadata.create_all(bind=engine)  # Scaffold Database if not already done
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scaffold_db()  # Scaffold Database on Startup
+    yield
+    await engine.dispose()
 
 
-app = FastAPI()
+app = FastAPI(lifespan=lifespan)
 
 if OPENTELEMTRY_ENABLED:
     FastAPIInstrumentor().instrument_app(app)
@@ -218,7 +222,7 @@ add_pagination(app)
 
 async def get_db():
     """FastAPI Dependency Generator for Database"""
-    db = SessionLocal()
+    db: AsyncSession = SessionLocal()
     try:
         yield db
     finally:
@@ -392,7 +396,7 @@ async def get_users(
         list[schemas.User]: List of User objects
 
     """
-    return paginate(db, await crud.get_users(db, app_id=app_id, reverse=reverse))
+    return await paginate(db, await crud.get_users(db, app_id=app_id, reverse=reverse))
 
 
 @app.get("/apps/{app_id}/users/{name}", response_model=schemas.User)
@@ -490,7 +494,7 @@ async def get_sessions(
         list[schemas.Session]: List of Session objects
 
     """
-    return paginate(
+    return await paginate(
         db,
         await crud.get_sessions(
             db,
@@ -691,7 +695,7 @@ async def get_messages(
 
     """
     try:
-        return paginate(
+        return await paginate(
             db,
             await crud.get_messages(
                 db,
@@ -798,7 +802,7 @@ async def get_metamessages(
 
     """
     try:
-        return paginate(
+        return await paginate(
             db,
             await crud.get_metamessages(
                 db,
@@ -867,7 +871,7 @@ async def get_collections(
     reverse: Optional[bool] = False,
     db: AsyncSession = Depends(get_db),
 ):
-    return paginate(
+    return await paginate(
         db,
         await crud.get_collections(db, app_id=app_id, user_id=user_id, reverse=reverse),
     )
@@ -993,7 +997,7 @@ async def get_documents(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        return paginate(
+        return await paginate(
             db,
             await crud.get_documents(
                 db,
