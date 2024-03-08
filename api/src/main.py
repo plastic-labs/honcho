@@ -1141,4 +1141,40 @@ async def delete_document(
         )
 
 
+router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
+
+
+@router.get("/sessions/{session_id}/chat", response_model=Sequence[schemas.Message])
+async def get_chat(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    pass
+
+
+@router.get("/sessions/{session_id}/hydrate")
+async def hydrate(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    pass
+
+
+@router.get("/sessions/{session_id}/insight")
+async def get_insight(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    pass
+
+
 app.include_router(router)
