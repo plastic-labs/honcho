@@ -24,6 +24,7 @@ opentelemetry-instrumentation-sqlalchemy = "^0.44b0"
 opentelemetry-instrumentation-logging = "^0.44b0"
 psycopg = "^3.1.18"
 greenlet = "^3.0.3"
+realtime = "^1.0.2"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
