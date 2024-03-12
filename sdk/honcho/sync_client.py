@@ -147,9 +147,7 @@ class GetMessagePage(GetPage):
         """
         if self.page >= self.pages:
             return None
-        return self.session.get_messages(
-            (self.page + 1), self.page_size, self.reverse
-        )
+        return self.session.get_messages((self.page + 1), self.page_size, self.reverse)
 
 
 class GetMetamessagePage(GetPage):
@@ -294,9 +292,7 @@ class Honcho:
         self.metadata: dict
 
     def initialize(self):
-        res = self.client.get(
-            f"{self.server_url}/apps/get_or_create/{self.app_name}"
-        )
+        res = self.client.get(f"{self.server_url}/apps/get_or_create/{self.app_name}")
         res.raise_for_status()
         data = res.json()
         self.app_id: uuid.UUID = data["id"]
@@ -337,9 +333,7 @@ class Honcho:
         if metadata is None:
             metadata = {}
         url = f"{self.base_url}/users"
-        response = self.client.post(
-            url, json={"name": name, "metadata": metadata}
-        )
+        response = self.client.post(url, json={"name": name, "metadata": metadata})
         response.raise_for_status()
         data = response.json()
         return User(
@@ -389,9 +383,7 @@ class Honcho:
             created_at=data["created_at"],
         )
 
-    def get_users(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
-    ):
+    def get_users(self, page: int = 1, page_size: int = 50, reverse: bool = False):
         """Get Paginated list of users
 
         Args:
@@ -402,8 +394,14 @@ class Honcho:
         Returns:
             GetUserPage: Paginated list of users
         """
-        url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
-        response = self.client.get(url)
+        # url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
+        url = f"{self.base_url}/users"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = self.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return GetUserPage(data, self, reverse)
@@ -475,7 +473,9 @@ class User:
 
     def __str__(self):
         """String representation of User"""
-        return f"User(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
+        return (
+            f"User(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
+        )
 
     def update(self, metadata: dict):
         """Updates a user's metadata
@@ -542,11 +542,20 @@ class User:
             GetSessionPage: Page or results for get_sessions query
 
         """
-        url = (
-            f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
-            + (f"&location_id={location_id}" if location_id else "")
-        )
-        response = self.honcho.client.get(url)
+        # url = (
+        #     f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
+        #     + (f"&location_id={location_id}" if location_id else "")
+        # )
+        url = f"{self.base_url}/sessions"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+            "is_active": is_active,
+        }
+        if location_id:
+            params["location_id"] = location_id
+        response = self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return GetSessionPage(data, self, reverse, location_id, is_active)
@@ -675,8 +684,14 @@ class User:
             GetCollectionPage: Page or results for get_collections query
 
         """
-        url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        response = self.honcho.client.get(url)
+        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/collections"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return GetCollectionPage(data, self, reverse)
@@ -802,8 +817,13 @@ class Session:
             GetMessagePage: Page of Message objects
 
         """
-        url = f"{self.base_url}/messages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        response = self.user.honcho.client.get(url)
+        url = f"{self.base_url}/messages"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return GetMessagePage(data, self, reverse)
@@ -829,9 +849,7 @@ class Session:
 
             get_messages_page = new_messages
 
-    def create_metamessage(
-        self, message: Message, metamessage_type: str, content: str
-    ):
+    def create_metamessage(self, message: Message, metamessage_type: str, content: str):
         """Adds a metamessage to a session and links it to a specific message
 
         Args:
@@ -905,18 +923,24 @@ class Session:
             list[dict]: List of Message objects
 
         """
-        url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        # url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/metamessages"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
         if metamessage_type:
-            url += f"&metamessage_type={metamessage_type}"
+            # url += f"&metamessage_type={metamessage_type}"
+            params["metamessage_type"] = metamessage_type
         if message:
-            url += f"&message_id={message.id}"
-        response = self.user.honcho.client.get(url)
+            # url += f"&message_id={message.id}"
+            params["message_id"] = message.id
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         message_id = message.id if message else None
-        return GetMetamessagePage(
-            data, self, reverse, message_id, metamessage_type
-        )
+        return GetMetamessagePage(data, self, reverse, message_id, metamessage_type)
 
     def get_metamessages_generator(
         self,
@@ -1001,7 +1025,9 @@ class Collection:
 
     def __str__(self):
         """String representation of Collection"""
-        return f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
+        return (
+            f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
+        )
 
     def update(self, name: str):
         """Update the name of the collection
@@ -1087,10 +1113,14 @@ class Collection:
             GetDocumentPage: Page of Document objects
 
         """
-        url = (
-            f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        )
-        response = self.user.honcho.client.get(url)
+        # url = f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/documents"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return GetDocumentPage(data, self, reverse)
@@ -1125,8 +1155,10 @@ class Collection:
         Returns:
             List[Document]: The response from the query with matching documents
         """
-        url = f"{self.base_url}/query?query={query}&top_k={top_k}"
-        response = self.user.honcho.client.get(url)
+        # url = f"{self.base_url}/query?query={query}&top_k={top_k}"
+        url = f"{self.base_url}/query"
+        params = {"query": query, "top_k": top_k}
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = [
             Document(
