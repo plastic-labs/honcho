@@ -1141,9 +1141,6 @@ async def delete_document(
         )
 
 
-router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
-
-
 @router.get("/sessions/{session_id}/chat", response_model=Sequence[schemas.Message])
 async def get_chat(
     request: Request,
