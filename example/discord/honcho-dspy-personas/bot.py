@@ -2,9 +2,9 @@ import os
 from uuid import uuid1
 import discord
 from honcho import Honcho
+from honcho.ext.langchain import langchain_message_converter
 from graph import chat
 from dspy import Example
-from chain import langchain_message_converter
 
 intents = discord.Intents.default()
 intents.messages = True
@@ -51,7 +51,9 @@ async def on_message(message):
     user = honcho.get_or_create_user(user_id)
     location_id = str(message.channel.id)
 
-    sessions = list(user.get_sessions_generator(location_id, is_active=True, reverse=True))
+    sessions = list(
+        user.get_sessions_generator(location_id, is_active=True, reverse=True)
+    )
 
     if len(sessions) > 0:
         session = sessions[0]
@@ -86,7 +88,9 @@ async def on_reaction_add(reaction, user):
     honcho_user = honcho.get_or_create_user(user_id)
     location_id = str(reaction.message.channel.id)
 
-    sessions = list(honcho_user.get_sessions_generator(location_id, is_active=True, reverse=True))
+    sessions = list(
+        honcho_user.get_sessions_generator(location_id, is_active=True, reverse=True)
+    )
     if len(sessions) > 0:
         session = sessions[0]
     else:
@@ -100,25 +104,29 @@ async def on_reaction_add(reaction, user):
     user_response = user_responses[0]
 
     user_state_storage = dict(honcho_user.metadata)
-    user_state = list(session.get_metamessages_generator(metamessage_type="user_state", message=user_response, reverse=True))[0].content
+    user_state = list(
+        session.get_metamessages_generator(
+            metamessage_type="user_state", message=user_response, reverse=True
+        )
+    )[0].content
     examples = user_state_storage[user_state]["examples"]
 
     # Check if the reaction is a thumbs up
     if str(reaction.emoji) == "👍":
         example = Example(
-            chat_input=user_response.content,  
+            chat_input=user_response.content,
             response=ai_response,
             assessment_dimension=user_state,
-            label='yes'
+            label="yes",
         ).with_inputs("chat_input", "response", "assessment_dimension")
         examples.append(example.toDict())
     # Check if the reaction is a thumbs down
     elif str(reaction.emoji) == "👎":
         example = Example(
-            chat_input=user_response.content,  
+            chat_input=user_response.content,
             response=ai_response,
             assessment_dimension=user_state,
-            label='no'
+            label="no",
         ).with_inputs("chat_input", "response", "assessment_dimension")
         examples.append(example.toDict())
 
