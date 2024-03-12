@@ -402,8 +402,14 @@ class AsyncHoncho:
         Returns:
             AsyncGetUserPage: Paginated list of users
         """
-        url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
-        response = await self.client.get(url)
+        # url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
+        url = f"{self.base_url}/users"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = await self.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return AsyncGetUserPage(data, self, reverse)
@@ -542,11 +548,20 @@ class AsyncUser:
             AsyncGetSessionPage: Page or results for get_sessions query
 
         """
-        url = (
-            f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
-            + (f"&location_id={location_id}" if location_id else "")
-        )
-        response = await self.honcho.client.get(url)
+        # url = (
+        #     f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
+        #     + (f"&location_id={location_id}" if location_id else "")
+        # )
+        url = f"{self.base_url}/sessions"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+            "is_active": is_active,
+        }
+        if location_id:
+            params["location_id"] = location_id
+        response = await self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return AsyncGetSessionPage(data, self, reverse, location_id, is_active)
@@ -675,8 +690,14 @@ class AsyncUser:
             AsyncGetCollectionPage: Page or results for get_collections query
 
         """
-        url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        response = await self.honcho.client.get(url)
+        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/collections"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = await self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return AsyncGetCollectionPage(data, self, reverse)
@@ -802,8 +823,13 @@ class AsyncSession:
             AsyncGetMessagePage: Page of Message objects
 
         """
-        url = f"{self.base_url}/messages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        response = await self.user.honcho.client.get(url)
+        url = f"{self.base_url}/messages"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return AsyncGetMessagePage(data, self, reverse)
@@ -905,12 +931,20 @@ class AsyncSession:
             list[dict]: List of Message objects
 
         """
-        url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        # url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/metamessages"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
         if metamessage_type:
-            url += f"&metamessage_type={metamessage_type}"
+            # url += f"&metamessage_type={metamessage_type}"
+            params["metamessage_type"] = metamessage_type
         if message:
-            url += f"&message_id={message.id}"
-        response = await self.user.honcho.client.get(url)
+            # url += f"&message_id={message.id}"
+            params["message_id"] = message.id
+        response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         message_id = message.id if message else None
@@ -1087,10 +1121,14 @@ class AsyncCollection:
             AsyncGetDocumentPage: Page of Document objects
 
         """
-        url = (
-            f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        )
-        response = await self.user.honcho.client.get(url)
+        # url = f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/documents"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         return AsyncGetDocumentPage(data, self, reverse)
@@ -1125,8 +1163,10 @@ class AsyncCollection:
         Returns:
             List[Document]: The response from the query with matching documents
         """
-        url = f"{self.base_url}/query?query={query}&top_k={top_k}"
-        response = await self.user.honcho.client.get(url)
+        # url = f"{self.base_url}/query?query={query}&top_k={top_k}"
+        url = f"{self.base_url}/query"
+        params = {"query": query, "top_k": top_k}
+        response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = [
             Document(
