@@ -99,9 +99,9 @@ class AsyncGetSessionPage(AsyncGetPage):
 
     async def next(self):
         """Get the next page of results
+
         Returns:
-            AsyncGetSessionPage | None: Next Page of Results or None if there
-            are no more sessions to retreive from a query
+            AsyncGetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
@@ -141,6 +141,7 @@ class AsyncGetMessagePage(AsyncGetPage):
 
     async def next(self):
         """Get the next page of results
+
         Returns:
             AsyncGetMessagePage | None: Next Page of Results or None if there
             are no more messages to retreive from a query
@@ -189,6 +190,7 @@ class AsyncGetMetamessagePage(AsyncGetPage):
 
     async def next(self):
         """Get the next page of results
+
         Returns:
             AsyncGetMetamessagePage | None: Next Page of Results or None if
             there are no more metamessages to retreive from a query
@@ -232,6 +234,7 @@ class AsyncGetDocumentPage(AsyncGetPage):
 
     async def next(self):
         """Get the next page of results
+
         Returns:
             AsyncGetDocumentPage | None: Next Page of Results or None if there
             are no more sessions to retreive from a query
@@ -269,6 +272,7 @@ class AsyncGetCollectionPage(AsyncGetPage):
 
     async def next(self):
         """Get the next page of results
+
         Returns:
             AsyncGetCollectionPage | None: Next Page of Results or None if
             there are no more sessions to retreive from a query

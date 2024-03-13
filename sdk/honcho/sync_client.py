@@ -99,9 +99,9 @@ class GetSessionPage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
-            GetSessionPage | None: Next Page of Results or None if there
-            are no more sessions to retreive from a query
+            GetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
@@ -141,13 +141,16 @@ class GetMessagePage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetMessagePage | None: Next Page of Results or None if there
             are no more messages to retreive from a query
         """
         if self.page >= self.pages:
             return None
-        return self.session.get_messages((self.page + 1), self.page_size, self.reverse)
+        return self.session.get_messages(
+            (self.page + 1), self.page_size, self.reverse
+        )
 
 
 class GetMetamessagePage(GetPage):
@@ -187,6 +190,7 @@ class GetMetamessagePage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetMetamessagePage | None: Next Page of Results or None if
             there are no more metamessages to retreive from a query
@@ -230,6 +234,7 @@ class GetDocumentPage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetDocumentPage | None: Next Page of Results or None if there
             are no more sessions to retreive from a query
@@ -267,6 +272,7 @@ class GetCollectionPage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetCollectionPage | None: Next Page of Results or None if
             there are no more sessions to retreive from a query
@@ -292,7 +298,9 @@ class Honcho:
         self.metadata: dict
 
     def initialize(self):
-        res = self.client.get(f"{self.server_url}/apps/get_or_create/{self.app_name}")
+        res = self.client.get(
+            f"{self.server_url}/apps/get_or_create/{self.app_name}"
+        )
         res.raise_for_status()
         data = res.json()
         self.app_id: uuid.UUID = data["id"]
@@ -333,7 +341,9 @@ class Honcho:
         if metadata is None:
             metadata = {}
         url = f"{self.base_url}/users"
-        response = self.client.post(url, json={"name": name, "metadata": metadata})
+        response = self.client.post(
+            url, json={"name": name, "metadata": metadata}
+        )
         response.raise_for_status()
         data = response.json()
         return User(
@@ -383,7 +393,9 @@ class Honcho:
             created_at=data["created_at"],
         )
 
-    def get_users(self, page: int = 1, page_size: int = 50, reverse: bool = False):
+    def get_users(
+        self, page: int = 1, page_size: int = 50, reverse: bool = False
+    ):
         """Get Paginated list of users
 
         Args:
@@ -473,9 +485,7 @@ class User:
 
     def __str__(self):
         """String representation of User"""
-        return (
-            f"User(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
-        )
+        return f"User(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
 
     def update(self, metadata: dict):
         """Updates a user's metadata
@@ -849,7 +859,9 @@ class Session:
 
             get_messages_page = new_messages
 
-    def create_metamessage(self, message: Message, metamessage_type: str, content: str):
+    def create_metamessage(
+        self, message: Message, metamessage_type: str, content: str
+    ):
         """Adds a metamessage to a session and links it to a specific message
 
         Args:
@@ -940,7 +952,9 @@ class Session:
         response.raise_for_status()
         data = response.json()
         message_id = message.id if message else None
-        return GetMetamessagePage(data, self, reverse, message_id, metamessage_type)
+        return GetMetamessagePage(
+            data, self, reverse, message_id, metamessage_type
+        )
 
     def get_metamessages_generator(
         self,
@@ -1025,9 +1039,7 @@ class Collection:
 
     def __str__(self):
         """String representation of Collection"""
-        return (
-            f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
-        )
+        return f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
 
     def update(self, name: str):
         """Update the name of the collection

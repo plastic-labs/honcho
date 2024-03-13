@@ -16,6 +16,10 @@ pytest = "^7.4.4"
 pytest-asyncio = "^0.23.4"
 coverage = "^7.4.3"
 
+[tool.poetry.group.docs.dependencies]
+sphinx = "^7.2.6"
+furo = "^2024.1.29"
+
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
 select = [
