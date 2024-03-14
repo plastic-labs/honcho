@@ -15,6 +15,43 @@ from honcho import (
 from honcho import Honcho as Honcho
 
 
+def test_session_metadata_filter():
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    user.create_session()
+    user.create_session(metadata={"foo": "bar"})
+    user.create_session(metadata={"foo": "bar"})
+
+    response = user.get_sessions(filter={"foo": "bar"})
+    retrieved_sessions = response.items
+
+    assert len(retrieved_sessions) == 2
+
+    response = user.get_sessions()
+
+    assert len(response.items) == 3
+
+
+def test_delete_session_metadata():
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    honcho.initialize()
+    user = honcho.create_user(user_name)
+    retrieved_session = user.create_session(metadata={"foo": "bar"})
+
+    assert retrieved_session.metadata == {"foo": "bar"}
+
+    retrieved_session.update(metadata={})
+
+    session_copy = user.get_session(retrieved_session.id)
+
+    assert session_copy.metadata == {}
+
+
 def test_user_update():
     user_name = str(uuid1())
     app_name = str(uuid1())

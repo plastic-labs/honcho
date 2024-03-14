@@ -384,6 +384,7 @@ async def get_users(
     request: Request,
     app_id: uuid.UUID,
     reverse: bool = False,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get All Users for an App
@@ -396,7 +397,13 @@ async def get_users(
         list[schemas.User]: List of User objects
 
     """
-    return await paginate(db, await crud.get_users(db, app_id=app_id, reverse=reverse))
+    data = None
+    if filter is not None:
+        data = json.loads(filter)
+
+    return await paginate(
+        db, await crud.get_users(db, app_id=app_id, reverse=reverse, filter=data)
+    )
 
 
 @app.get("/apps/{app_id}/users/{name}", response_model=schemas.User)
@@ -479,6 +486,7 @@ async def get_sessions(
     location_id: Optional[str] = None,
     is_active: Optional[bool] = False,
     reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get All Sessions for a User
@@ -494,6 +502,11 @@ async def get_sessions(
         list[schemas.Session]: List of Session objects
 
     """
+
+    data = None
+    if filter is not None:
+        data = json.loads(filter)
+
     return await paginate(
         db,
         await crud.get_sessions(
@@ -503,6 +516,7 @@ async def get_sessions(
             location_id=location_id,
             reverse=reverse,
             is_active=is_active,
+            filter=data,
         ),
     )
 
@@ -557,9 +571,7 @@ async def update_session(
 
     """
     if session.metadata is None:
-        raise HTTPException(
-            status_code=400, detail="Session metadata cannot be empty"
-        )  # TODO TEST if I can set the metadata to be blank with this
+        raise HTTPException(status_code=400, detail="Session metadata cannot be empty")
     try:
         return await crud.update_session(
             db, app_id=app_id, user_id=user_id, session_id=session_id, session=session
@@ -676,6 +688,7 @@ async def get_messages(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get all messages for a session
@@ -695,6 +708,9 @@ async def get_messages(
 
     """
     try:
+        data = None
+        if filter is not None:
+            data = json.loads(filter)
         return await paginate(
             db,
             await crud.get_messages(
@@ -702,6 +718,7 @@ async def get_messages(
                 app_id=app_id,
                 user_id=user_id,
                 session_id=session_id,
+                filter=data,
                 reverse=reverse,
             ),
         )
@@ -727,6 +744,34 @@ async def get_message(
     if honcho_message is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return honcho_message
+
+
+@router.put(
+    "sessions/{session_id}/messages/{message_id}", response_model=schemas.Message
+)
+async def update_message(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+    message: schemas.MessageUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update's the metadata of a message"""
+    if message.metadata is None:
+        raise HTTPException(status_code=400, detail="Message metadata cannot be empty")
+    try:
+        return await crud.update_message(
+            db,
+            message=message,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            message_id=message_id,
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
 
 
 ########################################################
@@ -783,6 +828,7 @@ async def get_metamessages(
     message_id: Optional[uuid.UUID] = None,
     metamessage_type: Optional[str] = None,
     reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """Get all messages for a session
@@ -802,6 +848,9 @@ async def get_metamessages(
 
     """
     try:
+        data = None
+        if filter is not None:
+            data = json.loads(filter)
         return await paginate(
             db,
             await crud.get_metamessages(
@@ -811,6 +860,7 @@ async def get_metamessages(
                 session_id=session_id,
                 message_id=message_id,
                 metamessage_type=metamessage_type,
+                filter=data,
                 reverse=reverse,
             ),
         )
@@ -831,7 +881,7 @@ async def get_metamessage(
     metamessage_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ):
-    """Get a specific session for a user by ID
+    """Get a specific Metamessage by ID
 
     Args:
         app_id (uuid.UUID): The ID of the app representing the client application using
@@ -858,6 +908,37 @@ async def get_metamessage(
     return honcho_metamessage
 
 
+@router.put(
+    "sessions/{session_id}/metamessages/{metamessage_id}",
+    response_model=schemas.Metamessage,
+)
+async def update_metamessage(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    metamessage_id: uuid.UUID,
+    metamessage: schemas.MetamessageUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update's the metadata of a metamessage"""
+    if metamessage.metadata is None:
+        raise HTTPException(
+            status_code=400, detail="Metamessage metadata cannot be empty"
+        )
+    try:
+        return await crud.update_metamessage(
+            db,
+            metamessage=metamessage,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            metamessage_id=metamessage_id,
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+
+
 ########################################################
 # collection routes
 ########################################################
@@ -869,11 +950,28 @@ async def get_collections(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
+    """Get All Collections for a User
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client
+        application using honcho
+        user_id (uuid.UUID): The User ID representing the user, managed by the user
+
+    Returns:
+        list[schemas.Collection]: List of Collection objects
+
+    """
+    data = None
+    if filter is not None:
+        data = json.loads(filter)
     return await paginate(
         db,
-        await crud.get_collections(db, app_id=app_id, user_id=user_id, reverse=reverse),
+        await crud.get_collections(
+            db, app_id=app_id, user_id=user_id, filter=data, reverse=reverse
+        ),
     )
 
 
@@ -994,9 +1092,13 @@ async def get_documents(
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     try:
+        data = None
+        if filter is not None:
+            data = json.loads(filter)
         return await paginate(
             db,
             await crud.get_documents(
@@ -1004,6 +1106,7 @@ async def get_documents(
                 app_id=app_id,
                 user_id=user_id,
                 collection_id=collection_id,
+                filter=data,
                 reverse=reverse,
             ),
         )
@@ -1053,16 +1156,21 @@ async def query_documents(
     collection_id: uuid.UUID,
     query: str,
     top_k: int = 5,
+    filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     if top_k is not None and top_k > 50:
         top_k = 50  # TODO see if we need to paginate this
+    data = None
+    if filter is not None:
+        data = json.loads(filter)
     return await crud.query_documents(
         db=db,
         app_id=app_id,
         user_id=user_id,
         collection_id=collection_id,
         query=query,
+        filter=data,
         top_k=top_k,
     )
 

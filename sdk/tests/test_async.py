@@ -16,6 +16,45 @@ from honcho import AsyncHoncho as Honcho
 
 
 @pytest.mark.asyncio
+async def test_session_metadata_filter():
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    await honcho.initialize()
+    user = await honcho.create_user(user_name)
+    await user.create_session()
+    await user.create_session(metadata={"foo": "bar"})
+    await user.create_session(metadata={"foo": "bar"})
+
+    response = await user.get_sessions(filter={"foo": "bar"})
+    retrieved_sessions = response.items
+
+    assert len(retrieved_sessions) == 2
+
+    response = await user.get_sessions()
+
+    assert len(response.items) == 3
+
+
+@pytest.mark.asyncio
+async def test_delete_session_metadata():
+    app_name = str(uuid1())
+    user_name = str(uuid1())
+    honcho = Honcho(app_name, "http://localhost:8000")
+    await honcho.initialize()
+    user = await honcho.create_user(user_name)
+    retrieved_session = await user.create_session(metadata={"foo": "bar"})
+
+    assert retrieved_session.metadata == {"foo": "bar"}
+
+    await retrieved_session.update(metadata={})
+
+    session_copy = await user.get_session(retrieved_session.id)
+
+    assert session_copy.metadata == {}
+
+
+@pytest.mark.asyncio
 async def test_user_update():
     user_name = str(uuid1())
     app_name = str(uuid1())

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import uuid
 from typing import Optional
 
@@ -32,7 +33,13 @@ class AsyncGetPage:
 class AsyncGetUserPage(AsyncGetPage):
     """Paginated Results for Get User Requests"""
 
-    def __init__(self, response: dict, honcho: AsyncHoncho, reverse: bool):
+    def __init__(
+        self,
+        response: dict,
+        honcho: AsyncHoncho,
+        filter: Optional[dict],
+        reverse: bool,
+    ):
         """Constructor for Page Result from User Get Request
 
         Args:
@@ -42,6 +49,7 @@ class AsyncGetUserPage(AsyncGetPage):
         """
         super().__init__(response)
         self.honcho = honcho
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             AsyncUser(
@@ -57,7 +65,10 @@ class AsyncGetUserPage(AsyncGetPage):
         if self.page >= self.pages:
             return None
         return await self.honcho.get_users(
-            page=(self.page + 1), page_size=self.page_size, reverse=self.reverse
+            filter=self.filter,
+            page=(self.page + 1),
+            page_size=self.page_size,
+            reverse=self.reverse,
         )
 
 
@@ -70,6 +81,7 @@ class AsyncGetSessionPage(AsyncGetPage):
         user: AsyncUser,
         reverse: bool,
         location_id: Optional[str],
+        filter: Optional[dict],
         is_active: bool,
     ):
         """Constructor for Page Result from Session Get Request
@@ -85,6 +97,7 @@ class AsyncGetSessionPage(AsyncGetPage):
         self.location_id = location_id
         self.reverse = reverse
         self.is_active = is_active
+        self.filter = filter
         self.items = [
             AsyncSession(
                 user=user,
@@ -107,6 +120,7 @@ class AsyncGetSessionPage(AsyncGetPage):
             return None
         return await self.user.get_sessions(
             location_id=self.location_id,
+            filter=self.filter,
             page=(self.page + 1),
             page_size=self.page_size,
             reverse=self.reverse,
@@ -117,7 +131,13 @@ class AsyncGetSessionPage(AsyncGetPage):
 class AsyncGetMessagePage(AsyncGetPage):
     """Paginated Results for Get Session Requests"""
 
-    def __init__(self, response: dict, session: AsyncSession, reverse: bool):
+    def __init__(
+        self,
+        response: dict,
+        session: AsyncSession,
+        filter: Optional[dict],
+        reverse: bool,
+    ):
         """Constructor for Page Result from Session Get Request
 
         Args:
@@ -127,6 +147,7 @@ class AsyncGetMessagePage(AsyncGetPage):
         """
         super().__init__(response)
         self.session = session
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Message(
@@ -134,6 +155,7 @@ class AsyncGetMessagePage(AsyncGetPage):
                 id=message["id"],
                 is_user=message["is_user"],
                 content=message["content"],
+                metadata=message["metadata"],
                 created_at=message["created_at"],
             )
             for message in response["items"]
@@ -149,7 +171,7 @@ class AsyncGetMessagePage(AsyncGetPage):
         if self.page >= self.pages:
             return None
         return await self.session.get_messages(
-            (self.page + 1), self.page_size, self.reverse
+            self.filter, (self.page + 1), self.page_size, self.reverse
         )
 
 
@@ -158,6 +180,7 @@ class AsyncGetMetamessagePage(AsyncGetPage):
         self,
         response: dict,
         session,
+        filter: Optional[dict],
         reverse: bool,
         message_id: Optional[uuid.UUID],
         metamessage_type: Optional[str],
@@ -176,11 +199,13 @@ class AsyncGetMetamessagePage(AsyncGetPage):
         self.session = session
         self.message_id = message_id
         self.metamessage_type = metamessage_type
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Metamessage(
                 id=metamessage["id"],
                 message_id=metamessage["message_id"],
+                metadata=metamessage["metadata"],
                 metamessage_type=metamessage["metamessage_type"],
                 content=metamessage["content"],
                 created_at=metamessage["created_at"],
@@ -199,6 +224,7 @@ class AsyncGetMetamessagePage(AsyncGetPage):
             return None
         return await self.session.get_metamessages(
             metamessage_type=self.metamessage_type,
+            filter=self.filter,
             message=self.message_id,
             page=(self.page + 1),
             page_size=self.page_size,
@@ -209,7 +235,9 @@ class AsyncGetMetamessagePage(AsyncGetPage):
 class AsyncGetDocumentPage(AsyncGetPage):
     """Paginated results for Get Document requests"""
 
-    def __init__(self, response: dict, collection, reverse: bool) -> None:
+    def __init__(
+        self, response: dict, collection, filter: Optional[dict], reverse: bool
+    ) -> None:
         """Constructor for Page Result from Document Get Request
 
         Args:
@@ -220,6 +248,7 @@ class AsyncGetDocumentPage(AsyncGetPage):
         """
         super().__init__(response)
         self.collection = collection
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Document(
@@ -242,14 +271,19 @@ class AsyncGetDocumentPage(AsyncGetPage):
         if self.page >= self.pages:
             return None
         return await self.collection.get_documents(
-            page=self.page + 1, page_size=self.page_size, reverse=self.reverse
+            filter=self.filter,
+            page=self.page + 1,
+            page_size=self.page_size,
+            reverse=self.reverse,
         )
 
 
 class AsyncGetCollectionPage(AsyncGetPage):
     """Paginated results for Get Collection requests"""
 
-    def __init__(self, response: dict, user: AsyncUser, reverse: bool):
+    def __init__(
+        self, response: dict, user: AsyncUser, filter: Optional[dict], reverse: bool
+    ):
         """Constructor for page result from Get Collection Request
 
         Args:
@@ -259,12 +293,14 @@ class AsyncGetCollectionPage(AsyncGetPage):
         """
         super().__init__(response)
         self.user = user
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             AsyncCollection(
                 user=user,
                 id=collection["id"],
                 name=collection["name"],
+                metadata=collection["metadata"],
                 created_at=collection["created_at"],
             )
             for collection in response["items"]
@@ -280,6 +316,7 @@ class AsyncGetCollectionPage(AsyncGetPage):
         if self.page >= self.pages:
             return None
         return await self.user.get_collections(
+            filter=self.filter,
             page=self.page + 1,
             page_size=self.page_size,
             reverse=self.reverse,
@@ -394,7 +431,11 @@ class AsyncHoncho:
         )
 
     async def get_users(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ):
         """Get Paginated list of users
 
@@ -413,13 +454,17 @@ class AsyncHoncho:
             "size": page_size,
             "reverse": reverse,
         }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
         response = await self.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetUserPage(data, self, reverse)
+        return AsyncGetUserPage(data, self, filter, reverse)
 
     async def get_users_generator(
         self,
+        filter: Optional[dict] = None,
         reverse: bool = False,
     ):
         """Shortcut Generator for get_users. Generator to iterate through
@@ -434,7 +479,7 @@ class AsyncHoncho:
         """
         page = 1
         page_size = 50
-        get_user_response = await self.get_users(page, page_size, reverse)
+        get_user_response = await self.get_users(filter, page, page_size, reverse)
         while True:
             for session in get_user_response.items:
                 yield session
@@ -533,6 +578,7 @@ class AsyncUser:
     async def get_sessions(
         self,
         location_id: Optional[str] = None,
+        filter: Optional[dict] = None,
         page: int = 1,
         page_size: int = 50,
         reverse: bool = False,
@@ -565,16 +611,20 @@ class AsyncUser:
         }
         if location_id:
             params["location_id"] = location_id
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
         response = await self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetSessionPage(data, self, reverse, location_id, is_active)
+        return AsyncGetSessionPage(data, self, reverse, location_id, filter, is_active)
 
     async def get_sessions_generator(
         self,
         location_id: Optional[str] = None,
         reverse: bool = False,
         is_active: bool = False,
+        filter: Optional[dict] = None,
     ):
         """Shortcut Generator for get_sessions. Generator to iterate through
         all sessions for a user in an app
@@ -592,7 +642,7 @@ class AsyncUser:
         page = 1
         page_size = 50
         get_session_response = await self.get_sessions(
-            location_id, page, page_size, reverse, is_active
+            location_id, filter, page, page_size, reverse, is_active
         )
         while True:
             for session in get_session_response.items:
@@ -637,6 +687,7 @@ class AsyncUser:
     async def create_collection(
         self,
         name: str,
+        metadata: Optional[dict] = None,
     ):
         """Create a collection for a user
 
@@ -647,7 +698,9 @@ class AsyncUser:
             AsyncCollection: The Collection object of the new Collection
 
         """
-        data = {"name": name}
+        if metadata is None:
+            metadata = {}
+        data = {"name": name, "metadata": metadata}
         url = f"{self.base_url}/collections"
         response = await self.honcho.client.post(url, json=data)
         response.raise_for_status()
@@ -656,6 +709,7 @@ class AsyncUser:
             self,
             id=data["id"],
             name=name,
+            metadata=metadata,
             created_at=data["created_at"],
         )
 
@@ -677,11 +731,16 @@ class AsyncUser:
             user=self,
             id=data["id"],
             name=data["name"],
+            metadata=data["metadata"],
             created_at=data["created_at"],
         )
 
     async def get_collections(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ):
         """Return collections associated with a user paginated
 
@@ -701,12 +760,17 @@ class AsyncUser:
             "size": page_size,
             "reverse": reverse,
         }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
         response = await self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetCollectionPage(data, self, reverse)
+        return AsyncGetCollectionPage(data, self, filter, reverse)
 
-    async def get_collections_generator(self, reverse: bool = False):
+    async def get_collections_generator(
+        self, filter: Optional[dict] = None, reverse: bool = False
+    ):
         """Shortcut Generator for get_sessions. Generator to iterate through
         all sessions for a user in an app
 
@@ -719,7 +783,9 @@ class AsyncUser:
         """
         page = 1
         page_size = 50
-        get_collection_response = await self.get_collections(page, page_size, reverse)
+        get_collection_response = await self.get_collections(
+            filter, page, page_size, reverse
+        )
         while True:
             for collection in get_collection_response.items:
                 yield collection
@@ -765,7 +831,9 @@ class AsyncSession:
         """Returns whether the session is active - made property to prevent tampering"""
         return self._is_active
 
-    async def create_message(self, is_user: bool, content: str):
+    async def create_message(
+        self, is_user: bool, content: str, metadata: Optional[dict] = None
+    ):
         """Adds a message to the session
 
         Args:
@@ -778,7 +846,9 @@ class AsyncSession:
         """
         if not self.is_active:
             raise Exception("Session is inactive")
-        data = {"is_user": is_user, "content": content}
+        if metadata is None:
+            metadata = {}
+        data = {"is_user": is_user, "content": content, "metadata": metadata}
         url = f"{self.base_url}/messages"
         response = await self.user.honcho.client.post(url, json=data)
         response.raise_for_status()
@@ -788,6 +858,7 @@ class AsyncSession:
             id=data["id"],
             is_user=is_user,
             content=content,
+            metadata=metadata,
             created_at=data["created_at"],
         )
 
@@ -810,11 +881,16 @@ class AsyncSession:
             id=data["id"],
             is_user=data["is_user"],
             content=data["content"],
+            metadata=data["metadata"],
             created_at=data["created_at"],
         )
 
     async def get_messages(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ) -> AsyncGetMessagePage:
         """Get all messages for a session
 
@@ -833,12 +909,17 @@ class AsyncSession:
             "size": page_size,
             "reverse": reverse,
         }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
         response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetMessagePage(data, self, reverse)
+        return AsyncGetMessagePage(data, self, filter, reverse)
 
-    async def get_messages_generator(self, reverse: bool = False):
+    async def get_messages_generator(
+        self, filter: Optional[dict] = None, reverse: bool = False
+    ):
         """Shortcut Generator for get_messages. Generator to iterate through
         all messages for a session in an app
 
@@ -848,7 +929,7 @@ class AsyncSession:
         """
         page = 1
         page_size = 50
-        get_messages_page = await self.get_messages(page, page_size, reverse)
+        get_messages_page = await self.get_messages(filter, page, page_size, reverse)
         while True:
             for message in get_messages_page.items:
                 yield message
@@ -860,7 +941,11 @@ class AsyncSession:
             get_messages_page = new_messages
 
     async def create_metamessage(
-        self, message: Message, metamessage_type: str, content: str
+        self,
+        message: Message,
+        metamessage_type: str,
+        content: str,
+        metadata: Optional[dict] = None,
     ):
         """Adds a metamessage to a session and links it to a specific message
 
@@ -875,10 +960,13 @@ class AsyncSession:
         """
         if not self.is_active:
             raise Exception("Session is inactive")
+        if metadata is None:
+            metadata = {}
         data = {
             "metamessage_type": metamessage_type,
             "content": content,
             "message_id": message.id,
+            "metadata": metadata,
         }
         url = f"{self.base_url}/metamessages"
         response = await self.user.honcho.client.post(url, json=data)
@@ -889,6 +977,7 @@ class AsyncSession:
             message_id=message.id,
             metamessage_type=metamessage_type,
             content=content,
+            metadata=metadata,
             created_at=data["created_at"],
         )
 
@@ -911,6 +1000,7 @@ class AsyncSession:
             message_id=data["message_id"],
             metamessage_type=data["metamessage_type"],
             content=data["content"],
+            metadata=data["metadata"],
             created_at=data["created_at"],
         )
 
@@ -918,6 +1008,7 @@ class AsyncSession:
         self,
         metamessage_type: Optional[str] = None,
         message: Optional[Message] = None,
+        filter: Optional[dict] = None,
         page: int = 1,
         page_size: int = 50,
         reverse: bool = False,
@@ -948,18 +1039,22 @@ class AsyncSession:
         if message:
             # url += f"&message_id={message.id}"
             params["message_id"] = message.id
+        if filter is not None:
+            json_metadata = json.dumps(filter)
+            params["filter"] = json_metadata
         response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         message_id = message.id if message else None
         return AsyncGetMetamessagePage(
-            data, self, reverse, message_id, metamessage_type
+            data, self, filter, reverse, message_id, metamessage_type
         )
 
     async def get_metamessages_generator(
         self,
         metamessage_type: Optional[str] = None,
         message: Optional[Message] = None,
+        filter: Optional[dict] = None,
         reverse: bool = False,
     ):
         """Shortcut Generator for get_metamessages. Generator to iterate
@@ -978,6 +1073,7 @@ class AsyncSession:
         get_metamessages_page = await self.get_metamessages(
             metamessage_type=metamessage_type,
             message=message,
+            filter=filter,
             page=page,
             page_size=page_size,
             reverse=reverse,
@@ -1008,6 +1104,50 @@ class AsyncSession:
         self.metadata = metadata
         return success
 
+    async def update_message(self, message: Message, metadata: dict):
+        """Update the metadata of a message
+
+        Args:
+            message (Message): The message to update
+            metadata (dict): The new metadata for the message
+
+        Returns:
+            boolean: Whether the message was successfully updated
+        """
+        info = {"metadata": metadata}
+        url = f"{self.base_url}/messages/{message.id}"
+        response = await self.user.honcho.client.put(url, json=info)
+        success = response.status_code < 400
+        message.metadata = metadata
+        return success
+
+    async def update_metamessage(
+        self,
+        metamessage: Metamessage,
+        metamessage_type: Optional[str],
+        metadata: Optional[dict],
+    ):
+        """Update the metadata of a metamessage
+
+        Args:
+            metamessage (Metamessage): The metamessage to update
+            metadata (dict): The new metadata for the metamessage
+
+        Returns:
+            boolean: Whether the metamessage was successfully updated
+        """
+        if metadata is None and metamessage_type is None:
+            raise ValueError("metadata and metamessage_type cannot both be None")
+        info = {"metamessage_type": metamessage_type, "metadata": metadata}
+        url = f"{self.base_url}/metamessages/{metamessage.id}"
+        response = await self.user.honcho.client.put(url, json=info)
+        success = response.status_code < 400
+        if metamessage_type is not None:
+            metamessage.metamessage_type = metamessage_type
+        if metadata is not None:
+            metamessage.metadata = metadata
+        return success
+
     async def close(self):
         """Closes a session by marking it as inactive"""
         url = f"{self.base_url}"
@@ -1024,12 +1164,14 @@ class AsyncCollection:
         user: AsyncUser,
         id: uuid.UUID,
         name: str,
+        metadata: dict,
         created_at: datetime.datetime,
     ):
         """Constructor for Collection"""
         self.user = user
         self.id: uuid.UUID = id
         self.name: str = name
+        self.metadata: dict = metadata
         self.created_at: datetime.datetime = created_at
 
     @property
@@ -1041,7 +1183,7 @@ class AsyncCollection:
         """String representation of Collection"""
         return f"AsyncCollection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
 
-    async def update(self, name: str):
+    async def update(self, name: Optional[str] = None, metadata: Optional[dict] = None):
         """Update the name of the collection
 
         Args:
@@ -1050,12 +1192,17 @@ class AsyncCollection:
         Returns:
             boolean: Whether the session was successfully updated
         """
-        info = {"name": name}
+        if metadata is None and name is None:
+            raise ValueError("metadata and name cannot both be None")
+        info = {"name": name, "metadata": metadata}
         url = f"{self.base_url}"
         response = await self.user.honcho.client.put(url, json=info)
         response.raise_for_status()
         success = response.status_code < 400
-        self.name = name
+        if name is not None:
+            self.name = name
+        if metadata is not None:
+            self.metadata = metadata
         return success
 
     async def delete(self):
@@ -1113,7 +1260,11 @@ class AsyncCollection:
         )
 
     async def get_documents(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ) -> AsyncGetDocumentPage:
         """Get all documents for a collection
 
@@ -1132,12 +1283,17 @@ class AsyncCollection:
             "size": page_size,
             "reverse": reverse,
         }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
         response = await self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return AsyncGetDocumentPage(data, self, reverse)
+        return AsyncGetDocumentPage(data, self, filter, reverse)
 
-    async def get_documents_generator(self, reverse: bool = False):
+    async def get_documents_generator(
+        self, filter: Optional[dict] = None, reverse: bool = False
+    ):
         """Shortcut Generator for get_documents. Generator to iterate through
         all documents for a collection in an app
 
@@ -1147,7 +1303,7 @@ class AsyncCollection:
         """
         page = 1
         page_size = 50
-        get_documents_page = await self.get_documents(page, page_size, reverse)
+        get_documents_page = await self.get_documents(filter, page, page_size, reverse)
         while True:
             for document in get_documents_page.items:
                 yield document
@@ -1185,7 +1341,10 @@ class AsyncCollection:
         return data
 
     async def update_document(
-        self, document: Document, content: Optional[str], metadata: Optional[dict]
+        self,
+        document: Document,
+        content: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> Document:
         """Update a document in the collection
 
