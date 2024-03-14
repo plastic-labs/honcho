@@ -1,6 +1,7 @@
-from pydantic import BaseModel, validator
 import datetime
 import uuid
+
+from pydantic import BaseModel, validator
 
 
 class AppBase(BaseModel):
@@ -68,21 +69,37 @@ class User(UserBase):
 
 
 class MessageBase(BaseModel):
-    content: str
-    is_user: bool
-
-
-class MessageCreate(MessageBase):
     pass
 
 
+class MessageCreate(MessageBase):
+    content: str
+    is_user: bool
+    metadata: dict | None = {}
+
+
+class MessageUpdate(MessageBase):
+    metadata: dict | None = None
+
+
 class Message(MessageBase):
+    content: str
+    is_user: bool
     session_id: uuid.UUID
     id: uuid.UUID
+    h_metadata: dict
+    metadata: dict
     created_at: datetime.datetime
+
+    @validator("metadata", pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if "h_metadata" in values:
+            return values["h_metadata"]
+        return {}
 
     class Config:
         from_attributes = True
+        schema_extra = {"exclude": ["h_metadata"]}
 
 
 class SessionBase(BaseModel):
@@ -120,21 +137,40 @@ class Session(SessionBase):
 
 
 class MetamessageBase(BaseModel):
-    metamessage_type: str
-    content: str
+    pass
 
 
 class MetamessageCreate(MetamessageBase):
+    metamessage_type: str
+    content: str
     message_id: uuid.UUID
+    metadata: dict | None = {}
+
+
+class MetamessageUpdate(MetamessageBase):
+    message_id: uuid.UUID
+    metamessage_type: str | None = None
+    metadata: dict | None = None
 
 
 class Metamessage(MetamessageBase):
+    metamessage_type: str
+    content: str
     id: uuid.UUID
     message_id: uuid.UUID
+    h_metadata: dict
+    metadata: dict
     created_at: datetime.datetime
+
+    @validator("metadata", pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if "h_metadata" in values:
+            return values["h_metadata"]
+        return {}
 
     class Config:
         from_attributes = True
+        schema_extra = {"exclude": ["h_metadata"]}
 
 
 class CollectionBase(BaseModel):
@@ -143,20 +179,31 @@ class CollectionBase(BaseModel):
 
 class CollectionCreate(CollectionBase):
     name: str
+    metadata: dict | None = {}
 
 
 class CollectionUpdate(CollectionBase):
     name: str
+    metadata: dict | None = None
 
 
 class Collection(CollectionBase):
     id: uuid.UUID
     name: str
     user_id: uuid.UUID
+    h_metadata: dict
+    metadata: dict
     created_at: datetime.datetime
+
+    @validator("metadata", pre=True, allow_reuse=True)
+    def fetch_h_metadata(cls, value, values):
+        if "h_metadata" in values:
+            return values["h_metadata"]
+        return {}
 
     class Config:
         from_attributes = True
+        schema_extra = {"exclude": ["h_metadata"]}
 
 
 class DocumentBase(BaseModel):
@@ -189,3 +236,7 @@ class Document(DocumentBase):
     class Config:
         from_attributes = True
         schema_extra = {"exclude": ["h_metadata"]}
+
+
+class AgentChat(BaseModel):
+    content: str

@@ -5,8 +5,9 @@ from typing import Optional, Sequence
 from openai import OpenAI
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
+# from sqlalchemy.orm import Session
 from . import models, schemas
 
 openai_client = OpenAI()
@@ -16,32 +17,36 @@ openai_client = OpenAI()
 ########################################################
 
 
-def get_app(db: Session, app_id: uuid.UUID) -> Optional[models.App]:
+async def get_app(db: AsyncSession, app_id: uuid.UUID) -> Optional[models.App]:
     stmt = select(models.App).where(models.App.id == app_id)
-    app = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    app = result.scalar_one_or_none()
     return app
 
 
-def get_app_by_name(db: Session, name: str) -> Optional[models.App]:
+async def get_app_by_name(db: AsyncSession, name: str) -> Optional[models.App]:
     stmt = select(models.App).where(models.App.name == name)
-    app = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    app = result.scalar_one_or_none()
     return app
 
 
-# def get_apps(db: Session) -> Sequence[models.App]:
+# def get_apps(db: AsyncSession) -> Sequence[models.App]:
 #     return db.query(models.App).all()
 
 
-def create_app(db: Session, app: schemas.AppCreate) -> models.App:
+async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
     honcho_app = models.App(name=app.name, h_metadata=app.metadata)
     db.add(honcho_app)
-    db.commit()
-    db.refresh(honcho_app)
+    await db.commit()
+    await db.refresh(honcho_app)
     return honcho_app
 
 
-def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models.App:
-    honcho_app = get_app(db, app_id)
+async def update_app(
+    db: AsyncSession, app_id: uuid.UUID, app: schemas.AppUpdate
+) -> models.App:
+    honcho_app = await get_app(db, app_id)
     if honcho_app is None:
         raise ValueError("App not found")
     if app.name is not None:
@@ -49,12 +54,12 @@ def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models
     if app.metadata is not None:
         honcho_app.h_metadata = app.metadata
 
-    db.commit()
-    db.refresh(honcho_app)
+    await db.commit()
+    await db.refresh(honcho_app)
     return honcho_app
 
 
-# def delete_app(db: Session, app_id: uuid.UUID) -> bool:
+# def delete_app(db: AsyncSession, app_id: uuid.UUID) -> bool:
 #     existing_app = get_app(db, app_id)
 #     if existing_app is None:
 #         return False
@@ -68,8 +73,8 @@ def update_app(db: Session, app_id: uuid.UUID, app: schemas.AppUpdate) -> models
 ########################################################
 
 
-def create_user(
-    db: Session, app_id: uuid.UUID, user: schemas.UserCreate
+async def create_user(
+    db: AsyncSession, app_id: uuid.UUID, user: schemas.UserCreate
 ) -> models.User:
     honcho_user = models.User(
         app_id=app_id,
@@ -77,37 +82,48 @@ def create_user(
         h_metadata=user.metadata,
     )
     db.add(honcho_user)
-    db.commit()
-    db.refresh(honcho_user)
+    await db.commit()
+    await db.refresh(honcho_user)
     return honcho_user
 
 
-def get_user(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID
+async def get_user(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID
 ) -> Optional[models.User]:
     stmt = (
         select(models.User)
         .where(models.User.app_id == app_id)
         .where(models.User.id == user_id)
     )
-    user = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
     return user
 
 
-def get_user_by_name(
-    db: Session, app_id: uuid.UUID, name: str
+async def get_user_by_name(
+    db: AsyncSession, app_id: uuid.UUID, name: str
 ) -> Optional[models.User]:
     stmt = (
         select(models.User)
         .where(models.User.app_id == app_id)
         .where(models.User.name == name)
     )
-    user = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    user = result.scalar_one_or_none()
     return user
 
 
-def get_users(db: Session, app_id: uuid.UUID, reverse: bool = False) -> Select:
+async def get_users(
+    db: AsyncSession,
+    app_id: uuid.UUID,
+    reverse: bool = False,
+    filter: Optional[dict] = None,
+) -> Select:
     stmt = select(models.User).where(models.User.app_id == app_id)
+
+    if filter is not None:
+        stmt = stmt.where(models.User.h_metadata.contains(filter))
+
     if reverse:
         stmt = stmt.order_by(models.User.created_at.desc())
     else:
@@ -116,10 +132,10 @@ def get_users(db: Session, app_id: uuid.UUID, reverse: bool = False) -> Select:
     return stmt
 
 
-def update_user(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, user: schemas.UserUpdate
+async def update_user(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, user: schemas.UserUpdate
 ) -> models.User:
-    honcho_user = get_user(db, app_id, user_id)
+    honcho_user = await get_user(db, app_id, user_id)
     if honcho_user is None:
         raise ValueError("User not found")
     if user.name is not None:
@@ -127,12 +143,12 @@ def update_user(
     if user.metadata is not None:
         honcho_user.h_metadata = user.metadata
 
-    db.commit()
-    db.refresh(honcho_user)
+    await db.commit()
+    await db.refresh(honcho_user)
     return honcho_user
 
 
-# def delete_user(db: Session, app_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+# def delete_user(db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID) -> bool:
 #     existing_user = get_user(db, app_id, user_id)
 #     if existing_user is None:
 #         return False
@@ -145,8 +161,8 @@ def update_user(
 ########################################################
 
 
-def get_session(
-    db: Session,
+async def get_session(
+    db: AsyncSession,
     app_id: uuid.UUID,
     session_id: uuid.UUID,
     user_id: Optional[uuid.UUID] = None,
@@ -159,17 +175,19 @@ def get_session(
     )
     if user_id is not None:
         stmt = stmt.where(models.Session.user_id == user_id)
-    session = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
     return session
 
 
-def get_sessions(
-    db: Session,
+async def get_sessions(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     location_id: Optional[str] = None,
     reverse: Optional[bool] = False,
     is_active: Optional[bool] = False,
+    filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Session)
@@ -180,6 +198,9 @@ def get_sessions(
 
     if is_active:
         stmt = stmt.where(models.Session.is_active.is_(True))
+
+    if filter is not None:
+        stmt = stmt.where(models.Session.h_metadata.contains(filter))
 
     if reverse:
         stmt = stmt.order_by(models.Session.created_at.desc())
@@ -192,28 +213,34 @@ def get_sessions(
     return stmt
 
 
-def create_session(
-    db: Session, session: schemas.SessionCreate, app_id: uuid.UUID, user_id: uuid.UUID
+async def create_session(
+    db: AsyncSession,
+    session: schemas.SessionCreate,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
 ) -> models.Session:
+    honcho_user = await get_user(db, app_id=app_id, user_id=user_id)
+    if honcho_user is None:
+        raise ValueError("User not found")
     honcho_session = models.Session(
         user_id=user_id,
         location_id=session.location_id,
         h_metadata=session.metadata,
     )
     db.add(honcho_session)
-    db.commit()
-    db.refresh(honcho_session)
+    await db.commit()
+    await db.refresh(honcho_session)
     return honcho_session
 
 
-def update_session(
-    db: Session,
+async def update_session(
+    db: AsyncSession,
     session: schemas.SessionUpdate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
 ) -> bool:
-    honcho_session = get_session(
+    honcho_session = await get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
     if honcho_session is None:
@@ -222,13 +249,13 @@ def update_session(
         session.metadata is not None
     ):  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
-    db.commit()
-    db.refresh(honcho_session)
+    await db.commit()
+    await db.refresh(honcho_session)
     return honcho_session
 
 
-def delete_session(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
+async def delete_session(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
 ) -> bool:
     stmt = (
         select(models.Session)
@@ -237,11 +264,12 @@ def delete_session(
         .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
     )
-    honcho_session = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    honcho_session = result.scalar_one_or_none()
     if honcho_session is None:
         return False
     honcho_session.is_active = False
-    db.commit()
+    await db.commit()
     return True
 
 
@@ -250,8 +278,8 @@ def delete_session(
 ########################################################
 
 
-def create_message(
-    db: Session,
+async def create_message(
+    db: AsyncSession,
     message: schemas.MessageCreate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -267,19 +295,21 @@ def create_message(
         session_id=session_id,
         is_user=message.is_user,
         content=message.content,
+        h_metadata=message.metadata,
     )
     db.add(honcho_message)
-    db.commit()
-    db.refresh(honcho_message)
+    await db.commit()
+    await db.refresh(honcho_message)
     return honcho_message
 
 
-def get_messages(
-    db: Session,
+async def get_messages(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     reverse: Optional[bool] = False,
+    filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Message)
@@ -291,6 +321,9 @@ def get_messages(
         .where(models.Message.session_id == session_id)
     )
 
+    if filter is not None:
+        stmt = stmt.where(models.Message.h_metadata.contains(filter))
+
     if reverse:
         stmt = stmt.order_by(models.Message.created_at.desc())
     else:
@@ -299,8 +332,8 @@ def get_messages(
     return stmt
 
 
-def get_message(
-    db: Session,
+async def get_message(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
@@ -316,7 +349,30 @@ def get_message(
         .where(models.Message.session_id == session_id)
         .where(models.Message.id == message_id)
     )
-    return db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def update_message(
+    db: AsyncSession,
+    message: schemas.MessageUpdate,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    message_id: uuid.UUID,
+) -> bool:
+    honcho_message = await get_message(
+        db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
+    )
+    if honcho_message is None:
+        raise ValueError("Message not found or does not belong to user")
+    if (
+        message.metadata is not None
+    ):  # Need to explicitly be there won't make it empty by default
+        honcho_message.h_metadata = message.metadata
+    await db.commit()
+    await db.refresh(honcho_message)
+    return honcho_message
 
 
 ########################################################
@@ -324,8 +380,8 @@ def get_message(
 ########################################################
 
 
-def create_metamessage(
-    db: Session,
+async def create_metamessage(
+    db: AsyncSession,
     metamessage: schemas.MetamessageCreate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -345,21 +401,23 @@ def create_metamessage(
         message_id=metamessage.message_id,
         metamessage_type=metamessage.metamessage_type,
         content=metamessage.content,
+        h_metadata=metamessage.metadata,
     )
 
     db.add(honcho_metamessage)
-    db.commit()
-    db.refresh(honcho_metamessage)
+    await db.commit()
+    await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
-def get_metamessages(
-    db: Session,
+async def get_metamessages(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     message_id: Optional[uuid.UUID],
     metamessage_type: Optional[str] = None,
+    filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
 ) -> Select:
     stmt = (
@@ -379,6 +437,9 @@ def get_metamessages(
     if metamessage_type is not None:
         stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
 
+    if filter is not None:
+        stmt = stmt.where(models.Metamessage.h_metadata.contains(filter))
+
     if reverse:
         stmt = stmt.order_by(models.Metamessage.created_at.desc())
     else:
@@ -387,8 +448,8 @@ def get_metamessages(
     return stmt
 
 
-def get_metamessage(
-    db: Session,
+async def get_metamessage(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
@@ -407,7 +468,37 @@ def get_metamessage(
         .where(models.Metamessage.message_id == message_id)
         .where(models.Metamessage.id == metamessage_id)
     )
-    return db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def update_metamessage(
+    db: AsyncSession,
+    metamessage: schemas.MetamessageUpdate,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    metamessage_id: uuid.UUID,
+) -> bool:
+    honcho_metamessage = await get_metamessage(
+        db,
+        app_id=app_id,
+        session_id=session_id,
+        user_id=user_id,
+        message_id=metamessage.message_id,
+        metamessage_id=metamessage_id,
+    )
+    if honcho_metamessage is None:
+        raise ValueError("Metamessage not found or does not belong to user")
+    if (
+        metamessage.metadata is not None
+    ):  # Need to explicitly be there won't make it empty by default
+        honcho_metamessage.h_metadata = metamessage.metadata
+    if metamessage.metamessage_type is not None:
+        honcho_metamessage.metamessage_type = metamessage.metamessage_type
+    await db.commit()
+    await db.refresh(honcho_metamessage)
+    return honcho_metamessage
 
 
 ########################################################
@@ -417,8 +508,12 @@ def get_metamessage(
 # Should be very similar to the session methods
 
 
-def get_collections(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, reverse: Optional[bool] = False
+async def get_collections(
+    db: AsyncSession,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    reverse: Optional[bool] = False,
+    filter: Optional[dict] = None,
 ) -> Select:
     """Get a distinct list of the names of collections associated with a user"""
     stmt = (
@@ -428,6 +523,9 @@ def get_collections(
         .where(models.User.id == user_id)
     )
 
+    if filter is not None:
+        stmt = stmt.where(models.Collection.h_metadata.contains(filter))
+
     if reverse:
         stmt = stmt.order_by(models.Collection.created_at.desc())
     else:
@@ -436,8 +534,8 @@ def get_collections(
     return stmt
 
 
-def get_collection_by_id(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
+async def get_collection_by_id(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
 ) -> Optional[models.Collection]:
     stmt = (
         select(models.Collection)
@@ -446,12 +544,13 @@ def get_collection_by_id(
         .where(models.User.id == user_id)
         .where(models.Collection.id == collection_id)
     )
-    collection = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    collection = result.scalar_one_or_none()
     return collection
 
 
-def get_collection_by_name(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, name: str
+async def get_collection_by_name(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, name: str
 ) -> Optional[models.Collection]:
     stmt = (
         select(models.Collection)
@@ -460,12 +559,13 @@ def get_collection_by_name(
         .where(models.User.id == user_id)
         .where(models.Collection.name == name)
     )
-    collection = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    collection = result.scalar_one_or_none()
     return collection
 
 
-def create_collection(
-    db: Session,
+async def create_collection(
+    db: AsyncSession,
     collection: schemas.CollectionCreate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
@@ -473,41 +573,44 @@ def create_collection(
     honcho_collection = models.Collection(
         user_id=user_id,
         name=collection.name,
+        h_metadata=collection.metadata,
     )
     try:
         db.add(honcho_collection)
-        db.commit()
+        await db.commit()
     except IntegrityError:
-        db.rollback()
-        raise ValueError("Collection already exists")
-    db.refresh(honcho_collection)
+        await db.rollback()
+        raise ValueError("Collection already exists") from None
+    await db.refresh(honcho_collection)
     return honcho_collection
 
 
-def update_collection(
-    db: Session,
+async def update_collection(
+    db: AsyncSession,
     collection: schemas.CollectionUpdate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
 ) -> models.Collection:
-    honcho_collection = get_collection_by_id(
+    honcho_collection = await get_collection_by_id(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
     )
     if honcho_collection is None:
         raise ValueError("collection not found or does not belong to user")
+    if collection.metadata is not None:
+        honcho_collection.h_metadata = collection.metadata
     try:
         honcho_collection.name = collection.name
-        db.commit()
+        await db.commit()
     except IntegrityError:
-        db.rollback()
-        raise ValueError("Collection already exists")
-    db.refresh(honcho_collection)
+        await db.rollback()
+        raise ValueError("Collection already exists") from None
+    await db.refresh(honcho_collection)
     return honcho_collection
 
 
-def delete_collection(
-    db: Session, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
+async def delete_collection(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
 ) -> bool:
     """
     Delete a Collection and all documents associated with it. Takes advantage of
@@ -520,11 +623,12 @@ def delete_collection(
         .where(models.User.id == user_id)
         .where(models.Collection.id == collection_id)
     )
-    honcho_collection = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    honcho_collection = result.scalar_one_or_none()
     if honcho_collection is None:
         return False
-    db.delete(honcho_collection)
-    db.commit()
+    await db.delete(honcho_collection)
+    await db.commit()
     return True
 
 
@@ -535,12 +639,13 @@ def delete_collection(
 # Should be similar to the messages methods outside of query
 
 
-def get_documents(
-    db: Session,
+async def get_documents(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     reverse: Optional[bool] = False,
+    filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Document)
@@ -551,6 +656,9 @@ def get_documents(
         .where(models.Document.collection_id == collection_id)
     )
 
+    if filter is not None:
+        stmt = stmt.where(models.Document.h_metadata.contains(filter))
+
     if reverse:
         stmt = stmt.order_by(models.Document.created_at.desc())
     else:
@@ -559,8 +667,8 @@ def get_documents(
     return stmt
 
 
-def get_document(
-    db: Session,
+async def get_document(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
@@ -576,16 +684,18 @@ def get_document(
         .where(models.Document.id == document_id)
     )
 
-    document = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
     return document
 
 
-def query_documents(
-    db: Session,
+async def query_documents(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     query: str,
+    filter: Optional[dict] = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     response = openai_client.embeddings.create(
@@ -599,23 +709,26 @@ def query_documents(
         .where(models.User.app_id == app_id)
         .where(models.User.id == user_id)
         .where(models.Document.collection_id == collection_id)
-        .order_by(models.Document.embedding.cosine_distance(embedding_query))
-        .limit(top_k)
+        # .limit(top_k)
     )
-    # if metadata is not None:
-    # stmt = stmt.where(models.Document.h_metadata.contains(metadata))
-    return db.scalars(stmt).all()
+    if filter is not None:
+        stmt = stmt.where(models.Document.h_metadata.contains(filter))
+    stmt = stmt.limit(top_k).order_by(
+        models.Document.embedding.cosine_distance(embedding_query)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
 
 
-def create_document(
-    db: Session,
+async def create_document(
+    db: AsyncSession,
     document: schemas.DocumentCreate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
-    collection = get_collection_by_id(
+    collection = await get_collection_by_id(
         db, app_id=app_id, collection_id=collection_id, user_id=user_id
     )
     if collection is None:
@@ -634,20 +747,20 @@ def create_document(
         embedding=embedding,
     )
     db.add(honcho_document)
-    db.commit()
-    db.refresh(honcho_document)
+    await db.commit()
+    await db.refresh(honcho_document)
     return honcho_document
 
 
-def update_document(
-    db: Session,
+async def update_document(
+    db: AsyncSession,
     document: schemas.DocumentUpdate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
 ) -> bool:
-    honcho_document = get_document(
+    honcho_document = await get_document(
         db,
         app_id=app_id,
         collection_id=collection_id,
@@ -667,13 +780,13 @@ def update_document(
 
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
-    db.commit()
-    db.refresh(honcho_document)
+    await db.commit()
+    await db.refresh(honcho_document)
     return honcho_document
 
 
-def delete_document(
-    db: Session,
+async def delete_document(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
@@ -688,9 +801,10 @@ def delete_document(
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.id == document_id)
     )
-    document = db.scalars(stmt).one_or_none()
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
     if document is None:
         return False
-    db.delete(document)
-    db.commit()
+    await db.delete(document)
+    await db.commit()
     return True

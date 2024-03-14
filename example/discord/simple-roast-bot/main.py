@@ -11,6 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import AIMessage, HumanMessage
 
 from honcho import Honcho
+from honcho.ext.langchain import langchain_message_converter
 
 load_dotenv()
 
@@ -41,16 +42,6 @@ model = ChatOpenAI(model="gpt-3.5-turbo")
 output_parser = StrOutputParser()
 
 chain = prompt | model | output_parser
-
-
-def langchain_message_converter(messages: List):
-    new_messages = []
-    for message in messages:
-        if message.is_user:
-            new_messages.append(HumanMessage(content=message.content))
-        else:
-            new_messages.append(AIMessage(content=message.content))
-    return new_messages
 
 
 @bot.event

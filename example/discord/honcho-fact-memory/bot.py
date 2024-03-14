@@ -2,7 +2,8 @@ import os
 from uuid import uuid1
 import discord
 from honcho import Honcho
-from chain import langchain_message_converter, LMChain
+from honcho.ext.langchain import langchain_message_converter
+from chain import LMChain
 
 
 intents = discord.Intents.default()
