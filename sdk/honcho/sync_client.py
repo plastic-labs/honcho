@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import uuid
 from typing import Optional
 
@@ -32,7 +33,13 @@ class GetPage:
 class GetUserPage(GetPage):
     """Paginated Results for Get User Requests"""
 
-    def __init__(self, response: dict, honcho: Honcho, reverse: bool):
+    def __init__(
+        self,
+        response: dict,
+        honcho: Honcho,
+        filter: Optional[dict],
+        reverse: bool,
+    ):
         """Constructor for Page Result from User Get Request
 
         Args:
@@ -42,6 +49,7 @@ class GetUserPage(GetPage):
         """
         super().__init__(response)
         self.honcho = honcho
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             User(
@@ -57,7 +65,10 @@ class GetUserPage(GetPage):
         if self.page >= self.pages:
             return None
         return self.honcho.get_users(
-            page=(self.page + 1), page_size=self.page_size, reverse=self.reverse
+            filter=self.filter,
+            page=(self.page + 1),
+            page_size=self.page_size,
+            reverse=self.reverse,
         )
 
 
@@ -70,6 +81,7 @@ class GetSessionPage(GetPage):
         user: User,
         reverse: bool,
         location_id: Optional[str],
+        filter: Optional[dict],
         is_active: bool,
     ):
         """Constructor for Page Result from Session Get Request
@@ -85,6 +97,7 @@ class GetSessionPage(GetPage):
         self.location_id = location_id
         self.reverse = reverse
         self.is_active = is_active
+        self.filter = filter
         self.items = [
             Session(
                 user=user,
@@ -99,14 +112,15 @@ class GetSessionPage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
-            GetSessionPage | None: Next Page of Results or None if there
-            are no more sessions to retreive from a query
+            GetSessionPage | None: Next Page of Results or None if there are no more sessions to retreive from a query
         """
         if self.page >= self.pages:
             return None
         return self.user.get_sessions(
             location_id=self.location_id,
+            filter=self.filter,
             page=(self.page + 1),
             page_size=self.page_size,
             reverse=self.reverse,
@@ -117,7 +131,13 @@ class GetSessionPage(GetPage):
 class GetMessagePage(GetPage):
     """Paginated Results for Get Session Requests"""
 
-    def __init__(self, response: dict, session: Session, reverse: bool):
+    def __init__(
+        self,
+        response: dict,
+        session: Session,
+        filter: Optional[dict],
+        reverse: bool,
+    ):
         """Constructor for Page Result from Session Get Request
 
         Args:
@@ -127,6 +147,7 @@ class GetMessagePage(GetPage):
         """
         super().__init__(response)
         self.session = session
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Message(
@@ -134,6 +155,7 @@ class GetMessagePage(GetPage):
                 id=message["id"],
                 is_user=message["is_user"],
                 content=message["content"],
+                metadata=message["metadata"],
                 created_at=message["created_at"],
             )
             for message in response["items"]
@@ -141,6 +163,7 @@ class GetMessagePage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetMessagePage | None: Next Page of Results or None if there
             are no more messages to retreive from a query
@@ -148,7 +171,7 @@ class GetMessagePage(GetPage):
         if self.page >= self.pages:
             return None
         return self.session.get_messages(
-            (self.page + 1), self.page_size, self.reverse
+            self.filter, (self.page + 1), self.page_size, self.reverse
         )
 
 
@@ -157,6 +180,7 @@ class GetMetamessagePage(GetPage):
         self,
         response: dict,
         session,
+        filter: Optional[dict],
         reverse: bool,
         message_id: Optional[uuid.UUID],
         metamessage_type: Optional[str],
@@ -175,11 +199,13 @@ class GetMetamessagePage(GetPage):
         self.session = session
         self.message_id = message_id
         self.metamessage_type = metamessage_type
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Metamessage(
                 id=metamessage["id"],
                 message_id=metamessage["message_id"],
+                metadata=metamessage["metadata"],
                 metamessage_type=metamessage["metamessage_type"],
                 content=metamessage["content"],
                 created_at=metamessage["created_at"],
@@ -189,6 +215,7 @@ class GetMetamessagePage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetMetamessagePage | None: Next Page of Results or None if
             there are no more metamessages to retreive from a query
@@ -197,6 +224,7 @@ class GetMetamessagePage(GetPage):
             return None
         return self.session.get_metamessages(
             metamessage_type=self.metamessage_type,
+            filter=self.filter,
             message=self.message_id,
             page=(self.page + 1),
             page_size=self.page_size,
@@ -207,7 +235,9 @@ class GetMetamessagePage(GetPage):
 class GetDocumentPage(GetPage):
     """Paginated results for Get Document requests"""
 
-    def __init__(self, response: dict, collection, reverse: bool) -> None:
+    def __init__(
+        self, response: dict, collection, filter: Optional[dict], reverse: bool
+    ) -> None:
         """Constructor for Page Result from Document Get Request
 
         Args:
@@ -218,6 +248,7 @@ class GetDocumentPage(GetPage):
         """
         super().__init__(response)
         self.collection = collection
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Document(
@@ -232,6 +263,7 @@ class GetDocumentPage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetDocumentPage | None: Next Page of Results or None if there
             are no more sessions to retreive from a query
@@ -239,14 +271,19 @@ class GetDocumentPage(GetPage):
         if self.page >= self.pages:
             return None
         return self.collection.get_documents(
-            page=self.page + 1, page_size=self.page_size, reverse=self.reverse
+            filter=self.filter,
+            page=self.page + 1,
+            page_size=self.page_size,
+            reverse=self.reverse,
         )
 
 
 class GetCollectionPage(GetPage):
     """Paginated results for Get Collection requests"""
 
-    def __init__(self, response: dict, user: User, reverse: bool):
+    def __init__(
+        self, response: dict, user: User, filter: Optional[dict], reverse: bool
+    ):
         """Constructor for page result from Get Collection Request
 
         Args:
@@ -256,12 +293,14 @@ class GetCollectionPage(GetPage):
         """
         super().__init__(response)
         self.user = user
+        self.filter = filter
         self.reverse = reverse
         self.items = [
             Collection(
                 user=user,
                 id=collection["id"],
                 name=collection["name"],
+                metadata=collection["metadata"],
                 created_at=collection["created_at"],
             )
             for collection in response["items"]
@@ -269,6 +308,7 @@ class GetCollectionPage(GetPage):
 
     def next(self):
         """Get the next page of results
+
         Returns:
             GetCollectionPage | None: Next Page of Results or None if
             there are no more sessions to retreive from a query
@@ -276,6 +316,7 @@ class GetCollectionPage(GetPage):
         if self.page >= self.pages:
             return None
         return self.user.get_collections(
+            filter=self.filter,
             page=self.page + 1,
             page_size=self.page_size,
             reverse=self.reverse,
@@ -390,7 +431,11 @@ class Honcho:
         )
 
     def get_users(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ):
         """Get Paginated list of users
 
@@ -402,14 +447,24 @@ class Honcho:
         Returns:
             GetUserPage: Paginated list of users
         """
-        url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
-        response = self.client.get(url)
+        # url = f"{self.base_url}/users?page={page}&size={page_size}&reverse={reverse}"
+        url = f"{self.base_url}/users"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
+        response = self.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return GetUserPage(data, self, reverse)
+        return GetUserPage(data, self, filter, reverse)
 
     def get_users_generator(
         self,
+        filter: Optional[dict] = None,
         reverse: bool = False,
     ):
         """Shortcut Generator for get_users. Generator to iterate through
@@ -424,7 +479,7 @@ class Honcho:
         """
         page = 1
         page_size = 50
-        get_user_response = self.get_users(page, page_size, reverse)
+        get_user_response = self.get_users(filter, page, page_size, reverse)
         while True:
             for session in get_user_response.items:
                 yield session
@@ -523,6 +578,7 @@ class User:
     def get_sessions(
         self,
         location_id: Optional[str] = None,
+        filter: Optional[dict] = None,
         page: int = 1,
         page_size: int = 50,
         reverse: bool = False,
@@ -542,20 +598,33 @@ class User:
             GetSessionPage: Page or results for get_sessions query
 
         """
-        url = (
-            f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
-            + (f"&location_id={location_id}" if location_id else "")
-        )
-        response = self.honcho.client.get(url)
+        # url = (
+        #     f"{self.base_url}/sessions?page={page}&size={page_size}&reverse={reverse}&is_active={is_active}"
+        #     + (f"&location_id={location_id}" if location_id else "")
+        # )
+        url = f"{self.base_url}/sessions"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+            "is_active": is_active,
+        }
+        if location_id:
+            params["location_id"] = location_id
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
+        response = self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return GetSessionPage(data, self, reverse, location_id, is_active)
+        return GetSessionPage(data, self, reverse, location_id, filter, is_active)
 
     def get_sessions_generator(
         self,
         location_id: Optional[str] = None,
         reverse: bool = False,
         is_active: bool = False,
+        filter: Optional[dict] = None,
     ):
         """Shortcut Generator for get_sessions. Generator to iterate through
         all sessions for a user in an app
@@ -573,7 +642,7 @@ class User:
         page = 1
         page_size = 50
         get_session_response = self.get_sessions(
-            location_id, page, page_size, reverse, is_active
+            location_id, filter, page, page_size, reverse, is_active
         )
         while True:
             for session in get_session_response.items:
@@ -618,6 +687,7 @@ class User:
     def create_collection(
         self,
         name: str,
+        metadata: Optional[dict] = None,
     ):
         """Create a collection for a user
 
@@ -628,7 +698,9 @@ class User:
             Collection: The Collection object of the new Collection
 
         """
-        data = {"name": name}
+        if metadata is None:
+            metadata = {}
+        data = {"name": name, "metadata": metadata}
         url = f"{self.base_url}/collections"
         response = self.honcho.client.post(url, json=data)
         response.raise_for_status()
@@ -637,6 +709,7 @@ class User:
             self,
             id=data["id"],
             name=name,
+            metadata=metadata,
             created_at=data["created_at"],
         )
 
@@ -658,11 +731,16 @@ class User:
             user=self,
             id=data["id"],
             name=data["name"],
+            metadata=data["metadata"],
             created_at=data["created_at"],
         )
 
     def get_collections(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ):
         """Return collections associated with a user paginated
 
@@ -675,13 +753,24 @@ class User:
             GetCollectionPage: Page or results for get_collections query
 
         """
-        url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        response = self.honcho.client.get(url)
+        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/collections"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
+        response = self.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return GetCollectionPage(data, self, reverse)
+        return GetCollectionPage(data, self, filter, reverse)
 
-    def get_collections_generator(self, reverse: bool = False):
+    def get_collections_generator(
+        self, filter: Optional[dict] = None, reverse: bool = False
+    ):
         """Shortcut Generator for get_sessions. Generator to iterate through
         all sessions for a user in an app
 
@@ -694,7 +783,9 @@ class User:
         """
         page = 1
         page_size = 50
-        get_collection_response = self.get_collections(page, page_size, reverse)
+        get_collection_response = self.get_collections(
+            filter, page, page_size, reverse
+        )
         while True:
             for collection in get_collection_response.items:
                 yield collection
@@ -740,7 +831,9 @@ class Session:
         """Returns whether the session is active - made property to prevent tampering"""
         return self._is_active
 
-    def create_message(self, is_user: bool, content: str):
+    def create_message(
+        self, is_user: bool, content: str, metadata: Optional[dict] = None
+    ):
         """Adds a message to the session
 
         Args:
@@ -753,7 +846,9 @@ class Session:
         """
         if not self.is_active:
             raise Exception("Session is inactive")
-        data = {"is_user": is_user, "content": content}
+        if metadata is None:
+            metadata = {}
+        data = {"is_user": is_user, "content": content, "metadata": metadata}
         url = f"{self.base_url}/messages"
         response = self.user.honcho.client.post(url, json=data)
         response.raise_for_status()
@@ -763,6 +858,7 @@ class Session:
             id=data["id"],
             is_user=is_user,
             content=content,
+            metadata=metadata,
             created_at=data["created_at"],
         )
 
@@ -785,11 +881,16 @@ class Session:
             id=data["id"],
             is_user=data["is_user"],
             content=data["content"],
+            metadata=data["metadata"],
             created_at=data["created_at"],
         )
 
     def get_messages(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ) -> GetMessagePage:
         """Get all messages for a session
 
@@ -802,13 +903,23 @@ class Session:
             GetMessagePage: Page of Message objects
 
         """
-        url = f"{self.base_url}/messages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        response = self.user.honcho.client.get(url)
+        url = f"{self.base_url}/messages"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return GetMessagePage(data, self, reverse)
+        return GetMessagePage(data, self, filter, reverse)
 
-    def get_messages_generator(self, reverse: bool = False):
+    def get_messages_generator(
+        self, filter: Optional[dict] = None, reverse: bool = False
+    ):
         """Shortcut Generator for get_messages. Generator to iterate through
         all messages for a session in an app
 
@@ -818,7 +929,7 @@ class Session:
         """
         page = 1
         page_size = 50
-        get_messages_page = self.get_messages(page, page_size, reverse)
+        get_messages_page = self.get_messages(filter, page, page_size, reverse)
         while True:
             for message in get_messages_page.items:
                 yield message
@@ -830,7 +941,11 @@ class Session:
             get_messages_page = new_messages
 
     def create_metamessage(
-        self, message: Message, metamessage_type: str, content: str
+        self,
+        message: Message,
+        metamessage_type: str,
+        content: str,
+        metadata: Optional[dict] = None,
     ):
         """Adds a metamessage to a session and links it to a specific message
 
@@ -845,10 +960,13 @@ class Session:
         """
         if not self.is_active:
             raise Exception("Session is inactive")
+        if metadata is None:
+            metadata = {}
         data = {
             "metamessage_type": metamessage_type,
             "content": content,
             "message_id": message.id,
+            "metadata": metadata,
         }
         url = f"{self.base_url}/metamessages"
         response = self.user.honcho.client.post(url, json=data)
@@ -859,6 +977,7 @@ class Session:
             message_id=message.id,
             metamessage_type=metamessage_type,
             content=content,
+            metadata=metadata,
             created_at=data["created_at"],
         )
 
@@ -881,6 +1000,7 @@ class Session:
             message_id=data["message_id"],
             metamessage_type=data["metamessage_type"],
             content=data["content"],
+            metadata=data["metadata"],
             created_at=data["created_at"],
         )
 
@@ -888,6 +1008,7 @@ class Session:
         self,
         metamessage_type: Optional[str] = None,
         message: Optional[Message] = None,
+        filter: Optional[dict] = None,
         page: int = 1,
         page_size: int = 50,
         reverse: bool = False,
@@ -905,23 +1026,35 @@ class Session:
             list[dict]: List of Message objects
 
         """
-        url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        # url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/metamessages"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
         if metamessage_type:
-            url += f"&metamessage_type={metamessage_type}"
+            # url += f"&metamessage_type={metamessage_type}"
+            params["metamessage_type"] = metamessage_type
         if message:
-            url += f"&message_id={message.id}"
-        response = self.user.honcho.client.get(url)
+            # url += f"&message_id={message.id}"
+            params["message_id"] = message.id
+        if filter is not None:
+            json_metadata = json.dumps(filter)
+            params["filter"] = json_metadata
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
         message_id = message.id if message else None
         return GetMetamessagePage(
-            data, self, reverse, message_id, metamessage_type
+            data, self, filter, reverse, message_id, metamessage_type
         )
 
     def get_metamessages_generator(
         self,
         metamessage_type: Optional[str] = None,
         message: Optional[Message] = None,
+        filter: Optional[dict] = None,
         reverse: bool = False,
     ):
         """Shortcut Generator for get_metamessages. Generator to iterate
@@ -940,6 +1073,7 @@ class Session:
         get_metamessages_page = self.get_metamessages(
             metamessage_type=metamessage_type,
             message=message,
+            filter=filter,
             page=page,
             page_size=page_size,
             reverse=reverse,
@@ -970,12 +1104,64 @@ class Session:
         self.metadata = metadata
         return success
 
+    def update_message(self, message: Message, metadata: dict):
+        """Update the metadata of a message
+
+        Args:
+            message (Message): The message to update
+            metadata (dict): The new metadata for the message
+
+        Returns:
+            boolean: Whether the message was successfully updated
+        """
+        info = {"metadata": metadata}
+        url = f"{self.base_url}/messages/{message.id}"
+        response = self.user.honcho.client.put(url, json=info)
+        success = response.status_code < 400
+        message.metadata = metadata
+        return success
+
+    def update_metamessage(
+        self,
+        metamessage: Metamessage,
+        metamessage_type: Optional[str],
+        metadata: Optional[dict],
+    ):
+        """Update the metadata of a metamessage
+
+        Args:
+            metamessage (Metamessage): The metamessage to update
+            metadata (dict): The new metadata for the metamessage
+
+        Returns:
+            boolean: Whether the metamessage was successfully updated
+        """
+        if metadata is None and metamessage_type is None:
+            raise ValueError("metadata and metamessage_type cannot both be None")
+        info = {"metamessage_type": metamessage_type, "metadata": metadata}
+        url = f"{self.base_url}/metamessages/{metamessage.id}"
+        response = self.user.honcho.client.put(url, json=info)
+        success = response.status_code < 400
+        if metamessage_type is not None:
+            metamessage.metamessage_type = metamessage_type
+        if metadata is not None:
+            metamessage.metadata = metadata
+        return success
+
     def close(self):
         """Closes a session by marking it as inactive"""
         url = f"{self.base_url}"
         response = self.user.honcho.client.delete(url)
         response.raise_for_status()
         self._is_active = False
+
+    def chat(self, query) -> str:
+        url = f"{self.base_url}/chat"
+        params = {"query": query}
+        response = self.user.honcho.client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data["content"]
 
 
 class Collection:
@@ -986,12 +1172,14 @@ class Collection:
         user: User,
         id: uuid.UUID,
         name: str,
+        metadata: dict,
         created_at: datetime.datetime,
     ):
         """Constructor for Collection"""
         self.user = user
         self.id: uuid.UUID = id
         self.name: str = name
+        self.metadata: dict = metadata
         self.created_at: datetime.datetime = created_at
 
     @property
@@ -1003,7 +1191,7 @@ class Collection:
         """String representation of Collection"""
         return f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
 
-    def update(self, name: str):
+    def update(self, name: Optional[str] = None, metadata: Optional[dict] = None):
         """Update the name of the collection
 
         Args:
@@ -1012,12 +1200,17 @@ class Collection:
         Returns:
             boolean: Whether the session was successfully updated
         """
-        info = {"name": name}
+        if metadata is None and name is None:
+            raise ValueError("metadata and name cannot both be None")
+        info = {"name": name, "metadata": metadata}
         url = f"{self.base_url}"
         response = self.user.honcho.client.put(url, json=info)
         response.raise_for_status()
         success = response.status_code < 400
-        self.name = name
+        if name is not None:
+            self.name = name
+        if metadata is not None:
+            self.metadata = metadata
         return success
 
     def delete(self):
@@ -1075,7 +1268,11 @@ class Collection:
         )
 
     def get_documents(
-        self, page: int = 1, page_size: int = 50, reverse: bool = False
+        self,
+        filter: Optional[dict] = None,
+        page: int = 1,
+        page_size: int = 50,
+        reverse: bool = False,
     ) -> GetDocumentPage:
         """Get all documents for a collection
 
@@ -1087,15 +1284,24 @@ class Collection:
             GetDocumentPage: Page of Document objects
 
         """
-        url = (
-            f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
-        )
-        response = self.user.honcho.client.get(url)
+        # url = f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        url = f"{self.base_url}/documents"
+        params = {
+            "page": page,
+            "size": page_size,
+            "reverse": reverse,
+        }
+        if filter is not None:
+            json_filter = json.dumps(filter)
+            params["filter"] = json_filter
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = response.json()
-        return GetDocumentPage(data, self, reverse)
+        return GetDocumentPage(data, self, filter, reverse)
 
-    def get_documents_generator(self, reverse: bool = False):
+    def get_documents_generator(
+        self, filter: Optional[dict] = None, reverse: bool = False
+    ):
         """Shortcut Generator for get_documents. Generator to iterate through
         all documents for a collection in an app
 
@@ -1105,7 +1311,7 @@ class Collection:
         """
         page = 1
         page_size = 50
-        get_documents_page = self.get_documents(page, page_size, reverse)
+        get_documents_page = self.get_documents(filter, page, page_size, reverse)
         while True:
             for document in get_documents_page.items:
                 yield document
@@ -1125,8 +1331,10 @@ class Collection:
         Returns:
             List[Document]: The response from the query with matching documents
         """
-        url = f"{self.base_url}/query?query={query}&top_k={top_k}"
-        response = self.user.honcho.client.get(url)
+        # url = f"{self.base_url}/query?query={query}&top_k={top_k}"
+        url = f"{self.base_url}/query"
+        params = {"query": query, "top_k": top_k}
+        response = self.user.honcho.client.get(url, params=params)
         response.raise_for_status()
         data = [
             Document(
@@ -1141,7 +1349,10 @@ class Collection:
         return data
 
     def update_document(
-        self, document: Document, content: Optional[str], metadata: Optional[dict]
+        self,
+        document: Document,
+        content: Optional[str] = None,
+        metadata: Optional[dict] = None,
     ) -> Document:
         """Update a document in the collection
 
