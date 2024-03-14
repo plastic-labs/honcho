@@ -236,3 +236,7 @@ class Document(DocumentBase):
     class Config:
         from_attributes = True
         schema_extra = {"exclude": ["h_metadata"]}
+
+
+class AgentChat(BaseModel):
+    content: str
