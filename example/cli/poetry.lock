@@ -469,7 +469,7 @@ version = "0.0.4"
 description = "Python Client SDK for Honcho"
 category = "main"
 optional = false
-python-versions = "^3.10"
+python-versions = "^3.9"
 files = []
 develop = true
 

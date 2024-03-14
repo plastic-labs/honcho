@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{include = "honcho"}]
 
 [tool.poetry.dependencies]
-python = "^3.8.1"
+python = "^3.9"
 httpx = "^0.26.0"
 
 [tool.poetry.group.test.dependencies]
