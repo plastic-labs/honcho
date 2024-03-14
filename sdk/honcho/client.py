@@ -1155,6 +1155,14 @@ class AsyncSession:
         response.raise_for_status()
         self._is_active = False
 
+    async def chat(self, query) -> str:
+        url = f"{self.base_url}/chat"
+        params = {"query": query}
+        response = await self.user.honcho.client.get(url, params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data["content"]
+
 
 class AsyncCollection:
     """Represents a single collection for a user in an app"""

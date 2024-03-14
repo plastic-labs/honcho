@@ -57,7 +57,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import crud, schemas
+from . import agent, crud, schemas
 from .db import SessionLocal, engine, scaffold_db
 
 # Otel Setup
@@ -1019,6 +1019,11 @@ async def create_collection(
     collection: schemas.CollectionCreate,
     db: AsyncSession = Depends(get_db),
 ):
+    if collection.name == "honcho":
+        raise HTTPException(
+            status_code=406,
+            detail="error invalid collection configuration - honcho is a reserved name",
+        )
     try:
         return await crud.create_collection(
             db, collection=collection, app_id=app_id, user_id=user_id
@@ -1043,6 +1048,12 @@ async def update_collection(
         raise HTTPException(
             status_code=400, detail="invalid request - name cannot be None"
         )
+    if collection.name == "honcho":
+        raise HTTPException(
+            status_code=406,
+            detail="error invalid collection configuration - honcho is a reserved name",
+        )
+
     try:
         honcho_collection = await crud.update_collection(
             db,
@@ -1249,37 +1260,18 @@ async def delete_document(
         )
 
 
-@router.get("/sessions/{session_id}/chat", response_model=Sequence[schemas.Message])
+@router.get("/sessions/{session_id}/chat", response_model=schemas.AgentChat)
 async def get_chat(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
+    query: str,
     db: AsyncSession = Depends(get_db),
 ):
-    pass
-
-
-@router.get("/sessions/{session_id}/hydrate")
-async def hydrate(
-    request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-):
-    pass
-
-
-@router.get("/sessions/{session_id}/insight")
-async def get_insight(
-    request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
-):
-    pass
+    return await agent.chat(
+        app_id=app_id, user_id=user_id, session_id=session_id, query=query, db=db
+    )
 
 
 app.include_router(router)
