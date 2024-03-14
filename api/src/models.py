@@ -87,6 +87,7 @@ class Message(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"), index=True)
     is_user: Mapped[bool]
     content: Mapped[str] = mapped_column(String(65535))
+    h_metadata: Mapped[dict] = mapped_column("metadata", ColumnType, default={})
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.datetime.utcnow
@@ -111,6 +112,7 @@ class Metamessage(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.datetime.utcnow
     )
+    h_metadata: Mapped[dict] = mapped_column("metadata", ColumnType, default={})
 
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
@@ -125,6 +127,7 @@ class Collection(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.datetime.utcnow
     )
+    h_metadata: Mapped[dict] = mapped_column("metadata", ColumnType, default={})
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
