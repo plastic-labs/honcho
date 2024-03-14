@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.5] — 2024-03-14
+
+### Added
+
+* Metadata to all data primitives (Users, Sessions, Messages, etc.)
+* Ability to filter paginated GET requests by JSON filter based on metadata
+* Optional Sentry error monitoring
+* Optional Opentelemetry logging
+* Dialectic API to interact with honcho agent and get insights about users
+* Automatic Fact Derivation Script for automatically generating simple memory
+
+### Changed
+
+* API Server now uses async methods to make use of benefits of FastAPI
+
+
 ## [0.0.4] — 2024-02-22
 
 ### Added

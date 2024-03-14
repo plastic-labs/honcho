@@ -5,7 +5,8 @@ applications.
 
 Read about the motivation of this project [here](https://blog.plasticlabs.ai).
 
-Read the full documentation of this project [here](https://docs.honcho.dev)
+Read the full documentation of this project [here](https://docs.honcho.dev) and
+find the SDK reference [here](https://api.python.honcho.dev)
 
 ## Installation
 
