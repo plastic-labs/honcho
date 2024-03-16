@@ -15,6 +15,7 @@ httpx = "^0.26.0"
 pytest = "^7.4.4"
 pytest-asyncio = "^0.23.4"
 coverage = "^7.4.3"
+interrogate = "^1.5.0"
 
 [tool.poetry.group.docs.dependencies]
 sphinx = "^7.2.6"
