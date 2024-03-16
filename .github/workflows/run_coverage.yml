@@ -36,6 +36,9 @@ jobs:
           poetry install
           poetry run coverage run -m pytest
           poetry run coverage report --format=markdown > coverage.md
+          echo -e "\n---\n# Docstring Coverage\n\`\`\`" >> coverage.md
+          poetry run interrogate -v honcho >> coverage.md
+          echo -e "\`\`\`" >> coverage.md
           cd ..
       - name: Add Coverage PR Comment
         uses: marocchino/sticky-pull-request-comment@v2
