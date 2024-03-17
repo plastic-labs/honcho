@@ -1,32 +1,19 @@
 import json
 import logging
 import os
-import uuid
 from contextlib import asynccontextmanager
-from typing import Optional, Sequence
 
 import sentry_sdk
 from fastapi import (
     APIRouter,
-    Depends,
     FastAPI,
-    HTTPException,
-    Request,
 )
 from fastapi.responses import PlainTextResponse
-from fastapi_pagination import Page, add_pagination
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination import add_pagination
 from opentelemetry import trace
 from opentelemetry._logs import (
-    SeverityNumber,
-    get_logger,
-    get_logger_provider,
     set_logger_provider,
-    std_to_otel,
 )
-
-# from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
-# from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.exporter.otlp.proto.http._log_exporter import (
     OTLPLogExporter,
 )
@@ -53,12 +40,9 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
-from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from . import agent, crud, schemas
 from .db import engine, scaffold_db
-from src.dependencies import db
 from src.routers import (
     apps,
     users,
@@ -108,11 +92,11 @@ def otel_trace_init():
         otlp_span_exporter = OTLPSpanExporter(
             endpoint=otel_endpoint_url, headers=otel_http_headers
         )
-        trace.get_tracer_provider().add_span_processor(
+        trace.get_tracer_provider().add_span_processor(  # type: ignore
             BatchSpanProcessor(otlp_span_exporter)
         )
     if DEBUG_LOG_OTEL_TO_CONSOLE:
-        trace.get_tracer_provider().add_span_processor(
+        trace.get_tracer_provider().add_span_processor(  # type: ignore
             SimpleSpanProcessor(ConsoleSpanExporter())
         )
 
