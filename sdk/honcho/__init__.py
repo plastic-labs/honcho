@@ -1,3 +1,5 @@
+"""Honcho is a Python client for the Honcho API."""
+
 from .client import (
     AsyncHoncho,
     AsyncUser,
