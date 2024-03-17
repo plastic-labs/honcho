@@ -1,11 +1,18 @@
+"""
+This module provides an LRU (Least Recently Used) cache implementation as part of the Honcho SDK's caching mechanisms. 
+"""
+
 from collections import OrderedDict
+
 
 class LRUCache:
     """
     An implementation of a basic LRUcache that utilizes the built
     in OrderedDict data structure.
     """
+
     def __init__(self, capacity: int):
+        """Initialize the cache"""
         self.capacity = capacity
         self.cache = OrderedDict()
 

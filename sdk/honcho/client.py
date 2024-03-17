@@ -1,3 +1,7 @@
+"""
+This module provides asynchronous client functionality for interacting with the Honcho API.
+"""
+
 from __future__ import annotations
 
 import datetime
@@ -62,6 +66,11 @@ class AsyncGetUserPage(AsyncGetPage):
         ]
 
     async def next(self):
+        """Get the next page of results
+
+        Returns:
+            AsyncGetUserPage | None: Next Page of Results or None if there are no more users to retreive from a query
+        """
         if self.page >= self.pages:
             return None
         return await self.honcho.get_users(
@@ -176,6 +185,8 @@ class AsyncGetMessagePage(AsyncGetPage):
 
 
 class AsyncGetMetamessagePage(AsyncGetPage):
+    """Paginated Results for Get Metamessage Requests"""
+
     def __init__(
         self,
         response: dict,
@@ -335,6 +346,7 @@ class AsyncHoncho:
         self.metadata: dict
 
     async def initialize(self):
+        """Initialize the Honcho client from the server"""
         res = await self.client.get(
             f"{self.server_url}/apps/get_or_create/{self.app_name}"
         )
@@ -345,7 +357,7 @@ class AsyncHoncho:
 
     @property
     def base_url(self):
-        """Shorcut for common API prefix. made a property to prevent tampering"""
+        """Shortcut for common API prefix. made a property to prevent tampering"""
         return f"{self.server_url}/apps/{self.app_id}"
 
     async def update(self, metadata: dict):
@@ -1156,6 +1168,7 @@ class AsyncSession:
         self._is_active = False
 
     async def chat(self, query) -> str:
+        """Ask Honcho for information about the user session"""
         url = f"{self.base_url}/chat"
         params = {"query": query}
         response = await self.user.honcho.client.get(url, params=params)
