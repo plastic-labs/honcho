@@ -25,6 +25,7 @@ app_name = str("roast-bot")
 
 # honcho = Honcho(app_name=app_name, base_url="http://localhost:8000") # uncomment to use local
 honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+honcho.initialize()
 
 bot = discord.Bot(intents=intents)
 
