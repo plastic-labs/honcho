@@ -44,7 +44,7 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    user = honcho.get_or_create(user_id)
+    user = honcho.get_or_create_user(user_id)
     location_id = str(message.channel.id)
 
     sessions = list(user.get_sessions_generator(location_id))
