@@ -114,7 +114,10 @@ alternatively if you are using poetry run:
 poetry add honcho-ai
 ```
 
-checkout the [example folder](./example/) for examples of how to use the sdk
+checkout the [SDK Reference](https://api.python.honcho.dev) for a detailed
+look at the different methods and how to use them. 
+
+Also, check out the[example folder](./example/) for examples of how to use the sdk 
 
 #### Use Locally
 
