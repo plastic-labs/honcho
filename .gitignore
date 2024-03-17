@@ -1,5 +1,6 @@
 api/**/*.db
-
+api/data
+api/docker-compose.yml
 
 
 # Byte-compiled / optimized / DLL files
