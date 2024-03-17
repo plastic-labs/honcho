@@ -44,14 +44,14 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    user = honcho.get_or_create(user_id)
+    user = honcho.get_or_create_user(user_id)
     location_id = str(message.channel.id)
 
     sessions = list(user.get_sessions_generator(location_id))
     try:
-        collection = user.get_collection(user_id=user_id, name="discord")
+        collection = user.get_collection(name="discord")
     except Exception:
-        collection = user.create_collection(user_id=user_id, name="discord")
+        collection = user.create_collection(name="discord")
 
     if len(sessions) > 0:
         session = sessions[0]
