@@ -13,7 +13,8 @@ openai = "^1.12.0"
 py-cord = "^2.4.1"
 python-dotenv = "^1.0.1"
 langchain-openai = "^0.0.6"
-honcho-ai = "0.0.3"
+honcho-ai = "0.0.5"
+aiohttp = "^3.9.3"
 
 
 [build-system]
