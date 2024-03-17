@@ -24,20 +24,19 @@ furo = "^2024.1.29"
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
 select = [
-    # pycodestyle
-    "E",
-    # Pyflakes
-    "F",
-    # pyupgrade
-    "UP",
-    # flake8-bugbear
-    "B",
-    # flake8-simplify
-    "SIM",
-    # isort
-    "I",
+    "E", # pycodestyle
+    "F", # Pyflakes
+    "UP", # pyupgrade
+    "B", # flake8-bugbear
+    "SIM", # flake8-simplify
+    "S", # flake8-bandit
+    "I", # isort
+    "RUF", # ruff
 ]
-ignore = ["UP007"]
+ignore = [
+  "UP007", # https://docs.astral.sh/ruff/rules/non-pep604-annotation/
+  "E501", # line too long
+]
 
 
 [build-system]
