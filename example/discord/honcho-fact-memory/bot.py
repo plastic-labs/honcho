@@ -2,7 +2,8 @@ import os
 from uuid import uuid1
 import discord
 from honcho import Honcho
-from chain import langchain_message_converter, LMChain
+from honcho.ext.langchain import langchain_message_converter
+from chain import LMChain
 
 
 intents = discord.Intents.default()
@@ -43,7 +44,7 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    user = honcho.get_or_create(user_id)
+    user = honcho.get_or_create_user(user_id)
     location_id = str(message.channel.id)
 
     sessions = list(user.get_sessions_generator(location_id))

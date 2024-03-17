@@ -1,0 +1,47 @@
+name: Run Coverage
+on: [pull_request]
+jobs:
+  test:
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - name: Install poetry
+        run: |
+          pip install poetry
+      - name: Start Database
+        run: |
+          cd api/local
+          docker compose up --wait
+          cd ../..
+      - name: Start Server
+        run: |
+          cd api
+          poetry install --no-root
+          poetry run uvicorn src.main:app &
+          sleep 5
+          cd ..
+        env:
+          DATABASE_TYPE: postgres
+          CONNECTION_URI: postgresql+psycopg://testuser:testpwd@localhost:5432/honcho
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Run Tests
+        run: |
+          cd sdk
+          poetry install
+          poetry run coverage run -m pytest
+          poetry run coverage report --format=markdown > coverage.md
+          cd ..
+      - name: Add Coverage PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          recreate: true
+          path: sdk/coverage.md
+      - name: Stop Server
+        run: |
+          kill $(jobs -p) || true

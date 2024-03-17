@@ -14,10 +14,11 @@ kill_timeout = "5s"
 
 [processes]
   api = "python -m uvicorn src.main:app --host 0.0.0.0 --port 8000"
+  deriver = "python -m src.harvester"
 
 [http_service]
   internal_port = 8000
-  auto_stop_machines = true
+  auto_stop_machines = false
   auto_start_machines = true
   min_machines_running = 1
   processes = ["api"]

@@ -75,7 +75,7 @@ instance/
 .scrapy
 
 # Sphinx documentation
-docs/_build/
+**/docs/_build/
 
 # PyBuilder
 .pybuilder/
@@ -166,3 +166,5 @@ cython_debug/
 #.idea/
 
 .DS_Store
+
+supabase/

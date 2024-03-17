@@ -2,15 +2,19 @@ from typing import List
 from uuid import uuid4
 
 from langchain.prompts import ChatPromptTemplate
+
 from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_community.chat_models.fake import FakeListChatModel
 
 from honcho import Honcho
+from honcho.ext.langchain import langchain_message_converter
 
 app_name = str(uuid4())
 
-# honcho = Honcho(app_id=app_id, base_url="http://localhost:8000") # uncomment to use local
-honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+honcho = Honcho(
+    app_name=app_name, base_url="http://localhost:8000"
+)  # uncomment to use local
+# honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
 honcho.initialize()
 
 responses = ["Fake LLM Response :)"]
@@ -24,14 +28,14 @@ user = honcho.create_user(user_name)
 session = user.create_session()
 
 
-def langchain_message_converter(messages: List):
-    new_messages = []
-    for message in messages:
-        if message.is_user:
-            new_messages.append(HumanMessage(content=message.content))
-        else:
-            new_messages.append(AIMessage(content=message.content))
-    return new_messages
+# def langchain_message_converter(messages: List):
+#     new_messages = []
+#     for message in messages:
+#         if message.is_user:
+#             new_messages.append(HumanMessage(content=message.content))
+#         else:
+#             new_messages.append(AIMessage(content=message.content))
+#     return new_messages
 
 
 def chat():

@@ -1,17 +1,16 @@
 [tool.poetry]
 name = "honcho"
-version = "0.0.4"
+version = "0.0.5"
 description = "Honcho Server"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.8"
+python = "^3.8.1"
 fastapi = "^0.109.0"
 uvicorn = "^0.24.0.post1"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.25"
-psycopg2-binary = "^2.9.9"
 slowapi = "^0.1.8"
 fastapi-pagination = "^0.12.14"
 pgvector = "^0.2.5"
@@ -23,6 +22,11 @@ opentelemetry-sdk = "^1.23.0"
 opentelemetry-exporter-otlp = "^1.23.0"
 opentelemetry-instrumentation-sqlalchemy = "^0.44b0"
 opentelemetry-instrumentation-logging = "^0.44b0"
+greenlet = "^3.0.3"
+realtime = "^1.0.2"
+psycopg = {extras = ["binary"], version = "^3.1.18"}
+langchain = "^0.1.12"
+langchain-openai = "^0.0.8"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
@@ -40,6 +44,8 @@ select = [
     # isort
     "I",
 ]
+[tool.ruff.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
 
 
 [build-system]
