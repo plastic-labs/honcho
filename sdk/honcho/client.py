@@ -49,6 +49,7 @@ class AsyncGetUserPage(AsyncGetPage):
         Args:
             response (dict): Response from API with pagination information
             honcho (AsyncHoncho): Honcho Client
+            filter (dict, optional): Key value filter to apply to the results
             reverse (bool): Whether to reverse the order of the results or not
         """
         super().__init__(response)
@@ -99,7 +100,10 @@ class AsyncGetSessionPage(AsyncGetPage):
             response (dict): Response from API with pagination information
             user (AsyncUser): Honcho User associated with the session
             reverse (bool): Whether to reverse the order of the results or not
-            location_id (str): ID of the location associated with the session
+            filter (dict, optional): Key value filter to apply to the results
+            location_id (str, optional): ID of the location associated with the session
+            is_active (bool): boolean filter for restricint results to only active
+            sessions
         """
         super().__init__(response)
         self.user = user
@@ -152,6 +156,7 @@ class AsyncGetMessagePage(AsyncGetPage):
         Args:
             response (dict): Response from API with pagination information
             session (AsyncSession): Session the returned messages are associated with
+            filter (dict, optional): Key value filter to apply to the results
             reverse (bool): Whether to reverse the order of the results or not
         """
         super().__init__(response)
@@ -202,9 +207,10 @@ class AsyncGetMetamessagePage(AsyncGetPage):
             response (dict): Response from API with pagination information
             session (AsyncSession): Session the returned messages are
             associated with
+            filter (dict, optional): Key value filter to apply to the results
             reverse (bool): Whether to reverse the order of the results
-            message_id (Optional[str]): ID of the message associated with the
-            metamessage_type (Optional[str]): Type of the metamessage
+            message_id (str, optional): ID of the message associated with the
+            metamessage_type (str, optional): Type of the metamessage
         """
         super().__init__(response)
         self.session = session
@@ -255,6 +261,7 @@ class AsyncGetDocumentPage(AsyncGetPage):
             response (dict): Response from API with pagination information
             collection (AsyncCollection): Collection the returned documents are
             associated with
+            filter (dict, optional): Key value filter to apply to the results
             reverse (bool): Whether to reverse the order of the results or not
         """
         super().__init__(response)
@@ -300,6 +307,7 @@ class AsyncGetCollectionPage(AsyncGetPage):
         Args:
             response (dict): Response from API with pagination information
             user (AsyncUser): Honcho Client
+            filter (dict, optional): Key value filter to apply to the results
             reverse (bool): Whether to reverse the order of the results or not
         """
         super().__init__(response)
@@ -338,7 +346,13 @@ class AsyncHoncho:
     """Honcho API Client Object"""
 
     def __init__(self, app_name: str, base_url: str = "https://demo.honcho.dev"):
-        """Constructor for Client"""
+        """Constructor for Client
+
+        Args:
+            app_name (str): Name of the application
+            base_url (str): Base URL for the instance of the Honcho API defaults to
+            https://demo.honcho.dev
+        """
         self.server_url: str = base_url  # Base URL for the instance of the Honcho API
         self.client: httpx.AsyncClient = httpx.AsyncClient()
         self.app_name: str = app_name  # Representing name of the client application
@@ -346,7 +360,7 @@ class AsyncHoncho:
         self.metadata: dict
 
     async def initialize(self):
-        """Initialize the Honcho client from the server"""
+        """Run initialization tasks for the Honcho client"""
         res = await self.client.get(
             f"{self.server_url}/apps/get_or_create/{self.app_name}"
         )
@@ -354,6 +368,10 @@ class AsyncHoncho:
         data = res.json()
         self.app_id: uuid.UUID = data["id"]
         self.metadata: dict = data["metadata"]
+
+    async def init(self):
+        """Synonym for initialize"""
+        await self.initialize()
 
     @property
     def base_url(self):
@@ -452,9 +470,11 @@ class AsyncHoncho:
         """Get Paginated list of users
 
         Args:
-            page (int, optional): The page of results to return
-            page_size (int, optional): The number of results to return
-            reverse (bool): Whether to reverse the order of the results
+            filter (dict, optional): The key value filter to apply
+            page (int): The page of results to return. Defaults to 1
+            page_size (int): The number of results to return. Defaults to 50
+            reverse (bool): Whether to pull from the beginning or end of the list —
+            latest or earliest. Defaults to False
 
         Returns:
             AsyncGetUserPage: Paginated list of users
@@ -483,7 +503,9 @@ class AsyncHoncho:
         all users in an app
 
         Args:
-            reverse (bool): Whether to reverse the order of the results
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            reverse (bool): Whether to pull from the beginning or end of the list —
+            latest or earliest. Defaults to False
 
         Yields:
             AsyncUser: The User object
@@ -519,7 +541,7 @@ class AsyncHoncho:
 
 
 class AsyncUser:
-    """Represents a single user in an app"""
+    """Represents a single user in an app and associated methods"""
 
     def __init__(
         self,
@@ -528,7 +550,18 @@ class AsyncUser:
         metadata: dict,
         created_at: datetime.datetime,
     ):
-        """Constructor for User"""
+        """Constructor for User
+
+        Args:
+            honcho (AsyncHoncho): The honcho object
+            id (uuid.UUID): The id of the user
+            metadata (dict): The metadata for the user
+            created_at (datetime.datetime): The time the user was created
+
+        Returns:
+            AsyncUser: The created User object
+
+        """
         # self.base_url: str = honcho.base_url
         self.honcho: AsyncHoncho = honcho
         self.id: uuid.UUID = id
@@ -542,7 +575,7 @@ class AsyncUser:
 
     def __str__(self):
         """String representation of User"""
-        return f"AsyncUser(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"  # noqa: E501
+        return f"AsyncUser(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"
 
     async def update(self, metadata: dict):
         """Updates a user's metadata
@@ -600,11 +633,13 @@ class AsyncUser:
 
         Args:
             location_id (str, optional): Optional Location ID representing the
-            location of a session
-            page (int, optional): The page of results to return
-            page_size (int, optional): The number of results to return
-            reverse (bool): Whether to reverse the order of the results
-            is_active (bool): Whether to only return active sessions
+            location of a session. Defaults to None
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            page (int, optional): The page of results to return. Defaults to 1
+            page_size (int, optional): The number of results to return. Defaults to 50
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
+            is_active (bool): Whether to only return active sessions. Defaults to False
 
         Returns:
             AsyncGetSessionPage: Page or results for get_sessions query
@@ -644,8 +679,10 @@ class AsyncUser:
         Args:
             location_id (str, optional): Optional Location ID representing the
             location of a session
-            reverse (bool): Whether to reverse the order of the results
-            is_active (bool): Whether to only return active sessions
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
+            is_active (bool): Whether to only return active sessions. Defaults to False
+            filter (dict, optional): The key value filter to apply. Defaults to None
 
         Yields:
             AsyncSession: The Session object of the requested Session
@@ -673,8 +710,8 @@ class AsyncUser:
 
         Args:
             location_id (str, optional): Optional Location ID representing the
-            location of a session
-            metadata (dict, optional): Optional session metadata
+            location of a session. Defaults to "default"
+            metadata (dict, optional): Optional session metadata. Defaults to None
 
         Returns:
             AsyncSession: The Session object of the new Session
@@ -705,6 +742,7 @@ class AsyncUser:
 
         Args:
             name (str): unique name for the collection for the user
+            metadata (dict, optional): Optional metadata. Defaults to None
 
         Returns:
             AsyncCollection: The Collection object of the new Collection
@@ -757,15 +795,16 @@ class AsyncUser:
         """Return collections associated with a user paginated
 
         Args:
-            page (int, optional): The page of results to return
-            page_size (int, optional): The number of results to return
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            page (int): The page of results to return. Defaults to 1
+            page_size (int): The number of results to return
             reverse (bool): Whether to reverse the order of the results
 
         Returns:
             AsyncGetCollectionPage: Page or results for get_collections query
 
         """
-        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"
         url = f"{self.base_url}/collections"
         params = {
             "page": page,
@@ -787,7 +826,9 @@ class AsyncUser:
         all sessions for a user in an app
 
         Args:
-            reverse (bool): Whether to reverse the order of the results
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
 
         Yields:
             AsyncCollection: The Session object of the requested Session
@@ -821,7 +862,20 @@ class AsyncSession:
         is_active: bool,
         created_at: datetime.datetime,
     ):
-        """Constructor for Session"""
+        """Constructor for Session
+
+        Args:
+            user (AsyncUser): The user object
+            id (uuid.UUID): The id of the session
+            location_id (str): The id of the location associated with the session
+            metadata (dict): The metadata associated with the session
+            is_active (bool): Whether the session is active
+            created_at (datetime.datetime): When the session was created
+
+        Returns:
+            AsyncSession: The Session object
+
+        """
         self.user: AsyncUser = user
         self.id: uuid.UUID = id
         self.location_id: str = location_id
@@ -836,7 +890,7 @@ class AsyncSession:
 
     def __str__(self):
         """String representation of Session"""
-        return f"AsyncSession(id={self.id}, location_id={self.location_id}, metadata={self.metadata}, is_active={self.is_active})"  # noqa: E501
+        return f"AsyncSession(id={self.id}, location_id={self.location_id}, metadata={self.metadata}, is_active={self.is_active})"
 
     @property
     def is_active(self):
@@ -851,6 +905,7 @@ class AsyncSession:
         Args:
             is_user (bool): Whether the message is from the user
             content (str): The content of the message
+            metadata (dict, optional): The metadata of the message. Defaults to None
 
         Returns:
             Message: The Message object of the added message
@@ -907,9 +962,11 @@ class AsyncSession:
         """Get all messages for a session
 
         Args:
-            page (int, optional): The page of results to return
-            page_size (int, optional): The number of results to return per page
-            reverse (bool): Whether to reverse the order of the results
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            page (int): The page of results to return. Defaults to 1
+            page_size (int): The number of results to return per page. Defaults to 50
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
 
         Returns:
             AsyncGetMessagePage: Page of Message objects
@@ -934,6 +991,11 @@ class AsyncSession:
     ):
         """Shortcut Generator for get_messages. Generator to iterate through
         all messages for a session in an app
+
+        Args:
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
 
         Yields:
             Message: The Message object of the next Message
@@ -965,6 +1027,7 @@ class AsyncSession:
             message (Message): A message to associate the metamessage with
             metamessage_type (str): The type of the metamessage arbitrary identifier
             content (str): The content of the metamessage
+            metadata (dict, optional): The metadata of the metamessage. Defaults to None
 
         Returns:
             Metamessage: The Metamessage object of the added metamessage
@@ -997,7 +1060,7 @@ class AsyncSession:
         """Get a specific metamessage
 
         Args:
-            message_id (uuid.UUID): The ID of the Message to retrieve
+            metamessage_id (uuid.UUID): The ID of the Metamessage to retrieve
 
         Returns:
             Message: The Message object
@@ -1028,17 +1091,21 @@ class AsyncSession:
         """Get all messages for a session
 
         Args:
-            metamessage_type (str, optional): The type of the metamessage
-            message (Message, optional): The message to associate the metamessage with
-            page (int, optional): The page of results to return
-            page_size (int, optional): The number of results to return per page
-            reverse (bool): Whether to reverse the order of the results
+            metamessage_type (str, optional): The type of the metamessage. Defaults to
+            None
+            message (Message, optional): The message to associate the metamessage with.
+            Defaults to None
+            filter (dict, optional): The key value filter to apply. Defaults to None
+            page (int): The page of results to return. Defaults to 1
+            page_size (int): The number of results to return per page. Defaults to 50
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
 
         Returns:
             list[dict]: List of Message objects
 
         """
-        # url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        # url = f"{self.base_url}/metamessages?page={page}&size={page_size}&reverse={reverse}"
         url = f"{self.base_url}/metamessages"
         params = {
             "page": page,
@@ -1073,8 +1140,12 @@ class AsyncSession:
         through all metamessages for a session in an app
 
         Args:
-            metamessage_type (str, optional): Optional Metamessage type to filter by
-            message (Message, optional): Optional Message to filter by
+            metamessage_type (str, optional): Optional Metamessage type to filter by.
+            Defaults to None
+            message (Message, optional): Optional Message to filter by. Defaults to None
+            filter (dict, optional): Optional key value filter. Defaults to None
+            reverse (bool): Whether to reverse the order of the results. Defaults to
+            False
 
         Yields:
             Metamessage: The next Metamessage object of the requested query
@@ -1143,7 +1214,8 @@ class AsyncSession:
 
         Args:
             metamessage (Metamessage): The metamessage to update
-            metadata (dict): The new metadata for the metamessage
+            metamessage_type (str, optional): The new type of the metamessage
+            metadata (dict, optional): The new metadata for the metamessage
 
         Returns:
             boolean: Whether the metamessage was successfully updated
@@ -1161,14 +1233,23 @@ class AsyncSession:
         return success
 
     async def close(self):
-        """Closes a session by marking it as inactive"""
+        """Closes a session by marking it as inactive. An inactive session can no longer
+        create new messages"""
         url = f"{self.base_url}"
         response = await self.user.honcho.client.delete(url)
         response.raise_for_status()
         self._is_active = False
 
     async def chat(self, query) -> str:
-        """Ask Honcho for information about the user session"""
+        """Chat with the dialectic Honcho Agent that asynchonously reasons about users
+
+        Args:
+            query (str): The query to send to the agent
+
+        Returns:
+            str: The response from the agent
+
+        """
         url = f"{self.base_url}/chat"
         params = {"query": query}
         response = await self.user.honcho.client.get(url, params=params)
@@ -1202,13 +1283,14 @@ class AsyncCollection:
 
     def __str__(self):
         """String representation of Collection"""
-        return f"AsyncCollection(id={self.id}, name={self.name}, created_at={self.created_at})"  # noqa: E501
+        return f"AsyncCollection(id={self.id}, name={self.name}, created_at={self.created_at})"
 
     async def update(self, name: Optional[str] = None, metadata: Optional[dict] = None):
-        """Update the name of the collection
+        """Update the name of the collection. Atleast one argument is required
 
         Args:
-            name (str): The new name of the document
+            name (str, optional): The new name of the document
+            metadata (dict, optional): The new metadata of the document
 
         Returns:
             boolean: Whether the session was successfully updated
@@ -1237,7 +1319,7 @@ class AsyncCollection:
 
         Args:
             content (str): The content of the document
-            metadata (dict): The metadata of the document
+            metadata (dict, optional): The metadata of the document
 
         Returns:
             Document: The Document object of the added document
@@ -1290,14 +1372,17 @@ class AsyncCollection:
         """Get all documents for a collection
 
         Args:
+            filter (dict, optional): The key value filter to apply
             page (int, optional): The page of results to return
             page_size (int, optional): The number of results to return per page
+            reverse (bool): Whether to pull from the beginning or end of the list —
+            latest or earliest. Defaults to None
 
         Returns:
             AsyncGetDocumentPage: Page of Document objects
 
         """
-        # url = f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"  # noqa: E501
+        # url = f"{self.base_url}/documents?page={page}&size={page_size}&reverse={reverse}"
         url = f"{self.base_url}/documents"
         params = {
             "page": page,
@@ -1317,6 +1402,11 @@ class AsyncCollection:
     ):
         """Shortcut Generator for get_documents. Generator to iterate through
         all documents for a collection in an app
+
+        Args:
+            filter (dict, optional): The key value filter to apply
+            reverse (bool): Whether to pull from the beginning or end of the list —
+            latest or earliest. Defaults to None
 
         Yields:
             Document: The Document object of the next Document
@@ -1371,8 +1461,8 @@ class AsyncCollection:
 
         Args:
             document (Document): The Document to update
-            metadata (dict): The metadata of the document
-            content (str): The content of the document
+            content (str, optional): The content of the document
+            metadata (dict, optional): The metadata of the document
 
         Returns:
             Document: The newly updated Document
