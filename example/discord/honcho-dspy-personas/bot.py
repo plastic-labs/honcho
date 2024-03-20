@@ -2,7 +2,7 @@ import os
 from uuid import uuid1
 import discord
 from honcho import Honcho
-from honcho.ext.langchain import langchain_message_converter
+from honcho.ext.langchain import _messages_to_langchain
 from graph import chat
 from dspy import Example
 
@@ -61,7 +61,7 @@ async def on_message(message):
         session = user.create_session(location_id)
 
     history = list(session.get_messages_generator())[:5]
-    chat_history = langchain_message_converter(history)
+    chat_history = _messages_to_langchain(history)
 
     inp = message.content
     user_message = session.create_message(is_user=True, content=inp)
