@@ -27,7 +27,15 @@ def requires_langchain(func):
 
 @requires_langchain
 def _messages_to_langchain(messages: List[Message]):
-    """Converts Honcho messages to Langchain messages"""
+    """Converts Honcho messages to Langchain messages
+
+    Args:
+        messages (List[Message]): The list of messages to convert
+
+    Returns:
+        List: The list of converted LangChain messages
+
+    """
     from langchain_core.messages import AIMessage, HumanMessage  # type: ignore
 
     new_messages = []
@@ -40,16 +48,31 @@ def _messages_to_langchain(messages: List[Message]):
 
 
 @requires_langchain
-def _langchain_to_messages(messages, session: Union[Session, AsyncSession]):
-    """Converts Langchain messages to Langchain messages"""
+def _langchain_to_messages(
+    messages, session: Union[Session, AsyncSession]
+) -> List[Message]:
+    """Converts Langchain messages to Honcho messages and adds to appropriate session
+
+    Args:
+        messages: The LangChain messages to convert
+        session: The session to add the messages to
+
+    Returns:
+        List[Message]: The list of converted messages
+
+    """
     from langchain_core.messages import HumanMessage  # type: ignore
 
+    messages = []
     for message in messages:
         if isinstance(message, HumanMessage):
-            session.create_message(
+            message = session.create_message(
                 is_user=True, content=message.content, metadata=message.metadata
             )
+            messages.append(message)
         else:
-            session.create_message(
+            message = session.create_message(
                 is_user=False, content=message.content, metadata=message.metadata
             )
+            messages.append(message)
+    return messages

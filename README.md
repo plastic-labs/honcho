@@ -1,16 +1,29 @@
-# Honcho
+# 🫡 Honcho
 ![Static Badge](https://img.shields.io/badge/Version-0.0.5-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)](https://twitter.com/plastic_labs)
 
-A User context management solution for building AI Agents and LLM powered
-applications.
+Honcho is a platform for making AI agents and LLM powered applications that are personalized
+to their end users.
 
 Read about the motivation of this project [here](https://blog.plasticlabs.ai).
 
 Read the user documenation [here](https://docs.honcho.dev)
+
+## Table of Contents
+
+- [Project Structure](#project-structure)
+- [Usage](#usage)
+    - [API](#api)
+        - [Docker](#docker)
+        - [Manually](#manually)
+        - [Deploying on Fly.io](#deploy-on-fly)
+    - [Client SDK](#client-sdk)
+        - [Use Locally](#use-locally) 
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Project Structure
 

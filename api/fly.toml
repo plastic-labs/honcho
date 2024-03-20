@@ -41,4 +41,4 @@ kill_timeout = "5s"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 512
-  processes = ["api"]
+  processes = ["api", "deriver"]

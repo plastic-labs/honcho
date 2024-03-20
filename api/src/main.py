@@ -42,16 +42,17 @@ from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .db import engine, scaffold_db
 from src.routers import (
     apps,
-    users,
-    sessions,
-    messages,
-    metamessages,
     collections,
     documents,
+    messages,
+    metamessages,
+    sessions,
+    users,
 )
+
+from .db import engine, scaffold_db
 
 # Otel Setup
 
@@ -171,7 +172,7 @@ if OPENTELEMTRY_ENABLED:
     otel_trace_init()
     otel_logging_init()
 
-    SQLAlchemyInstrumentor().instrument(engine=engine)
+    SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
 
 # Sentry Setup
 
