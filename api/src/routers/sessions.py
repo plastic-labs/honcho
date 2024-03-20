@@ -1,13 +1,13 @@
 import json
-from typing import Optional
 import uuid
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import agent, crud, schemas
 from src.dependencies import db
-
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
