@@ -3,6 +3,7 @@ import os
 import uuid
 from typing import List
 
+import sentry_sdk
 from dotenv import load_dotenv
 from langchain_core.output_parsers import NumberedListOutputParser
 from langchain_core.prompts import (
@@ -19,6 +20,14 @@ from . import crud, models, schemas
 from .db import SessionLocal
 
 load_dotenv()
+
+SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
+if SENTRY_ENABLED:
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        enable_tracing=True,
+    )
+
 
 SUPABASE_ID = os.getenv("SUPABASE_ID")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
