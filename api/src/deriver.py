@@ -104,7 +104,6 @@ async def process_user_message(
     collection_id: uuid.UUID,
     message_id: uuid.UUID,
 ):
-    # TODO get messages for the session
     async with SessionLocal() as db:
         messages_stmt = await crud.get_messages(
             db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
@@ -113,7 +112,7 @@ async def process_user_message(
         response = await db.execute(messages_stmt)
         messages = response.scalars().all()
         messages = messages[::-1]
-        contents = [m.content for m in messages]
+        # contents = [m.content for m in messages]
         # print(contents)
 
     facts = await derive_facts(messages, content)
