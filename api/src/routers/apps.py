@@ -46,7 +46,7 @@ async def get_app_by_name(request: Request, name: str, db=db):
     return app
 
 
-@router.post("/", response_model=schemas.App)
+@router.post("", response_model=schemas.App)
 async def create_app(request: Request, app: schemas.AppCreate, db=db):
     """Create an App
 
