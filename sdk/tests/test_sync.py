@@ -3,14 +3,14 @@ from uuid import uuid1
 import pytest
 
 from honcho import (
-    Document,
     GetDocumentPage,
     GetMessagePage,
     GetMetamessagePage,
     GetSessionPage,
+    Session,
+    Document,
     Message,
     Metamessage,
-    Session,
 )
 from honcho import Honcho as Honcho
 

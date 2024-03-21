@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from honcho import Honcho
 from honcho.ext.langchain import _messages_to_langchain
+>>>>>>> main
 
 load_dotenv()
 
@@ -25,6 +26,7 @@ app_name = str("roast-bot")
 
 # honcho = Honcho(app_name=app_name, base_url="http://localhost:8000") # uncomment to use local
 honcho = Honcho(app_name=app_name)  # uses demo server at https://demo.honcho.dev
+honcho.initialize()
 
 bot = discord.Bot(intents=intents)
 
