@@ -1,7 +1,7 @@
 import datetime
 import uuid
 
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 
 
 class AppBase(BaseModel):
@@ -21,7 +21,7 @@ class AppUpdate(AppBase):
 class App(AppBase):
     id: uuid.UUID
     name: str
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
 
@@ -33,7 +33,7 @@ class App(AppBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class UserBase(BaseModel):
@@ -54,7 +54,7 @@ class User(UserBase):
     id: uuid.UUID
     app_id: uuid.UUID
     created_at: datetime.datetime
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
 
     @validator("metadata", pre=True, allow_reuse=True)
@@ -65,7 +65,7 @@ class User(UserBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class MessageBase(BaseModel):
@@ -87,7 +87,7 @@ class Message(MessageBase):
     is_user: bool
     session_id: uuid.UUID
     id: uuid.UUID
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
 
@@ -99,7 +99,7 @@ class Message(MessageBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class SessionBase(BaseModel):
@@ -121,7 +121,7 @@ class Session(SessionBase):
     is_active: bool
     user_id: uuid.UUID
     location_id: str
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
 
@@ -133,7 +133,7 @@ class Session(SessionBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class MetamessageBase(BaseModel):
@@ -158,7 +158,7 @@ class Metamessage(MetamessageBase):
     content: str
     id: uuid.UUID
     message_id: uuid.UUID
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
 
@@ -170,7 +170,7 @@ class Metamessage(MetamessageBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class CollectionBase(BaseModel):
@@ -191,7 +191,7 @@ class Collection(CollectionBase):
     id: uuid.UUID
     name: str
     user_id: uuid.UUID
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
 
@@ -203,7 +203,7 @@ class Collection(CollectionBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class DocumentBase(BaseModel):
@@ -222,7 +222,7 @@ class DocumentUpdate(DocumentBase):
 class Document(DocumentBase):
     id: uuid.UUID
     content: str
-    h_metadata: dict
+    h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
     collection_id: uuid.UUID
@@ -235,7 +235,7 @@ class Document(DocumentBase):
 
     class Config:
         from_attributes = True
-        schema_extra = {"exclude": ["h_metadata"]}
+        json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class AgentChat(BaseModel):

@@ -14,7 +14,17 @@ kill_timeout = "5s"
 
 [processes]
   api = "python -m uvicorn src.main:app --host 0.0.0.0 --port 8000"
-  deriver = "python -m src.harvester"
+  deriver = "python -m src.deriver"
+
+[[services]]
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["deriver"]
+  protocol = "tcp"
+  [services.concurrency]
+    hard_limit = 250
+    soft_limit = 200
 
 [http_service]
   internal_port = 8000
@@ -31,4 +41,4 @@ kill_timeout = "5s"
   cpu_kind = "shared"
   cpus = 1
   memory_mb = 512
-  processes = ["api"]
+  processes = ["api", "deriver"]

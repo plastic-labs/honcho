@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.6] — 2024-03-21
+
+### Added
+
+* Full docker-compose for API and Database 
+
+### Fixed
+
+* API Response schema removed unnecessary fields
+* OTEL logging to properly work with async database engine
+* `fly.toml` default settings for deriver set `auto_stop=false`
+
+### Changed
+
+* Refactored API server into multiple route files
+
+
 ## [0.0.5] — 2024-03-14
 
 ### Added
