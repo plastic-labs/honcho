@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 * API Response schema removed unnecessary fields
 * OTEL logging to properly work with async database engine
+* `fly.toml` default settings for deriver set `auto_stop=false`
 
 ### Changed
 
