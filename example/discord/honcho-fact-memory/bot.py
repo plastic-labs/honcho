@@ -2,7 +2,7 @@ import os
 from uuid import uuid1
 import discord
 from honcho import Honcho
-from honcho.ext.langchain import langchain_message_converter
+from honcho.ext.langchain import _messages_to_langchain
 from chain import LMChain
 
 
@@ -44,7 +44,7 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    user = honcho.get_or_create(user_id)
+    user = honcho.get_or_create_user(user_id)
     location_id = str(message.channel.id)
 
     sessions = list(user.get_sessions_generator(location_id))
@@ -59,7 +59,7 @@ async def on_message(message):
         session = user.create_session(location_id)
 
     history = list(session.get_messages_generator())
-    chat_history = langchain_message_converter(history)
+    chat_history = _messages_to_langchain(history)
 
     inp = message.content
     user_message = session.create_message(is_user=True, content=inp)

@@ -1,8 +1,14 @@
-import uuid
+"""
+This module defines the schema classes for various entities such as Message, Metamessage, and Document.
+"""
+
 import datetime
+import uuid
 
 
 class Message:
+    """Class representing a Message"""
+
     def __init__(
         self,
         session_id: uuid.UUID,
@@ -21,10 +27,13 @@ class Message:
         self.created_at = created_at
 
     def __str__(self):
+        """String representation of Message object"""
         return f"Message(id={self.id}, is_user={self.is_user}, content={self.content})"
 
 
 class Metamessage:
+    """Class representing a Metamessage"""
+
     def __init__(
         self,
         id: uuid.UUID,
@@ -43,10 +52,13 @@ class Metamessage:
         self.created_at = created_at
 
     def __str__(self):
+        """String representation of Metamessage object"""
         return f"Metamessage(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content})"
 
 
 class Document:
+    """Class representing a Document"""
+
     def __init__(
         self,
         id: uuid.UUID,
@@ -63,4 +75,5 @@ class Document:
         self.created_at = created_at
 
     def __str__(self) -> str:
+        """String representation of Document object"""
         return f"Document(id={self.id}, metadata={self.metadata}, content={self.content}, created_at={self.created_at})"
