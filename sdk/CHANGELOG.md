@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.6] — 2024-03-21
+
+### Added
+
+* Full docstring coverage
+* Code coverage tests
+* Add LangChain to Honcho message converter in both directions
+* Synonym `init` function that acts the same as `initialize`
+
 ## [0.0.5] — 2024-03-14
 
 ### Added
