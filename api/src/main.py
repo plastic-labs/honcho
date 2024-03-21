@@ -1,7 +1,9 @@
 import json
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
+from typing import Optional, Sequence
 
 import sentry_sdk
 from fastapi import (
@@ -173,6 +175,7 @@ if OPENTELEMTRY_ENABLED:
     otel_logging_init()
 
     SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
+
 
 # Sentry Setup
 

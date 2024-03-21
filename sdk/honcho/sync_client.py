@@ -361,7 +361,9 @@ class Honcho:
 
     def initialize(self):
         """Run initialization tasks for the Honcho client"""
-        res = self.client.get(f"{self.server_url}/apps/get_or_create/{self.app_name}")
+        res = self.client.get(
+            f"{self.server_url}/apps/get_or_create/{self.app_name}"
+        )
         res.raise_for_status()
         data = res.json()
         self.app_id: uuid.UUID = data["id"]
@@ -406,7 +408,9 @@ class Honcho:
         if metadata is None:
             metadata = {}
         url = f"{self.base_url}/users"
-        response = self.client.post(url, json={"name": name, "metadata": metadata})
+        response = self.client.post(
+            url, json={"name": name, "metadata": metadata}
+        )
         response.raise_for_status()
         data = response.json()
         return User(
@@ -571,9 +575,7 @@ class User:
 
     def __str__(self):
         """String representation of User"""
-        return (
-            f"User(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"
-        )
+        return f"User(id={self.id}, app_id={self.honcho.app_id}, metadata={self.metadata})"
 
     def update(self, metadata: dict):
         """Updates a user's metadata
@@ -802,7 +804,6 @@ class User:
             GetCollectionPage: Page or results for get_collections query
 
         """
-        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"
         url = f"{self.base_url}/collections"
         params = {
             "page": page,
@@ -834,7 +835,9 @@ class User:
         """
         page = 1
         page_size = 50
-        get_collection_response = self.get_collections(filter, page, page_size, reverse)
+        get_collection_response = self.get_collections(
+            filter, page, page_size, reverse
+        )
         while True:
             for collection in get_collection_response.items:
                 yield collection
@@ -1279,9 +1282,7 @@ class Collection:
 
     def __str__(self):
         """String representation of Collection"""
-        return (
-            f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"
-        )
+        return f"Collection(id={self.id}, name={self.name}, created_at={self.created_at})"
 
     def update(self, name: Optional[str] = None, metadata: Optional[dict] = None):
         """Update the name of the collection. Atleast one argument is required

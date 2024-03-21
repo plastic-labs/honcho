@@ -804,7 +804,6 @@ class AsyncUser:
             AsyncGetCollectionPage: Page or results for get_collections query
 
         """
-        # url = f"{self.base_url}/collections?page={page}&size={page_size}&reverse={reverse}"
         url = f"{self.base_url}/collections"
         params = {
             "page": page,

@@ -2,8 +2,8 @@
 This module defines the schema classes for various entities such as Message, Metamessage, and Document.
 """
 
-import uuid
 import datetime
+import uuid
 
 
 class Message:
