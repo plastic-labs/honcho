@@ -39,3 +39,5 @@ viewcode_import = "import honcho"
 
 html_theme = "furo"
 html_static_path = ["_static"]
+
+html_favicon = "_static/favicon.svg"
