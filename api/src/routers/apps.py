@@ -1,10 +1,10 @@
 import uuid
-from fastapi import APIRouter, HTTPException, Request
 
+from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(
     prefix="/apps",
@@ -46,7 +46,7 @@ async def get_app_by_name(request: Request, name: str, db=db):
     return app
 
 
-@router.post("/apps", response_model=schemas.App)
+@router.post("/", response_model=schemas.App)
 async def create_app(request: Request, app: schemas.AppCreate, db=db):
     """Create an App
 
