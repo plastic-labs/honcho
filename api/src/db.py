@@ -18,13 +18,13 @@ engine = create_async_engine(
     os.environ["CONNECTION_URI"], connect_args=connect_args, echo=True
 )
 
-SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+sessionlocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
 def scaffold_db():
-    """Use a Sync Engine for scaffolding the database. DDL operations are unavailable
-    with Async Engines
+    """use a sync engine for scaffolding the database. ddl operations are unavailable
+    with async engines
     """
     engine = create_engine(os.environ["CONNECTION_URI"], echo=True)
     Base.metadata.create_all(bind=engine)

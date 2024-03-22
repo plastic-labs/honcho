@@ -1,0 +1,16 @@
+{
+  "name": "honcho-docs",
+  "version": "1.0.0",
+  "description": "## Setting Up `honcho-docs` Locally",
+  "main": ".pnp.js",
+  "scripts": {
+    "dev": "mintlify dev",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mintlify/scraping": "^3.0.92",
+    "mintlify": "^4.0.132"
+  }
+}

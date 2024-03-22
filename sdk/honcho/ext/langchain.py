@@ -26,7 +26,7 @@ def requires_langchain(func):
 
 
 @requires_langchain
-def _messages_to_langchain(messages: List[Message]):
+def messages_to_langchain(messages: List[Message]):
     """Converts Honcho messages to Langchain messages
 
     Args:
@@ -48,7 +48,7 @@ def _messages_to_langchain(messages: List[Message]):
 
 
 @requires_langchain
-def _langchain_to_messages(
+def langchain_to_messages(
     messages, session: Union[Session, AsyncSession]
 ) -> List[Message]:
     """Converts Langchain messages to Honcho messages and adds to appropriate session
