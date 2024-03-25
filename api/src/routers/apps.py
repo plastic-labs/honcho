@@ -68,8 +68,8 @@ async def create_app(request: Request, app: schemas.AppCreate, db=db):
             scheme, _, token = authorization.partition(" ")
             if token is not None:
                 honcho_app = await crud.create_app(db, app=app)
-                if token == "default":
-                    return honcho_app
+                # if token == "default":
+                #     return honcho_app
                 res = httpx.put(
                     f"{AUTH_SERVICE_URL}/organizations",
                     json={
