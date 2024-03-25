@@ -1,10 +1,12 @@
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional, Sequence
 
+import httpx
 import sentry_sdk
 from fastapi import (
     APIRouter,
@@ -220,33 +222,49 @@ app.add_middleware(SlowAPIMiddleware)
 add_pagination(app)
 
 USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
 
 
-# TODO make the API Token Validation Optional
 class BearerTokenMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         authorization: Optional[str] = request.headers.get("Authorization")
         if authorization:
             scheme, _, token = authorization.partition(" ")
-            if scheme.lower() == "bearer":
-                if token == "default":
+            if scheme.lower() == "bearer" and token:
+                id_pattern = r"\/apps\/([^\/]+)"
+                name_pattern = r"\/apps\/name\/([^\/]+)|\/apps\/get_or_create\/([^\/]+)"
+                match_id = re.search(id_pattern, request.url.path)
+                match_name = re.search(name_pattern, request.url.path)
+                payload = {"token": token}
+                if match_name:
+                    payload["name"] = match_name.group(1)
+                elif match_id:
+                    payload["app_id"] = match_id.group(1)
+
+                res = httpx.get(
+                    f"{AUTH_SERVICE_URL}/validate",
+                    params=payload,
+                )
+                data = res.json()
+                if (
+                    data["app_id"] or data["name"]
+                ):  # Anything that checks app_id if True is valid
                     return await call_next(request)
+                if data["token"]:
+                    check_pattern = r"^\/apps$|^\/apps\/get_or_create"
+                    match = re.search(check_pattern, request.url.path)
+                    if match:
+                        return await call_next(request)
 
                 return Response(content="Invalid token.", status_code=400)
-                # Here you can add your token validation logic
-                # For example, checking token validity, expiration, etc.
-                # If the token is valid, you let the request pass through:
             else:
-                # If the scheme is not Bearer, you might want to either
-                # 1. Reject the request
-                # 2. Ignore and proceed with the next middleware or the request
-                # This example demonstrates rejecting the request:
                 return Response(
                     content="Invalid authentication scheme.", status_code=400
                 )
 
-        # If no Authorization header is present, you can choose to reject the request or let it pass
-        # This example demonstrates rejecting the request:
+        exclude_paths = ["/docs", "/redoc", "/openapi.json"]
+        if request.url.path in exclude_paths:
+            return await call_next(request)
         return Response(content="Authorization header missing.", status_code=401)
 
 
