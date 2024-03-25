@@ -10,6 +10,7 @@ packages = [{include = "honcho"}]
 [tool.poetry.dependencies]
 python = "^3.9"
 httpx = "^0.26.0"
+python-dotenv = "^1.0.1"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.4.4"
