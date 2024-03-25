@@ -18,7 +18,7 @@ engine = create_async_engine(
     os.environ["CONNECTION_URI"], connect_args=connect_args, echo=True
 )
 
-sessionlocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
