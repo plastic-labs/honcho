@@ -168,3 +168,5 @@ cython_debug/
 .DS_Store
 
 supabase/
+
+docs/node_modules

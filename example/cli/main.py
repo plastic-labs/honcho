@@ -7,7 +7,7 @@ from langchain.schema import AIMessage, HumanMessage, SystemMessage
 from langchain_community.chat_models.fake import FakeListChatModel
 
 from honcho import Honcho
-from honcho.ext.langchain import _messages_to_langchain
+from honcho.ext.langchain import messages_to_langchain
 
 app_name = str(uuid4())
 
@@ -36,7 +36,7 @@ def chat():
             break
         user_message = HumanMessage(content=user_input)
         history = list(session.get_messages_generator())
-        langchain_history = _messages_to_langchain(history)
+        langchain_history = messages_to_langchain(history)
         prompt = ChatPromptTemplate.from_messages(
             [system, *langchain_history, user_message]
         )

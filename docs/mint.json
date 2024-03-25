@@ -1,0 +1,177 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Honcho",
+  "logo": {
+    "dark": "/logo/honcho-light.svg",
+    "light": "/logo/honcho-dark.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#FF5A7E",
+    "light": "#FF5A7E",
+    "dark": "#FF5A7E",
+    "anchors": {
+      "from": "#FF5A7E",
+      "to": "#FF5A7E"
+    }
+  },
+  "topbarCtaButton": {
+    "type": "github",
+    "url": "https://github.com/plastic-labs/honcho"
+  },
+  "tabs": [
+    {
+      "name": "Guides",
+      "url": "guides"
+    },
+    {
+      "name": "API Reference",
+      "url": "api-reference"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "SDK Reference",
+      "icon": "book-open-cover",
+      "url": "https://api.python.honcho.dev"
+    },
+    {
+      "name": "Community",
+      "icon": "discord",
+      "url": "https://discord.gg/plasticlabs"
+    },
+    {
+      "name": "Blog",
+      "icon": "newspaper",
+      "url": "https://blog.plasticlabs.ai"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Get Started",
+      "pages": [
+        "getting-started/introduction",
+        "getting-started/quickstart",
+        "getting-started/architecture",
+        "getting-started/self-hosting",
+        "getting-started/deploying"
+      ]
+    },
+    {
+      "group": "About",
+      "pages": [
+        "about/contributing",
+        "about/license"
+      ]
+    },
+    {
+      "group": "Getting Started",
+      "pages": [
+        "guides/overview"
+      ]
+    },
+    {
+      "group": "Application Interfaces",
+      "pages": [
+        "guides/discord"
+      ]
+    },
+    {
+      "group": "Integrations",
+      "pages": [
+        "guides/langchain"
+      ]
+    },
+    {
+      "group": "Personal Memory",
+      "pages": [
+        "guides/simple-memory",
+        "guides/dialectic-endpoint"
+      ]
+    },
+    {
+      "group": "API Documentation",
+      "pages": [
+        "api-reference/introduction"
+      ]
+    },
+    {
+      "group": "apps",
+      "pages": [
+        "api-reference/endpoint/apps/get-app",
+        "api-reference/endpoint/apps/update-app",
+        "api-reference/endpoint/apps/get-app-by-name",
+        "api-reference/endpoint/apps/create-app",
+        "api-reference/endpoint/apps/get-or-create-app"
+      ]
+    },
+    {
+      "group": "users",
+      "pages": [
+        "api-reference/endpoint/users/get-users",
+        "api-reference/endpoint/users/create-user",
+        "api-reference/endpoint/users/get-user-by-name",
+        "api-reference/endpoint/users/get-or-create-user",
+        "api-reference/endpoint/users/update-user"
+      ]
+    },
+    {
+      "group": "sessions",
+      "pages": [
+        "api-reference/endpoint/sessions/get-sessions",
+        "api-reference/endpoint/sessions/create-session",
+        "api-reference/endpoint/sessions/get-session",
+        "api-reference/endpoint/sessions/update-session",
+        "api-reference/endpoint/sessions/delete-session",
+        "api-reference/endpoint/sessions/get-chat"
+      ]
+    },
+    {
+      "group": "messages",
+      "pages": [
+        "api-reference/endpoint/messages/get-messages",
+        "api-reference/endpoint/messages/create-message-for-session",
+        "api-reference/endpoint/messages/get-message",
+        "api-reference/endpoint/messages/update-message",
+        "api-reference/endpoint/messages/get-metamessages",
+        "api-reference/endpoint/messages/create-metamessage",
+        "api-reference/endpoint/messages/get-metamessage",
+        "api-reference/endpoint/messages/update-metamessage"
+      ]
+    },
+    {
+      "group": "collections",
+      "pages": [
+        "api-reference/endpoint/collections/get-collections",
+        "api-reference/endpoint/collections/create-collection",
+        "api-reference/endpoint/collections/get-collection-by-name",
+        "api-reference/endpoint/collections/update-collection",
+        "api-reference/endpoint/collections/delete-collection"
+      ]
+    },
+    {
+      "group": "documents",
+      "pages": [
+        "api-reference/endpoint/documents/get-documents",
+        "api-reference/endpoint/documents/create-document",
+        "api-reference/endpoint/documents/get-document",
+        "api-reference/endpoint/documents/update-document",
+        "api-reference/endpoint/documents/delete-document",
+        "api-reference/endpoint/documents/query-documents"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "twitter": "https://twitter.com/plastic_labs",
+    "github": "https://github.com/plastic-labs",
+    "linkedin": "https://www.linkedin.com/company/plasticlabs"
+  },
+  "openapi": [
+    "https://demo.honcho.dev/openapi.json"
+  ],
+  "analytics": {
+    "posthog": {
+      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    }
+  }
+}

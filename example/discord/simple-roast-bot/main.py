@@ -11,8 +11,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.messages import AIMessage, HumanMessage
 
 from honcho import Honcho
-from honcho.ext.langchain import _messages_to_langchain
->>>>>>> main
+from honcho.ext.langchain import messages_to_langchain
 
 load_dotenv()
 
@@ -68,7 +67,7 @@ async def on_message(message):
         session = user.create_session(location_id)
 
     history = list(session.get_messages_generator())
-    chat_history = _messages_to_langchain(history)
+    chat_history = messages_to_langchain(history)
 
     inp = message.content
     session.create_message(is_user=True, content=inp)
