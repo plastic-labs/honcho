@@ -9,6 +9,7 @@ import sentry_sdk
 from fastapi import (
     APIRouter,
     FastAPI,
+    Request,
 )
 from fastapi.responses import PlainTextResponse
 from fastapi_pagination import add_pagination
@@ -43,6 +44,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from src.routers import (
     apps,
@@ -215,6 +218,40 @@ app.add_middleware(SlowAPIMiddleware)
 
 
 add_pagination(app)
+
+USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
+
+
+# TODO make the API Token Validation Optional
+class BearerTokenMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        authorization: Optional[str] = request.headers.get("Authorization")
+        if authorization:
+            scheme, _, token = authorization.partition(" ")
+            if scheme.lower() == "bearer":
+                if token == "default":
+                    return await call_next(request)
+
+                return Response(content="Invalid token.", status_code=400)
+                # Here you can add your token validation logic
+                # For example, checking token validity, expiration, etc.
+                # If the token is valid, you let the request pass through:
+            else:
+                # If the scheme is not Bearer, you might want to either
+                # 1. Reject the request
+                # 2. Ignore and proceed with the next middleware or the request
+                # This example demonstrates rejecting the request:
+                return Response(
+                    content="Invalid authentication scheme.", status_code=400
+                )
+
+        # If no Authorization header is present, you can choose to reject the request or let it pass
+        # This example demonstrates rejecting the request:
+        return Response(content="Authorization header missing.", status_code=401)
+
+
+if USE_AUTH_SERVICE:
+    app.add_middleware(BearerTokenMiddleware)
 
 
 @app.exception_handler(StarletteHTTPException)
