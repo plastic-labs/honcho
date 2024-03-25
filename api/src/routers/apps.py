@@ -1,5 +1,8 @@
+import os
 import uuid
+from typing import Optional
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,8 +60,30 @@ async def create_app(request: Request, app: schemas.AppCreate, db=db):
         schemas.App: Created App object
 
     """
-
-    return await crud.create_app(db, app=app)
+    USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
+    if USE_AUTH_SERVICE:
+        AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
+        authorization: Optional[str] = request.headers.get("Authorization")
+        if authorization:
+            scheme, _, token = authorization.partition(" ")
+            if token is not None:
+                honcho_app = await crud.create_app(db, app=app)
+                if token == "default":
+                    return honcho_app
+                res = httpx.put(
+                    f"{AUTH_SERVICE_URL}/organizations",
+                    json={
+                        "id": str(honcho_app.id),
+                        "name": honcho_app.name,
+                        "token": token,
+                    },
+                )
+                data = res.json()
+                if data:
+                    return honcho_app
+    else:
+        honcho_app = await crud.create_app(db, app=app)
+        return honcho_app
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.App)
@@ -73,9 +98,9 @@ async def get_or_create_app(request: Request, name: str, db=db):
 
     """
     print("name", name)
-    app = await crud.get_app_by_name(db, name=name)
+    app = await crud.get_app_by_name(db=db, name=name)
     if app is None:
-        app = await crud.create_app(db, app=schemas.AppCreate(name=name))
+        app = await create_app(request=request, db=db, app=schemas.AppCreate(name=name))
     return app
 
 
