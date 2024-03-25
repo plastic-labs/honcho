@@ -1,6 +1,7 @@
 from fastapi import Depends
-from .db import SessionLocal
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from .db import SessionLocal
 
 
 async def get_db():

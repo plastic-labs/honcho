@@ -1,0 +1,72 @@
+---
+title: 'Quickstart'
+description: 'Start building awesome documentation in under 5 minutes'
+icon: 'bolt'
+---
+
+To make things easy, there's an instance of Honcho up and running on a demo
+server at [https://demo.honcho.dev](https://demo.honcho.dev/docs). The python
+package defaults to this instance, so let's dive into how to get up and
+running!
+
+
+Install the Honcho client SDK with the following command:
+```bash
+pip install honcho-ai
+```
+Alternatively, if you're using [Poetry](https://python-poetry.org/), run:
+```bash
+poetry add honcho-ai
+```
+
+Let's walk through simple Python steps. First, import the `Client` from the package:
+
+```python
+from honcho import Honcho
+```
+
+Next, we want to register an application with the Honcho client:
+```python
+from uuid import uuid4
+
+app_name = str(uuid4())  # random int for the app_name, but this can be any string
+honcho = Honcho(app_name=app_name)
+honcho.initialize()
+```
+
+This will create an application with the above name if it does not already exist or retrieve it if it does. After we have our application
+initialized, we can make a user with the following:
+
+```python
+user_name = str(uuid4())  # random int for the user_name, but this can be anything, should be unique for each user
+user = honcho.create_user(user_name)
+```
+
+Now let's create a session for that application. Honcho is a user context management system, so you can create sessions for users. Thus, a `user_id` is required.
+```python
+session = user.create_session()
+```
+
+Let's add a user message and an AI message to that session:
+```python
+user_input = "Here's a message!"
+ai_response = "I'm a helpful assistant!"
+
+session.create_message(is_user=True, content=user_input)
+session.create_message(is_user=False, content=ai_response)
+```
+
+You can also easily query Honcho to get the session objects for that user with the following:
+```python
+sessions = list(user.get_sessions_generator())
+session = sessions[0]  # gets the most recent session for that user
+```
+
+And finally you can get the messages within a session with the following:
+```python
+messages = list(session.get_messages_generator())
+```
+
+This is a super simple overview of how to get up and running with the Honcho SDK. We covered the basic methods for reading and writing from the hosted storage service. Next, we'll cover alternative forms of hosting Honcho.
+
+For a more detailed look at the SDK check out the SDK reference [here](https://api.python.honcho.dev/).
