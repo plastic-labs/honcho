@@ -389,6 +389,10 @@ class Honcho:
         """Synonym for initialize"""
         self.initialize()
 
+    def init(self):
+        """Synonym for initialize"""
+        self.initialize()
+
     @property
     def base_url(self):
         """Shortcut for common API prefix. made a property to prevent tampering"""
