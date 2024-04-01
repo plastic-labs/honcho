@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import uuid
 from typing import Optional
 
 import httpx
+from dotenv import load_dotenv
 
 from .schemas import Document, Message, Metamessage
 
@@ -345,7 +347,12 @@ class AsyncGetCollectionPage(AsyncGetPage):
 class AsyncHoncho:
     """Honcho API Client Object"""
 
-    def __init__(self, app_name: str, base_url: str = "https://demo.honcho.dev"):
+    def __init__(
+        self,
+        app_name: str,
+        base_url: str = "https://demo.honcho.dev",
+        api_key: str = "default",
+    ):
         """Constructor for Client
 
         Args:
@@ -353,21 +360,34 @@ class AsyncHoncho:
             base_url (str): Base URL for the instance of the Honcho API defaults to
             https://demo.honcho.dev
         """
+        load_dotenv()
+        token = os.getenv("HONCHO_API_KEY", api_key)
         self.server_url: str = base_url  # Base URL for the instance of the Honcho API
-        self.client: httpx.AsyncClient = httpx.AsyncClient()
+        self.client: httpx.AsyncClient = httpx.AsyncClient(
+            headers={"Authorization": f"Bearer {token}"}
+        )
         self.app_name: str = app_name  # Representing name of the client application
         self.app_id: uuid.UUID
         self.metadata: dict
 
     async def initialize(self):
         """Run initialization tasks for the Honcho client"""
-        res = await self.client.get(
-            f"{self.server_url}/apps/get_or_create/{self.app_name}"
-        )
-        res.raise_for_status()
-        data = res.json()
-        self.app_id: uuid.UUID = data["id"]
-        self.metadata: dict = data["metadata"]
+        try:
+            res = await self.client.get(
+                f"{self.server_url}/apps/get_or_create/{self.app_name}"
+            )
+            res.raise_for_status()
+            data = res.json()
+            self.app_id: uuid.UUID = data["id"]
+            self.metadata: dict = data["metadata"]
+        except httpx.HTTPStatusError as e:
+            error_content = e.response.content
+            print(error_content)
+            raise Exception(error_content) from None
+
+    async def init(self):
+        """Synonym for initialize"""
+        await self.initialize()
 
     async def init(self):
         """Synonym for initialize"""

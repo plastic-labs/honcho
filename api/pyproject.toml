@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho"
-version = "0.0.6"
+version = "0.0.7"
 description = "Honcho Server"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
@@ -27,6 +27,7 @@ realtime = "^1.0.2"
 psycopg = {extras = ["binary"], version = "^3.1.18"}
 langchain = "^0.1.12"
 langchain-openai = "^0.0.8"
+httpx = "^0.27.0"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
