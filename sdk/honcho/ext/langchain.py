@@ -10,7 +10,7 @@ from honcho import AsyncSession, Session
 from honcho.schemas import Message
 
 
-def requires_langchain(func):
+def _requires_langchain(func):
     """A utility to check if langchain is installed before running a function"""
 
     @functools.wraps(func)
@@ -25,8 +25,8 @@ def requires_langchain(func):
     return wrapper
 
 
-@requires_langchain
-def _messages_to_langchain(messages: List[Message]):
+@_requires_langchain
+def messages_to_langchain(messages: List[Message]):
     """Converts Honcho messages to Langchain messages
 
     Args:
@@ -47,8 +47,8 @@ def _messages_to_langchain(messages: List[Message]):
     return new_messages
 
 
-@requires_langchain
-def _langchain_to_messages(
+@_requires_langchain
+def langchain_to_messages(
     messages, session: Union[Session, AsyncSession]
 ) -> List[Message]:
     """Converts Langchain messages to Honcho messages and adds to appropriate session

@@ -1,14 +1,17 @@
 import json
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Optional, Sequence
 
+import httpx
 import sentry_sdk
 from fastapi import (
     APIRouter,
     FastAPI,
+    Request,
 )
 from fastapi.responses import PlainTextResponse
 from fastapi_pagination import add_pagination
@@ -43,6 +46,8 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response
 
 from src.routers import (
     apps,
@@ -215,6 +220,56 @@ app.add_middleware(SlowAPIMiddleware)
 
 
 add_pagination(app)
+
+USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
+AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
+
+
+class BearerTokenMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        authorization: Optional[str] = request.headers.get("Authorization")
+        if authorization:
+            scheme, _, token = authorization.partition(" ")
+            if scheme.lower() == "bearer" and token:
+                id_pattern = r"\/apps\/([^\/]+)"
+                name_pattern = r"\/apps\/name\/([^\/]+)|\/apps\/get_or_create\/([^\/]+)"
+                match_id = re.search(id_pattern, request.url.path)
+                match_name = re.search(name_pattern, request.url.path)
+                payload = {"token": token}
+                if match_name:
+                    payload["name"] = match_name.group(1)
+                elif match_id:
+                    payload["app_id"] = match_id.group(1)
+
+                res = httpx.get(
+                    f"{AUTH_SERVICE_URL}/validate",
+                    params=payload,
+                )
+                data = res.json()
+                if (
+                    data["app_id"] or data["name"]
+                ):  # Anything that checks app_id if True is valid
+                    return await call_next(request)
+                if data["token"]:
+                    check_pattern = r"^\/apps$|^\/apps\/get_or_create"
+                    match = re.search(check_pattern, request.url.path)
+                    if match:
+                        return await call_next(request)
+
+                return Response(content="Invalid token.", status_code=400)
+            else:
+                return Response(
+                    content="Invalid authentication scheme.", status_code=400
+                )
+
+        exclude_paths = ["/docs", "/redoc", "/openapi.json"]
+        if request.url.path in exclude_paths:
+            return await call_next(request)
+        return Response(content="Authorization header missing.", status_code=401)
+
+
+if USE_AUTH_SERVICE:
+    app.add_middleware(BearerTokenMiddleware)
 
 
 @app.exception_handler(StarletteHTTPException)

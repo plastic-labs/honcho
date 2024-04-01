@@ -25,6 +25,7 @@ services:
       - OTEL_RESOURCE_ATTRIBUTES=
       - DEBUG_LOG_OTEL_TO_PROVIDER=false
       - DEBUG_LOG_OTEL_TO_CONSOLE=true
+      - USE_AUTH_SERVICE=false
   database:
     image: ankane/pgvector
     restart: always

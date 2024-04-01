@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import uuid
 from typing import List
 
@@ -15,6 +16,7 @@ from langchain_openai import ChatOpenAI
 from realtime.connection import Socket
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from websockets.exceptions import ConnectionClosedError
 
 from . import crud, models, schemas
 from .db import SessionLocal
@@ -32,7 +34,7 @@ if SENTRY_ENABLED:
 SUPABASE_ID = os.getenv("SUPABASE_ID")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
-llm = ChatOpenAI(model_name="gpt-4")
+llm = ChatOpenAI(model_name="gpt-3.5")
 output_parser = NumberedListOutputParser()
 
 SYSTEM_DERIVE_FACTS = load_prompt(
@@ -200,9 +202,26 @@ async def check_dups(
     return new_facts
 
 
+# def listen_to_websocket(url):
+#     while True:
+#         try:
+#             s = Socket(url)
+#             s.connect()
+#             channel = s.set_channel("realtime:public:messages")
+#             channel.join().on(
+#                 "INSERT", lambda payload: asyncio.create_task(callback(payload))
+#             )
+
+#             s.listen()
+#         except ConnectionClosedError:
+#             print("Connection closed, attempting to reconnect...")
+#             time.sleep(5)
+
+
 if __name__ == "__main__":
     URL = f"wss://{SUPABASE_ID}.supabase.co/realtime/v1/websocket?apikey={SUPABASE_API_KEY}&vsn=1.0.0"
     # URL = f"ws://127.0.0.1:54321/realtime/v1/websocket?apikey={SUPABASE_API_KEY}"  # For local Supabase
+    # listen_to_websocket(URL)
     s = Socket(URL)
     s.connect()
 

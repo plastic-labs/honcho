@@ -23,8 +23,8 @@ Base = declarative_base()
 
 
 def scaffold_db():
-    """Use a Sync Engine for scaffolding the database. DDL operations are unavailable
-    with Async Engines
+    """use a sync engine for scaffolding the database. ddl operations are unavailable
+    with async engines
     """
     engine = create_engine(os.environ["CONNECTION_URI"], echo=True)
     Base.metadata.create_all(bind=engine)
