@@ -389,6 +389,10 @@ class AsyncHoncho:
         """Synonym for initialize"""
         await self.initialize()
 
+    async def init(self):
+        """Synonym for initialize"""
+        await self.initialize()
+
     @property
     def base_url(self):
         """Shortcut for common API prefix. made a property to prevent tampering"""
