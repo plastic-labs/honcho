@@ -10,7 +10,7 @@ to their end users.
 
 Read about the motivation of this project [here](https://blog.plasticlabs.ai).
 
-Read the user documenation [here](https://docs.honcho.dev)
+Read the user documentation [here](https://docs.honcho.dev)
 
 ## Table of Contents
 
