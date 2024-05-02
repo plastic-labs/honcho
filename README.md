@@ -8,7 +8,7 @@
 Honcho is a platform for making AI agents and LLM powered applications that are personalized
 to their end users.
 
-Read about the motivation of this project [here](https://blog.plasticlabs.ai).
+Read about the motivation of this project [here](https://blog.plasticlabs.ai/blog/A-Simple-Honcho-Primer).
 
 Read the user documenation [here](https://docs.honcho.dev)
 

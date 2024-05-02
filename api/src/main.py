@@ -199,7 +199,18 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    servers=[
+        {"url": "http://127.0.0.1:8000", "description": "Local Development Server"},
+        {"url": "https:/demo.honcho.dev", "description": "Demo Server"},
+    ],
+    summary="An API for adding personalization to AI Apps",
+    description="""This API is used to store data and get insights about users for AI
+    applications""",
+    version="0.1.0",
+    title="Honcho API",
+)
 
 if OPENTELEMTRY_ENABLED:
     FastAPIInstrumentor().instrument_app(app)

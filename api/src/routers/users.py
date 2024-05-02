@@ -1,6 +1,7 @@
 import json
-from typing import Optional
 import uuid
+from typing import Optional
+
 from fastapi import APIRouter, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -63,7 +64,7 @@ async def get_users(
     )
 
 
-@router.get("/{name}", response_model=schemas.User)
+@router.get("/name/{name}", response_model=schemas.User)
 async def get_user_by_name(
     request: Request,
     app_id: uuid.UUID,
@@ -82,6 +83,27 @@ async def get_user_by_name(
 
     """
     return await crud.get_user_by_name(db, app_id=app_id, name=name)
+
+
+@router.get("/{user_id}", response_model=schemas.User)
+async def get_user(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db=db,
+):
+    """Get a User
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using
+        honcho
+        user_id (str): The User ID representing the user, managed by the user
+
+    Returns:
+        schemas.User: User object
+
+    """
+    return await crud.get_user(db, app_id=app_id, user_id=user_id)
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.User)
