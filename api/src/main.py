@@ -200,7 +200,7 @@ app = FastAPI(
     summary="An API for adding personalization to AI Apps",
     description="""This API is used to store data and get insights about users for AI
     applications""",
-    version="0.1.0",
+    version="0.0.8",
     contact={
         "name": "Plastic Labs",
         "url": "https://plasticlabs.ai",
@@ -222,7 +222,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 if OPENTELEMTRY_ENABLED:
     FastAPIInstrumentor().instrument_app(app)
