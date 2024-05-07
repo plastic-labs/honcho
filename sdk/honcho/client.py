@@ -449,7 +449,7 @@ class AsyncHoncho:
         Returns:
             AsyncUser: The User object
         """
-        url = f"{self.base_url}/users/{name}"
+        url = f"{self.base_url}/users/name/{name}"
         response = await self.client.get(url)
         response.raise_for_status()
         data = response.json()
@@ -793,7 +793,7 @@ class AsyncUser:
             AsyncCollection: The Session object of the requested Session
 
         """
-        url = f"{self.base_url}/collections/{name}"
+        url = f"{self.base_url}/collections/name/{name}"
         response = await self.honcho.client.get(url)
         response.raise_for_status()
         data = response.json()

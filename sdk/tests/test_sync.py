@@ -251,7 +251,9 @@ def test_paginated_messages():
         created_session.create_message(is_user=False, content="Hi")
 
     page_size = 7
-    get_message_response = created_session.get_messages(page=1, page_size=page_size)
+    get_message_response = created_session.get_messages(
+        page=1, page_size=page_size
+    )
 
     assert get_message_response is not None
     assert isinstance(get_message_response, GetMessagePage)
@@ -446,7 +448,9 @@ def test_collection_query():
     collection = user.create_collection(col_name)
 
     # Add documents
-    doc1 = collection.create_document(content="The user loves puppies", metadata={})
+    doc1 = collection.create_document(
+        content="The user loves puppies", metadata={}
+    )
     doc2 = collection.create_document(content="The user owns a dog", metadata={})
     doc3 = collection.create_document(content="The user is a doctor", metadata={})
 
