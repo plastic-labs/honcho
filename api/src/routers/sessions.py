@@ -3,6 +3,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -190,4 +191,36 @@ async def get_chat(
 ):
     return await agent.chat(
         app_id=app_id, user_id=user_id, session_id=session_id, query=query, db=db
+    )
+
+
+@router.get(
+    "/{session_id}/chat/stream",
+    responses={
+        200: {
+            "description": "Chat stream",
+            "content": {
+                "text/event-stream": {"schema": {"type": "string", "format": "binary"}}
+            },
+        }
+    },
+)
+async def get_chat_stream(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    query: str,
+    db=db,
+):
+    return StreamingResponse(
+        await agent.stream(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            query=query,
+            db=db,
+        ),
+        media_type="text/event-stream",
+        status_code=200,
     )
