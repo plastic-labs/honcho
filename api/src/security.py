@@ -8,9 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
 
-security = HTTPBearer(
-    auto_error=False,
-)
+security = HTTPBearer(auto_error=False)
 
 
 async def auth(
