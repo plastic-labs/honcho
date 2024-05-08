@@ -1,13 +1,14 @@
 import json
-from typing import Optional, Sequence
 import uuid
-from fastapi import APIRouter, HTTPException, Request
+from typing import Optional, Sequence
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-
+from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections/{collection_id}",
@@ -24,6 +25,7 @@ async def get_documents(
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
+    auth=Depends(auth),
 ):
     try:
         data = None
@@ -59,6 +61,7 @@ async def get_document(
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     honcho_document = await crud.get_document(
         db,
@@ -84,6 +87,7 @@ async def query_documents(
     top_k: int = 5,
     filter: Optional[str] = None,
     db=db,
+    auth=Depends(auth),
 ):
     if top_k is not None and top_k > 50:
         top_k = 50  # TODO see if we need to paginate this
@@ -109,6 +113,7 @@ async def create_document(
     collection_id: uuid.UUID,
     document: schemas.DocumentCreate,
     db=db,
+    auth=Depends(auth),
 ):
     try:
         return await crud.create_document(
@@ -136,6 +141,7 @@ async def update_document(
     document_id: uuid.UUID,
     document: schemas.DocumentUpdate,
     db=db,
+    auth=Depends(auth),
 ):
     if document.content is None and document.metadata is None:
         raise HTTPException(
@@ -159,6 +165,7 @@ async def delete_document(
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     response = await crud.delete_document(
         db,

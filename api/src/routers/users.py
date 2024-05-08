@@ -2,12 +2,13 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
+from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users",
@@ -21,6 +22,7 @@ async def create_user(
     app_id: uuid.UUID,
     user: schemas.UserCreate,
     db=db,
+    auth=Depends(auth),
 ):
     """Create a User
 
@@ -44,6 +46,7 @@ async def get_users(
     reverse: bool = False,
     filter: Optional[str] = None,
     db=db,
+    auth=Depends(auth),
 ):
     """Get All Users for an App
 
@@ -70,6 +73,7 @@ async def get_user_by_name(
     app_id: uuid.UUID,
     name: str,
     db=db,
+    auth=Depends(auth),
 ):
     """Get a User
 
@@ -91,6 +95,7 @@ async def get_user(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     """Get a User
 
@@ -107,7 +112,9 @@ async def get_user(
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.User)
-async def get_or_create_user(request: Request, app_id: uuid.UUID, name: str, db=db):
+async def get_or_create_user(
+    request: Request, app_id: uuid.UUID, name: str, db=db, auth=Depends(auth)
+):
     """Get or Create a User
 
     Args:
@@ -134,6 +141,7 @@ async def update_user(
     user_id: uuid.UUID,
     user: schemas.UserUpdate,
     db=db,
+    auth=Depends(auth),
 ):
     """Update a User
 

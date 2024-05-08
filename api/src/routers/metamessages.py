@@ -1,13 +1,14 @@
 import json
-from typing import Optional
 import uuid
-from fastapi import APIRouter, HTTPException, Request
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-
+from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages",
@@ -23,6 +24,7 @@ async def create_metamessage(
     session_id: uuid.UUID,
     metamessage: schemas.MetamessageCreate,
     db=db,
+    auth=Depends(auth),
 ):
     """Adds a message to a session
 
@@ -64,6 +66,7 @@ async def get_metamessages(
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
+    auth=Depends(auth),
 ):
     """Get all messages for a session
 
@@ -114,6 +117,7 @@ async def get_metamessage(
     message_id: uuid.UUID,
     metamessage_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     """Get a specific Metamessage by ID
 
@@ -154,6 +158,7 @@ async def update_metamessage(
     metamessage_id: uuid.UUID,
     metamessage: schemas.MetamessageUpdate,
     db=db,
+    auth=Depends(auth),
 ):
     """Update's the metadata of a metamessage"""
     if metamessage.metadata is None:
