@@ -94,7 +94,6 @@ async def create_app(
     try:
         honcho_app = await crud.create_app(db, app=app)
         return honcho_app
-
     except IntegrityError as e:
         raise HTTPException(
             status_code=406, detail="App with name may already exist"
