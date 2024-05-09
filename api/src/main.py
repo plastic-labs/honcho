@@ -1,18 +1,11 @@
 import json
 import logging
 import os
-import re
-import uuid
 from contextlib import asynccontextmanager
-from typing import Optional, Sequence
 
-import httpx
 import sentry_sdk
-from fastapi import (
-    APIRouter,
-    FastAPI,
-    Request,
-)
+from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi_pagination import add_pagination
 from opentelemetry import trace
@@ -46,8 +39,6 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import Response
 
 from src.routers import (
     apps,
@@ -199,11 +190,42 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan,
+    servers=[
+        {"url": "http://127.0.0.1:8000", "description": "Local Development Server"},
+        {"url": "https:/demo.honcho.dev", "description": "Demo Server"},
+    ],
+    title="Honcho API",
+    summary="An API for adding personalization to AI Apps",
+    description="""This API is used to store data and get insights about users for AI
+    applications""",
+    version="0.1.0",
+    contact={
+        "name": "Plastic Labs",
+        "url": "https://plasticlabs.ai",
+        "email": "hello@plasticlabs.ai",
+    },
+    license_info={
+        "name": "GNU Affero General Public License v3.0",
+        "identifier": "AGPL-3.0-only",
+        "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
+    },
+)
+
+origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 if OPENTELEMTRY_ENABLED:
     FastAPIInstrumentor().instrument_app(app)
-
 
 router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
 
@@ -220,56 +242,6 @@ app.add_middleware(SlowAPIMiddleware)
 
 
 add_pagination(app)
-
-USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
-AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
-
-
-class BearerTokenMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next):
-        authorization: Optional[str] = request.headers.get("Authorization")
-        if authorization:
-            scheme, _, token = authorization.partition(" ")
-            if scheme.lower() == "bearer" and token:
-                id_pattern = r"\/apps\/([^\/]+)"
-                name_pattern = r"\/apps\/name\/([^\/]+)|\/apps\/get_or_create\/([^\/]+)"
-                match_id = re.search(id_pattern, request.url.path)
-                match_name = re.search(name_pattern, request.url.path)
-                payload = {"token": token}
-                if match_name:
-                    payload["name"] = match_name.group(1)
-                elif match_id:
-                    payload["app_id"] = match_id.group(1)
-
-                res = httpx.get(
-                    f"{AUTH_SERVICE_URL}/validate",
-                    params=payload,
-                )
-                data = res.json()
-                if (
-                    data["app_id"] or data["name"]
-                ):  # Anything that checks app_id if True is valid
-                    return await call_next(request)
-                if data["token"]:
-                    check_pattern = r"^\/apps$|^\/apps\/get_or_create"
-                    match = re.search(check_pattern, request.url.path)
-                    if match:
-                        return await call_next(request)
-
-                return Response(content="Invalid token.", status_code=400)
-            else:
-                return Response(
-                    content="Invalid authentication scheme.", status_code=400
-                )
-
-        exclude_paths = ["/docs", "/redoc", "/openapi.json"]
-        if request.url.path in exclude_paths:
-            return await call_next(request)
-        return Response(content="Authorization header missing.", status_code=401)
-
-
-if USE_AUTH_SERVICE:
-    app.add_middleware(BearerTokenMiddleware)
 
 
 @app.exception_handler(StarletteHTTPException)

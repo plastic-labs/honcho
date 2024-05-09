@@ -2,12 +2,14 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import agent, crud, schemas
 from src.dependencies import db
+from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
@@ -25,6 +27,7 @@ async def get_sessions(
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
+    auth=Depends(auth),
 ):
     """Get All Sessions for a User
 
@@ -65,6 +68,7 @@ async def create_session(
     user_id: uuid.UUID,
     session: schemas.SessionCreate,
     db=db,
+    auth=Depends(auth),
 ):
     """Create a Session for a User
 
@@ -93,6 +97,7 @@ async def update_session(
     session_id: uuid.UUID,
     session: schemas.SessionUpdate,
     db=db,
+    auth=Depends(auth),
 ):
     """Update the metadata of a Session
 
@@ -124,6 +129,7 @@ async def delete_session(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     """Delete a session by marking it as inactive
 
@@ -156,6 +162,7 @@ async def get_session(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     """Get a specific session for a user by ID
 
@@ -187,7 +194,41 @@ async def get_chat(
     session_id: uuid.UUID,
     query: str,
     db=db,
+    auth=Depends(auth),
 ):
     return await agent.chat(
         app_id=app_id, user_id=user_id, session_id=session_id, query=query, db=db
+    )
+
+
+@router.get(
+    "/{session_id}/chat/stream",
+    responses={
+        200: {
+            "description": "Chat stream",
+            "content": {
+                "text/event-stream": {"schema": {"type": "string", "format": "binary"}}
+            },
+        }
+    },
+)
+async def get_chat_stream(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    query: str,
+    db=db,
+    auth=Depends(auth),
+):
+    return StreamingResponse(
+        await agent.stream(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            query=query,
+            db=db,
+        ),
+        media_type="text/event-stream",
+        status_code=200,
     )

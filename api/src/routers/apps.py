@@ -3,11 +3,14 @@ import uuid
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+from psycopg.errors import UniqueViolation
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
+from src.security import auth
 
 router = APIRouter(
     prefix="/apps",
@@ -16,7 +19,9 @@ router = APIRouter(
 
 
 @router.get("/{app_id}", response_model=schemas.App)
-async def get_app(request: Request, app_id: uuid.UUID, db=db):
+async def get_app(
+    request: Request, app_id: uuid.UUID, db=db, auth: dict = Depends(auth)
+):
     """Get an App by ID
 
     Args:
@@ -33,7 +38,9 @@ async def get_app(request: Request, app_id: uuid.UUID, db=db):
 
 
 @router.get("/name/{name}", response_model=schemas.App)
-async def get_app_by_name(request: Request, name: str, db=db):
+async def get_app_by_name(
+    request: Request, name: str, db=db, auth: dict = Depends(auth)
+):
     """Get an App by Name
 
     Args:
@@ -50,7 +57,9 @@ async def get_app_by_name(request: Request, name: str, db=db):
 
 
 @router.post("", response_model=schemas.App)
-async def create_app(request: Request, app: schemas.AppCreate, db=db):
+async def create_app(
+    request: Request, app: schemas.AppCreate, db=db, auth=Depends(auth)
+):
     """Create an App
 
     Args:
@@ -60,34 +69,42 @@ async def create_app(request: Request, app: schemas.AppCreate, db=db):
         schemas.App: Created App object
 
     """
-    USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
-    if USE_AUTH_SERVICE:
-        AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
-        authorization: Optional[str] = request.headers.get("Authorization")
-        if authorization:
-            scheme, _, token = authorization.partition(" ")
-            if token is not None:
-                honcho_app = await crud.create_app(db, app=app)
-                # if token == "default":
-                #     return honcho_app
-                res = httpx.put(
-                    f"{AUTH_SERVICE_URL}/organizations",
-                    json={
-                        "id": str(honcho_app.id),
-                        "name": honcho_app.name,
-                        "token": token,
-                    },
-                )
-                data = res.json()
-                if data:
-                    return honcho_app
-    else:
+    # USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
+    # if USE_AUTH_SERVICE:
+    #     AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
+    #     authorization: Optional[str] = request.headers.get("Authorization")
+    #     if authorization:
+    #         scheme, _, token = authorization.partition(" ")
+    #         if token is not None:
+    #             honcho_app = await crud.create_app(db, app=app)
+    #             # if token == "default":
+    #             #     return honcho_app
+    #             res = httpx.put(
+    #                 f"{AUTH_SERVICE_URL}/organizations",
+    #                 json={
+    #                     "id": str(honcho_app.id),
+    #                     "name": honcho_app.name,
+    #                     "token": token,
+    #                 },
+    #             )
+    #             data = res.json()
+    #             if data:
+    #                 return honcho_app
+    # else:
+    try:
         honcho_app = await crud.create_app(db, app=app)
         return honcho_app
 
+    except IntegrityError as e:
+        raise HTTPException(
+            status_code=406, detail="App with name may already exist"
+        ) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Unknown Error") from e
+
 
 @router.get("/get_or_create/{name}", response_model=schemas.App)
-async def get_or_create_app(request: Request, name: str, db=db):
+async def get_or_create_app(request: Request, name: str, db=db, auth=Depends(auth)):
     """Get or Create an App
 
     Args:
@@ -106,7 +123,11 @@ async def get_or_create_app(request: Request, name: str, db=db):
 
 @router.put("/{app_id}", response_model=schemas.App)
 async def update_app(
-    request: Request, app_id: uuid.UUID, app: schemas.AppUpdate, db=db
+    request: Request,
+    app_id: uuid.UUID,
+    app: schemas.AppUpdate,
+    db=db,
+    auth=Depends(auth),
 ):
     """Update an App
 

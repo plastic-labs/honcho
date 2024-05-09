@@ -1,13 +1,14 @@
 import json
-from typing import Optional
 import uuid
-from fastapi import APIRouter, HTTPException, Request
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-
+from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
@@ -23,6 +24,7 @@ async def create_message_for_session(
     session_id: uuid.UUID,
     message: schemas.MessageCreate,
     db=db,
+    auth=Depends(auth),
 ):
     """Adds a message to a session
 
@@ -58,6 +60,7 @@ async def get_messages(
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
+    auth=Depends(auth),
 ):
     """Get all messages for a session
 
@@ -102,6 +105,7 @@ async def get_message(
     session_id: uuid.UUID,
     message_id: uuid.UUID,
     db=db,
+    auth=Depends(auth),
 ):
     """ """
     honcho_message = await crud.get_message(
@@ -121,6 +125,7 @@ async def update_message(
     message_id: uuid.UUID,
     message: schemas.MessageUpdate,
     db=db,
+    auth=Depends(auth),
 ):
     """Update's the metadata of a message"""
     if message.metadata is None:

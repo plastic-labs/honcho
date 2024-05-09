@@ -27,12 +27,12 @@ system_dialectic: SystemMessagePromptTemplate = SystemMessagePromptTemplate(
 llm: ChatOpenAI = ChatOpenAI(model_name="gpt-4")
 
 
-async def chat(
+async def prep_inference(
+    db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     query: str,
-    db: AsyncSession,
 ):
     collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
     retrieved_facts = None
@@ -58,6 +58,19 @@ async def chat(
 
     dialectic_prompt = ChatPromptTemplate.from_messages([system_dialectic])
     chain = dialectic_prompt | llm
+    return (chain, retrieved_facts)
+
+
+async def chat(
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    query: str,
+    db: AsyncSession,
+):
+    (chain, retrieved_facts) = await prep_inference(
+        db, app_id, user_id, session_id, query
+    )
     response = await chain.ainvoke(
         {
             "agent_input": query,
@@ -68,9 +81,19 @@ async def chat(
     return schemas.AgentChat(content=response.content)
 
 
-async def hydrate():
-    pass
-
-
-async def insight():
-    pass
+async def stream(
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    query: str,
+    db: AsyncSession,
+):
+    (chain, retrieved_facts) = await prep_inference(
+        db, app_id, user_id, session_id, query
+    )
+    return chain.astream(
+        {
+            "agent_input": query,
+            "retrieved_facts": retrieved_facts if retrieved_facts else "None",
+        }
+    )

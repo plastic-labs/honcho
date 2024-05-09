@@ -52,6 +52,7 @@ class UserUpdate(UserBase):
 
 class User(UserBase):
     id: uuid.UUID
+    name: str
     app_id: uuid.UUID
     created_at: datetime.datetime
     h_metadata: dict = Field(exclude=True)
