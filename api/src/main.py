@@ -223,6 +223,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 if OPENTELEMTRY_ENABLED:
     FastAPIInstrumentor().instrument_app(app)
 
