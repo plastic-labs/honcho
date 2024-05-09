@@ -34,7 +34,7 @@ if SENTRY_ENABLED:
 SUPABASE_ID = os.getenv("SUPABASE_ID")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
-llm = ChatOpenAI(model_name="gpt-3.5")
+llm = ChatOpenAI(model_name="gpt-3.5-turbo")
 output_parser = NumberedListOutputParser()
 
 SYSTEM_DERIVE_FACTS = load_prompt(
