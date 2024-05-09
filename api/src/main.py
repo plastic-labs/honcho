@@ -200,7 +200,7 @@ app = FastAPI(
     summary="An API for adding personalization to AI Apps",
     description="""This API is used to store data and get insights about users for AI
     applications""",
-    version="0.1.0",
+    version="0.0.8",
     contact={
         "name": "Plastic Labs",
         "url": "https://plasticlabs.ai",
@@ -211,6 +211,16 @@ app = FastAPI(
         "identifier": "AGPL-3.0-only",
         "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
     },
+)
+
+origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]

@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.8] — 2024-05-09
+
+### Added
+
+* Documentation to OpenAPI
+* Bearer token auth to OpenAPI routes
+* Get by ID routes for users and collections
+
+### Changed
+
+* Authentication Middleware now implemented using built-in FastAPI Security
+module
+* Get by name routes for users and collections now include "name" in slug
+
+### Fixed
+
+* Error reporting for methods with integrity errors due to unique key
+constraints
+
 ## [0.0.7] — 2024-04-01
 
 ### Added
