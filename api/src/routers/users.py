@@ -2,9 +2,10 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy.exc import IntegrityError
 
 from src import crud, schemas
 from src.dependencies import db
@@ -36,7 +37,12 @@ async def create_user(
 
     """
     print("running create_user")
-    return await crud.create_user(db, app_id=app_id, user=user)
+    try:
+        return await crud.create_user(db, app_id=app_id, user=user)
+    except IntegrityError as e:
+        raise HTTPException(
+            status_code=406, detail="User with name may already exist"
+        ) from e
 
 
 @router.get("", response_model=Page[schemas.User])
@@ -128,8 +134,8 @@ async def get_or_create_user(
     """
     user = await crud.get_user_by_name(db, app_id=app_id, name=name)
     if user is None:
-        user = await crud.create_user(
-            db, app_id=app_id, user=schemas.UserCreate(name=name)
+        user = await create_user(
+            request=request, db=db, app_id=app_id, user=schemas.UserCreate(name=name)
         )
     return user
 

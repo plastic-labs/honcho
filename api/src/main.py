@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 import sentry_sdk
 from fastapi import APIRouter, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from fastapi_pagination import add_pagination
 from opentelemetry import trace
@@ -195,16 +196,36 @@ app = FastAPI(
         {"url": "http://127.0.0.1:8000", "description": "Local Development Server"},
         {"url": "https:/demo.honcho.dev", "description": "Demo Server"},
     ],
+    title="Honcho API",
     summary="An API for adding personalization to AI Apps",
     description="""This API is used to store data and get insights about users for AI
     applications""",
     version="0.1.0",
-    title="Honcho API",
+    contact={
+        "name": "Plastic Labs",
+        "url": "https://plasticlabs.ai",
+        "email": "hello@plasticlabs.ai",
+    },
+    license_info={
+        "name": "GNU Affero General Public License v3.0",
+        "identifier": "AGPL-3.0-only",
+        "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE",
+    },
 )
+
+origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 if OPENTELEMTRY_ENABLED:
     FastAPIInstrumentor().instrument_app(app)
-
 
 router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
 

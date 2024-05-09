@@ -4,6 +4,8 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
+from psycopg.errors import UniqueViolation
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
@@ -89,8 +91,16 @@ async def create_app(
     #             if data:
     #                 return honcho_app
     # else:
-    honcho_app = await crud.create_app(db, app=app)
-    return honcho_app
+    try:
+        honcho_app = await crud.create_app(db, app=app)
+        return honcho_app
+
+    except IntegrityError as e:
+        raise HTTPException(
+            status_code=406, detail="App with name may already exist"
+        ) from e
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Unknown Error") from e
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.App)
