@@ -84,7 +84,7 @@ Apps
 Users familiar with APIs such as the OpenAI Assistants API will be familiar with
 much of the mapping here. 
 
-**Apps**
+#### Apps
 
 This is the top level construct of Honcho. Developers can register different
 `Apps` for different assistants, agents, AI enabled features, etc. It is a way to
@@ -95,7 +95,7 @@ isolation data between use cases.
 Within an `App` everything revolves around a `User`. the `User` object very
 literally represent a user of an application.  
 
-**Sessions**
+#### Sessions
 
 The `Session` object represents a set of interactions a `User` has with an
 `App`. Other application may refer to this as a thread or conversation.  
@@ -105,7 +105,7 @@ The `Session` object represents a set of interactions a `User` has with an
 The `Message` represents an atomic interaction of a `User` in a `Session`.
 `Message`s are labed as either a `User` or AI message.   
 
-**Metamessages**
+#### Metamessages
 
 A `Metamessage` is very similar to a `Message` with different use case. They are
 meant to be used to store intermediate inference from AI assistants or other
@@ -117,7 +117,7 @@ information such as logs.
 Each `Metamessage` is associated with a `Message`. The convention we recommend
 is to attach a `Metamessage` to the `Message` it was derived from or based on. 
 
-**Collections**
+#### Collections
 
 At a high level a `Collection` is a named group of `Documents`. Developers
 familiar with RAG based applications will be familar with these. `Collection`s
@@ -128,7 +128,7 @@ Developers can create multiple `Collection`s for a user for different purposes
 such as modeling different personas, adding third-party data such as emails and
 PDF files, and more. 
 
-**Documents**
+#### Documents
 
 As stated before a `Document` is vector embedded data stored in a `Collection`. 
 
@@ -156,53 +156,6 @@ API include:
 - Asking Honcho for a theory-of-mind insight about the `User`
 - Asking Honcho to hydrate a prompt with data about the `User`s behavior
 - Asking Honcho for a 2nd opinion or approach about how to respond to the User
-
-<!-- The folders are structured as follows: -->
-
-<!-- - `api/` - contains a FastAPI application that provides user context management -->
-<!--   routes -->
-<!-- - `sdk/` - contains the code for the python sdk and package hosted on PyPI -->
-<!-- - `example/` - contains example code for different use cases of honcho -->
-
-<!-- This project utilizes [poetry](https://python-poetry.org/) for dependency -->
-<!-- management -->
-
-<!-- A separate changelog is managed for the sdk and api in their respective -->
-<!-- directories. -->
-
-<!-- ### Client SDK -->
-
-<!-- Install the honcho client sdk from a python project with the following command: -->
-
-<!-- ```bash -->
-<!-- pip install honcho-ai -->
-<!-- ``` -->
-
-<!-- alternatively if you are using poetry run: -->
-
-<!-- ```bash -->
-<!-- poetry add honcho-ai -->
-<!-- ``` -->
-
-<!-- checkout the [SDK Reference](https://api.python.honcho.dev) for a detailed -->
-<!-- look at the different methods and how to use them.  -->
-
-<!-- Also, check out the[example folder](./example/) for examples of how to use the sdk  -->
-<!-- checkout the [SDK Reference](https://api.python.honcho.dev) for a detailed -->
-<!-- look at the different methods and how to use them.  -->
-
-<!-- Also, check out the[example folder](./example/) for examples of how to use the sdk  -->
-
-<!-- #### Use Locally -->
-
-<!-- For local development of the sdk you can add the local directory as a package -->
-<!-- using poetry with the following commands. -->
-
-<!-- ```bash -->
-<!-- poetry add --editable ./{path_to_honcho}/honcho/sdk -->
-<!-- ``` -->
-
-<!-- See more information [here](https://python-poetry.org/docs/cli/#add) -->
 
 ## License
 

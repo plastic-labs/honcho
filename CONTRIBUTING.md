@@ -24,7 +24,7 @@ Server.
 
 Honcho is developed using [python](https://www.python.org/) and [poetry](https://python-poetry.org/).
 
-The minimum python version is `3.8.1`
+The minimum python version is `3.9`
 The minimum poetry version is `1.4.1`
 
 ### Setup
