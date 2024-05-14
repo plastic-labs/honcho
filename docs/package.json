@@ -5,6 +5,7 @@
   "main": ".pnp.js",
   "scripts": {
     "dev": "mintlify dev",
+    "openapi": "npx @mintlify/scraping@latest openapi-file openapi.json -o api-reference/endpoint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
