@@ -4,6 +4,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    depends_on:
+      database:
+        condition: service_healthy
     ports:
       - 8000:8000
     volumes:
@@ -40,3 +43,8 @@ services:
     volumes:
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - ./data:/var/lib/postgresql/data/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d honcho"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
