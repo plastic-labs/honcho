@@ -3,12 +3,7 @@ import uuid
 from typing import Optional
 
 from dotenv import load_dotenv
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    load_prompt,
-)
-from langchain_openai import ChatOpenAI
+from mirascope.openai import OpenAICall, OpenAICallParams
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, schemas
@@ -17,21 +12,25 @@ load_dotenv()
 
 # from supabase import Client
 
-SYSTEM_DIALECTIC = load_prompt(
-    os.path.join(os.path.dirname(__file__), "prompts/dialectic.yaml")
-)
-system_dialectic: SystemMessagePromptTemplate = SystemMessagePromptTemplate(
-    prompt=SYSTEM_DIALECTIC
-)
+class Dialectic(OpenAICall):
+    prompt_template = """
+    You are tasked with responding to the query based on the context provided. 
+    ---
+    query: {agent_input}
+    context: {retrieved_facts}
+    ---
+    Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
+    """
+    agent_input: str
+    retrieved_facts: str
 
-llm: ChatOpenAI = ChatOpenAI(model_name="gpt-4")
+    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
 
 
 async def prep_inference(
     db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    session_id: uuid.UUID,
     query: str,
 ):
     collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
@@ -56,27 +55,20 @@ async def prep_inference(
         if len(retrieved_documents) > 0:
             retrieved_facts = retrieved_documents[0].content
 
-    dialectic_prompt = ChatPromptTemplate.from_messages([system_dialectic])
-    chain = dialectic_prompt | llm
-    return (chain, retrieved_facts)
+    chain = Dialectic(agent_input=query, retrieved_facts=retrieved_facts if retrieved_facts else "None")
+    return chain
 
 
 async def chat(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    session_id: uuid.UUID,
     query: str,
     db: AsyncSession,
 ):
-    (chain, retrieved_facts) = await prep_inference(
-        db, app_id, user_id, session_id, query
+    chain = await prep_inference(
+        db, app_id, user_id, query
     )
-    response = await chain.ainvoke(
-        {
-            "agent_input": query,
-            "retrieved_facts": retrieved_facts if retrieved_facts else "None",
-        }
-    )
+    response = await chain.call_async()
 
     return schemas.AgentChat(content=response.content)
 
@@ -88,12 +80,7 @@ async def stream(
     query: str,
     db: AsyncSession,
 ):
-    (chain, retrieved_facts) = await prep_inference(
-        db, app_id, user_id, session_id, query
+    chain = await prep_inference(
+        db, app_id, user_id, query
     )
-    return chain.astream(
-        {
-            "agent_input": query,
-            "retrieved_facts": retrieved_facts if retrieved_facts else "None",
-        }
-    )
+    return chain.stream_async()

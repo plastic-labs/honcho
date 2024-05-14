@@ -1,18 +1,14 @@
 import asyncio
-import os
+import os, re
 import time
 import uuid
 from typing import List
 
 import sentry_sdk
 from dotenv import load_dotenv
-from langchain_core.output_parsers import NumberedListOutputParser
-from langchain_core.prompts import (
-    ChatPromptTemplate,
-    SystemMessagePromptTemplate,
-    load_prompt,
-)
-from langchain_openai import ChatOpenAI
+
+from mirascope.openai import OpenAICall, OpenAICallParams
+
 from realtime.connection import Socket
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -34,23 +30,35 @@ if SENTRY_ENABLED:
 SUPABASE_ID = os.getenv("SUPABASE_ID")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
-llm = ChatOpenAI(model_name="gpt-3.5-turbo")
-output_parser = NumberedListOutputParser()
+class DeriveFacts(OpenAICall):
+    prompt_template = """
+    You are tasked with deriving discrete facts about the user based on their input. The goal is to only extract absolute facts from the message, do not make inferences beyond the text provided.
 
-SYSTEM_DERIVE_FACTS = load_prompt(
-    os.path.join(os.path.dirname(__file__), "prompts/derive_facts.yaml")
-)
-SYSTEM_CHECK_DUPS = load_prompt(
-    os.path.join(os.path.dirname(__file__), "prompts/check_dup_facts.yaml")
-)
+    chat history: ```{chat_history}```
+    user input: ```{user_input}```
 
-system_check_dups: SystemMessagePromptTemplate = SystemMessagePromptTemplate(
-    prompt=SYSTEM_CHECK_DUPS
-)
+    Output the facts as a numbered list.
+    """
 
-system_derive_facts: SystemMessagePromptTemplate = SystemMessagePromptTemplate(
-    prompt=SYSTEM_DERIVE_FACTS
-)
+    chat_history: str
+    user_input: str
+
+    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
+
+class CheckDups(OpenAICall):
+    prompt_template = """
+    Your job is to determine if the new fact exists in the old:
+
+    Old: ```{existing_facts}```
+
+    New: ```{facts}```
+    
+    If the new fact is sufficiently represented in the old list, return False. Otherwise, if the fact is indeed new, return True.
+    """
+    existing_facts: List[str]
+    fact: str
+
+    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
 
 
 async def callback(payload):
@@ -106,6 +114,9 @@ async def process_user_message(
     collection_id: uuid.UUID,
     message_id: uuid.UUID,
 ):
+    """
+    Process a user message and derive facts from it (check for duplicates before writing to the collection).
+    """
     async with SessionLocal() as db:
         messages_stmt = await crud.get_messages(
             db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
@@ -117,15 +128,14 @@ async def process_user_message(
         # contents = [m.content for m in messages]
         # print(contents)
 
-    facts = await derive_facts(messages, content)
+    chat_history_str = "\n".join([f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages])
+    facts_response = await DeriveFacts(chat_history=chat_history_str, user_input=content).call_async()
+    facts = re.findall(r"\d+\.\s([^\n]+)", facts_response.content)
+
     print("===================")
     print(f"DERIVED FACTS: {facts}")
     print("===================")
     new_facts = await check_dups(app_id, user_id, collection_id, facts)
-
-    print("===================")
-    print(f"CHECKED FOR DUPLICATES: {new_facts}")
-    print("===================")
 
     for fact in new_facts:
         create_document = schemas.DocumentCreate(content=fact)
@@ -146,76 +156,49 @@ async def process_user_message(
     # print(f"Created fact: {fact}")
 
 
-async def derive_facts(chat_history, input: str) -> List[str]:
-    """Derive facts from the user input"""
-
-    fact_derivation = ChatPromptTemplate.from_messages([system_derive_facts])
-    chain = fact_derivation | llm
-    response = await chain.ainvoke(
-        {
-            "chat_history": [
-                (
-                    "user: " + message.content
-                    if message.is_user
-                    else "ai: " + message.content
-                )
-                for message in chat_history
-            ],
-            "user_input": input,
-        }
-    )
-    facts = output_parser.parse(response.content)
-
-    return facts
-
 
 async def check_dups(
     app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str]
 ):
     """Check that we're not storing duplicate facts"""
 
-    check_duplication = ChatPromptTemplate.from_messages([system_check_dups])
-    query = " ".join(facts)
+    check_duplication = CheckDups(existing_facts=[], fact="")
     result = None
-    async with SessionLocal() as db:
-        result = await crud.query_documents(
-            db=db,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-            query=query,
-            top_k=10,
-        )
-    # result = collection.query(query=query, top_k=10)
-    existing_facts = [document.content for document in result]
+    new_facts = []
+    global_existing_facts = []  # for debugging
+    for fact in facts:
+        async with SessionLocal() as db:
+            result = await crud.query_documents(
+                db=db,
+                app_id=app_id,
+                user_id=user_id,
+                collection_id=collection_id,
+                query=fact,
+                top_k=5,
+            )
+        existing_facts = [document.content for document in result]
+        if len(existing_facts) == 0:
+            new_facts.append(fact)
+            print(f"New Fact: {fact}")
+            continue
+        
+        global_existing_facts.extend(existing_facts)  # for debugging
+
+        check_duplication.existing_facts = existing_facts
+        check_duplication.fact = fact
+        response = await check_duplication.call_async()
+        if response.content == "True":
+            new_facts.append(fact)
+            print(f"New Fact: {fact}")
+            continue
+
+
     print("===================")
-    print(f"Existing Facts {existing_facts}")
-    print("===================")
-    if len(existing_facts) == 0:
-        return facts
-    chain = check_duplication | llm
-    response = await chain.ainvoke({"existing_facts": existing_facts, "facts": facts})
-    new_facts = output_parser.parse(response.content)
-    print("===================")
-    print(f"New Facts {facts}")
+    print(f"Existing Facts: {global_existing_facts}")
+    print(f"Net New Facts {new_facts}")
     print("===================")
     return new_facts
 
-
-# def listen_to_websocket(url):
-#     while True:
-#         try:
-#             s = Socket(url)
-#             s.connect()
-#             channel = s.set_channel("realtime:public:messages")
-#             channel.join().on(
-#                 "INSERT", lambda payload: asyncio.create_task(callback(payload))
-#             )
-
-#             s.listen()
-#         except ConnectionClosedError:
-#             print("Connection closed, attempting to reconnect...")
-#             time.sleep(5)
 
 
 if __name__ == "__main__":
