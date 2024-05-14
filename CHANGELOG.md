@@ -11,12 +11,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 * Documentation to OpenAPI
 * Bearer token auth to OpenAPI routes
 * Get by ID routes for users and collections
+* [NodeJS](https://github.com/plastic-labs/honcho-node) SDK support
 
 ### Changed
 
 * Authentication Middleware now implemented using built-in FastAPI Security
 module
 * Get by name routes for users and collections now include "name" in slug
+* Python SDK moved to separate [respository](https://github.com/plastic-labs/honcho-python)
 
 ### Fixed
 

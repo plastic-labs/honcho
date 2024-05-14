@@ -1,0 +1,9 @@
+fly.toml
+.env
+.env.template
+*.md
+docs/**
+.DS_Store
+supabase/**
+LICENSE
+__pycache__

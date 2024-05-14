@@ -38,5 +38,5 @@ services:
       - POSTGRES_HOST_AUTH_METHOD=trust
       - PGDATA=/var/lib/postgresql/data/pgdata
     volumes:
-      - ./local/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
       - ./data:/var/lib/postgresql/data/
