@@ -1,183 +1,161 @@
 # 🫡 Honcho
 ![Static Badge](https://img.shields.io/badge/Version-0.0.8-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
+[![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)](https://twitter.com/plastic_labs)
+[![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
+[![NPM version](https://img.shields.io/npm/v/honcho-ai.svg)](https://npmjs.org/package/honcho-ai)
+
 
 Honcho is a platform for making AI agents and LLM powered applications that are personalized
-to their end users.
+to their end users. It leverages the inherent theory-of-mind capabilities of
+LLMs to cohere to user psychology over time.
 
-Read about the motivation of this project [here](https://blog.plasticlabs.ai/blog/A-Simple-Honcho-Primer).
+Read about the the project [here](https://blog.plasticlabs.ai/blog/A-Simple-Honcho-Primer).
 
-Read the user documenation [here](https://docs.honcho.dev)
+Read the user documentation [here](https://docs.honcho.dev)
 
 ## Table of Contents
 
 - [Project Structure](#project-structure)
 - [Usage](#usage)
-    - [API](#api)
-        - [Docker](#docker)
-        - [Manually](#manually)
-        - [Deploying on Fly.io](#deploy-on-fly)
-    - [Client SDK](#client-sdk)
-        - [Use Locally](#use-locally) 
-- [Contributing](#contributing)
+- [Architecture](#architecture)
+    - [Storage](#storage)
+    - [Insights](#insights)
 - [License](#license)
 
 ## Project Structure
 
-The Honcho repo is a monorepo containing the server/API that manages database
-interactions and storing data about an application's state along with the python
-sdk for interacting with the API.
+The Honcho project is split between several repositories with this one hosting
+the core service logic. This is implemented as a FastAPI server/API to store
+data about an application's state. 
 
-The folders are structured as follows:
+There are also client-sdks that are created using
+[Stainless](https://www.stainlessapi.com/). Currently, there is a [Python](https://github.com/plastic-labs/honcho-python) and 
+[TypeScript/JavaScript](https://github.com/plastic-labs/honcho-node) SDK available. 
 
-- `api/` - contains a FastAPI application that provides user context management
-  routes
-- `sdk/` - contains the code for the python sdk and package hosted on PyPI
-- `example/` - contains example code for different use cases of honcho
-
-This project utilizes [poetry](https://python-poetry.org/) for dependency
-management
-
-A separate changelog is managed for the sdk and api in their respective
-directories.
+Examples on how to use the SDK are located within each SDK repository. There is
+also SDK example usage available in the [API Reference](https://docs.honcho.dev/api-reference/introduction)
+along with various guides. 
 
 ## Usage
 
-### API
+Currently, there is a demo server of Honcho running at https://demo.honcho.dev.
+This server is not production ready and does not have an reliability guarantees.
+It is purely there for evaluation purposes. 
 
-#### Docker
+A private beta for a tenant isolated production ready version of Honcho is
+currently underway. If interested fill out this
+[typeform](https://plasticlabs.typeform.com/honchobeta) and the Plastic Labs
+team will reach out to onboard users. 
 
-The API can be run using docker-compose. The `docker-compose.yml.example` file can be copied to `docker-compose.yml` and the environment variables can be set in the `.env` file.
+Additionally, Honcho can be self-hosted for testing and evaluation purposes. See
+[Contributing](./CONTRIBUTING.md) for more details on how to setup a local
+version of Honcho.
 
-```bash
-cd honcho/api
-cp docker-compose.yml.example docker-compose.yml
-[ update the file with openai key and other wanted environment variables ]
-docker compose up -d
+## Architecture
+
+The functionality of Honcho can be split into two different services: Storage
+and Insights. 
+
+### Storage 
+
+Honcho contains several different primitives used for storing application and
+user data. This data is used for managing conversations, modeling user
+psychology, building RAG applications, and more. 
+
+The philosophy behind Honcho is to provide a platform that is user-centric and
+easily scalable from a single user to a million. 
+
+Below is a mapping of the different primitives. 
+
+```
+Apps
+└── Users
+    ├── Sessions
+    │   ├── Messages
+    │   └── Metamessages
+    └── Collections
+        └── Documents
 ```
 
-#### Manually
+Users familiar with APIs such as the OpenAI Assistants API will be familiar with
+much of the mapping here. 
 
-#### Docker
+#### Apps
 
-The API can be run using docker-compose. The `docker-compose.yml.example` file can be copied to `docker-compose.yml` and the environment variables can be set in the `.env` file.
+This is the top level construct of Honcho. Developers can register different
+`Apps` for different assistants, agents, AI enabled features, etc. It is a way to
+isolation data between use cases.
 
-```bash
-cd honcho/api
-cp docker-compose.yml.example docker-compose.yml
-[ update the file with openai key and other wanted environment variables ]
-docker compose up -d
-```
+**Users**
 
-#### Manually
+Within an `App` everything revolves around a `User`. the `User` object very
+literally represent a user of an application.  
 
-The API can be run either by installing the necessary dependencies and then
-specifying the appropriate environment variables.
+#### Sessions
 
-1. Create a virtualenv and install the API's dependencies
+The `Session` object represents a set of interactions a `User` has with an
+`App`. Other application may refer to this as a thread or conversation.  
 
-```bash
-cd honcho/api/ # change to the api directory
-poetry shell # Activate virutal environment
-poetry install # install dependencies
-```
+**Messages**
 
-2. Copy the `.env.template` file and specify the type of database and
-   connection_uri. For testing sqlite is fine. The below example uses an
-   in-memory sqlite database.
-   in-memory sqlite database.
+The `Message` represents an atomic interaction of a `User` in a `Session`.
+`Message`s are labed as either a `User` or AI message.   
 
-> Honcho has been tested with Postgresql and PGVector
+#### Metamessages
 
-```env
-DATABASE_TYPE=postgres
-CONNECTION_URI=postgresql://testuser:testpwd@localhost:5432/honcho
-```
+A `Metamessage` is very similar to a `Message` with different use case. They are
+meant to be used to store intermediate inference from AI assistants or other
+derived information that is separate from the main `User` `App` interaction
+loop. For complicated prompting architectures like [metacognitive prompting](https://arxiv.org/abs/2310.06983)
+metamessages can store thought and reflection steps along with having developer
+information such as logs. 
 
-3. launch a postgresd with pgvector enabled with docker-compose
+Each `Metamessage` is associated with a `Message`. The convention we recommend
+is to attach a `Metamessage` to the `Message` it was derived from or based on. 
 
-```bash
-cd honcho/api/local
-docker-compose up -d
-```
+#### Collections
 
-4. Run the API via uvicorn
+At a high level a `Collection` is a named group of `Documents`. Developers
+familiar with RAG based applications will be familar with these. `Collection`s
+store vector embedded data that developers and agents can retrieve against using
+functions like cosine similarity. 
 
-```bash
-cd honcho/api # change to the api directory
-poetry shell # Activate virtual environment if not already enabled
-python -m uvicorn src.main:app --reload
-```
+Developers can create multiple `Collection`s for a user for different purposes
+such as modeling different personas, adding third-party data such as emails and
+PDF files, and more. 
 
-#### Deploy on Fly
+#### Documents
 
-The API can also be deployed on fly.io. Follow the [Fly.io
-Docs](https://fly.io/docs/getting-started/) to setup your environment and the
-`flyctl`.
-`flyctl`.
+As stated before a `Document` is vector embedded data stored in a `Collection`. 
 
-Once `flyctl` is set up use the following commands to launch the application:
+### Insights
 
-```bash
-cd honcho/api
-flyctl launch --no-deploy # Follow the prompts and edit as you see fit
-cat .env | flyctl secrets import # Load in your secrets
-flyctl deploy # Deploy with appropriate environment variables
-```
+The Insight functionality of Honcho is built on top of the Storage service. As
+`Messages` and `Sessions` are created for a `User`, Honcho will asynchronously
+reason about the `User`'s psychology to derive facts about them and store them
+in a reserved `Collection`. 
 
-### Client SDK
+To read more about how this works read our [Research Paper](https://arxiv.org/abs/2310.06983)
 
-Install the honcho client sdk from a python project with the following command:
+Developers can then leverage these insights in their application to better
+server `User` needs. The primary interface for using these insights is through
+the [Dialectic Endpoint](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API).
 
-```bash
-pip install honcho-ai
-```
+This is a regular API endpoint that takes natural language requests to get data
+about the `User`. This robust design let's us use this single endpoint for all
+cases where extra personalization or information about the `User` is necessary.
 
-alternatively if you are using poetry run:
+A developer's application can treat Honcho as an oracle to the `User` and
+consult with it when necessary. Some examples of how to leverage the Dialectic
+API include:
 
-```bash
-poetry add honcho-ai
-```
-
-checkout the [SDK Reference](https://api.python.honcho.dev) for a detailed
-look at the different methods and how to use them. 
-
-Also, check out the[example folder](./example/) for examples of how to use the sdk 
-checkout the [SDK Reference](https://api.python.honcho.dev) for a detailed
-look at the different methods and how to use them. 
-
-Also, check out the[example folder](./example/) for examples of how to use the sdk 
-
-#### Use Locally
-
-For local development of the sdk you can add the local directory as a package
-using poetry with the following commands.
-
-```bash
-poetry add --editable ./{path_to_honcho}/honcho/sdk
-```
-
-See more information [here](https://python-poetry.org/docs/cli/#add)
-
-## Contributing
-
-This project is completely open source and welcomes any and all open source
-contributions. The workflow for contributing is to make a fork of the
-repository. You can claim an issue in the issues tab or start a new thread to
-indicate a feature or bug fix you are working on.
-indicate a feature or bug fix you are working on.
-
-Once you have finished your contribution make a PR pointed at the `staging`
-branch, and it will be reviewed by a project manager. Feel free to join us in
-our [discord](http://discord.gg/plasticlabs) to discuss your changes or get
-help.
-help.
-
-Once your changes are accepted and merged into staging they will undergo a
-period of live testing before entering the upstream into `main`
+- Asking Honcho for a theory-of-mind insight about the `User`
+- Asking Honcho to hydrate a prompt with data about the `User`s behavior
+- Asking Honcho for a 2nd opinion or approach about how to respond to the User
 
 ## License
 

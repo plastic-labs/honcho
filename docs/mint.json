@@ -31,11 +31,6 @@
   ],
   "anchors": [
     {
-      "name": "SDK Reference",
-      "icon": "book-open-cover",
-      "url": "https://api.python.honcho.dev"
-    },
-    {
       "name": "Community",
       "icon": "discord",
       "url": "https://discord.gg/plasticlabs"
@@ -52,16 +47,16 @@
       "pages": [
         "getting-started/introduction",
         "getting-started/quickstart",
-        "getting-started/architecture",
-        "getting-started/self-hosting",
-        "getting-started/deploying"
+        "getting-started/architecture"
       ]
     },
     {
-      "group": "About",
+      "group": "Contributing",
       "pages": [
-        "about/contributing",
-        "about/license"
+        "contributing/guidelines",
+        "contributing/self-hosting",
+        "contributing/deploying",
+        "contributing/license"
       ]
     },
     {
@@ -111,6 +106,7 @@
         "api-reference/endpoint/users/get-users",
         "api-reference/endpoint/users/create-user",
         "api-reference/endpoint/users/get-user-by-name",
+        "api-reference/endpoint/users/get-user",
         "api-reference/endpoint/users/get-or-create-user",
         "api-reference/endpoint/users/update-user"
       ]
@@ -123,7 +119,8 @@
         "api-reference/endpoint/sessions/get-session",
         "api-reference/endpoint/sessions/update-session",
         "api-reference/endpoint/sessions/delete-session",
-        "api-reference/endpoint/sessions/get-chat"
+        "api-reference/endpoint/sessions/get-chat",
+        "api-reference/endpoint/sessions/get-chat-stream"
       ]
     },
     {
@@ -145,6 +142,7 @@
         "api-reference/endpoint/collections/get-collections",
         "api-reference/endpoint/collections/create-collection",
         "api-reference/endpoint/collections/get-collection-by-name",
+        "api-reference/endpoint/collections/get-collection-by-id",
         "api-reference/endpoint/collections/update-collection",
         "api-reference/endpoint/collections/delete-collection"
       ]
@@ -167,7 +165,7 @@
     "linkedin": "https://www.linkedin.com/company/plasticlabs"
   },
   "openapi": [
-    "https://demo.honcho.dev/openapi.json"
+    "/openapi.json"
   ],
   "analytics": {
     "posthog": {

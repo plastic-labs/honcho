@@ -1,1 +1,0 @@
-BOT_TOKEN=

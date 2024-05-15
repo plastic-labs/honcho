@@ -1,0 +1,24 @@
+---
+title: 'Deploying Honcho'
+sidebarTitle: 'Deploying'
+description: 'Deploying the Honcho API Server with Docker'
+icon: 'rocket'
+---
+
+If you're happy with how things are working locally, deploying your Honcho instance is a breeze with [Fly](https://fly.io). Follow the [Fly.io Docs](https://fly.io/docs/getting-started/) to setup your environment and the `flyctl`.
+
+A sample `fly.toml` is included for convenience in the repository.
+
+<Warning>Note. The fly.toml does not include launching a Postgres database. This must
+be configured separately</Warning>
+
+Once `flyctl` is set up use the the following commands to launch the application:
+
+```bash
+cd honcho
+flyctl launch --no-deploy # Follow the prompts and edit as you see fit
+cat .env | flyctl secrets import # Load in your secrets
+flyctl deploy # Deploy with appropriate environment variables
+```
+
+Then you should have a new URL to initialize your Honcho client with! Consider your user context managed 🪄.`
