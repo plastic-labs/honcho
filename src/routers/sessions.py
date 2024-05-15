@@ -196,9 +196,7 @@ async def get_chat(
     db=db,
     auth=Depends(auth),
 ):
-    return await agent.chat(
-        app_id=app_id, user_id=user_id, session_id=session_id, query=query, db=db
-    )
+    return await agent.chat(app_id=app_id, user_id=user_id, query=query, db=db)
 
 
 @router.get(
@@ -221,14 +219,11 @@ async def get_chat_stream(
     db=db,
     auth=Depends(auth),
 ):
+    async def parse_stream():
+        stream = await agent.stream(app_id=app_id, user_id=user_id, query=query, db=db)
+        async for chunk in stream:
+            yield chunk.content
+
     return StreamingResponse(
-        await agent.stream(
-            app_id=app_id,
-            user_id=user_id,
-            session_id=session_id,
-            query=query,
-            db=db,
-        ),
-        media_type="text/event-stream",
-        status_code=200,
+        content=parse_stream(), media_type="text/event-stream", status_code=200
     )
