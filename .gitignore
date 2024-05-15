@@ -2,6 +2,10 @@ api/**/*.db
 api/data
 api/docker-compose.yml
 
+*.db
+data
+docker-compose.yml
+
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

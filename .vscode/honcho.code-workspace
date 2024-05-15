@@ -1,20 +1,9 @@
 {
   "folders": [
     {
-      "path": "../sdk"
-    },
-    {
-      "path": "../api"
-    },
-    {
-      "path": "../example/cli"
-    },
-    {
-      "path": "../example/discord"
-    },
-    {
       "path": ".."
     }
   ],
-  "settings": {}
+  "settings": {
+  }
 }
