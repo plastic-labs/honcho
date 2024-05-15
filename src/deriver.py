@@ -1,18 +1,15 @@
 import asyncio
-import os, re
-import time
+import os
+import re
 import uuid
 from typing import List
 
 import sentry_sdk
 from dotenv import load_dotenv
-
 from mirascope.openai import OpenAICall, OpenAICallParams
-
 from realtime.connection import Socket
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from websockets.exceptions import ConnectionClosedError
 
 from . import crud, models, schemas
 from .db import SessionLocal
@@ -30,6 +27,7 @@ if SENTRY_ENABLED:
 SUPABASE_ID = os.getenv("SUPABASE_ID")
 SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
 
+
 class DeriveFacts(OpenAICall):
     prompt_template = """
     You are tasked with deriving discrete facts about the user based on their input. The goal is to only extract absolute facts from the message, do not make inferences beyond the text provided.
@@ -45,13 +43,14 @@ class DeriveFacts(OpenAICall):
 
     call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
 
+
 class CheckDups(OpenAICall):
     prompt_template = """
     Your job is to determine if the new fact exists in the old:
 
     Old: ```{existing_facts}```
 
-    New: ```{facts}```
+    New: ```{fact}```
     
     If the new fact is sufficiently represented in the old list, return False. Otherwise, if the fact is indeed new, return True.
     """
@@ -128,8 +127,12 @@ async def process_user_message(
         # contents = [m.content for m in messages]
         # print(contents)
 
-    chat_history_str = "\n".join([f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages])
-    facts_response = await DeriveFacts(chat_history=chat_history_str, user_input=content).call_async()
+    chat_history_str = "\n".join(
+        [f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+    )
+    facts_response = await DeriveFacts(
+        chat_history=chat_history_str, user_input=content
+    ).call_async()
     facts = re.findall(r"\d+\.\s([^\n]+)", facts_response.content)
 
     print("===================")
@@ -156,7 +159,6 @@ async def process_user_message(
     # print(f"Created fact: {fact}")
 
 
-
 async def check_dups(
     app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str]
 ):
@@ -181,7 +183,7 @@ async def check_dups(
             new_facts.append(fact)
             print(f"New Fact: {fact}")
             continue
-        
+
         global_existing_facts.extend(existing_facts)  # for debugging
 
         check_duplication.existing_facts = existing_facts
@@ -192,7 +194,6 @@ async def check_dups(
             print(f"New Fact: {fact}")
             continue
 
-
     print("===================")
     print(f"Existing Facts: {global_existing_facts}")
     print(f"Net New Facts {new_facts}")
@@ -200,10 +201,9 @@ async def check_dups(
     return new_facts
 
 
-
 if __name__ == "__main__":
-    URL = f"wss://{SUPABASE_ID}.supabase.co/realtime/v1/websocket?apikey={SUPABASE_API_KEY}&vsn=1.0.0"
-    # URL = f"ws://127.0.0.1:54321/realtime/v1/websocket?apikey={SUPABASE_API_KEY}"  # For local Supabase
+    # URL = f"wss://{SUPABASE_ID}.supabase.co/realtime/v1/websocket?apikey={SUPABASE_API_KEY}&vsn=1.0.0"
+    URL = f"ws://127.0.0.1:54321/realtime/v1/websocket?apikey={SUPABASE_API_KEY}"  # For local Supabase
     # listen_to_websocket(URL)
     s = Socket(URL)
     s.connect()

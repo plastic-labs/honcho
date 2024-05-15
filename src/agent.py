@@ -1,6 +1,4 @@
-import os
 import uuid
-from typing import Optional
 
 from dotenv import load_dotenv
 from mirascope.openai import OpenAICall, OpenAICallParams
@@ -10,7 +8,6 @@ from . import crud, schemas
 
 load_dotenv()
 
-# from supabase import Client
 
 class Dialectic(OpenAICall):
     prompt_template = """
@@ -55,7 +52,10 @@ async def prep_inference(
         if len(retrieved_documents) > 0:
             retrieved_facts = retrieved_documents[0].content
 
-    chain = Dialectic(agent_input=query, retrieved_facts=retrieved_facts if retrieved_facts else "None")
+    chain = Dialectic(
+        agent_input=query,
+        retrieved_facts=retrieved_facts if retrieved_facts else "None",
+    )
     return chain
 
 
@@ -65,9 +65,7 @@ async def chat(
     query: str,
     db: AsyncSession,
 ):
-    chain = await prep_inference(
-        db, app_id, user_id, query
-    )
+    chain = await prep_inference(db, app_id, user_id, query)
     response = await chain.call_async()
 
     return schemas.AgentChat(content=response.content)
@@ -76,11 +74,8 @@ async def chat(
 async def stream(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    session_id: uuid.UUID,
     query: str,
     db: AsyncSession,
 ):
-    chain = await prep_inference(
-        db, app_id, user_id, query
-    )
+    chain = await prep_inference(db, app_id, user_id, query)
     return chain.stream_async()
