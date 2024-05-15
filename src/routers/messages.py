@@ -2,18 +2,39 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
+from src.db import SessionLocal
 from src.dependencies import db
+from src.models import QueueItem
 from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
     tags=["messages"],
 )
+
+
+async def enqueue(payload: dict):
+    async with SessionLocal() as db:
+        try:
+            processed_payload = {
+                k: str(v) if isinstance(v, uuid.UUID) else v for k, v in payload.items()
+            }
+            item = QueueItem(payload=processed_payload)
+            db.add(item)
+            await db.commit()
+            return
+        except Exception as e:
+            print("=====================")
+            print("FAILURE: in enqueue")
+            print("=====================")
+            print(e)
+            await db.rollback()
 
 
 @router.post("", response_model=schemas.Message)
@@ -23,6 +44,7 @@ async def create_message_for_session(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     message: schemas.MessageCreate,
+    background_tasks: BackgroundTasks,
     db=db,
     auth=Depends(auth),
 ):
@@ -44,10 +66,27 @@ async def create_message_for_session(
 
     """
     try:
-        return await crud.create_message(
+        honcho_message = await crud.create_message(
             db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
         )
+        if message.is_user:
+            print("=======")
+            print("Should be enqueued")
+            payload = {
+                "app_id": app_id,
+                "user_id": user_id,
+                "session_id": session_id,
+                "message_id": honcho_message.id,
+                "content": honcho_message.content,
+                "metadata": honcho_message.h_metadata,
+            }
+            background_tasks.add_task(enqueue, payload)  # type: ignore
+
+        return honcho_message
     except ValueError:
+        print("=====================")
+        print("FAILURE: in create message")
+        print("=====================")
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 

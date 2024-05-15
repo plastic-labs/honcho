@@ -6,9 +6,11 @@ from dotenv import load_dotenv
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    Boolean,
     Column,
     DateTime,
     ForeignKey,
+    Integer,
     String,
     UniqueConstraint,
     Uuid,
@@ -153,3 +155,10 @@ class Document(Base):
 
     collection_id = Column(Uuid, ForeignKey("collections.id"), index=True)
     collection = relationship("Collection", back_populates="documents")
+
+
+class QueueItem(Base):
+    __tablename__ = "queue"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    payload: Mapped[dict] = mapped_column(ColumnType, nullable=False)
+    processed: Mapped[bool] = mapped_column(Boolean, default=False)
