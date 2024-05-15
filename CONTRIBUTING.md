@@ -107,13 +107,17 @@ As mentioned earlier a `docker-compose` template is included for running Honcho.
 As an alternative to running Honcho locally it can also be run with the compose
 template. 
 
+The docker-compose template is set to use an environment file called `.env`.
+You can also copy the `.env.template` and fill with the appropriate values. 
+
 Copy the template and update the appropriate environment variables before
 launching the service.
 
 ```bash
 cd honcho/api
+cp .env.template .env
+# update the file with openai key and other wanted environment variables 
 cp docker-compose.yml.example docker-compose.yml
-[ update the file with openai key and other wanted environment variables ]
 docker compose up
 ```
 

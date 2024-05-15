@@ -11,24 +11,20 @@ services:
       - 8000:8000
     volumes:
       - .:/app
-    environment:
-      - DATABASE_TYPE=postgres
-      - CONNECTION_URI=postgresql+psycopg://testuser:testpwd@database:5432/honcho
-      - OPENAI_API_KEY=[YOUR_OPENAI_API_KEY]
-      - OPENTELEMETRY_ENABLED=false
-      - SENTRY_ENABLED=false
-      - SENTRY_DSN=
-      - OTEL_SERVICE_NAME=honcho
-      - OTEL_PYTHON_LOGGING_AUTO_INSTRUMENTATION_ENABLED=true
-      - OTEL_PYTHON_LOG_CORRELATION=true
-      - OTEL_PYTHON_LOG_LEVEL=
-      - OTEL_EXPORTER_OTLP_PROTOCOL=
-      - OTEL_EXPORTER_OTLP_ENDPOINT=
-      - OTEL_EXPORTER_OTLP_HEADERS=
-      - OTEL_RESOURCE_ATTRIBUTES=
-      - DEBUG_LOG_OTEL_TO_PROVIDER=false
-      - DEBUG_LOG_OTEL_TO_CONSOLE=true
-      - USE_AUTH_SERVICE=false
+    env_file:
+      - .env
+  deriver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["python", "-m", "src.deriver"]
+    depends_on:
+      database:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    env_file:
+      - .env
   database:
     image: ankane/pgvector
     restart: always
