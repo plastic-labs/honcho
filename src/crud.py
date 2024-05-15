@@ -285,7 +285,7 @@ async def create_message(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
 ) -> models.Message:
-    honcho_session = get_session(
+    honcho_session = await get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
     if honcho_session is None:
@@ -299,6 +299,7 @@ async def create_message(
     )
     db.add(honcho_message)
     await db.commit()
+    # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
     await db.refresh(honcho_message)
     return honcho_message
 
