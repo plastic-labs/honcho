@@ -9,10 +9,10 @@ load_dotenv()
 
 connect_args = {}
 
-if (
-    os.environ["DATABASE_TYPE"] == "sqlite"
-):  # https://fastapi.tiangolo.com/tutorial/sql-databases/#note
-    connect_args = {"check_same_thread": False}
+# if (
+#     os.environ["DATABASE_TYPE"] == "sqlite"
+# ):  # https://fastapi.tiangolo.com/tutorial/sql-databases/#note
+#     connect_args = {"check_same_thread": False}
 
 engine = create_async_engine(
     os.environ["CONNECTION_URI"],
