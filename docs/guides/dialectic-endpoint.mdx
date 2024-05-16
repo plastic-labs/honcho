@@ -35,17 +35,19 @@ Belows is some example code on how this works.
 ```python
 from honcho import Honcho
 
-honcho = Honcho(app_name="demo")
-honcho.initialize()
+honcho = Honcho()
+
+# Create or get an existing App
+app = honcho.apps.get_or_create(name="demo-app")
 
 # create or get user
-user = honcho.create_or_get_user("demo-user")
+user = honcho.apps.users.get_or_create(app_id=app.id, name="demo-user")
 
-# create or get session
-session = honcho.create_or_get_session(user, "demo-session")
+# create a new session
+session = honcho.apps.users.session.create(app_id=app.id, user_id=user.id)
 
 # Talk to the dialectic agent to reason about their needs
-answer = session.chat("What is the user's favorite way of completing the task")
+answer = honcho.apps.users.session.chat(app_id=app.id, user_id=user.id, session_id=session.id, query="What is the user's favorite way of completing the task")
 ```
 
 
