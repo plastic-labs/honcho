@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.9] — 2024-05-16
+
+### Added
+
+* Deriver to docker compose
+* Postgres based Queue for background jobs
+
+### Changed
+
+* Deriver to use a queue instead of supabase realtime
+* Using mirascope instead of langchain
+
+### Removed
+
+* Legacy SDKs in preference for stainless SDKs
+
+
 ## [0.0.8] — 2024-05-09
 
 ### Added
