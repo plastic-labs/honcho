@@ -1,5 +1,5 @@
 # 🫡 Honcho
-![Static Badge](https://img.shields.io/badge/Version-0.0.8-blue)
+![Static Badge](https://img.shields.io/badge/Version-0.0.9-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
@@ -13,7 +13,7 @@ Honcho is a platform for making AI agents and LLM powered applications that are 
 to their end users. It leverages the inherent theory-of-mind capabilities of
 LLMs to cohere to user psychology over time.
 
-Read about the the project [here](https://blog.plasticlabs.ai/blog/A-Simple-Honcho-Primer).
+Read about the project [here](https://blog.plasticlabs.ai/blog/A-Simple-Honcho-Primer).
 
 Read the user documentation [here](https://docs.honcho.dev)
 
@@ -92,7 +92,7 @@ isolation data between use cases.
 
 **Users**
 
-Within an `App` everything revolves around a `User`. the `User` object very
+Within an `App` everything revolves around a `User`. the `User` object
 literally represent a user of an application.  
 
 #### Sessions
@@ -103,11 +103,11 @@ The `Session` object represents a set of interactions a `User` has with an
 **Messages**
 
 The `Message` represents an atomic interaction of a `User` in a `Session`.
-`Message`s are labed as either a `User` or AI message.   
+`Message`s are labed as either a `User` or AI message. 
 
 #### Metamessages
 
-A `Metamessage` is very similar to a `Message` with different use case. They are
+A `Metamessage` is similar to a `Message` with different use case. They are
 meant to be used to store intermediate inference from AI assistants or other
 derived information that is separate from the main `User` `App` interaction
 loop. For complicated prompting architectures like [metacognitive prompting](https://arxiv.org/abs/2310.06983)
@@ -150,7 +150,7 @@ about the `User`. This robust design let's us use this single endpoint for all
 cases where extra personalization or information about the `User` is necessary.
 
 A developer's application can treat Honcho as an oracle to the `User` and
-consult with it when necessary. Some examples of how to leverage the Dialectic
+consult it when necessary. Some examples of how to leverage the Dialectic
 API include:
 
 - Asking Honcho for a theory-of-mind insight about the `User`
