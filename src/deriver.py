@@ -62,7 +62,7 @@ class UserPredictionThoughtRevision(OpenAICall):
     Based on this thought, the following personal data has been retrieved:
 
     Personal Data: ```
-    {retrieved_vectors}
+    {retrieved_context}
     ```
 
     And here's the conversation history that was used to generate the original thought:
@@ -77,7 +77,7 @@ class UserPredictionThoughtRevision(OpenAICall):
     thought revision:
     """
     user_prediction_thought_revision: str
-    retrieved_vectors = str
+    retrieved_context = str
     chat_history: str
     call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
 
@@ -214,13 +214,23 @@ async def process_user_message(
     user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
     user_prediction_thought_response = await user_prediction_thought.call_async()
 
-    ## query the dialectic api to build the context
+    ## query the collection to build the context
     additional_data = re.findall(r"\d+\.\s([^\n]+)", user_prediction_thought_response.content)
+    additional_data_list = []
+    for d in additional_data:
+        async with SessionLocal() as db:
+            response = await crud.query_documents(db, app_id=app_id, user_id=user_id, collection_id=collection_id, query=d, top_k=3)
+            additional_data_list.extend([document.content for document in response])
 
-    for datum in additional_data:
-        
+    context_str = "\n".join(additional_data_list)
 
     # user prediction thought revision given the context
+    user_prediction_thought_revision = UserPredictionThoughtRevision(
+        user_prediction_thought=user_prediction_thought_response.content, 
+        retrieved_context=context_str, 
+        chat_history=chat_history_str
+    )
+    user_prediction_thought_revision_response = await user_prediction_thought_revision.call_async()
 
     # VoE thought
 
@@ -257,6 +267,17 @@ async def process_user_message(
     #         message=user_message, metamessage_type="fact", content=fact
     #     )
     # print(f"Created fact: {fact}")
+
+async def process_ai_message(
+    content: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: AsyncSession,
+):
+    pass
 
 
 async def check_dups(
