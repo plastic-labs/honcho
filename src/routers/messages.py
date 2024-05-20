@@ -51,12 +51,10 @@ async def create_message_for_session(
     """Adds a message to a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
-        honcho
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
-        message (schemas.MessageCreate): The Message object to add containing the
-        message content and type
+        message (schemas.MessageCreate): The Message object to add containing the message content and type
 
     Returns:
         schemas.Message: The Message object of the added message
@@ -69,18 +67,18 @@ async def create_message_for_session(
         honcho_message = await crud.create_message(
             db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
         )
-        if message.is_user:
-            print("=======")
-            print("Should be enqueued")
-            payload = {
-                "app_id": app_id,
-                "user_id": user_id,
-                "session_id": session_id,
-                "message_id": honcho_message.id,
-                "content": honcho_message.content,
-                "metadata": honcho_message.h_metadata,
-            }
-            background_tasks.add_task(enqueue, payload)  # type: ignore
+        print("=======")
+        print("Should be enqueued")
+        payload = {
+            "app_id": app_id,
+            "user_id": user_id,
+            "session_id": session_id,
+            "message_id": honcho_message.id,
+            "is_user": honcho_message.is_user,
+            "content": honcho_message.content,
+            "metadata": honcho_message.h_metadata,
+        }
+        background_tasks.add_task(enqueue, payload)  # type: ignore
 
         return honcho_message
     except ValueError:

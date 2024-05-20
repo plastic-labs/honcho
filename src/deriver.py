@@ -7,14 +7,19 @@ from typing import List
 import sentry_sdk
 import uvloop
 from dotenv import load_dotenv
-from mirascope.openai import OpenAICall, OpenAICallParams
-
 # from realtime.connection import Socket
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, models, schemas
 from .db import SessionLocal
+from .voe import (
+    UserPredictionThought, 
+    UserPredictionThoughtRevision, 
+    VoeThought, 
+    VoeDeriveFacts, 
+    CheckVoeList
+)
 
 load_dotenv()
 
@@ -28,128 +33,6 @@ if SENTRY_ENABLED:
 
 # SUPABASE_ID = os.getenv("SUPABASE_ID")
 # SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
-
-# user prediction thought + additional data to improve prediction
-class UserPredictionThought(OpenAICall):
-    prompt_template = """
-    USER:
-    Generate a "thought" that makes a theory of mind prediction about what the user will say based on the way the conversation has been going. Also list other pieces of data that would help improve your prediction.
-
-    Conversation:
-    ```
-    {chat_history}
-    ```
-
-    Generate the additional pieces of data as a numbered list.
-
-    ASSISTANT:
-    Thought:
-    """
-
-    chat_history: str
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
-
-# user prediction thought revision given context
-class UserPredictionThoughtRevision(OpenAICall):
-    prompt_template = """
-    USER:
-    You are tasked with revising theory of mind "thoughts" about what the user is going to say. Here is the thought generated previously:
-
-    Thought: ```
-    {user_prediction_thought}
-    ```
-
-    Based on this thought, the following personal data has been retrieved:
-
-    Personal Data: ```
-    {retrieved_context}
-    ```
-
-    And here's the conversation history that was used to generate the original thought:
-
-    History: ```
-    {chat_history}
-    ```
-    
-    Given the thought, conversation history, and personal data, revise the thought. If there are no changes to be made, output "None".
-
-    ASSISTANT:
-    thought revision:
-    """
-    user_prediction_thought_revision: str
-    retrieved_context = str
-    chat_history: str
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
-
-# VoE thought
-class VoeThought(OpenAICall):
-    prompt_template = """
-    USER:
-    Below is a "thought" about what the user was going to say, and then what the user actually said. Generate a theory of mind prediction about the user based on the difference between the "thought" and actual response.
-
-    Thought: ```
-    {user_prediction_thought_revision}
-    ```
-
-    Actual: ```
-    {actual}
-    ```
-
-    Provide the theory of mind prediction solely in reference to the Actual statement, i.e. do not generate something that negates the thought. Do not speculate anything about the user.
-    """
-    user_prediction_thought_revision: str
-    actual: str
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
-
-# VoE derive facts
-class VoeDeriveFacts(OpenAICall):
-    prompt_template = """
-    USER:
-    Below is the most recent AI message we sent to a user, a "thought" about what the user was going to say to that, what the user actually responded with, and a theory of mind prediction about the user's response. Derive a fact (or list of facts) about the user based on the difference between the original thought and their actual response plus the theory of mind prediction about that response.
-
-    Most recent AI message: ```
-    {ai_message}
-    ```
-
-    Thought about what they were going to say: ```
-    {user_prediction_thought_revision}
-    ```
-
-    Actual response: ```
-    {actual}
-    ```
-
-    Theory of mind prediction about that response: ```
-    {voe_thought}
-    ```
-
-    Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out. Your response should be a numbered list with each item on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".
-    """
-    user_prediction_thought_revision: str
-    actual: str
-    voe_thought: str
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
-
-# check dups
-class CheckVoeList(OpenAICall):
-    prompt_template = """
-    USER:
-    Please compare the following two lists and keep only unique items:
-
-    Old: ```
-    {existing_facts}
-    ```
-
-    New: ```
-    {facts}
-    ```
-    
-    Remove redundant information from the new list and output the remaining facts. Your response should be a numbered list with each fact on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to remove (i.e. the statements are sufficiently different), print "None".
-    """
-    existing_facts: str
-    facts: str
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
-
 
 async def process_item(db: AsyncSession, payload: dict):
 
@@ -167,16 +50,101 @@ async def process_item(db: AsyncSession, payload: dict):
             user_id=payload["user_id"],
         )
     collection_id = collection.id
-    await process_user_message(
-        payload["content"],
-        payload["app_id"],
-        payload["user_id"],
-        payload["session_id"],
-        collection_id,
-        payload["message_id"],
-        db,
-    )
+    if payload["is_user"]:
+        await process_user_message(
+            payload["content"],
+            payload["app_id"],
+            payload["user_id"],
+            payload["session_id"],
+            collection_id,
+            payload["message_id"],
+            db,
+        )
+    else:
+        await process_ai_message(
+            payload["content"],
+            payload["app_id"],
+            payload["user_id"],
+            payload["session_id"],
+            collection_id,
+            payload["message_id"],
+            db,
+        )
     return
+
+
+async def process_ai_message(
+    content: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: AsyncSession,
+):
+    """
+    Process an AI message. If there's enough of a conversation history to run user prediction, run it. Otherwise pass.
+    """
+    messages_stmt = await crud.get_messages(
+        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
+    )
+    messages_stmt = messages_stmt.limit(10)
+    response = await db.execute(messages_stmt)
+    messages = response.scalars().all()
+    # messages = messages[::-1]
+    contents = [m.content for m in messages]
+    print("===================")
+    print("Contents")
+    print(contents)
+    print("===================")
+
+    # there needs to be at least one user and one ai message
+    if len(contents) > 2:
+
+        chat_history_str = "\n".join(
+            [f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+        )
+        # user prediction thought
+        user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
+        user_prediction_thought_response = await user_prediction_thought.call_async()
+
+        ## query the collection to build the context
+        additional_data = re.findall(r"\d+\.\s([^\n]+)", user_prediction_thought_response.content)
+        additional_data_list = []
+        for d in additional_data:
+            response = await crud.query_documents(db, app_id=app_id, user_id=user_id, collection_id=collection_id, query=d, top_k=3)
+            additional_data_list.extend([document.content for document in response])
+
+        context_str = "\n".join(additional_data_list)
+
+        # user prediction thought revision given the context
+        user_prediction_thought_revision = UserPredictionThoughtRevision(
+            user_prediction_thought=user_prediction_thought_response.content, 
+            retrieved_context=context_str, 
+            chat_history=chat_history_str
+        )
+        user_prediction_thought_revision_response = await user_prediction_thought_revision.call_async()
+
+        upt_metamessage = models.Metamessage(
+            message_id=message_id,
+            metamessage_type="user_prediction_thought",
+            content=user_prediction_thought_response.content,
+            h_metadata={},
+        )
+
+        uptr_metamessage = models.Metamessage(
+            message_id=message_id,
+            metamessage_type="user_prediction_thought_revision",
+            content=user_prediction_thought_revision_response.content,
+            h_metadata={},
+        )
+
+        db.add(upt_metamessage)
+        db.add(uptr_metamessage)
+        await db.commit()
+
+    else:
+        pass
 
 
 async def process_user_message(
@@ -189,95 +157,70 @@ async def process_user_message(
     db: AsyncSession,
 ):
     """
-    Process a user message thought the VoE pipeline
-    """
+    Process a user message. If there's enough of a conversation history to run VoE, run it. Otherwise pass.
+    """  
     messages_stmt = await crud.get_messages(
         db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
     )
     messages_stmt = messages_stmt.limit(10)
     response = await db.execute(messages_stmt)
     messages = response.scalars().all()
-    messages = messages[::-1]
     contents = [m.content for m in messages]
     print("===================")
     print("Contents")
     print(contents)
     print("===================")
 
-    chat_history_str = "\n".join(
-        [f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+    # get the most recent user thought prediction revision
+    metamessages_stmt = await crud.get_metamessages(
+        db=db, 
+        app_id=app_id, 
+        user_id=user_id, 
+        session_id=session_id, 
+        message_id=message_id, 
+        metamessage_type="user_prediction_thought_revision", 
+        reverse=True
     )
+    metamessages_stmt = metamessages_stmt.limit(1)
+    response = await db.execute(metamessages_stmt)
+    metamessage = response.scalars().all()
 
-    ############
+    if metamessage:
+        # VoE thought
+        voe_thought = VoeThought(
+            user_prediction_thought_revision=metamessage.content, 
+            actual=content
+        )
+        voe_thought_response = await voe_thought.call_async()
 
-    # user prediction thought
-    user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
-    user_prediction_thought_response = await user_prediction_thought.call_async()
+        # VoE derive facts
+        most_recent_ai_message = next((m.content for m in messages if not m.is_user), "")
+        voe_derive_facts = VoeDeriveFacts(
+            ai_message=most_recent_ai_message,
+            user_prediction_thought_revision=metamessage.content, 
+            actual=content, 
+            voe_thought=voe_thought_response.content
+        )
+        voe_derive_facts_response = await voe_derive_facts.call_async()
 
-    ## query the collection to build the context
-    additional_data = re.findall(r"\d+\.\s([^\n]+)", user_prediction_thought_response.content)
-    additional_data_list = []
-    for d in additional_data:
-        async with SessionLocal() as db:
-            response = await crud.query_documents(db, app_id=app_id, user_id=user_id, collection_id=collection_id, query=d, top_k=3)
-            additional_data_list.extend([document.content for document in response])
+        # check dups
+        facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
+        new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
-    context_str = "\n".join(additional_data_list)
+        for fact in new_facts:
+            create_document = schemas.DocumentCreate(content=fact)
+            async with SessionLocal() as db:
+                doc = await crud.create_document(
+                    db,
+                    document=create_document,
+                    app_id=app_id,
+                    user_id=user_id,
+                    collection_id=collection_id,
+                )
+                print(f"Returned Document: {doc}")
 
-    # user prediction thought revision given the context
-    user_prediction_thought_revision = UserPredictionThoughtRevision(
-        user_prediction_thought=user_prediction_thought_response.content, 
-        retrieved_context=context_str, 
-        chat_history=chat_history_str
-    )
-    user_prediction_thought_revision_response = await user_prediction_thought_revision.call_async()
-
-    # VoE thought
-
-    # VoE derive facts
-
-    # check dups
-
-    ###############
-
-    facts_response = await DeriveFacts(
-        chat_history=chat_history_str, user_input=content
-    ).call_async()
-    facts = re.findall(r"\d+\.\s([^\n]+)", facts_response.content)
-
-    print("===================")
-    print(f"DERIVED FACTS: {facts}")
-    print("===================")
-    new_facts = await check_dups(app_id, user_id, collection_id, facts)
-
-    for fact in new_facts:
-        create_document = schemas.DocumentCreate(content=fact)
-        async with SessionLocal() as db:
-            doc = await crud.create_document(
-                db,
-                document=create_document,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-            )
-            print(f"Returned Document: {doc}")
-        # doc = crud.create_document(content=fact)
-    # for fact in new_facts:
-    #     session.create_metamessage(
-    #         message=user_message, metamessage_type="fact", content=fact
-    #     )
-    # print(f"Created fact: {fact}")
-
-async def process_ai_message(
-    content: str,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    message_id: uuid.UUID,
-    db: AsyncSession,
-):
-    pass
+    else:
+        pass
 
 
 async def check_dups(
@@ -285,7 +228,7 @@ async def check_dups(
 ):
     """Check that we're not storing duplicate facts"""
 
-    check_duplication = CheckDups(existing_facts=[], fact="")
+    check_duplication = CheckVoeList(existing_facts=[], facts=[])
     result = None
     new_facts = []
     global_existing_facts = []  # for debugging
