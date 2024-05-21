@@ -86,17 +86,18 @@ async def process_ai_message(
     Process an AI message. If there's enough of a conversation history to run user prediction, run it. Otherwise pass.
     """
     messages_stmt = await crud.get_messages(
-        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
+        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
     )
     messages_stmt = messages_stmt.limit(10)
     response = await db.execute(messages_stmt)
     messages = response.scalars().all()
     # messages = messages[::-1]
     contents = [m.content for m in messages]
-    print("===================")
-    print("Contents")
+    print("\033[91m===================")
+    print("Processing AI message")
+    print("History")
     print(contents)
-    print("===================")
+    print("===================\033[0m")
 
     # there needs to be at least one user and one ai message
     if len(contents) > 2:
@@ -139,6 +140,16 @@ async def process_ai_message(
             h_metadata={},
         )
 
+        print("\033[94m==================")
+        print("User Prediction Thought")
+        print(user_prediction_thought_response.content)
+        print("==================\033[0m")
+
+        print("\033[92m==================")
+        print("User Prediction Thought Revision")
+        print(user_prediction_thought_revision_response.content)
+        print("==================\033[0m")
+
         db.add(upt_metamessage)
         db.add(uptr_metamessage)
         await db.commit()
@@ -160,16 +171,17 @@ async def process_user_message(
     Process a user message. If there's enough of a conversation history to run VoE, run it. Otherwise pass.
     """  
     messages_stmt = await crud.get_messages(
-        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
+        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
     )
     messages_stmt = messages_stmt.limit(10)
     response = await db.execute(messages_stmt)
     messages = response.scalars().all()
     contents = [m.content for m in messages]
-    print("===================")
-    print("Contents")
+    print("\033[91m===================")
+    print("Processing user message")
+    print("History")
     print(contents)
-    print("===================")
+    print("===================\033[0m")
 
     # get the most recent user thought prediction revision
     metamessages_stmt = await crud.get_metamessages(
@@ -179,13 +191,22 @@ async def process_user_message(
         session_id=session_id, 
         message_id=message_id, 
         metamessage_type="user_prediction_thought_revision", 
-        reverse=True
+        reverse=False
     )
     metamessages_stmt = metamessages_stmt.limit(1)
     response = await db.execute(metamessages_stmt)
-    metamessage = response.scalars().all()
+    metamessages = response.scalars().all()
+    contents = [m.content for m in metamessages]
 
-    if metamessage:
+
+    if metamessages:
+        print(f"METAMESSAGES: {contents}")
+        metamessage = contents[0]
+
+        print("\033[93m==================")
+        print("Most Recent User Prediction Thought Revision")
+        print(metamessage.content)
+        print("==================\033[0m")
         # VoE thought
         voe_thought = VoeThought(
             user_prediction_thought_revision=metamessage.content, 
@@ -251,7 +272,7 @@ async def check_dups(
         global_existing_facts.extend(existing_facts)  # for debugging
 
         check_duplication.existing_facts = existing_facts
-        check_duplication.fact = fact
+        check_duplication.facts = [fact]
         response = await check_duplication.call_async()
         print("==================")
         print("Dedupe Responses")
