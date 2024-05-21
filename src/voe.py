@@ -98,6 +98,7 @@ class VoeDeriveFacts(AnthropicCall):
 
     Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out. Your response should be a numbered list with each item on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".
     """
+    ai_message: str
     user_prediction_thought_revision: str
     actual: str
     voe_thought: str
