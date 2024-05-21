@@ -49,8 +49,8 @@ class UserPredictionThoughtRevision(AnthropicCall):
     ASSISTANT:
     thought revision:
     """
-    user_prediction_thought_revision: str
-    retrieved_context = str
+    user_prediction_thought: str
+    retrieved_context: str
     chat_history: str
     call_params = AnthropicCallParams(model="claude-3-opus-20240229", temperature=0.4)
 
