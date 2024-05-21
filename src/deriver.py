@@ -94,10 +94,10 @@ async def process_ai_message(
     # messages = messages[::-1]
     contents = [m.content for m in messages]
     print("\033[91m===================")
-    print("Processing AI message")
-    print("History")
-    print(contents)
-    print("===================\033[0m")
+    print("\033[91mProcessing AI message")
+    print("\033[91mHistory")
+    print(f"\033[91m{contents}")
+    print("\033[91m===================\033[0m")
 
     # there needs to be at least one user and one ai message
     if len(contents) > 2:
@@ -141,14 +141,14 @@ async def process_ai_message(
         )
 
         print("\033[94m==================")
-        print("User Prediction Thought")
-        print(user_prediction_thought_response.content)
-        print("==================\033[0m")
+        print("\033[94mUser Prediction Thought")
+        print(f"\033[94m{user_prediction_thought_response.content}")
+        print("\033[94m==================\033[0m")
 
         print("\033[92m==================")
-        print("User Prediction Thought Revision")
-        print(user_prediction_thought_revision_response.content)
-        print("==================\033[0m")
+        print("\033[92mUser Prediction Thought Revision")
+        print(f"\033[92m{user_prediction_thought_revision_response.content}")
+        print("\033[92m==================\033[0m")
 
         db.add(upt_metamessage)
         db.add(uptr_metamessage)
@@ -177,11 +177,11 @@ async def process_user_message(
     response = await db.execute(messages_stmt)
     messages = response.scalars().all()
     contents = [m.content for m in messages]
-    print("\033[91m===================")
-    print("Processing user message")
-    print("History")
-    print(contents)
-    print("===================\033[0m")
+    print("\033[93m===================")
+    print("\033[93mProcessing user message")
+    print("\033[93mHistory")
+    print(f"\033[93m{contents}")
+    print("\033[93m===================\033[0m")
 
     # get the most recent user thought prediction revision
     metamessages_stmt = await crud.get_metamessages(
@@ -203,10 +203,10 @@ async def process_user_message(
         print(f"METAMESSAGES: {contents}")
         metamessage = contents[0]
 
-        print("\033[93m==================")
-        print("Most Recent User Prediction Thought Revision")
-        print(metamessage.content)
-        print("==================\033[0m")
+        print("\033[94m==================")
+        print("\033[94mMost Recent User Prediction Thought Revision")
+        print(f"\033[94m{metamessage.content}")
+        print("\033[94m==================\033[0m")
         # VoE thought
         voe_thought = VoeThought(
             user_prediction_thought_revision=metamessage.content, 
