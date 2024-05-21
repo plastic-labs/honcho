@@ -1,4 +1,5 @@
 from typing import List
+
 from mirascope.anthropic import AnthropicCall, AnthropicCallParams
 
 
@@ -21,6 +22,7 @@ class UserPredictionThought(AnthropicCall):
 
     chat_history: str
     call_params = AnthropicCallParams(model="claude-3-opus-20240229", temperature=0.4)
+
 
 # user prediction thought revision given context
 class UserPredictionThoughtRevision(AnthropicCall):
@@ -54,6 +56,7 @@ class UserPredictionThoughtRevision(AnthropicCall):
     chat_history: str
     call_params = AnthropicCallParams(model="claude-3-opus-20240229", temperature=0.4)
 
+
 # VoE thought
 class VoeThought(AnthropicCall):
     prompt_template = """
@@ -73,6 +76,7 @@ class VoeThought(AnthropicCall):
     user_prediction_thought_revision: str
     actual: str
     call_params = AnthropicCallParams(model="claude-3-opus-20240229", temperature=0.4)
+
 
 # VoE derive facts
 class VoeDeriveFacts(AnthropicCall):
@@ -103,6 +107,7 @@ class VoeDeriveFacts(AnthropicCall):
     actual: str
     voe_thought: str
     call_params = AnthropicCallParams(model="claude-3-opus-20240229", temperature=0.4)
+
 
 # check dups
 class CheckVoeList(AnthropicCall):

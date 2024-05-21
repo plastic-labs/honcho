@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -7,18 +8,17 @@ from typing import List
 import sentry_sdk
 import uvloop
 from dotenv import load_dotenv
-# from realtime.connection import Socket
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, models, schemas
 from .db import SessionLocal
 from .voe import (
-    UserPredictionThought, 
-    UserPredictionThoughtRevision, 
-    VoeThought, 
-    VoeDeriveFacts, 
-    CheckVoeList
+    CheckVoeList,
+    UserPredictionThought,
+    UserPredictionThoughtRevision,
+    VoeDeriveFacts,
+    VoeThought,
 )
 
 load_dotenv()
@@ -31,13 +31,12 @@ if SENTRY_ENABLED:
     )
 
 
-# SUPABASE_ID = os.getenv("SUPABASE_ID")
-# SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
+# Turn of SQLAlchemy Echo logging
+logging.getLogger("sqlalchemy.engine.Engine").disabled = True
+
 
 async def process_item(db: AsyncSession, payload: dict):
-
     collection: models.Collection
-    # async with SessionLocal() as db:
     collection = await crud.get_collection_by_name(
         db, payload["app_id"], payload["user_id"], "honcho"
     )
@@ -50,26 +49,19 @@ async def process_item(db: AsyncSession, payload: dict):
             user_id=payload["user_id"],
         )
     collection_id = collection.id
+    processing_args = [
+        payload["content"],
+        payload["app_id"],
+        payload["user_id"],
+        payload["session_id"],
+        collection_id,
+        payload["message_id"],
+        db,
+    ]
     if payload["is_user"]:
-        await process_user_message(
-            payload["content"],
-            payload["app_id"],
-            payload["user_id"],
-            payload["session_id"],
-            collection_id,
-            payload["message_id"],
-            db,
-        )
+        await process_user_message(*processing_args)
     else:
-        await process_ai_message(
-            payload["content"],
-            payload["app_id"],
-            payload["user_id"],
-            payload["session_id"],
-            collection_id,
-            payload["message_id"],
-            db,
-        )
+        await process_ai_message(*processing_args)
     return
 
 
@@ -101,30 +93,43 @@ async def process_ai_message(
 
     # there needs to be at least one user and one ai message
     if len(contents) > 2:
-
         chat_history_str = "\n".join(
-            [f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+            [
+                f"user: {m.content}" if m.is_user else f"ai: {m.content}"
+                for m in messages
+            ]
         )
         # user prediction thought
         user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
         user_prediction_thought_response = await user_prediction_thought.call_async()
 
         ## query the collection to build the context
-        additional_data = re.findall(r"\d+\.\s([^\n]+)", user_prediction_thought_response.content)
+        additional_data = re.findall(
+            r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
+        )
         additional_data_list = []
         for d in additional_data:
-            response = await crud.query_documents(db, app_id=app_id, user_id=user_id, collection_id=collection_id, query=d, top_k=3)
+            response = await crud.query_documents(
+                db,
+                app_id=app_id,
+                user_id=user_id,
+                collection_id=collection_id,
+                query=d,
+                top_k=3,
+            )
             additional_data_list.extend([document.content for document in response])
 
         context_str = "\n".join(additional_data_list)
 
         # user prediction thought revision given the context
         user_prediction_thought_revision = UserPredictionThoughtRevision(
-            user_prediction_thought=user_prediction_thought_response.content, 
-            retrieved_context=context_str, 
-            chat_history=chat_history_str
+            user_prediction_thought=user_prediction_thought_response.content,
+            retrieved_context=context_str,
+            chat_history=chat_history_str,
         )
-        user_prediction_thought_revision_response = await user_prediction_thought_revision.call_async()
+        user_prediction_thought_revision_response = (
+            await user_prediction_thought_revision.call_async()
+        )
 
         upt_metamessage = models.Metamessage(
             message_id=message_id,
@@ -169,7 +174,7 @@ async def process_user_message(
 ):
     """
     Process a user message. If there's enough of a conversation history to run VoE, run it. Otherwise pass.
-    """  
+    """
     messages_stmt = await crud.get_messages(
         db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
     )
@@ -185,19 +190,18 @@ async def process_user_message(
 
     # get the most recent user thought prediction revision
     metamessages_stmt = await crud.get_metamessages(
-        db=db, 
-        app_id=app_id, 
-        user_id=user_id, 
-        session_id=session_id, 
-        message_id=message_id, 
-        metamessage_type="user_prediction_thought_revision", 
-        reverse=False
+        db=db,
+        app_id=app_id,
+        user_id=user_id,
+        session_id=session_id,
+        message_id=message_id,
+        metamessage_type="user_prediction_thought_revision",
+        reverse=False,
     )
     metamessages_stmt = metamessages_stmt.limit(1)
     response = await db.execute(metamessages_stmt)
     metamessages = response.scalars().all()
     contents = [m.content for m in metamessages]
-
 
     if metamessages:
         print(f"METAMESSAGES: {contents}")
@@ -209,18 +213,19 @@ async def process_user_message(
         print("\033[94m==================\033[0m")
         # VoE thought
         voe_thought = VoeThought(
-            user_prediction_thought_revision=metamessage.content, 
-            actual=content
+            user_prediction_thought_revision=metamessage.content, actual=content
         )
         voe_thought_response = await voe_thought.call_async()
 
         # VoE derive facts
-        most_recent_ai_message = next((m.content for m in messages if not m.is_user), "")
+        most_recent_ai_message = next(
+            (m.content for m in messages if not m.is_user), ""
+        )
         voe_derive_facts = VoeDeriveFacts(
             ai_message=most_recent_ai_message,
-            user_prediction_thought_revision=metamessage.content, 
-            actual=content, 
-            voe_thought=voe_thought_response.content
+            user_prediction_thought_revision=metamessage.content,
+            actual=content,
+            voe_thought=voe_thought_response.content,
         )
         voe_derive_facts_response = await voe_derive_facts.call_async()
 
@@ -324,27 +329,21 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
 async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
     while True:
         if queue_empty_flag.is_set():
-            print("========")
+            # print("========")
             print("Queue is empty flag")
-            print("========")
+            # print("========")
             await asyncio.sleep(5)  # Sleep briefly if the queue is empty
             queue_empty_flag.clear()  # Reset the flag
             continue
         if semaphore.locked():
-            print("========")
-            print("Semaphore Locked")
-            print("========")
+            # print("========")
+            # print("Semaphore Locked")
+            # print("========")
             await asyncio.sleep(2)  # Sleep briefly if the semaphore is fully locked
             continue
         task = asyncio.create_task(dequeue(semaphore, queue_empty_flag))
-        task.add_done_callback(lambda t: print(f"Task done: {t}"))
+        # task.add_done_callback(lambda t: print(f"Task done: {t}"))
         await asyncio.sleep(0)  # Yield control to allow tasks to run
-        # tasks = []
-        # for _ in range(5):
-        #     tasks.append(task)
-        # await asyncio.gather(*tasks)
-        # await dequeue()
-        # await asyncio.sleep(5)
 
 
 async def main():
@@ -356,12 +355,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     asyncio.run(main())
-    # URL = f"wss://{SUPABASE_ID}.supabase.co/realtime/v1/websocket?apikey={SUPABASE_API_KEY}&vsn=1.0.0"
-    # URL = f"ws://127.0.0.1:54321/realtime/v1/websocket?apikey={SUPABASE_API_KEY}"  # For local Supabase
-    # listen_to_websocket(URL)
-    # s = Socket(URL)
-    # s.connect()
-
-    # channel = s.set_channel("realtime:public:messages")
-    # channel.join().on("INSERT", lambda payload: asyncio.create_task(callback(payload)))
-    # s.listen()
