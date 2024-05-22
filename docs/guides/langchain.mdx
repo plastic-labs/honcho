@@ -24,12 +24,12 @@ load_dotenv()   # assumes you have a .env file with OPENAI_API_KEY defined
 Next let's instantiate our Honcho client:
 
 ```python
-app_name = str(uuid4())
+honcho = Honcho(environment="demo")
+app_name = "LangChain App"
+app = honcho.apps.get_or_create(name=app_name) # create or get app
 
-honcho = Honcho(app_name=app_name)
-honcho.initialize()
 user_name = str(uuid4())
-user = honcho.create_or_get_user(user_name) # create or get user
+user = honcho.apps.users.get_or_create(app_id=app.id, name=user_name) # create or get user
 ```
 
 Then we can define our chain using the LangChain Expression Language ([LCEL](https://python.langchain.com/docs/expression_language/why)):
@@ -48,7 +48,7 @@ chain = prompt | model | output_parser
 Honcho returns lists of `Message` objects when queried using a built-in method like `get_messages()`, so a quick utility function is needed to change the list format to message objects LangChain expects:
 
 ```python
-def langchain_message_converter(messages: List):
+def messages_to_langchain(messages: List):
     new_messages = []
     for message in messages:
         if message.is_user:
@@ -58,18 +58,38 @@ def langchain_message_converter(messages: List):
     return new_messages
 ```
 
+This method is importable with the following statement
+
+```python
+from honcho.lib.ext.langchain import messages_to_langchain
+```
+
 Now we can structure Honcho calls around our LLM inference:
 ```python
-sessions = list(user.get_sessions_generator(location_id))  # args come from application logic
+sessions = [
+    session for session in 
+    honcho.apps.users.sessions.list(
+        app_id=app.id,
+        user_id=user.id,
+        location_id=location_id
+    ) 
+]  # args come from application logic
 session = sessions[0]   # most recent session for user
-history = list(session.get_messages_generator())
-chat_history = langchain_message_converter(history)   # convert messages for LangChain
+history = [
+    message for message in 
+    honcho.apps.users.sessions.messages.list(
+        app_id=app.id,
+        user_id=user.id,
+        session_id=session.id
+    )
+]
+chat_history = messages_to_langchain(history)   # convert messages for LangChain
 inp = "Here's a user message!"
-session.create_message(is_user=True, content=inp)
+honcho.apps.users.sessions.messages.create(app_id=app.id, user_id=user.id, is_user=True, content=inp)
 
 response = await chain.ainvoke({"chat_history": chat_history, "input": inp})
 
-session.create_message(is_user=False, content=response)
+honcho.apps.users.sessions.messages.create(app_id=app.id, user_id=user.id, is_user=False, content=response)
 ```
 
 Here we query messages from a user's session using Honcho and construct a chat history object to send to the LLM alongside our immediate user input. Once the LLM has responded, we can add that to Honcho!

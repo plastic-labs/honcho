@@ -17,27 +17,49 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    user = honcho.get_or_create_user(user_id)
-    location_id=str(message.channel.id)
+    user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
 
-    sessions = list(user.get_sessions_generator(location_id))
+    # Get the session associated with the user and location
+    location_id = str(message.channel.id)  # Get the channel id for the message
+
+    sessions = [
+        session
+        for session in honcho.apps.users.sessions.list(
+            user_id=user.id, app_id=app.id, is_active=True, location_id=location_id
+        )
+    ]
 
     if len(sessions) > 0:
         session = sessions[0]
     else:
-        session = user.create_session(location_id)
+        session = honcho.apps.users.sessions.create(user_id=user.id, app_id=app.id, location_id=location_id)
 
-    history = list(session.get_messages_generator())
-    chat_history = langchain_message_converter(history)
+    history = [
+        message
+        for message in honcho.apps.users.sessions.messages.list(session_id=session.id, app_id=app.id, user_id=user.id)
+    ]
+    chat_history = messages_to_langchain(history)
 
     inp = message.content
-    session.create_message(is_user=True, content=inp)
+    honcho.apps.users.sessions.messages.create(
+        app_id=app.id,
+        user_id=user.id,
+        session_id=session.id,
+        content=input,
+        is_user=True,
+    )
 
     async with message.channel.typing():
         response = await chain.ainvoke({"chat_history": chat_history, "input": inp})
         await message.channel.send(response)
 
-    session.create_message(is_user=False, content=response)
+    honcho.apps.users.sessions.messages.create(
+        app_id=app.id,
+        user_id=user.id,
+        session_id=session.id,
+        content=response,
+        is_user=False,
+    )
 ```
 
 Let's break down what each chunk of code is doing...
@@ -58,14 +80,19 @@ location_id = str(message.channel.id)
 Honcho accepts a `location_id` argument to help separate out locations messages were sent (which is convenient for Discord channels).  
 
 ```python
-sessions = list(user.get_sessions_generator(location_id))
+sessions = [
+        session
+        for session in honcho.apps.users.sessions.list(
+            user_id=user.id, app_id=app.id, is_active=True, location_id=location_id
+        )
+    ]
 if len(sessions) > 0:
     session = sessions[0]
 else:
-    session = user.create_session(user_id, location_id)
+    session = honcho.apps.users.sessions.create(user_id=user.id, app_id=app.id, location_id=location_id)
 ```
 
-Here we're querying the `session` object for the user based on the location (channel) they're in. This will get all the sessions, so the if statement just pops the most recent one (if there are many) or creates a new one if none exist.
+Here we're querying honcho for the user's sessions based on the location (channel) they're in. This will get all the sessions, so the if statement just pops the most recent one (if there are many) or creates a new one if none exist.
 
 ```python
 history = list(session.get_messages_generator())
