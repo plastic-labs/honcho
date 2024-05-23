@@ -5,7 +5,13 @@ description: "Discord is a powerful chat application that handles many UI compli
 sidebarTitle: 'Discord'
 ---
 
-Any application interface that defines logic based on events and supports special commands can work easily with Honcho. Here's how to use Honcho with **Discord** as an interface. If you're not familiar with Discord bot application logic, the [py-cord](https://pycord.dev/) docs would be a good place to start. 
+> Example code is available on [GitHub](https://github.com/plastic-labs/honcho-python/blob/main/examples/discord/roast-bot/main.py)
+
+Any application interface that defines logic based on events and supports
+special commands can work easily with Honcho. Here's how to use Honcho with
+**Discord** as an interface. If you're not familiar with Discord bot
+application logic, the [py-cord](https://pycord.dev/) docs would be a good
+place to start. 
 
 ## Events
 
@@ -17,27 +23,49 @@ async def on_message(message):
         return
 
     user_id = f"discord_{str(message.author.id)}"
-    user = honcho.get_or_create_user(user_id)
-    location_id=str(message.channel.id)
+    user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
 
-    sessions = list(user.get_sessions_generator(location_id))
+    # Get the session associated with the user and location
+    location_id = str(message.channel.id)  # Get the channel id for the message
+
+    sessions = [
+        session
+        for session in honcho.apps.users.sessions.list(
+            user_id=user.id, app_id=app.id, is_active=True, location_id=location_id
+        )
+    ]
 
     if len(sessions) > 0:
         session = sessions[0]
     else:
-        session = user.create_session(location_id)
+        session = honcho.apps.users.sessions.create(user_id=user.id, app_id=app.id, location_id=location_id)
 
-    history = list(session.get_messages_generator())
-    chat_history = langchain_message_converter(history)
+    history = [
+        message
+        for message in honcho.apps.users.sessions.messages.list(session_id=session.id, app_id=app.id, user_id=user.id)
+    ]
+    chat_history = messages_to_langchain(history)
 
     inp = message.content
-    session.create_message(is_user=True, content=inp)
+    honcho.apps.users.sessions.messages.create(
+        app_id=app.id,
+        user_id=user.id,
+        session_id=session.id,
+        content=input,
+        is_user=True,
+    )
 
     async with message.channel.typing():
         response = await chain.ainvoke({"chat_history": chat_history, "input": inp})
         await message.channel.send(response)
 
-    session.create_message(is_user=False, content=response)
+    honcho.apps.users.sessions.messages.create(
+        app_id=app.id,
+        user_id=user.id,
+        session_id=session.id,
+        content=response,
+        is_user=False,
+    )
 ```
 
 Let's break down what each chunk of code is doing...
@@ -58,43 +86,80 @@ location_id = str(message.channel.id)
 Honcho accepts a `location_id` argument to help separate out locations messages were sent (which is convenient for Discord channels).  
 
 ```python
-sessions = list(user.get_sessions_generator(location_id))
+sessions = [
+        session
+        for session in honcho.apps.users.sessions.list(
+            user_id=user.id, app_id=app.id, is_active=True, location_id=location_id
+        )
+    ]
 if len(sessions) > 0:
     session = sessions[0]
 else:
-    session = user.create_session(user_id, location_id)
+    session = honcho.apps.users.sessions.create(user_id=user.id, app_id=app.id, location_id=location_id)
 ```
 
-Here we're querying the `session` object for the user based on the location (channel) they're in. This will get all the sessions, so the if statement just pops the most recent one (if there are many) or creates a new one if none exist.
+Here we're querying honcho for the user's sessions based on the location (channel) they're in. This will get all the sessions, so the if statement just pops the most recent one (if there are many) or creates a new one if none exist.
 
 ```python
-history = list(session.get_messages_generator())
-chat_history = langchain_message_converter(history)
+history = [
+        message
+        for message in honcho.apps.users.sessions.messages.list(session_id=session.id, app_id=app.id, user_id=user.id)
+    ]
+chat_history = messages_to_langchain(history)
 
-inp = message.content
-session.create_message(is_user=True, content=inp)
+# Add user message to session
+input = message.content
+honcho.apps.users.sessions.messages.create(
+    app_id=app.id,
+    user_id=user.id,
+    session_id=session.id,
+    content=input,
+    is_user=True,
+)
 
 async with message.channel.typing():
     response = await chain.ainvoke({"chat_history": chat_history, "input": inp})
     await message.channel.send(response)
 
-session.create_message(is_user=False, content=response)
+# Add bot message to session
+honcho.apps.users.sessions.messages.create(
+    app_id=app.id,
+    user_id=user.id,
+    session_id=session.id,
+    content=response,
+    is_user=False,
+)
 ```
 
-This chunk is all about constructing the object to send to an LLM API. We get the messages from a `session` and construct a `chat_history` object with a quick utility function (more on that in the [Langchain](../llm-frameworks/langchain) guide). Then, we access the user message via `message.content` and use `session.create_message` to add it to Honcho. The `async with` method allows the bot to show that it's "typing" while waiting for an LLM response and then uses `message.channel.send` to respond to the user. We can then add that AI response to Honcho with the same `session.create_message` method, this time specifying that this message did not come from a user with `is_user=False`.
+This chunk is all about constructing the object to send to an LLM API. We get
+the messages from a `session` and construct a `chat_history` object with a
+quick utility function (more on that in the [Langchain](./langchain) guide).
+Then, we access the user message via `message.content` and add it to Honcho.
+The `async with` method allows the bot to show that it's "typing" while waiting
+for an LLM response and then uses `message.channel.send` to respond to the
+user. We can then add that AI response to Honcho with the same
+`session.create_message` method, this time specifying that this message did not
+come from a user with `is_user=False`.
 
 ## Slash Commands
 
-Discord bots also offer slash command functionality. We can use Honcho to do interesting things via slash commands. Here's a simple example:
+Discord bots also offer slash command functionality. We can use Honcho to do
+interesting things via slash commands. Here's a simple example:
 
 ```python
 @bot.slash_command(name = "restart", description = "Restart the Conversation")
 async def restart(ctx):
     user_id=f"discord_{str(ctx.author.id)}"
-    user = honcho.get_or_create_user(user_id)
+    user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
     location_id=str(ctx.channel_id)
-    sessions = list(user.get_sessions_generator(location_id))
-    sessions[0].close() if len(sessions) > 0 else None
+    sessions = [
+        session
+        for session in honcho.apps.users.sessions.list(
+            user_id=user.id, app_id=app.id, is_active=True, location_id=location_id
+        )
+    ]
+    if len(sessions) > 0:
+        honcho.apps.users.sessions.delete(app_id=app.id, user_id=user.id, session_id=sessions[0].id)
 
     msg = "Great! The conversation has been restarted. What would you like to talk about?"
     await ctx.respond(msg)
@@ -103,11 +168,17 @@ async def restart(ctx):
 This slash command restarts a conversation with a bot. In that case, we want to remove that session from storage. You can see we follow the same steps to access the user metadata via commands from the application interface:
 ```python
 user_id=f"discord_{str(ctx.author.id)}"
-user = honcho.get_or_create_user(user_id)
+user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
 location_id=str(ctx.channel_id)
 ```
-Then we can retrieve and delete the messages associated with that metadata:
+Then we can retrieve and delete the session associated with that metadata:
 ```python
-sessions = list(user.get_sessions_generator(user_id, location_id))
-sessions[0].close() if len(sessions) > 0 else None
+sessions = [
+    session
+    for session in honcho.apps.users.sessions.list(
+        user_id=user.id, app_id=app.id, is_active=True, location_id=location_id
+    )
+]
+if len(sessions) > 0:
+    honcho.apps.users.sessions.delete(app_id=app.id, user_id=user.id, session_id=sessions[0].id)
 ```
