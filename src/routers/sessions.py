@@ -83,10 +83,13 @@ async def create_session(
         schemas.Session: The Session object of the new Session
 
     """
-    value = await crud.create_session(
-        db, app_id=app_id, user_id=user_id, session=session
-    )
-    return value
+    try:
+        value = await crud.create_session(
+            db, app_id=app_id, user_id=user_id, session=session
+        )
+        return value
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.put("/{session_id}", response_model=schemas.Session)
@@ -146,13 +149,13 @@ async def delete_session(
         HTTPException: If the session is not found
 
     """
-    response = await crud.delete_session(
-        db, app_id=app_id, user_id=user_id, session_id=session_id
-    )
-    if response:
+    try:
+        await crud.delete_session(
+            db, app_id=app_id, user_id=user_id, session_id=session_id
+        )
         return {"message": "Session deleted successfully"}
-    else:
-        raise HTTPException(status_code=404, detail="Session not found")
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail="Session not found") from e
 
 
 @router.get("/{session_id}", response_model=schemas.Session)
