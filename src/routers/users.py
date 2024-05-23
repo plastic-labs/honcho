@@ -92,7 +92,10 @@ async def get_user_by_name(
         schemas.User: User object
 
     """
-    return await crud.get_user_by_name(db, app_id=app_id, name=name)
+    user = await crud.get_user_by_name(db, app_id=app_id, name=name)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 
 @router.get("/{user_id}", response_model=schemas.User)
@@ -114,7 +117,10 @@ async def get_user(
         schemas.User: User object
 
     """
-    return await crud.get_user(db, app_id=app_id, user_id=user_id)
+    user = await crud.get_user(db, app_id=app_id, user_id=user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.User)
@@ -161,4 +167,7 @@ async def update_user(
         schemas.User: Updated User object
 
     """
-    return await crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
+    try:
+        return await crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
+    except ValueError as e:
+        raise HTTPException(status_code=406, detail=str(e)) from e
