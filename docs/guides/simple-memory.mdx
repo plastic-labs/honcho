@@ -7,8 +7,8 @@ description: "A simple example of how to store and derive facts about individual
 This guide shows how to implement a simple user memory system that derives and stores facts about users that
 are then referenced later on. 
 
-A fully working example can be found on [GitHub](https://github.com/plastic-labs/honcho/tree/main/example/discord/honcho-fact-memory).
-It's setup as a discord bot so view our [Discord guide](../interfaces/discord)
+A fully working example can be found on [GitHub](https://github.com/plastic-labs/honcho-python/tree/main/examples/discord/fact-memory).
+It's setup as a discord bot so view our [Discord guide](./discord)
 for more details on how to set that up.
 
 ## Initial Setup
@@ -31,7 +31,9 @@ from langchain.schema import (
 from langchain_core.output_parsers import NumberedListOutputParser
 
 llm: ChatOpenAI = ChatOpenAI(model_name="gpt-4")
-honcho = Honcho(app_id="Simple User Memory")
+app_name = "Fact-Memory"
+
+honcho = Honcho(environment="demo")
 ```
 
 The 3 steps to this project are:
@@ -81,23 +83,30 @@ template: >
     Output the facts as a numbered list.
 ```
 
-We then invoke the chain and parse the output to get our list of facts. We take advantage of one of LangChain's built in output parsers for this.
+We then invoke the chain and parse the output to get our list of facts. We take
+advantage of one of LangChain's built in output parsers for this.
 
 ## Step 2 - Storing Facts
 
-This is where Honcho comes into play. With Honcho we can initialize `Collections` for each user and can store facts as vector embeddings. You can use multiple collections if you want to segment different types of facts or data, but for now we just need one. 
+This is where Honcho comes into play. With Honcho we can initialize
+`Collections` for each user and can store facts as vector embeddings. You can
+use multiple collections if you want to segment different types of facts or
+data, but for now we just need one. 
 
 ```python
-def store_facts(user_name, facts):
-  user = honcho.get_or_create_user(user_name)
+def store_facts(app_id, user_id, facts):
+  user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
+
+  try:
+    collection = honcho.apps.users.collections.get_by_name(app_id=app.id, user_id=user.id, name="discord")
+  except NotFoundError as e:
+    collection = honcho.apps.users.collections.create(app_id=app.id, user_id=user.id, name="discord")
   collection: Collection
-  try: # Check if collection exists if not create it
-    collection = user.get_collection("simple-memory")
-  except Exception
-    collection = user.create_collection("simple-memory")
  
   for fact in facts: # store each fact in the collection
-    collection.create_document(content=fact)
+    honcho.apps.users.collections.documents.create(
+      app_id=app_id, user_id=user_id, collection_id=collection.id, content=fact
+    )
 
 ```
 
