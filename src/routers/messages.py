@@ -151,7 +151,7 @@ async def get_message(
         db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
     )
     if honcho_message is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail="Message not found")
     return honcho_message
 
 
