@@ -173,7 +173,7 @@ async def process_user_message(
     db: AsyncSession,
 ):
     """
-    Process a user message. If there's enough of a conversation history to run VoE, run it. Otherwise pass.
+    Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
     messages_stmt = await crud.get_messages(
         db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
@@ -186,7 +186,6 @@ async def process_user_message(
     print("\033[93mProcessing user message")
     print("\033[93mHistory")
     print(f"\033[93m{contents}")
-    print("\033[93m===================\033[0m")
 
     # get the most recent user thought prediction revision
     metamessages_stmt = await crud.get_metamessages(
@@ -198,15 +197,18 @@ async def process_user_message(
         metamessage_type="user_prediction_thought_revision",
         reverse=False,
     )
-    metamessages_stmt = metamessages_stmt.limit(1)
-    response = await db.execute(metamessages_stmt)
-    metamessages = response.scalars().all()
-    contents = [m.content for m in metamessages]
+    metamessages_stmt = metamessages_stmt.limit(10)
+    mm_response = await db.execute(metamessages_stmt)
+    metamessages = mm_response.scalars().all()
+    mm_contents = [m.content for m in metamessages]
+    print("\033[94m===================")
+    print("\033[94mProcessing user message")
+    print(f"\033[94mMetamessages")
+    print(f"\033[94m{mm_contents}")
+    print("\033[94m===================\033[0m")
 
-    if metamessages:
-        print(f"METAMESSAGES: {contents}")
-        metamessage = contents[0]
-
+    if len(mm_contents) > 0:
+        metamessage = mm_contents[0]
         print("\033[94m==================")
         print("\033[94mMost Recent User Prediction Thought Revision")
         print(f"\033[94m{metamessage.content}")
