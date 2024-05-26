@@ -193,7 +193,7 @@ async def process_user_message(
         app_id=app_id,
         user_id=user_id,
         session_id=session_id,
-        message_id=message_id,
+        message_id=messages[-1].id,
         metamessage_type="user_prediction_thought_revision",
         reverse=False,
     )
@@ -211,11 +211,11 @@ async def process_user_message(
         metamessage = mm_contents[0]
         print("\033[94m==================")
         print("\033[94mMost Recent User Prediction Thought Revision")
-        print(f"\033[94m{metamessage.content}")
+        print(f"\033[94m{metamessage}")
         print("\033[94m==================\033[0m")
         # VoE thought
         voe_thought = VoeThought(
-            user_prediction_thought_revision=metamessage.content, actual=content
+            user_prediction_thought_revision=metamessage, actual=content
         )
         voe_thought_response = await voe_thought.call_async()
 
@@ -225,7 +225,7 @@ async def process_user_message(
         )
         voe_derive_facts = VoeDeriveFacts(
             ai_message=most_recent_ai_message,
-            user_prediction_thought_revision=metamessage.content,
+            user_prediction_thought_revision=metamessage,
             actual=content,
             voe_thought=voe_thought_response.content,
         )
