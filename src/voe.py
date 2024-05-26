@@ -46,7 +46,7 @@ class UserPredictionThoughtRevision(AnthropicCall):
     {chat_history}
     ```
     
-    Given the thought, conversation history, and personal data, revise the thought. If there are no changes to be made, output "None".
+    Given the thought, conversation history, and personal data, revise the thought. If there are no changes to be made, output the original thought.
 
     ASSISTANT:
     thought revision:
