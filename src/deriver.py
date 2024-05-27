@@ -4,6 +4,7 @@ import os
 import re
 import uuid
 from typing import List
+from datetime import datetime
 
 import sentry_sdk
 import uvloop
@@ -85,14 +86,15 @@ async def process_ai_message(
     messages = response.scalars().all()
     # messages = messages[::-1]
     contents = [m.content for m in messages]
-    print("\033[91m===================")
-    print("\033[91mProcessing AI message")
-    print("\033[91mHistory")
-    print(f"\033[91m{contents}")
-    print("\033[91m===================\033[0m")
 
     # there needs to be at least one user and one ai message
     if len(contents) > 2:
+        print("\033[91m===================")
+        print("\033[91mProcessing AI message:")
+        content_lines = content.split('\n')
+        for line in content_lines:
+            print(f"\033[91m{line}")
+        print("\033[91m===================\033[0m")
         chat_history_str = "\n".join(
             [
                 f"user: {m.content}" if m.is_user else f"ai: {m.content}"
@@ -147,12 +149,16 @@ async def process_ai_message(
 
         print("\033[94m==================")
         print("\033[94mUser Prediction Thought")
-        print(f"\033[94m{user_prediction_thought_response.content}")
+        content_lines = user_prediction_thought_response.content.split('\n')
+        for line in content_lines:
+            print(f"\033[94m{line}")
         print("\033[94m==================\033[0m")
 
         print("\033[92m==================")
         print("\033[92mUser Prediction Thought Revision")
-        print(f"\033[92m{user_prediction_thought_revision_response.content}")
+        content_lines = user_prediction_thought_revision_response.content.split('\n')
+        for line in content_lines:
+            print(f"\033[92m{line}")
         print("\033[92m==================\033[0m")
 
         db.add(upt_metamessage)
@@ -160,7 +166,9 @@ async def process_ai_message(
         await db.commit()
 
     else:
-        pass
+        print(f"\033[91m===================")
+        print(f"\033[91mAI Message Processed -- Not enough conversation history for User Prediction")
+        print(f"\033[91m===================\033[0m")
 
 
 async def process_user_message(
@@ -176,79 +184,118 @@ async def process_user_message(
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
     messages_stmt = await crud.get_messages(
-        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
-    )
+        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
+    ) # could use a filter for "is_user" = False, tried it but don't know how to get it to work
+    # there's also the case where the AI response gets written to honcho as this one's executing
+    # so the most recent AI message isn't the one before this user message
+    # need to ensure the AI message we query comes before this user message
     messages_stmt = messages_stmt.limit(10)
     response = await db.execute(messages_stmt)
     messages = response.scalars().all()
     contents = [m.content for m in messages]
-    print("\033[93m===================")
-    print("\033[93mProcessing user message")
-    print("\033[93mHistory")
-    print(f"\033[93m{contents}")
+    print(f"\033[93mMessages Queried: {contents}")
 
-    # get the most recent user thought prediction revision
-    metamessages_stmt = await crud.get_metamessages(
-        db=db,
-        app_id=app_id,
-        user_id=user_id,
-        session_id=session_id,
-        message_id=messages[-1].id,
-        metamessage_type="user_prediction_thought_revision",
-        reverse=False,
-    )
-    metamessages_stmt = metamessages_stmt.limit(10)
-    mm_response = await db.execute(metamessages_stmt)
-    metamessages = mm_response.scalars().all()
-    mm_contents = [m.content for m in metamessages]
-    print("\033[94m===================")
-    print("\033[94mProcessing user message")
-    print(f"\033[94mMetamessages")
-    print(f"\033[94m{mm_contents}")
-    print("\033[94m===================\033[0m")
-
-    if len(mm_contents) > 0:
-        metamessage = mm_contents[0]
-        print("\033[94m==================")
-        print("\033[94mMost Recent User Prediction Thought Revision")
-        print(f"\033[94m{metamessage}")
-        print("\033[94m==================\033[0m")
-        # VoE thought
-        voe_thought = VoeThought(
-            user_prediction_thought_revision=metamessage, actual=content
+    if len(contents) > 2:
+        print("\033[93m===================")
+        print("\033[93mProcessing user message:")
+        content_lines = content.split('\n')
+        for line in content_lines:
+            print(f"\033[93m{line}")
+        print("\033[93m===================\033[0m")
+        # get the most recent ai message with user thought predictions associated with it
+        ai_message = schemas.Message(
+            content="",
+            is_user=False,
+            session_id=session_id,
+            id=uuid.uuid4(),
+            h_metadata={},
+            metadata={},
+            created_at=datetime.now(),
         )
-        voe_thought_response = await voe_thought.call_async()
+        for i, message in enumerate(messages):
+            if message.id == message_id:
+                # check that the next one in the list is the AI message we're looking for
+                if i + 1 < len(messages) and not messages[i + 1].is_user:
+                    ai_message = messages[i + 1]
+                    print(f"Most Recent AI Message: {ai_message.content}")
+                    break
+                else:
+                    print(len(messages))
+                    print(messages[i + 1])
+                    print(f"\033[93mMessage IDs Matched, but no AI message found before this user message")
+                    return
+        if ai_message.content:    
+            # get the most recent user thought prediction (TODO: Should be querying this one exactly as well)
+            metamessages_stmt = await crud.get_metamessages(
+                db=db,
+                app_id=app_id,
+                user_id=user_id,
+                session_id=session_id,
+                message_id=ai_message.id,
+                metamessage_type="user_prediction_thought_revision",
+                reverse=True,
+            )
+            metamessages_stmt = metamessages_stmt.limit(10)
+            mm_response = await db.execute(metamessages_stmt)
+            metamessages = mm_response.scalars().all()
+            mm_contents = [m.content for m in metamessages]
+            print("\033[94m===================")
+            print(f"\033[94mMetamessages: {mm_contents}")
+            print("\033[94m===================\033[0m")
+        else:
+            print(f"\033[93mNo AI message found before this user message")
+            return
 
-        # VoE derive facts
-        most_recent_ai_message = next(
-            (m.content for m in messages if not m.is_user), ""
-        )
-        voe_derive_facts = VoeDeriveFacts(
-            ai_message=most_recent_ai_message,
-            user_prediction_thought_revision=metamessage,
-            actual=content,
-            voe_thought=voe_thought_response.content,
-        )
-        voe_derive_facts_response = await voe_derive_facts.call_async()
+        if len(mm_contents) > 0:
+            metamessage = mm_contents[0]
+            print("\033[94m==================")
+            print("\033[94mMost Recent User Prediction Thought Revision")
+            content_lines = metamessage.split('\n')
+            for line in content_lines:
+                print(f"\033[94m{line}")
+            print("\033[94m==================\033[0m")
+            # VoE thought
+            voe_thought = VoeThought(
+                user_prediction_thought_revision=metamessage, actual=content
+            )
+            voe_thought_response = await voe_thought.call_async()
 
-        # check dups
-        facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
-        new_facts = await check_dups(app_id, user_id, collection_id, facts)
+            voe_derive_facts = VoeDeriveFacts(
+                ai_message=ai_message.content,
+                user_prediction_thought_revision=metamessage,
+                actual=content,
+                voe_thought=voe_thought_response.content,
+            )
+            voe_derive_facts_response = await voe_derive_facts.call_async()
 
-        for fact in new_facts:
-            create_document = schemas.DocumentCreate(content=fact)
-            async with SessionLocal() as db:
-                doc = await crud.create_document(
-                    db,
-                    document=create_document,
-                    app_id=app_id,
-                    user_id=user_id,
-                    collection_id=collection_id,
-                )
-                print(f"Returned Document: {doc}")
+            # check dups
+            facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
+            new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
+            for fact in new_facts:
+                create_document = schemas.DocumentCreate(content=fact)
+                async with SessionLocal() as db:
+                    doc = await crud.create_document(
+                        db,
+                        document=create_document,
+                        app_id=app_id,
+                        user_id=user_id,
+                        collection_id=collection_id,
+                    )
+                    print(f"Returned Document: {doc.content}")
+
+        else:
+            print(f"\033[93m===================")
+            print(f"\033[93mAttempted to process User message -- No User Prediction Thought Revisions to run VoE against")
+            print(f"\033[93m===================\033[0m")
+            return
     else:
-        pass
+        print("\033[93m===================")
+        print("\033[93mAttempted to process User message -- Not enough conversation history to run VoE")
+        print("\033[93m===================\033[0m")
+        return
+
+
 
 
 async def check_dups(
@@ -311,7 +358,7 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
 
             if item:
                 print("========")
-                print("Processing")
+                print("Processing item")
                 print("========")
                 await process_item(db, payload=item.payload)
                 item.processed = True
