@@ -76,99 +76,107 @@ async def process_ai_message(
     db: AsyncSession,
 ):
     """
-    Process an AI message. If there's enough of a conversation history to run user prediction, run it. Otherwise pass.
+    Process an AI message. Make a prediction about what the user is going to say to it.
     """
-    messages_stmt = await crud.get_messages(
-        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
+    print(f"\033[92mProcessing AI message: {content}")
+
+    subquery = ( 
+        select(models.Message.created_at)
+        .where(models.Message.id == message_id)
+        .scalar_subquery()
     )
-    messages_stmt = messages_stmt.limit(10)
-    response = await db.execute(messages_stmt)
-    messages = response.scalars().all()
+    messages_stmt = (
+        select(models.Message)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Message.created_at)
+        .where(models.Message.created_at < subquery)
+        .limit(10)
+    )
+
+    # messages_stmt = await crud.get_messages(
+    #     db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=False
+    # )
+    # messages_stmt = messages_stmt.limit(10)
+    result = await db.execute(messages_stmt)
+    messages = result.scalars().all()
+    # messages = response.scalars().all()
     # messages = messages[::-1]
-    contents = [m.content for m in messages]
+    # print(messages)
+    # contents = [m.content for m in messages]
 
-    # there needs to be at least one user and one ai message
-    if len(contents) > 2:
-        print("\033[91m===================")
-        print("\033[91mProcessing AI message:")
-        content_lines = content.split('\n')
-        for line in content_lines:
-            print(f"\033[91m{line}")
-        print("\033[91m===================\033[0m")
-        chat_history_str = "\n".join(
-            [
-                f"user: {m.content}" if m.is_user else f"ai: {m.content}"
-                for m in messages
-            ]
+    chat_history_str = "\n".join(
+        [
+            f"human: {m.content}" if m.is_user else f"ai: {m.content}"
+            for m in messages
+        ]
+    )
+    # append current message to chat history
+    chat_history_str = f"{chat_history_str}\nai: {content}"
+
+    # user prediction thought
+    user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
+    user_prediction_thought_response = await user_prediction_thought.call_async()
+
+    ## query the collection to build the context
+    additional_data = re.findall(
+        r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
+    )
+    additional_data_list = []
+    for d in additional_data:
+        response = await crud.query_documents(
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            query=d,
+            top_k=3,
         )
-        # user prediction thought
-        user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
-        user_prediction_thought_response = await user_prediction_thought.call_async()
+        additional_data_list.extend([document.content for document in response])
 
-        ## query the collection to build the context
-        additional_data = re.findall(
-            r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
-        )
-        additional_data_list = []
-        for d in additional_data:
-            response = await crud.query_documents(
-                db,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-                query=d,
-                top_k=3,
-            )
-            additional_data_list.extend([document.content for document in response])
+    context_str = "\n".join(additional_data_list)
 
-        context_str = "\n".join(additional_data_list)
+    # user prediction thought revision given the context
+    user_prediction_thought_revision = UserPredictionThoughtRevision(
+        user_prediction_thought=user_prediction_thought_response.content,
+        retrieved_context=context_str,
+        chat_history=chat_history_str,
+    )
+    user_prediction_thought_revision_response = (
+        await user_prediction_thought_revision.call_async()
+    )
 
-        # user prediction thought revision given the context
-        user_prediction_thought_revision = UserPredictionThoughtRevision(
-            user_prediction_thought=user_prediction_thought_response.content,
-            retrieved_context=context_str,
-            chat_history=chat_history_str,
-        )
-        user_prediction_thought_revision_response = (
-            await user_prediction_thought_revision.call_async()
-        )
+    upt_metamessage = models.Metamessage(
+        message_id=message_id,
+        metamessage_type="user_prediction_thought",
+        content=user_prediction_thought_response.content,
+        h_metadata={},
+    )
 
-        upt_metamessage = models.Metamessage(
-            message_id=message_id,
-            metamessage_type="user_prediction_thought",
-            content=user_prediction_thought_response.content,
-            h_metadata={},
-        )
+    uptr_metamessage = models.Metamessage(
+        message_id=message_id,
+        metamessage_type="user_prediction_thought_revision",
+        content=user_prediction_thought_revision_response.content,
+        h_metadata={},
+    )
 
-        uptr_metamessage = models.Metamessage(
-            message_id=message_id,
-            metamessage_type="user_prediction_thought_revision",
-            content=user_prediction_thought_revision_response.content,
-            h_metadata={},
-        )
+    print("\033[94m==================")
+    print("\033[94mUser Prediction Thought")
+    content_lines = user_prediction_thought_response.content.split('\n')
+    for line in content_lines:
+        print(f"\033[94m{line}")
+    print("\033[94m==================\033[0m")
 
-        print("\033[94m==================")
-        print("\033[94mUser Prediction Thought")
-        content_lines = user_prediction_thought_response.content.split('\n')
-        for line in content_lines:
-            print(f"\033[94m{line}")
-        print("\033[94m==================\033[0m")
+    print("\033[95m==================")
+    print("\033[95mUser Prediction Thought Revision")
+    content_lines = user_prediction_thought_revision_response.content.split('\n')
+    for line in content_lines:
+        print(f"\033[95m{line}")
+    print("\033[95m==================\033[0m")
 
-        print("\033[92m==================")
-        print("\033[92mUser Prediction Thought Revision")
-        content_lines = user_prediction_thought_revision_response.content.split('\n')
-        for line in content_lines:
-            print(f"\033[92m{line}")
-        print("\033[92m==================\033[0m")
-
-        db.add(upt_metamessage)
-        db.add(uptr_metamessage)
-        await db.commit()
-
-    else:
-        print(f"\033[91m===================")
-        print(f"\033[91mAI Message Processed -- Not enough conversation history for User Prediction")
-        print(f"\033[91m===================\033[0m")
+    db.add(upt_metamessage)
+    db.add(uptr_metamessage)
+    await db.commit()
+    
 
 
 async def process_user_message(
@@ -183,92 +191,52 @@ async def process_user_message(
     """
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
-    messages_stmt = await crud.get_messages(
-        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
-    ) # could use a filter for "is_user" = False, tried it but don't know how to get it to work
-    # there's also the case where the AI response gets written to honcho as this one's executing
-    # so the most recent AI message isn't the one before this user message
-    # need to ensure the AI message we query comes before this user message
-    messages_stmt = messages_stmt.limit(10)
+    print(f"\033[93mProcessing User Message: {content}")
+    subquery = ( 
+        select(models.Message.created_at)
+        .where(models.Message.id == message_id)
+        .scalar_subquery()
+    )
+
+    messages_stmt = (
+        select(models.Message)
+        .where(models.Message.created_at < subquery)
+        .where(models.Message.session_id == session_id)
+        .where(models.Message.is_user == False)
+    )
+
     response = await db.execute(messages_stmt)
-    messages = response.scalars().all()
-    contents = [m.content for m in messages]
-    print(f"\033[93mMessages Queried: {contents}")
+    ai_message = response.scalar_one_or_none()
 
-    if len(contents) > 2:
-        print("\033[93m===================")
-        print("\033[93mProcessing user message:")
-        content_lines = content.split('\n')
-        for line in content_lines:
-            print(f"\033[93m{line}")
-        print("\033[93m===================\033[0m")
-        # get the most recent ai message with user thought predictions associated with it
-        ai_message = schemas.Message(
-            content="",
-            is_user=False,
-            session_id=session_id,
-            id=uuid.uuid4(),
-            h_metadata={},
-            metadata={},
-            created_at=datetime.now(),
+    if ai_message and ai_message.content:
+        print(f"\033[93mAI Message: {ai_message.content}")
+        metamessages_stmt = (
+            select(models.Metamessage)
+            .where(models.Metamessage.message_id == ai_message.id)
+            .where(models.Metamessage.metamessage_type == "user_prediction_thought_revision")
+            .order_by(models.Metamessage.created_at.asc())
         )
-        for i, message in enumerate(messages):
-            if message.id == message_id:
-                # check that the next one in the list is the AI message we're looking for
-                if i + 1 < len(messages) and not messages[i + 1].is_user:
-                    ai_message = messages[i + 1]
-                    print(f"Most Recent AI Message: {ai_message.content}")
-                    break
-                else:
-                    print(len(messages))
-                    print(messages[i + 1])
-                    print(f"\033[93mMessage IDs Matched, but no AI message found before this user message")
-                    return
-        if ai_message.content:    
-            # get the most recent user thought prediction (TODO: Should be querying this one exactly as well)
-            metamessages_stmt = await crud.get_metamessages(
-                db=db,
-                app_id=app_id,
-                user_id=user_id,
-                session_id=session_id,
-                message_id=ai_message.id,
-                metamessage_type="user_prediction_thought_revision",
-                reverse=True,
-            )
-            metamessages_stmt = metamessages_stmt.limit(10)
-            mm_response = await db.execute(metamessages_stmt)
-            metamessages = mm_response.scalars().all()
-            mm_contents = [m.content for m in metamessages]
-            print("\033[94m===================")
-            print(f"\033[94mMetamessages: {mm_contents}")
-            print("\033[94m===================\033[0m")
-        else:
-            print(f"\033[93mNo AI message found before this user message")
-            return
+        response = await db.execute(metamessages_stmt)
+        metamessage = response.scalars().first()
 
-        if len(mm_contents) > 0:
-            metamessage = mm_contents[0]
-            print("\033[94m==================")
-            print("\033[94mMost Recent User Prediction Thought Revision")
-            content_lines = metamessage.split('\n')
-            for line in content_lines:
-                print(f"\033[94m{line}")
-            print("\033[94m==================\033[0m")
+        if metamessage and metamessage.content:
+            print(f"\033[93mMetamessage: {metamessage.content}")
+
             # VoE thought
             voe_thought = VoeThought(
-                user_prediction_thought_revision=metamessage, actual=content
+                user_prediction_thought_revision=metamessage.content, actual=content
             )
             voe_thought_response = await voe_thought.call_async()
 
+            # VoE derive facts
             voe_derive_facts = VoeDeriveFacts(
                 ai_message=ai_message.content,
-                user_prediction_thought_revision=metamessage,
+                user_prediction_thought_revision=metamessage.content,
                 actual=content,
                 voe_thought=voe_thought_response.content,
             )
             voe_derive_facts_response = await voe_derive_facts.call_async()
 
-            # check dups
             facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
@@ -282,17 +250,11 @@ async def process_user_message(
                         user_id=user_id,
                         collection_id=collection_id,
                     )
-                    print(f"Returned Document: {doc.content}")
-
+                    print(f"\033[93mReturned Document: {doc.content}")
         else:
-            print(f"\033[93m===================")
-            print(f"\033[93mAttempted to process User message -- No User Prediction Thought Revisions to run VoE against")
-            print(f"\033[93m===================\033[0m")
-            return
+            raise Exception(f"\033[91mUser Thought Prediction Revision NOT READY YET")
     else:
-        print("\033[93m===================")
-        print("\033[93mAttempted to process User message -- Not enough conversation history to run VoE")
-        print("\033[93m===================\033[0m")
+        print(f"\033[91mNo AI message before this user message")
         return
 
 
