@@ -263,6 +263,20 @@ files = [
 test = ["pytest (>=6)"]
 
 [[package]]
+name = "executing"
+version = "2.0.1"
+description = "Get the currently executing AST node of a frame, and other information"
+optional = false
+python-versions = ">=3.5"
+files = [
+    {file = "executing-2.0.1-py2.py3-none-any.whl", hash = "sha256:eac49ca94516ccc753f9fb5ce82603156e590b27525a8bc32cce8ae302eb61bc"},
+    {file = "executing-2.0.1.tar.gz", hash = "sha256:35afe2ce3affba8ee97f2d69927fa823b08b472b7b994e36a52a964b93d16147"},
+]
+
+[package.extras]
+tests = ["asttokens (>=2.1.0)", "coverage", "coverage-enable-subprocess", "ipython", "littleutils", "pytest", "rich"]
+
+[[package]]
 name = "fastapi"
 version = "0.109.2"
 description = "FastAPI framework, high performance, easy to learn, fast to code, ready for production"
@@ -730,14 +744,87 @@ redis = ["redis (>3,!=4.5.2,!=4.5.3,<6.0.0)"]
 rediscluster = ["redis (>=4.2.0,!=4.5.2,!=4.5.3)"]
 
 [[package]]
+name = "logfire"
+version = "0.36.1"
+description = "The best Python observability tool! 🪵🔥"
+optional = false
+python-versions = "*"
+files = [
+    {file = "logfire-0.36.1-py2.py3-none-any.whl", hash = "sha256:3b585a86afefed20b69257b84628ca2bace4e15c7f8c42bf1d40025240a86eba"},
+    {file = "logfire-0.36.1.tar.gz", hash = "sha256:d90e714467348c3c1d045e8648e0280b6527a5422f50eefd1ba5744a86fa12dc"},
+]
+
+[package.dependencies]
+executing = ">=2.0.1"
+opentelemetry-exporter-otlp-proto-http = ">=1.21.0"
+opentelemetry-instrumentation = ">=0.41b0"
+opentelemetry-sdk = ">=1.21.0"
+protobuf = ">=4.23.4"
+rich = ">=13.4.2"
+tomli = {version = ">=2.0.1", markers = "python_version < \"3.11\""}
+typing-extensions = ">=4.1.0"
+
+[package.extras]
+aiohttp = ["opentelemetry-instrumentation-aiohttp-client (>=0.42b0)"]
+asyncpg = ["opentelemetry-instrumentation-asyncpg (>=0.42b0)"]
+celery = ["opentelemetry-instrumentation-celery (>=0.42b0)"]
+django = ["opentelemetry-instrumentation-django (>=0.42b0)"]
+fastapi = ["opentelemetry-instrumentation-fastapi (>=0.42b0)"]
+flask = ["opentelemetry-instrumentation-flask (>=0.42b0)"]
+httpx = ["opentelemetry-instrumentation-httpx (>=0.42b0)"]
+psycopg = ["opentelemetry-instrumentation-psycopg (>=0.42b0)", "packaging"]
+psycopg2 = ["opentelemetry-instrumentation-psycopg2 (>=0.42b0)", "packaging"]
+pymongo = ["opentelemetry-instrumentation-pymongo (>=0.42b0)"]
+redis = ["opentelemetry-instrumentation-redis (>=0.42b0)"]
+requests = ["opentelemetry-instrumentation-requests (>=0.42b0)"]
+sqlalchemy = ["opentelemetry-instrumentation-sqlalchemy (>=0.42b0)"]
+starlette = ["opentelemetry-instrumentation-starlette (>=0.42b0)"]
+system-metrics = ["opentelemetry-instrumentation-system-metrics (>=0.42b0)"]
+
+[[package]]
+name = "markdown-it-py"
+version = "3.0.0"
+description = "Python port of markdown-it. Markdown parsing, done right!"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "markdown-it-py-3.0.0.tar.gz", hash = "sha256:e3f60a94fa066dc52ec76661e37c851cb232d92f9886b15cb560aaada2df8feb"},
+    {file = "markdown_it_py-3.0.0-py3-none-any.whl", hash = "sha256:355216845c60bd96232cd8d8c40e8f9765cc86f46880e43a8fd22dc1a1a8cab1"},
+]
+
+[package.dependencies]
+mdurl = ">=0.1,<1.0"
+
+[package.extras]
+benchmarking = ["psutil", "pytest", "pytest-benchmark"]
+code-style = ["pre-commit (>=3.0,<4.0)"]
+compare = ["commonmark (>=0.9,<1.0)", "markdown (>=3.4,<4.0)", "mistletoe (>=1.0,<2.0)", "mistune (>=2.0,<3.0)", "panflute (>=2.3,<3.0)"]
+linkify = ["linkify-it-py (>=1,<3)"]
+plugins = ["mdit-py-plugins"]
+profiling = ["gprof2dot"]
+rtd = ["jupyter_sphinx", "mdit-py-plugins", "myst-parser", "pyyaml", "sphinx", "sphinx-copybutton", "sphinx-design", "sphinx_book_theme"]
+testing = ["coverage", "pytest", "pytest-cov", "pytest-regressions"]
+
+[[package]]
+name = "mdurl"
+version = "0.1.2"
+description = "Markdown URL utilities"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8"},
+    {file = "mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba"},
+]
+
+[[package]]
 name = "mirascope"
-version = "0.13.4"
+version = "0.13.5"
 description = "An intuitive approach to building with LLMs"
 optional = false
 python-versions = "<4.0,>=3.9"
 files = [
-    {file = "mirascope-0.13.4-py3-none-any.whl", hash = "sha256:f471948de89e83967b8d92110c4f0c1ef3b9c6fd3736708271da8aaa47ae8513"},
-    {file = "mirascope-0.13.4.tar.gz", hash = "sha256:d17cc7fee81c2c9fc50b1d48e5b4d1794c74b00802dc21c04f4da55f8a733f8f"},
+    {file = "mirascope-0.13.5-py3-none-any.whl", hash = "sha256:491e6491f9c882225258d63abb3642ee1b29b495300e2c386f549bdb33fa0c30"},
+    {file = "mirascope-0.13.5.tar.gz", hash = "sha256:49a82e7ac4d27c96bf07e9b3fdaa64592a7dc598155254768869e5130c8cb31c"},
 ]
 
 [package.dependencies]
@@ -1323,6 +1410,20 @@ files = [
 typing-extensions = ">=4.6.0,<4.7.0 || >4.7.0"
 
 [[package]]
+name = "pygments"
+version = "2.18.0"
+description = "Pygments is a syntax highlighting package written in Python."
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "pygments-2.18.0-py3-none-any.whl", hash = "sha256:b8e6aca0523f3ab76fee51799c488e38782ac06eafcf95e7ba832985c8e7b13a"},
+    {file = "pygments-2.18.0.tar.gz", hash = "sha256:786ff802f32e91311bff3889f6e9a86e81505fe99f2735bb6d60ae0c5004f199"},
+]
+
+[package.extras]
+windows-terminal = ["colorama (>=0.4.6)"]
+
+[[package]]
 name = "python-dotenv"
 version = "1.0.1"
 description = "Read key-value pairs from a .env file and set them as environment variables"
@@ -1415,6 +1516,24 @@ urllib3 = ">=1.21.1,<3"
 [package.extras]
 socks = ["PySocks (>=1.5.6,!=1.5.7)"]
 use-chardet-on-py3 = ["chardet (>=3.0.2,<6)"]
+
+[[package]]
+name = "rich"
+version = "13.7.1"
+description = "Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal"
+optional = false
+python-versions = ">=3.7.0"
+files = [
+    {file = "rich-13.7.1-py3-none-any.whl", hash = "sha256:4edbae314f59eb482f54e9e30bf00d33350aaa94f4bfcd4e9e3110e64d0d7222"},
+    {file = "rich-13.7.1.tar.gz", hash = "sha256:9be308cb1fe2f1f57d67ce99e95af38a1e2bc71ad9813b0e247cf7ffbcc3a432"},
+]
+
+[package.dependencies]
+markdown-it-py = ">=2.2.0"
+pygments = ">=2.13.0,<3.0.0"
+
+[package.extras]
+jupyter = ["ipywidgets (>=7.5.1,<9)"]
 
 [[package]]
 name = "sentry-sdk"
@@ -1747,6 +1866,17 @@ docs = ["setuptools-rust", "sphinx", "sphinx-rtd-theme"]
 testing = ["black (==22.3)", "datasets", "numpy", "pytest", "requests", "ruff"]
 
 [[package]]
+name = "tomli"
+version = "2.0.1"
+description = "A lil' TOML parser"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "tomli-2.0.1-py3-none-any.whl", hash = "sha256:939de3e7a6161af0c887ef91b7d41a53e7c5a1ca976325f429cb46ea9bc30ecc"},
+    {file = "tomli-2.0.1.tar.gz", hash = "sha256:de526c12914f0c550d15924c62d72abc48d6fe7364aa87328337a31007fe8a4f"},
+]
+
+[[package]]
 name = "tqdm"
 version = "4.66.4"
 description = "Fast, Extensible Progress Meter"
@@ -1965,4 +2095,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "9f9095c6645433b4c5834c84ea63cc58411505c00863baad2d91a2169bf27794"
+content-hash = "c87ae3770f8b8feafc41b8241e69033ee782db82adaf8d5df2d5a38dcad8d6c1"
