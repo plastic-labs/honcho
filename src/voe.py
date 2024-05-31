@@ -1,7 +1,8 @@
-import logfire
+import os
 from typing import List
 
-from mirascope.openai import OpenAICall, OpenAICallParams
+from mirascope.base import BaseConfig
+from mirascope.openai import OpenAICall, OpenAICallParams, azure_client_wrapper
 
 
 # user prediction thought + additional data to improve prediction
@@ -20,9 +21,21 @@ class UserPredictionThought(OpenAICall):
     ASSISTANT:
     Thought:
     '''
-
     chat_history: str
-    call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
+
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+    )
+    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
 
 
 # user prediction thought revision given context
@@ -51,12 +64,25 @@ class UserPredictionThoughtRevision(OpenAICall):
 
     ASSISTANT:
     thought revision:
-    '''    
+    '''
 
     user_prediction_thought: str
     retrieved_context: str
     chat_history: str
-    call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
+    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
+
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+    )
 
 
 # VoE thought
@@ -77,7 +103,20 @@ class VoeThought(OpenAICall):
     '''
     user_prediction_thought_revision: str
     actual: str
-    call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
+
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+    )
+    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
 
 
 # VoE derive facts
@@ -108,7 +147,20 @@ class VoeDeriveFacts(OpenAICall):
     user_prediction_thought_revision: str
     actual: str
     voe_thought: str
-    call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
+
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+    )
+    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
 
 
 # check dups
@@ -129,4 +181,17 @@ class CheckVoeList(OpenAICall):
     '''
     existing_facts: List[str]
     facts: List[str]
-    call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
+
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+    )
+    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
