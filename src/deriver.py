@@ -3,8 +3,8 @@ import logging
 import os
 import re
 import uuid
-from typing import List
 from datetime import datetime
+from typing import List
 
 import sentry_sdk
 import uvloop
@@ -90,7 +90,7 @@ async def process_ai_message(
     """
     print(f"\033[92mProcessing AI message: {content}")
 
-    subquery = ( 
+    subquery = (
         select(models.Message.created_at)
         .where(models.Message.id == message_id)
         .scalar_subquery()
@@ -107,10 +107,7 @@ async def process_ai_message(
     messages = result.scalars().all()
 
     chat_history_str = "\n".join(
-        [
-            f"human: {m.content}" if m.is_user else f"ai: {m.content}"
-            for m in messages
-        ]
+        [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
     )
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
@@ -134,8 +131,13 @@ async def process_ai_message(
             top_k=3,
         )
         # TODO: fix this -- add it to the list if it's not there already
-        additional_data_list.extend([document for document in response if document.id not in [d.id for d in additional_data_list]])
-    
+        additional_data_list.extend(
+            [
+                document
+                for document in response
+                if document.id not in [d.id for d in additional_data_list]
+            ]
+        )
 
     context_str = "\n".join([document.content for document in additional_data_list])
 
@@ -151,38 +153,56 @@ async def process_ai_message(
 
     if user_prediction_thought_revision_response.content == "None":
         print(f"\033[94mModel predicted no changes to the user prediction thought")
-        await add_metamessage(db, message_id, "user_prediction_thought", user_prediction_thought_response.content)
-        await add_metamessage(db, message_id, "user_prediction_thought_revision", user_prediction_thought_response.content)
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought",
+            user_prediction_thought_response.content,
+        )
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought_revision",
+            user_prediction_thought_response.content,
+        )
     else:
-        await add_metamessage(db, message_id, "user_prediction_thought", user_prediction_thought_response.content)
-        await add_metamessage(db, message_id, "user_prediction_thought_revision", user_prediction_thought_revision_response.content)
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought",
+            user_prediction_thought_response.content,
+        )
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought_revision",
+            user_prediction_thought_revision_response.content,
+        )
 
     await db.commit()
 
     # debugging
     print(f"\033[94m=================")
     print(f"\033[94mUser Prediction Thought Prompt:")
-    content_lines = str(user_prediction_thought).split('\n')
+    content_lines = str(user_prediction_thought).split("\n")
     for line in content_lines:
         print(f"\033[94m{line}")
     print(f"\033[94mUser Prediction Thought:")
-    content_lines = str(user_prediction_thought_response.content).split('\n')
+    content_lines = str(user_prediction_thought_response.content).split("\n")
     for line in content_lines:
         print(f"\033[94m{line}")
     print(f"\033[94m=================\033[0m")
 
     print(f"\033[95m=================")
     print(f"\033[95mUser Prediction Thought Revision:")
-    content_lines = str(user_prediction_thought_revision).split('\n')
+    content_lines = str(user_prediction_thought_revision).split("\n")
     for line in content_lines:
         print(f"\033[95m{line}")
     print(f"\033[95mUser Prediction Thought Revision Response:")
-    content_lines = str(user_prediction_thought_revision_response.content).split('\n')
+    content_lines = str(user_prediction_thought_revision_response.content).split("\n")
     for line in content_lines:
         print(f"\033[95m{line}")
     print(f"\033[95m=================\033[0m")
-
-    
 
 
 async def process_user_message(
@@ -198,7 +218,7 @@ async def process_user_message(
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
     print(f"\033[93mProcessing User Message: {content}")
-    subquery = ( 
+    subquery = (
         select(models.Message.created_at)
         .where(models.Message.id == message_id)
         .scalar_subquery()
@@ -220,7 +240,10 @@ async def process_user_message(
         metamessages_stmt = (
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.id)
-            .where(models.Metamessage.metamessage_type == "user_prediction_thought_revision")
+            .where(
+                models.Metamessage.metamessage_type
+                == "user_prediction_thought_revision"
+            )
             .order_by(models.Metamessage.created_at.asc())
             .limit(1)
         )
@@ -248,27 +271,30 @@ async def process_user_message(
             # debugging
             print(f"\033[93m=================")
             print(f"\033[93mVoe Thought Prompt:")
-            content_lines = str(voe_thought).split('\n')
+            content_lines = str(voe_thought).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
             print(f"\033[93mVoe Thought:")
-            content_lines = str(voe_thought_response.content).split('\n')
+            content_lines = str(voe_thought_response.content).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
             print(f"\033[93m=================\033[0m")
 
             print(f"\033[93m=================")
             print(f"\033[93mVoe Derive Facts Prompt:")
-            content_lines = str(voe_derive_facts).split('\n')
+            content_lines = str(voe_derive_facts).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
             print(f"\033[93mVoe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_response.content).split('\n')
+            content_lines = str(voe_derive_facts_response.content).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
             print(f"\033[93m=================\033[0m")
 
             facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
+            print(f"\033[93m=================")
+            print(f"\033[93mThe Facts Themselves:")
+            print(facts)
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
             for fact in new_facts:
@@ -287,8 +313,6 @@ async def process_user_message(
     else:
         print(f"\033[91mNo AI message before this user message")
         return
-
-
 
 
 async def check_dups(
@@ -325,7 +349,7 @@ async def check_dups(
         print("Dedupe Responses")
         print(response.content)
         print("==================")
-        if response.content == "True":
+        if response.content == "None":
             new_facts.append(fact)
             print(f"New Fact: {fact}")
             continue
