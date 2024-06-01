@@ -1,7 +1,9 @@
+import os
 import uuid
 
 from dotenv import load_dotenv
-from mirascope.openai import OpenAICall, OpenAICallParams
+from mirascope.base import BaseConfig
+from mirascope.openai import OpenAICall, OpenAICallParams, azure_client_wrapper
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, schemas
@@ -21,7 +23,19 @@ class Dialectic(OpenAICall):
     agent_input: str
     retrieved_facts: str
 
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+    )
+    # call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
 
 
 async def prep_inference(
