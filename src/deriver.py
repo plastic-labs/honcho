@@ -320,7 +320,7 @@ async def check_dups(
 ):
     """Check that we're not storing duplicate facts"""
 
-    check_duplication = CheckVoeList(existing_facts=[], facts=[])
+    check_duplication = CheckVoeList(existing_facts=[], new_fact="")
     result = None
     new_facts = []
     global_existing_facts = []  # for debugging
