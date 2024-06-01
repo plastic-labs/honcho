@@ -267,7 +267,7 @@ async def delete_session(
     result = await db.execute(stmt)
     honcho_session = result.scalar_one_or_none()
     if honcho_session is None:
-        return False
+        raise ValueError("Session not found or does not belong to user")
     honcho_session.is_active = False
     await db.commit()
     return True
@@ -627,7 +627,7 @@ async def delete_collection(
     result = await db.execute(stmt)
     honcho_collection = result.scalar_one_or_none()
     if honcho_collection is None:
-        return False
+        raise ValueError("collection not found or does not belong to user")
     await db.delete(honcho_collection)
     await db.commit()
     return True

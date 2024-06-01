@@ -7,3 +7,8 @@ docs/**
 supabase/**
 LICENSE
 __pycache__
+docker-compose.yml.example
+.github/**
+.vscode/**
+data/**
+

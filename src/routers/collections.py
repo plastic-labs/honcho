@@ -174,12 +174,12 @@ async def delete_collection(
     db=db,
     auth=Depends(auth),
 ):
-    response = await crud.delete_collection(
-        db, app_id=app_id, user_id=user_id, collection_id=collection_id
-    )
-    if response:
+    try:
+        await crud.delete_collection(
+            db, app_id=app_id, user_id=user_id, collection_id=collection_id
+        )
         return {"message": "Collection deleted successfully"}
-    else:
+    except ValueError:
         raise HTTPException(
             status_code=404, detail="collection not found or does not belong to user"
-        )
+        ) from None
