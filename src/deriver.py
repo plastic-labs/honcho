@@ -343,13 +343,13 @@ async def check_dups(
         global_existing_facts.extend(existing_facts)  # for debugging
 
         check_duplication.existing_facts = existing_facts
-        check_duplication.facts = [fact]
+        check_duplication.new_fact = fact
         response = await check_duplication.call_async()
         print("==================")
         print("Dedupe Responses")
         print(response.content)
         print("==================")
-        if response.content == "None":
+        if response.content == "true":
             new_facts.append(fact)
             print(f"New Fact: {fact}")
             continue
