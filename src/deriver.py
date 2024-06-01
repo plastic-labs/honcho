@@ -3,7 +3,6 @@ import logging
 import os
 import re
 import uuid
-from datetime import datetime
 from typing import List
 
 import sentry_sdk
@@ -36,6 +35,7 @@ if SENTRY_ENABLED:
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
+# FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
     metamessage = models.Metamessage(
         message_id=message_id,
@@ -98,13 +98,13 @@ async def process_ai_message(
     messages_stmt = (
         select(models.Message)
         .where(models.Message.session_id == session_id)
-        .order_by(models.Message.created_at)
+        .order_by(models.Message.created_at.desc())
         .where(models.Message.created_at < subquery)
         .limit(10)
     )
 
     result = await db.execute(messages_stmt)
-    messages = result.scalars().all()
+    messages = result.scalars().all()[::-1]
 
     chat_history_str = "\n".join(
         [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
@@ -120,6 +120,7 @@ async def process_ai_message(
     additional_data = re.findall(
         r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
     )
+    additional_data_set = set()
     additional_data_list = []
     for d in additional_data:
         response = await crud.query_documents(
@@ -130,14 +131,9 @@ async def process_ai_message(
             query=d,
             top_k=3,
         )
-        # TODO: fix this -- add it to the list if it's not there already
-        additional_data_list.extend(
-            [
-                document
-                for document in response
-                if document.id not in [d.id for d in additional_data_list]
-            ]
-        )
+        for document in response:
+            additional_data_set.add(document)
+        additional_data_list = list(additional_data_set)
 
     context_str = "\n".join([document.content for document in additional_data_list])
 
@@ -366,6 +362,7 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
         try:
             result = await db.execute(
                 select(models.QueueItem)
+                .order_by(models.QueueItem.created_at)
                 .where(models.QueueItem.processed == False)
                 .with_for_update(skip_locked=True)
                 .limit(1)
@@ -394,20 +391,13 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
 async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
     while True:
         if queue_empty_flag.is_set():
-            # print("========")
-            print("Queue is empty flag")
-            # print("========")
-            await asyncio.sleep(5)  # Sleep briefly if the queue is empty
+            await asyncio.sleep(1)  # Sleep briefly if the queue is empty
             queue_empty_flag.clear()  # Reset the flag
             continue
         if semaphore.locked():
-            # print("========")
-            # print("Semaphore Locked")
-            # print("========")
             await asyncio.sleep(2)  # Sleep briefly if the semaphore is fully locked
             continue
         task = asyncio.create_task(dequeue(semaphore, queue_empty_flag))
-        # task.add_done_callback(lambda t: print(f"Task done: {t}"))
         await asyncio.sleep(0)  # Yield control to allow tasks to run
 
 

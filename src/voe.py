@@ -5,12 +5,29 @@ from mirascope.base import BaseConfig
 from mirascope.openai import OpenAICall, OpenAICallParams, azure_client_wrapper
 
 
+class HonchoCall(OpenAICall):
+    configuration = BaseConfig(
+        client_wrappers=[
+            azure_client_wrapper(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),  # type: ignore
+            )
+        ]
+    )
+    call_params = OpenAICallParams(
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),  # type: ignore
+        temperature=1.2,
+        top_p=0.5,
+    )
+
+
 # user prediction thought + additional data to improve prediction
-class UserPredictionThought(OpenAICall):
+class UserPredictionThought(HonchoCall):
     prompt_template = '''
     SYSTEM:
     Generate a "thought" that makes a theory of mind prediction about what the user will say based on the way the conversation has been going. Also list other pieces of data that would help improve your prediction.
-
+:
     Conversation:
     """
     {chat_history}
@@ -23,23 +40,9 @@ class UserPredictionThought(OpenAICall):
     '''
     chat_history: str
 
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            )
-        ]
-    )
-    call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
-    )
-    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
-
 
 # user prediction thought revision given context
-class UserPredictionThoughtRevision(OpenAICall):
+class UserPredictionThoughtRevision(HonchoCall):
     prompt_template = '''
     SYSTEM:
     You are tasked with revising theory of mind "thoughts" about what the user is going to say. Here is the thought generated previously:
@@ -69,24 +72,10 @@ class UserPredictionThoughtRevision(OpenAICall):
     user_prediction_thought: str
     retrieved_context: str
     chat_history: str
-    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
-
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            )
-        ]
-    )
-    call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
-    )
 
 
 # VoE thought
-class VoeThought(OpenAICall):
+class VoeThought(HonchoCall):
     prompt_template = '''
     SYSTEM:
     Below is a "thought" about what the user was going to say, and then what the user actually said. Generate a theory of mind prediction about the user based on the difference between the "thought" and actual response.
@@ -104,23 +93,9 @@ class VoeThought(OpenAICall):
     user_prediction_thought_revision: str
     actual: str
 
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            )
-        ]
-    )
-    call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
-    )
-    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
-
 
 # VoE derive facts
-class VoeDeriveFacts(OpenAICall):
+class VoeDeriveFacts(HonchoCall):
     prompt_template = '''
     SYSTEM:
     Below is the most recent AI message we sent to a user, a "thought" about what the user was going to say to that, what the user actually responded with, and a theory of mind prediction about the user's response. Derive a fact (or list of facts) about the user based on the difference between the original thought and their actual response plus the theory of mind prediction about that response.
@@ -148,23 +123,9 @@ class VoeDeriveFacts(OpenAICall):
     actual: str
     voe_thought: str
 
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            )
-        ]
-    )
-    call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
-    )
-    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
-
 
 # check dups
-class CheckVoeList(OpenAICall):
+class CheckVoeList(HonchoCall):
     prompt_template = '''
     SYSTEM:
     Your job is to compare the existing list of facts to the new fact and determine if the existing list sufficiently represents the new one or not.
@@ -182,17 +143,3 @@ class CheckVoeList(OpenAICall):
     '''
     existing_facts: List[str]
     new_fact: str
-
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            )
-        ]
-    )
-    call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1
-    )
-    # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
