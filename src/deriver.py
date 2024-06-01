@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import re
 import uuid
@@ -7,14 +8,18 @@ from typing import List
 import sentry_sdk
 import uvloop
 from dotenv import load_dotenv
-from mirascope.openai import OpenAICall, OpenAICallParams
-
-# from realtime.connection import Socket
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import crud, models, schemas
 from .db import SessionLocal
+from .voe import (
+    CheckVoeList,
+    UserPredictionThought,
+    UserPredictionThoughtRevision,
+    VoeDeriveFacts,
+    VoeThought,
+)
 
 load_dotenv()
 
@@ -26,69 +31,23 @@ if SENTRY_ENABLED:
     )
 
 
-# SUPABASE_ID = os.getenv("SUPABASE_ID")
-# SUPABASE_API_KEY = os.getenv("SUPABASE_API_KEY")
+# Turn of SQLAlchemy Echo logging
+logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
-class DeriveFacts(OpenAICall):
-    prompt_template = """
-    You are tasked with deriving discrete facts about the user based on their input. The goal is to only extract absolute facts from the message, do not make inferences beyond the text provided.
-
-    chat history: ```{chat_history}```
-    user input: ```{user_input}```
-
-    Output the facts as a numbered list.
-    """
-
-    chat_history: str
-    user_input: str
-
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
-
-
-class CheckDups(OpenAICall):
-    prompt_template = """
-    Your job is to determine if the new fact exists in the old:
-
-    Old: ```{existing_facts}```
-
-    New: ```{fact}```
-    
-    If the new fact is sufficiently represented in the old list, return False. Otherwise, if the fact is indeed new, return True.
-    """
-    existing_facts: List[str]
-    fact: str
-
-    call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
+# FIXME see if this is SAFE
+async def add_metamessage(db, message_id, metamessage_type, content):
+    metamessage = models.Metamessage(
+        message_id=message_id,
+        metamessage_type=metamessage_type,
+        content=content,
+        h_metadata={},
+    )
+    db.add(metamessage)
 
 
 async def process_item(db: AsyncSession, payload: dict):
-    # print(payload["record"]["is_user"])
-    # print(type(payload["record"]["is_user"]))
-    # if payload["record"]["is_user"]:  # Check if the message is from a user
-    #     session_id = payload["record"]["session_id"]
-    #     message_id = payload["record"]["id"]
-    #     content = payload["record"]["content"]
-
-    #     # Example of querying for a user_id based on session_id, adjust according to your schema
-    #     session: models.Session
-    #     user_id: uuid.UUID
-    #     app_id: uuid.UUID
-    #     async with SessionLocal() as db:
-    #         stmt = (
-    #             select(models.Session)
-    #             .join(models.Session.messages)
-    #             .where(models.Message.id == message_id)
-    #             .where(models.Session.id == session_id)
-    #             .options(selectinload(models.Session.user))
-    #         )
-    #         result = await db.execute(stmt)
-    #         session = result.scalars().one()
-    #         user = session.user
-    #         user_id = user.id
-    #         app_id = user.app_id
     collection: models.Collection
-    # async with SessionLocal() as db:
     collection = await crud.get_collection_by_name(
         db, payload["app_id"], payload["user_id"], "honcho"
     )
@@ -101,7 +60,7 @@ async def process_item(db: AsyncSession, payload: dict):
             user_id=payload["user_id"],
         )
     collection_id = collection.id
-    await process_user_message(
+    processing_args = [
         payload["content"],
         payload["app_id"],
         payload["user_id"],
@@ -109,8 +68,137 @@ async def process_item(db: AsyncSession, payload: dict):
         collection_id,
         payload["message_id"],
         db,
-    )
+    ]
+    if payload["is_user"]:
+        await process_user_message(*processing_args)
+    else:
+        await process_ai_message(*processing_args)
     return
+
+
+async def process_ai_message(
+    content: str,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    session_id: uuid.UUID,
+    collection_id: uuid.UUID,
+    message_id: uuid.UUID,
+    db: AsyncSession,
+):
+    """
+    Process an AI message. Make a prediction about what the user is going to say to it.
+    """
+    print(f"\033[92mProcessing AI message: {content}")
+
+    subquery = (
+        select(models.Message.created_at)
+        .where(models.Message.id == message_id)
+        .scalar_subquery()
+    )
+    messages_stmt = (
+        select(models.Message)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Message.created_at.desc())
+        .where(models.Message.created_at < subquery)
+        .limit(10)
+    )
+
+    result = await db.execute(messages_stmt)
+    messages = result.scalars().all()[::-1]
+
+    chat_history_str = "\n".join(
+        [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+    )
+    # append current message to chat history
+    chat_history_str = f"{chat_history_str}\nai: {content}"
+
+    # user prediction thought
+    user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
+    user_prediction_thought_response = await user_prediction_thought.call_async()
+
+    ## query the collection to build the context
+    additional_data = re.findall(
+        r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
+    )
+    additional_data_set = set()
+    additional_data_list = []
+    for d in additional_data:
+        response = await crud.query_documents(
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            query=d,
+            top_k=3,
+        )
+        for document in response:
+            additional_data_set.add(document)
+        additional_data_list = list(additional_data_set)
+
+    context_str = "\n".join([document.content for document in additional_data_list])
+
+    # user prediction thought revision given the context
+    user_prediction_thought_revision = UserPredictionThoughtRevision(
+        user_prediction_thought=user_prediction_thought_response.content,
+        retrieved_context=context_str,
+        chat_history=chat_history_str,
+    )
+    user_prediction_thought_revision_response = (
+        await user_prediction_thought_revision.call_async()
+    )
+
+    if user_prediction_thought_revision_response.content == "None":
+        print(f"\033[94mModel predicted no changes to the user prediction thought")
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought",
+            user_prediction_thought_response.content,
+        )
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought_revision",
+            user_prediction_thought_response.content,
+        )
+    else:
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought",
+            user_prediction_thought_response.content,
+        )
+        await add_metamessage(
+            db,
+            message_id,
+            "user_prediction_thought_revision",
+            user_prediction_thought_revision_response.content,
+        )
+
+    await db.commit()
+
+    # debugging
+    print(f"\033[94m=================")
+    print(f"\033[94mUser Prediction Thought Prompt:")
+    content_lines = str(user_prediction_thought).split("\n")
+    for line in content_lines:
+        print(f"\033[94m{line}")
+    print(f"\033[94mUser Prediction Thought:")
+    content_lines = str(user_prediction_thought_response.content).split("\n")
+    for line in content_lines:
+        print(f"\033[94m{line}")
+    print(f"\033[94m=================\033[0m")
+
+    print(f"\033[95m=================")
+    print(f"\033[95mUser Prediction Thought Revision:")
+    content_lines = str(user_prediction_thought_revision).split("\n")
+    for line in content_lines:
+        print(f"\033[95m{line}")
+    print(f"\033[95mUser Prediction Thought Revision Response:")
+    content_lines = str(user_prediction_thought_revision_response.content).split("\n")
+    for line in content_lines:
+        print(f"\033[95m{line}")
+    print(f"\033[95m=================\033[0m")
 
 
 async def process_user_message(
@@ -123,51 +211,104 @@ async def process_user_message(
     db: AsyncSession,
 ):
     """
-    Process a user message and derive facts from it (check for duplicates before writing to the collection).
+    Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
-    messages_stmt = await crud.get_messages(
-        db=db, app_id=app_id, user_id=user_id, session_id=session_id, reverse=True
+    print(f"\033[93mProcessing User Message: {content}")
+    subquery = (
+        select(models.Message.created_at)
+        .where(models.Message.id == message_id)
+        .scalar_subquery()
     )
-    messages_stmt = messages_stmt.limit(10)
+
+    messages_stmt = (
+        select(models.Message)
+        .where(models.Message.created_at < subquery)
+        .where(models.Message.session_id == session_id)
+        .where(models.Message.is_user == False)
+        .limit(1)
+    )
+
     response = await db.execute(messages_stmt)
-    messages = response.scalars().all()
-    messages = messages[::-1]
-    contents = [m.content for m in messages]
-    print("===================")
-    print("Contents")
-    print(contents)
-    print("===================")
+    ai_message = response.scalar_one_or_none()
 
-    chat_history_str = "\n".join(
-        [f"user: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
-    )
-    facts_response = await DeriveFacts(
-        chat_history=chat_history_str, user_input=content
-    ).call_async()
-    facts = re.findall(r"\d+\.\s([^\n]+)", facts_response.content)
-
-    print("===================")
-    print(f"DERIVED FACTS: {facts}")
-    print("===================")
-    new_facts = await check_dups(app_id, user_id, collection_id, facts)
-
-    for fact in new_facts:
-        create_document = schemas.DocumentCreate(content=fact)
-        async with SessionLocal() as db:
-            doc = await crud.create_document(
-                db,
-                document=create_document,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
+    if ai_message and ai_message.content:
+        print(f"\033[93mAI Message: {ai_message.content}")
+        metamessages_stmt = (
+            select(models.Metamessage)
+            .where(models.Metamessage.message_id == ai_message.id)
+            .where(
+                models.Metamessage.metamessage_type
+                == "user_prediction_thought_revision"
             )
-            print(f"Returned Document: {doc}")
-        # doc = crud.create_document(content=fact)
-    # for fact in new_facts:
-    #     session.create_metamessage(
-    #         message=user_message, metamessage_type="fact", content=fact
-    #     )
-    # print(f"Created fact: {fact}")
+            .order_by(models.Metamessage.created_at.asc())
+            .limit(1)
+        )
+        response = await db.execute(metamessages_stmt)
+        metamessage = response.scalar_one_or_none()
+
+        if metamessage and metamessage.content:
+            print(f"\033[93mMetamessage: {metamessage.content}")
+
+            # VoE thought
+            voe_thought = VoeThought(
+                user_prediction_thought_revision=metamessage.content, actual=content
+            )
+            voe_thought_response = await voe_thought.call_async()
+
+            # VoE derive facts
+            voe_derive_facts = VoeDeriveFacts(
+                ai_message=ai_message.content,
+                user_prediction_thought_revision=metamessage.content,
+                actual=content,
+                voe_thought=voe_thought_response.content,
+            )
+            voe_derive_facts_response = await voe_derive_facts.call_async()
+
+            # debugging
+            print(f"\033[93m=================")
+            print(f"\033[93mVoe Thought Prompt:")
+            content_lines = str(voe_thought).split("\n")
+            for line in content_lines:
+                print(f"\033[93m{line}")
+            print(f"\033[93mVoe Thought:")
+            content_lines = str(voe_thought_response.content).split("\n")
+            for line in content_lines:
+                print(f"\033[93m{line}")
+            print(f"\033[93m=================\033[0m")
+
+            print(f"\033[93m=================")
+            print(f"\033[93mVoe Derive Facts Prompt:")
+            content_lines = str(voe_derive_facts).split("\n")
+            for line in content_lines:
+                print(f"\033[93m{line}")
+            print(f"\033[93mVoe Derive Facts Response:")
+            content_lines = str(voe_derive_facts_response.content).split("\n")
+            for line in content_lines:
+                print(f"\033[93m{line}")
+            print(f"\033[93m=================\033[0m")
+
+            facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
+            print(f"\033[93m=================")
+            print(f"\033[93mThe Facts Themselves:")
+            print(facts)
+            new_facts = await check_dups(app_id, user_id, collection_id, facts)
+
+            for fact in new_facts:
+                create_document = schemas.DocumentCreate(content=fact)
+                async with SessionLocal() as db:
+                    doc = await crud.create_document(
+                        db,
+                        document=create_document,
+                        app_id=app_id,
+                        user_id=user_id,
+                        collection_id=collection_id,
+                    )
+                    print(f"\033[93mReturned Document: {doc.content}")
+        else:
+            raise Exception(f"\033[91mUser Thought Prediction Revision NOT READY YET")
+    else:
+        print(f"\033[91mNo AI message before this user message")
+        return
 
 
 async def check_dups(
@@ -175,7 +316,7 @@ async def check_dups(
 ):
     """Check that we're not storing duplicate facts"""
 
-    check_duplication = CheckDups(existing_facts=[], fact="")
+    check_duplication = CheckVoeList(existing_facts=[], new_fact="")
     result = None
     new_facts = []
     global_existing_facts = []  # for debugging
@@ -198,14 +339,13 @@ async def check_dups(
         global_existing_facts.extend(existing_facts)  # for debugging
 
         check_duplication.existing_facts = existing_facts
-        check_duplication.fact = fact
+        check_duplication.new_fact = fact
         response = await check_duplication.call_async()
         print("==================")
         print("Dedupe Responses")
-        print(response)
         print(response.content)
         print("==================")
-        if response.content == "True":
+        if response.content == "true":
             new_facts.append(fact)
             print(f"New Fact: {fact}")
             continue
@@ -222,6 +362,7 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
         try:
             result = await db.execute(
                 select(models.QueueItem)
+                .order_by(models.QueueItem.created_at)
                 .where(models.QueueItem.processed == False)
                 .with_for_update(skip_locked=True)
                 .limit(1)
@@ -230,7 +371,7 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
 
             if item:
                 print("========")
-                print("Processing")
+                print("Processing item")
                 print("========")
                 await process_item(db, payload=item.payload)
                 item.processed = True
@@ -250,27 +391,14 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
 async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
     while True:
         if queue_empty_flag.is_set():
-            print("========")
-            print("Queue is empty flag")
-            print("========")
-            await asyncio.sleep(5)  # Sleep briefly if the queue is empty
+            await asyncio.sleep(1)  # Sleep briefly if the queue is empty
             queue_empty_flag.clear()  # Reset the flag
             continue
         if semaphore.locked():
-            print("========")
-            print("Semaphore Locked")
-            print("========")
             await asyncio.sleep(2)  # Sleep briefly if the semaphore is fully locked
             continue
         task = asyncio.create_task(dequeue(semaphore, queue_empty_flag))
-        task.add_done_callback(lambda t: print(f"Task done: {t}"))
         await asyncio.sleep(0)  # Yield control to allow tasks to run
-        # tasks = []
-        # for _ in range(5):
-        #     tasks.append(task)
-        # await asyncio.gather(*tasks)
-        # await dequeue()
-        # await asyncio.sleep(5)
 
 
 async def main():
@@ -282,12 +410,3 @@ async def main():
 if __name__ == "__main__":
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     asyncio.run(main())
-    # URL = f"wss://{SUPABASE_ID}.supabase.co/realtime/v1/websocket?apikey={SUPABASE_API_KEY}&vsn=1.0.0"
-    # URL = f"ws://127.0.0.1:54321/realtime/v1/websocket?apikey={SUPABASE_API_KEY}"  # For local Supabase
-    # listen_to_websocket(URL)
-    # s = Socket(URL)
-    # s.connect()
-
-    # channel = s.set_channel("realtime:public:messages")
-    # channel.join().on("INSERT", lambda payload: asyncio.create_task(callback(payload)))
-    # s.listen()
