@@ -167,20 +167,21 @@ class VoeDeriveFacts(OpenAICall):
 class CheckVoeList(OpenAICall):
     prompt_template = '''
     SYSTEM:
-    Your job is to compare the following two lists and keep only unique items:
+    Your job is to compare the existing list of facts to the new fact and determine if the existing list sufficiently represents the new one or not.
 
-    Old: """
+
+    Existing Facts: """
     {existing_facts}
     """
 
-    New: """
-    {facts}
+    New Fact: """
+    {new_fact}
     """
     
-    Remove redundant information from the new list and output the remaining facts. Your response should be a numbered list with each fact on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to remove (i.e. the statements are sufficiently different), print "None".
+    If you believe the new fact is sufficiently new given the ones in the list, output true. If not, output false. Do not provide extra commentary, only output a boolean value.
     '''
     existing_facts: List[str]
-    facts: List[str]
+    new_fact: str
 
     configuration = BaseConfig(
         client_wrappers=[
@@ -192,6 +193,6 @@ class CheckVoeList(OpenAICall):
         ]
     )
     call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1
     )
     # call_params = OpenAICallParams(model="gpt-4-turbo", temperature=1.2, top_p=0.5)
