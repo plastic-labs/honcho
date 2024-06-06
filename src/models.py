@@ -162,3 +162,6 @@ class QueueItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.datetime.utcnow
+    )
