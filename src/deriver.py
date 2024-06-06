@@ -8,6 +8,7 @@ from typing import List
 import sentry_sdk
 import uvloop
 from dotenv import load_dotenv
+from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,14 +23,6 @@ from .voe import (
 )
 
 load_dotenv()
-
-SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
-if SENTRY_ENABLED:
-    sentry_sdk.init(
-        dsn=os.getenv("SENTRY_DSN"),
-        enable_tracing=True,
-    )
-
 
 # Turn of SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -148,7 +141,7 @@ async def process_ai_message(
     )
 
     if user_prediction_thought_revision_response.content == "None":
-        print(f"\033[94mModel predicted no changes to the user prediction thought")
+        print("\033[94mModel predicted no changes to the user prediction thought")
         await add_metamessage(
             db,
             message_id,
@@ -178,27 +171,27 @@ async def process_ai_message(
     await db.commit()
 
     # debugging
-    print(f"\033[94m=================")
-    print(f"\033[94mUser Prediction Thought Prompt:")
+    print("\033[94m=================")
+    print("\033[94mUser Prediction Thought Prompt:")
     content_lines = str(user_prediction_thought).split("\n")
     for line in content_lines:
         print(f"\033[94m{line}")
-    print(f"\033[94mUser Prediction Thought:")
+    print("\033[94mUser Prediction Thought:")
     content_lines = str(user_prediction_thought_response.content).split("\n")
     for line in content_lines:
         print(f"\033[94m{line}")
-    print(f"\033[94m=================\033[0m")
+    print("\033[94m=================\033[0m")
 
-    print(f"\033[95m=================")
-    print(f"\033[95mUser Prediction Thought Revision:")
+    print("\033[95m=================")
+    print("\033[95mUser Prediction Thought Revision:")
     content_lines = str(user_prediction_thought_revision).split("\n")
     for line in content_lines:
         print(f"\033[95m{line}")
-    print(f"\033[95mUser Prediction Thought Revision Response:")
+    print("\033[95mUser Prediction Thought Revision Response:")
     content_lines = str(user_prediction_thought_revision_response.content).split("\n")
     for line in content_lines:
         print(f"\033[95m{line}")
-    print(f"\033[95m=================\033[0m")
+    print("\033[95m=================\033[0m")
 
 
 async def process_user_message(
@@ -222,9 +215,10 @@ async def process_user_message(
 
     messages_stmt = (
         select(models.Message)
-        .where(models.Message.created_at < subquery)
         .where(models.Message.session_id == session_id)
         .where(models.Message.is_user == False)
+        .order_by(models.Message.created_at.desc())
+        .where(models.Message.created_at < subquery)
         .limit(1)
     )
 
@@ -265,31 +259,31 @@ async def process_user_message(
             voe_derive_facts_response = await voe_derive_facts.call_async()
 
             # debugging
-            print(f"\033[93m=================")
-            print(f"\033[93mVoe Thought Prompt:")
+            print("\033[93m=================")
+            print("\033[93mVoe Thought Prompt:")
             content_lines = str(voe_thought).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
-            print(f"\033[93mVoe Thought:")
+            print("\033[93mVoe Thought:")
             content_lines = str(voe_thought_response.content).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
-            print(f"\033[93m=================\033[0m")
+            print("\033[93m=================\033[0m")
 
-            print(f"\033[93m=================")
-            print(f"\033[93mVoe Derive Facts Prompt:")
+            print("\033[93m=================")
+            print("\033[93mVoe Derive Facts Prompt:")
             content_lines = str(voe_derive_facts).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
-            print(f"\033[93mVoe Derive Facts Response:")
+            print("\033[93mVoe Derive Facts Response:")
             content_lines = str(voe_derive_facts_response.content).split("\n")
             for line in content_lines:
                 print(f"\033[93m{line}")
-            print(f"\033[93m=================\033[0m")
+            print("\033[93m=================\033[0m")
 
             facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
-            print(f"\033[93m=================")
-            print(f"\033[93mThe Facts Themselves:")
+            print("\033[93m=================")
+            print("\033[93mThe Facts Themselves:")
             print(facts)
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
@@ -305,9 +299,9 @@ async def process_user_message(
                     )
                     print(f"\033[93mReturned Document: {doc.content}")
         else:
-            raise Exception(f"\033[91mUser Thought Prediction Revision NOT READY YET")
+            raise Exception("\033[91mUser Thought Prediction Revision NOT READY YET")
     else:
-        print(f"\033[91mNo AI message before this user message")
+        print("\033[91mNo AI message before this user message")
         return
 
 
@@ -362,7 +356,7 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
         try:
             result = await db.execute(
                 select(models.QueueItem)
-                .order_by(models.QueueItem.created_at)
+                .order_by(models.QueueItem.id)
                 .where(models.QueueItem.processed == False)
                 .with_for_update(skip_locked=True)
                 .limit(1)
@@ -402,6 +396,17 @@ async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.E
 
 
 async def main():
+    SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
+    if SENTRY_ENABLED:
+        sentry_sdk.init(
+            dsn=os.getenv("SENTRY_DSN"),
+            enable_tracing=True,
+            traces_sample_rate=1.0,
+            profiles_sample_rate=1.0,
+            integrations=[
+                AsyncioIntegration(),
+            ],
+        )
     semaphore = asyncio.Semaphore(1)  # Limit to 5 concurrent dequeuing operations
     queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
     await polling_loop(semaphore, queue_empty_flag)

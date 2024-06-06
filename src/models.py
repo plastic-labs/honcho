@@ -1,5 +1,4 @@
 import datetime
-import os
 import uuid
 
 from dotenv import load_dotenv
@@ -17,6 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import func
 
 from .db import Base
 
@@ -35,7 +35,7 @@ class App(Base):
     name: Mapped[str] = mapped_column(String(512), index=True, unique=True)
     users = relationship("User", back_populates="app")
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     # Add any additional fields for an app here
@@ -49,7 +49,7 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(512), index=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
     app_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("apps.id"), index=True)
     app = relationship("App", back_populates="users")
@@ -71,7 +71,7 @@ class Session(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
     messages = relationship("Message", back_populates="session")
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"), index=True)
@@ -92,7 +92,7 @@ class Message(Base):
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
 
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
     session = relationship("Session", back_populates="messages")
     metamessages = relationship("Metamessage", back_populates="message")
@@ -112,7 +112,7 @@ class Metamessage(Base):
 
     message = relationship("Message", back_populates="metamessages")
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
 
@@ -127,7 +127,7 @@ class Collection(Base):
     )
     name: Mapped[str] = mapped_column(String(512), index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     documents = relationship(
@@ -150,7 +150,7 @@ class Document(Base):
     content: Mapped[str] = mapped_column(String(65535))
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=func.now()
     )
 
     collection_id = Column(Uuid, ForeignKey("collections.id"), index=True)
