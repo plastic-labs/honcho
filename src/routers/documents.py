@@ -94,7 +94,7 @@ async def query_documents(
     data = None
     if filter is not None:
         data = json.loads(filter)
-    return await crud.query_documents(
+    docs = await crud.query_documents(
         db=db,
         app_id=app_id,
         user_id=user_id,
@@ -103,6 +103,10 @@ async def query_documents(
         filter=data,
         top_k=top_k,
     )
+    print("=========================")
+    print(f"Query Response: {docs}")
+    print("=========================")
+    return docs
 
 
 @router.post("/documents", response_model=schemas.Document)

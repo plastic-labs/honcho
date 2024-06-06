@@ -113,11 +113,11 @@ async def create_collection(
     db=db,
     auth=Depends(auth),
 ):
-    if collection.name == "honcho":
-        raise HTTPException(
-            status_code=406,
-            detail="error invalid collection configuration - honcho is a reserved name",
-        )
+    # if collection.name == "honcho":
+    #     raise HTTPException(
+    #         status_code=406,
+    #         detail="error invalid collection configuration - honcho is a reserved name",
+    #     )
     try:
         return await crud.create_collection(
             db, collection=collection, app_id=app_id, user_id=user_id

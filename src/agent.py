@@ -13,7 +13,7 @@ load_dotenv()
 
 class Dialectic(OpenAICall):
     prompt_template = """
-    You are tasked with responding to the query based on the context provided. 
+    You are tasked with responding to a query on behalf of a user based on the context provided. Another agent is supplying the query, and the context is retrieved from a knowledge store you built about an individual user.
     ---
     query: {agent_input}
     context: {retrieved_facts}
@@ -33,7 +33,7 @@ class Dialectic(OpenAICall):
         ]
     )
     call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
+        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1
     )
     # call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
 
@@ -61,10 +61,9 @@ async def prep_inference(
             user_id=user_id,
             collection_id=collection.id,
             query=query,
-            top_k=1,
+            top_k=50,
         )
-        if len(retrieved_documents) > 0:
-            retrieved_facts = retrieved_documents[0].content
+        retrieved_facts = "\n".join([doc.content for doc in retrieved_documents])
 
     chain = Dialectic(
         agent_input=query,

@@ -130,7 +130,6 @@ async def process_ai_message(
             query=d,
             top_k=3,
         )
-        # TODO: fix this -- add it to the list if it's not there already
         additional_data_list.extend(
             [
                 document
@@ -182,27 +181,27 @@ async def process_ai_message(
     await db.commit()
 
     # debugging
-    print(f"\033[94m=================")
-    print(f"\033[94mUser Prediction Thought Prompt:")
-    content_lines = str(user_prediction_thought).split("\n")
-    for line in content_lines:
-        print(f"\033[94m{line}")
-    print(f"\033[94mUser Prediction Thought:")
-    content_lines = str(user_prediction_thought_response.content).split("\n")
-    for line in content_lines:
-        print(f"\033[94m{line}")
-    print(f"\033[94m=================\033[0m")
+    # print(f"\033[94m=================")
+    # print(f"\033[94mUser Prediction Thought Prompt:")
+    # content_lines = str(user_prediction_thought).split("\n")
+    # for line in content_lines:
+    #     print(f"\033[94m{line}")
+    # print(f"\033[94mUser Prediction Thought:")
+    # content_lines = str(user_prediction_thought_response.content).split("\n")
+    # for line in content_lines:
+    #     print(f"\033[94m{line}")
+    # print(f"\033[94m=================\033[0m")
 
-    print(f"\033[95m=================")
-    print(f"\033[95mUser Prediction Thought Revision:")
-    content_lines = str(user_prediction_thought_revision).split("\n")
-    for line in content_lines:
-        print(f"\033[95m{line}")
-    print(f"\033[95mUser Prediction Thought Revision Response:")
-    content_lines = str(user_prediction_thought_revision_response.content).split("\n")
-    for line in content_lines:
-        print(f"\033[95m{line}")
-    print(f"\033[95m=================\033[0m")
+    # print(f"\033[95m=================")
+    # print(f"\033[95mUser Prediction Thought Revision:")
+    # content_lines = str(user_prediction_thought_revision).split("\n")
+    # for line in content_lines:
+    #     print(f"\033[95m{line}")
+    # print(f"\033[95mUser Prediction Thought Revision Response:")
+    # content_lines = str(user_prediction_thought_revision_response.content).split("\n")
+    # for line in content_lines:
+    #     print(f"\033[95m{line}")
+    # print(f"\033[95m=================\033[0m")
 
 
 async def process_user_message(
@@ -226,6 +225,7 @@ async def process_user_message(
 
     messages_stmt = (
         select(models.Message)
+        .order_by(models.Message.created_at.desc())
         .where(models.Message.created_at < subquery)
         .where(models.Message.session_id == session_id)
         .where(models.Message.is_user == False)
@@ -269,32 +269,32 @@ async def process_user_message(
             voe_derive_facts_response = await voe_derive_facts.call_async()
 
             # debugging
-            print(f"\033[93m=================")
-            print(f"\033[93mVoe Thought Prompt:")
-            content_lines = str(voe_thought).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print(f"\033[93mVoe Thought:")
-            content_lines = str(voe_thought_response.content).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print(f"\033[93m=================\033[0m")
+            # print(f"\033[93m=================")
+            # print(f"\033[93mVoe Thought Prompt:")
+            # content_lines = str(voe_thought).split("\n")
+            # for line in content_lines:
+            #     print(f"\033[93m{line}")
+            # print(f"\033[93mVoe Thought:")
+            # content_lines = str(voe_thought_response.content).split("\n")
+            # for line in content_lines:
+            #     print(f"\033[93m{line}")
+            # print(f"\033[93m=================\033[0m")
 
-            print(f"\033[93m=================")
-            print(f"\033[93mVoe Derive Facts Prompt:")
-            content_lines = str(voe_derive_facts).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print(f"\033[93mVoe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_response.content).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print(f"\033[93m=================\033[0m")
+            # print(f"\033[93m=================")
+            # print(f"\033[93mVoe Derive Facts Prompt:")
+            # content_lines = str(voe_derive_facts).split("\n")
+            # for line in content_lines:
+            #     print(f"\033[93m{line}")
+            # print(f"\033[93mVoe Derive Facts Response:")
+            # content_lines = str(voe_derive_facts_response.content).split("\n")
+            # for line in content_lines:
+            #     print(f"\033[93m{line}")
+            # print(f"\033[93m=================\033[0m")
 
             facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
-            print(f"\033[93m=================")
-            print(f"\033[93mThe Facts Themselves:")
-            print(facts)
+            # print(f"\033[93m=================")
+            # print(f"\033[93mThe Facts Themselves:")
+            # print(facts)
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
             for fact in new_facts:
@@ -307,7 +307,7 @@ async def process_user_message(
                         user_id=user_id,
                         collection_id=collection_id,
                     )
-                    print(f"\033[93mReturned Document: {doc.content}")
+                    # print(f"\033[93mReturned Document: {doc.content}")
         else:
             raise Exception(f"\033[91mUser Thought Prediction Revision NOT READY YET")
     else:
@@ -337,7 +337,7 @@ async def check_dups(
         existing_facts = [document.content for document in result]
         if len(existing_facts) == 0:
             new_facts.append(fact)
-            print(f"New Fact: {fact}")
+            #print(f"New Fact: {fact}")
             continue
 
         global_existing_facts.extend(existing_facts)  # for debugging
@@ -345,18 +345,23 @@ async def check_dups(
         check_duplication.existing_facts = existing_facts
         check_duplication.new_fact = fact
         response = await check_duplication.call_async()
-        print("==================")
-        print("Dedupe Responses")
-        print(response.content)
-        print("==================")
+        # print("==================")
+        # print("Dedupe Responses")
+        # print(response.content)
+        # print("==================")
         if response.content == "true":
             new_facts.append(fact)
             print(f"New Fact: {fact}")
             continue
 
     print("===================")
-    print(f"Existing Facts: {global_existing_facts}")
-    print(f"Net New Facts {new_facts}")
+    print(f"Existing Facts:")
+    for fact in global_existing_facts:
+        print(f"{fact}")
+    print("===================")
+    print(f"Net New Facts:")
+    for fact in new_facts:
+        print(f"{fact}")
     print("===================")
     return new_facts
 
@@ -366,6 +371,7 @@ async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event)
         try:
             result = await db.execute(
                 select(models.QueueItem)
+                .order_by(models.QueueItem.created_at)
                 .where(models.QueueItem.processed == False)
                 .with_for_update(skip_locked=True)
                 .limit(1)
