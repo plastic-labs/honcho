@@ -39,7 +39,7 @@ async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
     honcho_app = models.App(name=app.name, h_metadata=app.metadata)
     db.add(honcho_app)
     await db.commit()
-    await db.refresh(honcho_app)
+    # await db.refresh(honcho_app)
     return honcho_app
 
 
@@ -55,7 +55,7 @@ async def update_app(
         honcho_app.h_metadata = app.metadata
 
     await db.commit()
-    await db.refresh(honcho_app)
+    # await db.refresh(honcho_app)
     return honcho_app
 
 
@@ -83,7 +83,7 @@ async def create_user(
     )
     db.add(honcho_user)
     await db.commit()
-    await db.refresh(honcho_user)
+    # await db.refresh(honcho_user)
     return honcho_user
 
 
@@ -144,7 +144,7 @@ async def update_user(
         honcho_user.h_metadata = user.metadata
 
     await db.commit()
-    await db.refresh(honcho_user)
+    # await db.refresh(honcho_user)
     return honcho_user
 
 
@@ -228,8 +228,18 @@ async def create_session(
         h_metadata=session.metadata,
     )
     db.add(honcho_session)
+    # print("====== Testing State of ORM Object ====")
+    # print(honcho_session)
+    # print("=======================================")
+    #
+    # await db.flush()
+    #
+    # print("====== Testing State of ORM Object ====")
+    # print(honcho_session)
+    # print("=======================================")
+
     await db.commit()
-    await db.refresh(honcho_session)
+    # await db.refresh(honcho_session)
     return honcho_session
 
 
@@ -250,7 +260,7 @@ async def update_session(
     ):  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
     await db.commit()
-    await db.refresh(honcho_session)
+    # await db.refresh(honcho_session)
     return honcho_session
 
 
@@ -300,7 +310,7 @@ async def create_message(
     db.add(honcho_message)
     await db.commit()
     # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
-    await db.refresh(honcho_message)
+    # await db.refresh(honcho_message)
     return honcho_message
 
 
@@ -372,7 +382,7 @@ async def update_message(
     ):  # Need to explicitly be there won't make it empty by default
         honcho_message.h_metadata = message.metadata
     await db.commit()
-    await db.refresh(honcho_message)
+    # await db.refresh(honcho_message)
     return honcho_message
 
 
@@ -407,7 +417,7 @@ async def create_metamessage(
 
     db.add(honcho_metamessage)
     await db.commit()
-    await db.refresh(honcho_metamessage)
+    # await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
@@ -498,7 +508,7 @@ async def update_metamessage(
     if metamessage.metamessage_type is not None:
         honcho_metamessage.metamessage_type = metamessage.metamessage_type
     await db.commit()
-    await db.refresh(honcho_metamessage)
+    # await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
@@ -582,7 +592,7 @@ async def create_collection(
     except IntegrityError:
         await db.rollback()
         raise ValueError("Collection already exists") from None
-    await db.refresh(honcho_collection)
+    # await db.refresh(honcho_collection)
     return honcho_collection
 
 
@@ -606,7 +616,7 @@ async def update_collection(
     except IntegrityError:
         await db.rollback()
         raise ValueError("Collection already exists") from None
-    await db.refresh(honcho_collection)
+    # await db.refresh(honcho_collection)
     return honcho_collection
 
 
@@ -749,7 +759,7 @@ async def create_document(
     )
     db.add(honcho_document)
     await db.commit()
-    await db.refresh(honcho_document)
+    # await db.refresh(honcho_document)
     return honcho_document
 
 
@@ -782,7 +792,7 @@ async def update_document(
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
     await db.commit()
-    await db.refresh(honcho_document)
+    # await db.refresh(honcho_document)
     return honcho_document
 
 

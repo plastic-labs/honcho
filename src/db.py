@@ -21,7 +21,9 @@ engine = create_async_engine(
     pool_pre_ping=True,
 )
 
-SessionLocal = async_sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = async_sessionmaker(
+    autocommit=False, autoflush=False, expire_on_commit=False, bind=engine
+)
 Base = declarative_base()
 
 

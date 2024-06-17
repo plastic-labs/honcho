@@ -78,7 +78,7 @@ class Session(Base):
     user = relationship("User", back_populates="sessions")
 
     def __repr__(self) -> str:
-        return f"Session(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"Session(id={self.id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Message(Base):
