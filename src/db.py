@@ -1,9 +1,11 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import create_engine
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
+
+# from sqlalchemy.ext.declarative import declarative_base
 
 load_dotenv()
 
@@ -24,7 +26,12 @@ engine = create_async_engine(
 SessionLocal = async_sessionmaker(
     autocommit=False, autoflush=False, expire_on_commit=False, bind=engine
 )
-Base = declarative_base()
+
+table_schema = os.getenv("DATABASE_SCHEMA")
+meta = MetaData()
+if table_schema:
+    meta.schema = table_schema
+Base = declarative_base(metadata=meta)
 
 
 def scaffold_db():

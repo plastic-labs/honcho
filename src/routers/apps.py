@@ -2,6 +2,8 @@ import os
 import uuid
 from typing import Optional
 
+import traceback
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg.errors import UniqueViolation
@@ -99,6 +101,7 @@ async def create_app(
             status_code=406, detail="App with name may already exist"
         ) from e
     except Exception as e:
+        print(traceback.format_exc())
         raise HTTPException(status_code=400, detail="Unknown Error") from e
 
 

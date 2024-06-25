@@ -30,7 +30,8 @@ opentelemetry-instrumentation-logging = "^0.45b0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.2.2"
-pytest-postgresql = "^6.0.0"
+sqlalchemy-utils = "^0.41.2"
+pytest-asyncio = "^0.23.7"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
@@ -55,3 +56,6 @@ extend-immutable-calls = ["fastapi.Depends"]
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.lpytest.ini_options]
+asyncio_mode = "auto"

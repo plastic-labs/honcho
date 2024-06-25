@@ -55,7 +55,7 @@ async def update_app(
     if honcho_app is None:
         raise ValueError("App not found")
     if app.name is not None:
-        honcho_app.content = app.name
+        honcho_app.name = app.name
     if app.metadata is not None:
         honcho_app.h_metadata = app.metadata
 
