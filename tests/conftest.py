@@ -1,6 +1,7 @@
 import logging  # noqa: I001
 import asyncio
 import sys
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -25,11 +26,19 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Test database URL
+# TODO use environment variable
 TEST_DB_URL = make_url("postgresql+psycopg://testuser:testpwd@localhost:5432/test")
 DEFAULT_DB_URL = str(TEST_DB_URL.set(database="postgres"))
 
 
 def create_test_database(db_url):
+    """Helper function create a database if it does not already exist
+    uses the `sqlalchemy_utils` library to create the database and takes a DB URL
+    as the input
+
+    Args:
+        db_url (str): Database URL
+    """
     try:
         logger.debug(f"Checking if database exists: {db_url.database}")
         if not database_exists(db_url):
@@ -44,6 +53,15 @@ def create_test_database(db_url):
 
 
 async def setup_test_database(db_url):
+    """Helper function to setup the test database
+    takes a DB URL as input and returns a SQLAlchemy engine
+
+    Args:
+        db_url (str): Database URL
+
+    Returns:
+        engine: SQLAlchemy engine
+    """
     engine = create_async_engine(str(db_url))
     async with engine.connect() as conn:
         try:
@@ -78,11 +96,13 @@ async def db_engine():
     yield engine
 
     await engine.dispose()
+
     drop_database(TEST_DB_URL)
 
 
 @pytest_asyncio.fixture(scope="function")
 async def db_session(db_engine):
+    """Create a database session for the scope of a single test function"""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with Session() as session:
         yield session
@@ -91,7 +111,7 @@ async def db_session(db_engine):
 
 @pytest.fixture(scope="function")
 def client(db_session):
-    """Create a FastAPI TestClient"""
+    """Create a FastAPI TestClient for the scope of a single test function"""
 
     async def override_get_db():
         yield db_session
@@ -101,16 +121,16 @@ def client(db_session):
         yield c
 
 
-# Helper function to create test data
 @pytest_asyncio.fixture(scope="function")
 async def test_data(db_session):
+    """Helper function to create test data"""
     # Create test app
-    test_app = models.App(name="Test App", metadata={})
+    test_app = models.App(name=str(uuid.uuid4()), metadata={})
     db_session.add(test_app)
     await db_session.flush()
 
     # Create test user
-    test_user = models.User(name="Test User", app_id=test_app.id, metadata={})
+    test_user = models.User(name=str(uuid.uuid4()), app_id=test_app.id, metadata={})
     db_session.add(test_user)
     await db_session.flush()
 
