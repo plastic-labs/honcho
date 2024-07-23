@@ -144,7 +144,7 @@ async def update_user(
     if honcho_user is None:
         raise ValueError("User not found")
     if user.name is not None:
-        honcho_user.content = user.name
+        honcho_user.name = user.name
     if user.metadata is not None:
         honcho_user.h_metadata = user.metadata
 
@@ -403,7 +403,7 @@ async def create_metamessage(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
 ):
-    message = get_message(
+    message = await get_message(
         db,
         app_id=app_id,
         session_id=session_id,

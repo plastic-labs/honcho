@@ -1,8 +1,7 @@
 import os
+import traceback
 import uuid
 from typing import Optional
-
-import traceback
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request

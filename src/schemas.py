@@ -1,7 +1,7 @@
 import datetime
 import uuid
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AppBase(BaseModel):
@@ -25,15 +25,21 @@ class App(AppBase):
     metadata: dict
     created_at: datetime.datetime
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+        # if "h_metadata" in values:
+        #     return values["h_metadata"]
+        # return {}
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class UserBase(BaseModel):
@@ -58,15 +64,22 @@ class User(UserBase):
     h_metadata: dict = Field(exclude=True)
     metadata: dict
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    # @validator("metadata", pre=True, allow_reuse=True)
+    # def fetch_h_metadata(cls, value, values):
+    #     if "h_metadata" in values:
+    #         return values["h_metadata"]
+    #     return {}
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class MessageBase(BaseModel):
@@ -92,15 +105,22 @@ class Message(MessageBase):
     metadata: dict
     created_at: datetime.datetime
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    # @validator("metadata", pre=True, allow_reuse=True)
+    # def fetch_h_metadata(cls, value, values):
+    #     if "h_metadata" in values:
+    #         return values["h_metadata"]
+    #     return {}
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class SessionBase(BaseModel):
@@ -126,15 +146,22 @@ class Session(SessionBase):
     metadata: dict
     created_at: datetime.datetime
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    # @validator("metadata", pre=True, allow_reuse=True)
+    # def fetch_h_metadata(cls, value, values):
+    #     if "h_metadata" in values:
+    #         return values["h_metadata"]
+    #     return {}
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class MetamessageBase(BaseModel):
@@ -163,15 +190,23 @@ class Metamessage(MetamessageBase):
     metadata: dict
     created_at: datetime.datetime
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    # @validator("metadata", pre=True, allow_reuse=True)
+    # def fetch_h_metadata(cls, value, values):
+    #     if "h_metadata" in values:
+    #         return values["h_metadata"]
+    #     return {}
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class CollectionBase(BaseModel):
@@ -196,15 +231,23 @@ class Collection(CollectionBase):
     metadata: dict
     created_at: datetime.datetime
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    # @validator("metadata", pre=True, allow_reuse=True)
+    # def fetch_h_metadata(cls, value, values):
+    #     if "h_metadata" in values:
+    #         return values["h_metadata"]
+    #     return {}
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class DocumentBase(BaseModel):
@@ -228,15 +271,23 @@ class Document(DocumentBase):
     created_at: datetime.datetime
     collection_id: uuid.UUID
 
-    @validator("metadata", pre=True, allow_reuse=True)
-    def fetch_h_metadata(cls, value, values):
-        if "h_metadata" in values:
-            return values["h_metadata"]
-        return {}
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {"exclude": ["h_metadata"]}
+    # @validator("metadata", pre=True, allow_reuse=True)
+    # def fetch_h_metadata(cls, value, values):
+    #     if "h_metadata" in values:
+    #         return values["h_metadata"]
+    #     return {}
+
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_schema_extra={"exclude": ["h_metadata"]},
+    )
+    # class Config:
+    #     from_attributes = True
+    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class AgentChat(BaseModel):
