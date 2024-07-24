@@ -17,6 +17,7 @@ jobs:
           pip install poetry
       - name: Start Database
         run: |
+          touch .env
           docker compose -f docker-compose.yml.example up database
       - name: Run Tests
         run: |
