@@ -9,9 +9,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: 3.11
+          cache: 'poetry'
       - name: Install poetry
         run: |
           pip install poetry
@@ -19,12 +20,6 @@ jobs:
         run: |
           cp .env.template .env
           docker compose -f docker-compose.yml.example up database -d
-      - uses: actions/cache@v3
-        with:
-          path: ~/.cache/pypoetry
-          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-poetry
       - name: Run Tests
         run: |
           sudo chown -R runner:docker data && sudo chmod -R 755 data
