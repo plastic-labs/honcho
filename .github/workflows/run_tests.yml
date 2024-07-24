@@ -19,12 +19,17 @@ jobs:
         run: |
           cp .env.template .env
           docker compose -f docker-compose.yml.example up database -d
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('**/poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry
       - name: Run Tests
         run: |
-          ls -l
           sudo chown -R runner:docker data && sudo chmod -R 755 data
-          ls -l
           ls -alR data
+          ls -alR data/pgdata
           poetry install --no-root
           poetry run coverage run -m pytest -vv -s
           poetry run coverage report --format=markdown > coverage.md
