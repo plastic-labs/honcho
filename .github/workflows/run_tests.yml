@@ -25,6 +25,7 @@ jobs:
           sudo chown runner:docker data
           sudo chmod -R 755 data
           ls -l
+          ls -r data
           poetry install --no-root
           poetry run coverage run -m pytest -vv -s
           poetry run coverage report --format=markdown > coverage.md
