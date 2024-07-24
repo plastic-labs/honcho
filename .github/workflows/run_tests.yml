@@ -21,9 +21,8 @@ jobs:
           docker compose -f docker-compose.yml.example up database -d
       - name: Run Tests
         run: |
-          chmod -R 755 /home/runner/work/honcho/honcho/data
           poetry install --no-root
-          poetry run coverage run -m pytest
+          sudo poetry run coverage run -m pytest
           poetry run coverage report --format=markdown > coverage.md
           echo -e "\n---\n# Docstring Coverage\n\`\`\`" >> coverage.md
           poetry run interrogate -v honcho >> coverage.md
