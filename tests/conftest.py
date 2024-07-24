@@ -62,6 +62,7 @@ async def setup_test_database(db_url):
         engine: SQLAlchemy engine
     """
     engine = create_async_engine(str(db_url))
+    print("Making the engine")
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -87,8 +88,11 @@ async def setup_test_database(db_url):
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
     test_type = os.getenv("TEST_TYPE", "remote")
+    print(f"TEST TYPE: {test_type}")
     if test_type == "local":
         create_test_database(TEST_DB_URL)
+    print("Making the engine")
+    print(DEFAULT_DB_URL)
     engine = await setup_test_database(DEFAULT_DB_URL)
 
     async with engine.begin() as conn:
