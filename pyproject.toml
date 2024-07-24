@@ -29,6 +29,8 @@ opentelemetry-instrumentation-logging = "^0.45b0"
 pytest = "^8.2.2"
 sqlalchemy-utils = "^0.41.2"
 pytest-asyncio = "^0.23.7"
+coverage = "^7.6.0"
+interrogate = "^1.7.0"
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
