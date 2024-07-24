@@ -1,16 +1,15 @@
 import logging  # noqa: I001
-import asyncio
+import os
 import sys
 import uuid
 
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
-from sqlalchemy.orm import sessionmaker
 from sqlalchemy_utils import create_database, database_exists, drop_database
 
 from src import models
@@ -87,8 +86,10 @@ async def setup_test_database(db_url):
 
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
-    create_test_database(TEST_DB_URL)
-    engine = await setup_test_database(TEST_DB_URL)
+    test_type = os.getenv("TEST_TYPE", "remote")
+    if test_type == "local":
+        create_test_database(TEST_DB_URL)
+    engine = await setup_test_database(DEFAULT_DB_URL)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -97,7 +98,8 @@ async def db_engine():
 
     await engine.dispose()
 
-    drop_database(TEST_DB_URL)
+    if test_type == "local":
+        drop_database(TEST_DB_URL)
 
 
 @pytest_asyncio.fixture(scope="function")
