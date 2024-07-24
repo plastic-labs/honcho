@@ -21,6 +21,8 @@ jobs:
           docker compose -f docker-compose.yml.example up database -d
       - name: Run Tests
         run: |
+          ls -l
+          sudo chmod -R 755 data
           poetry install --no-root
           poetry run coverage run -m pytest -vv -s
           poetry run coverage report --format=markdown > coverage.md
