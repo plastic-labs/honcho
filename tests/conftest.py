@@ -26,8 +26,9 @@ logger = logging.getLogger(__name__)
 
 # Test database URL
 # TODO use environment variable
-TEST_DB_URL = make_url("postgresql+psycopg://testuser:testpwd@localhost:5432/test")
-DEFAULT_DB_URL = str(TEST_DB_URL.set(database="honcho"))
+CONNECTION_URI = make_url(os.getenv("CONNECTION_URI"))
+TEST_DB_URL = CONNECTION_URI.set(database="test")
+DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
 
 def create_test_database(db_url):
@@ -62,7 +63,6 @@ async def setup_test_database(db_url):
         engine: SQLAlchemy engine
     """
     engine = create_async_engine(str(db_url))
-    print("Making the engine")
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -87,13 +87,8 @@ async def setup_test_database(db_url):
 
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
-    test_type = os.getenv("TEST_TYPE", "remote")
-    print(f"TEST TYPE: {test_type}")
-    if test_type == "local":
-        create_test_database(TEST_DB_URL)
-    print("Making the engine")
-    print(DEFAULT_DB_URL)
-    engine = await setup_test_database(DEFAULT_DB_URL)
+    create_test_database(TEST_DB_URL)
+    engine = await setup_test_database(TEST_DB_URL)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -102,8 +97,7 @@ async def db_engine():
 
     await engine.dispose()
 
-    if test_type == "local":
-        drop_database(TEST_DB_URL)
+    drop_database(TEST_DB_URL)
 
 
 @pytest_asyncio.fixture(scope="function")
