@@ -21,14 +21,12 @@ jobs:
           docker compose -f docker-compose.yml.example up database -d
       - name: Run Tests
         run: |
-          cd sdk
           poetry install --no-root
           poetry run coverage run -m pytest
           poetry run coverage report --format=markdown > coverage.md
           echo -e "\n---\n# Docstring Coverage\n\`\`\`" >> coverage.md
           poetry run interrogate -v honcho >> coverage.md
           echo -e "\`\`\`" >> coverage.md
-          cd ..
         env:
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
