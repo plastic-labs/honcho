@@ -139,11 +139,11 @@ async def update_collection(
     db=db,
     auth=Depends(auth),
 ):
-    if collection.name is None:
-        raise HTTPException(
-            status_code=400, detail="invalid request - name cannot be None"
-        )
-    if collection.name == "honcho":
+    # if collection.name is None:
+    #     raise HTTPException(
+    #         status_code=400, detail="invalid request - name cannot be None"
+    #     )
+    if collection.name is not None and collection.name == "honcho":
         raise HTTPException(
             status_code=406,
             detail="error invalid collection configuration - honcho is a reserved name",

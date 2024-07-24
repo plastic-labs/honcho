@@ -616,8 +616,9 @@ async def update_collection(
     if collection.metadata is not None:
         honcho_collection.h_metadata = collection.metadata
     try:
-        honcho_collection.name = collection.name
-        await db.commit()
+        if collection.name is not None:
+            honcho_collection.name = collection.name
+            await db.commit()
     except IntegrityError:
         await db.rollback()
         raise ValueError("Collection already exists") from None

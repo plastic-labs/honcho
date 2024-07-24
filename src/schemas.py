@@ -219,7 +219,7 @@ class CollectionCreate(CollectionBase):
 
 
 class CollectionUpdate(CollectionBase):
-    name: str
+    name: str | None = None
     metadata: dict | None = None
 
 

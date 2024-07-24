@@ -147,14 +147,19 @@ async def update_document(
         raise HTTPException(
             status_code=400, detail="content and metadata cannot both be None"
         )
-    return await crud.update_document(
-        db,
-        document=document,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection_id,
-        document_id=document_id,
-    )
+    try:
+        return await crud.update_document(
+            db,
+            document=document,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            document_id=document_id,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=404, detail="collection not found or does not belong to user"
+        ) from None
 
 
 @router.delete("/documents/{document_id}")
