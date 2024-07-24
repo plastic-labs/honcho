@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Test database URL
 # TODO use environment variable
 TEST_DB_URL = make_url("postgresql+psycopg://testuser:testpwd@localhost:5432/test")
-DEFAULT_DB_URL = str(TEST_DB_URL.set(database="postgres"))
+DEFAULT_DB_URL = str(TEST_DB_URL.set(database="honcho"))
 
 
 def create_test_database(db_url):
