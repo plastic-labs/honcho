@@ -11,12 +11,12 @@ from src.dependencies import db
 from src.security import auth
 
 router = APIRouter(
-    prefix="/apps/{app_id}/users/{user_id}/collections/{collection_id}",
+    prefix="/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents",
     tags=["documents"],
 )
 
 
-@router.get("/documents", response_model=Page[schemas.Document])
+@router.get("", response_model=Page[schemas.Document])
 async def get_documents(
     request: Request,
     app_id: uuid.UUID,
@@ -51,7 +51,7 @@ async def get_documents(
 
 
 @router.get(
-    "/documents/{document_id}",
+    "/{document_id}",
     response_model=schemas.Document,
 )
 async def get_document(
@@ -105,7 +105,7 @@ async def query_documents(
     )
 
 
-@router.post("/documents", response_model=schemas.Document)
+@router.post("", response_model=schemas.Document)
 async def create_document(
     request: Request,
     app_id: uuid.UUID,
@@ -130,7 +130,7 @@ async def create_document(
 
 
 @router.put(
-    "/documents/{document_id}",
+    "/{document_id}",
     response_model=schemas.Document,
 )
 async def update_document(
@@ -147,17 +147,22 @@ async def update_document(
         raise HTTPException(
             status_code=400, detail="content and metadata cannot both be None"
         )
-    return await crud.update_document(
-        db,
-        document=document,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection_id,
-        document_id=document_id,
-    )
+    try:
+        return await crud.update_document(
+            db,
+            document=document,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            document_id=document_id,
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=404, detail="collection not found or does not belong to user"
+        ) from None
 
 
-@router.delete("/documents/{document_id}")
+@router.delete("/{document_id}")
 async def delete_document(
     request: Request,
     app_id: uuid.UUID,

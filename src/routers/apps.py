@@ -1,4 +1,5 @@
 import os
+import traceback
 import uuid
 from typing import Optional
 
@@ -99,6 +100,7 @@ async def create_app(
             status_code=406, detail="App with name may already exist"
         ) from e
     except Exception as e:
+        print(traceback.format_exc())
         raise HTTPException(status_code=400, detail="Unknown Error") from e
 
 

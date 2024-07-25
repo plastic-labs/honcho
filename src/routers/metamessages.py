@@ -33,11 +33,10 @@ async def create_metamessage(
         honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
-        message (schemas.MessageCreate): The Message object to add containing the
-        message content and type
+        metamessage (schemas.MeteamessageCreate): The metamessage creation object
 
     Returns:
-        schemas.Message: The Message object of the added message
+        schemas.Metamessage: The Metamessage object of the added metamessage
 
     Raises:
         HTTPException: If the session is not found

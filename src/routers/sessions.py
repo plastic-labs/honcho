@@ -90,6 +90,9 @@ async def create_session(
         return value
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    # except Exception as e:
+    #     print(e)
+    #     raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.put("/{session_id}", response_model=schemas.Session)
