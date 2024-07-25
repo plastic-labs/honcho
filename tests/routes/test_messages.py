@@ -4,8 +4,8 @@ from src import models  # Import your SQLAlchemy models
 
 
 @pytest.mark.asyncio
-async def test_create_message(client, db_session, test_data):
-    test_app, test_user = test_data
+async def test_create_message(client, db_session, sample_data):
+    test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
         user_id=test_user.id, location_id="test_location", metadata={}
@@ -30,8 +30,8 @@ async def test_create_message(client, db_session, test_data):
 
 
 @pytest.mark.asyncio
-async def test_get_messages(client, db_session, test_data):
-    test_app, test_user = test_data
+async def test_get_messages(client, db_session, sample_data):
+    test_app, test_user = sample_data
     # Create a test session and message
     test_session = models.Session(
         user_id=test_user.id, location_id="test_location", metadata={}
@@ -57,8 +57,8 @@ async def test_get_messages(client, db_session, test_data):
 
 
 @pytest.mark.asyncio
-async def test_update_message(client, db_session, test_data):
-    test_app, test_user = test_data
+async def test_update_message(client, db_session, sample_data):
+    test_app, test_user = sample_data
     # Create a test session and message
     test_session = models.Session(
         user_id=test_user.id, location_id="test_location", metadata={}

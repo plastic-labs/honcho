@@ -1,13 +1,10 @@
-import uuid
-
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models  # Import your SQLAlchemy models
 
 
-def test_create_session(client, test_data):
-    test_app, test_user = test_data
+def test_create_session(client, sample_data):
+    test_app, test_user = sample_data
     response = client.post(
         f"/apps/{test_app.id}/users/{test_user.id}/sessions",
         json={
@@ -23,8 +20,8 @@ def test_create_session(client, test_data):
 
 
 @pytest.mark.asyncio
-async def test_get_sessions(client, db_session, test_data):
-    test_app, test_user = test_data
+async def test_get_sessions(client, db_session, sample_data):
+    test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
         user_id=test_user.id, location_id="test_location", metadata={}
@@ -41,8 +38,8 @@ async def test_get_sessions(client, db_session, test_data):
 
 
 @pytest.mark.asyncio
-async def test_update_session(client, db_session, test_data):
-    test_app, test_user = test_data
+async def test_update_session(client, db_session, sample_data):
+    test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
         user_id=test_user.id, location_id="test_location", metadata={}
@@ -60,8 +57,8 @@ async def test_update_session(client, db_session, test_data):
 
 
 @pytest.mark.asyncio
-async def test_delete_session(client, db_session, test_data):
-    test_app, test_user = test_data
+async def test_delete_session(client, db_session, sample_data):
+    test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
         user_id=test_user.id, location_id="test_location", metadata={}
@@ -76,4 +73,4 @@ async def test_delete_session(client, db_session, test_data):
         f"/apps/{test_app.id}/users/{test_user.id}/sessions/{test_session.id}"
     )
     data = response.json()
-    assert data["is_active"] == False
+    assert data["is_active"] is False

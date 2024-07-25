@@ -48,24 +48,6 @@ async def get_collections(
     )
 
 
-# @router.get("/id/{collection_id}", response_model=schemas.Collection)
-# def get_collection_by_id(
-#     request: Request,
-#     app_id: uuid.UUID,
-#     user_id: uuid.UUID,
-#     collection_id: uuid.UUID,
-#     db=db,
-# ) -> schemas.Collection:
-#     honcho_collection = crud.get_collection_by_id(
-#         db, app_id=app_id, user_id=user_id, collection_id=collection_id
-#     )
-#     if honcho_collection is None:
-#         raise HTTPException(
-#             status_code=404, detail="collection not found or does not belong to user"
-#         )
-#     return honcho_collection
-
-
 @router.get("/name/{name}", response_model=schemas.Collection)
 async def get_collection_by_name(
     request: Request,
@@ -139,16 +121,11 @@ async def update_collection(
     db=db,
     auth=Depends(auth),
 ):
-    # if collection.name is None:
-    #     raise HTTPException(
-    #         status_code=400, detail="invalid request - name cannot be None"
-    #     )
     if collection.name is not None and collection.name == "honcho":
         raise HTTPException(
             status_code=406,
             detail="error invalid collection configuration - honcho is a reserved name",
         )
-
     try:
         honcho_collection = await crud.update_collection(
             db,

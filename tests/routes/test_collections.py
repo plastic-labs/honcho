@@ -1,8 +1,8 @@
 import uuid
 
 
-def test_create_collection(client, test_data) -> None:
-    test_app, test_user = test_data
+def test_create_collection(client, sample_data) -> None:
+    test_app, test_user = sample_data
     response = client.post(
         f"/apps/{test_app.id}/users/{test_user.id}/collections",
         json={"name": "test_collection", "metadata": {}},
@@ -14,8 +14,8 @@ def test_create_collection(client, test_data) -> None:
     assert "id" in data
 
 
-def test_get_collection_by_id(client, test_data) -> None:
-    test_app, test_user = test_data
+def test_get_collection_by_id(client, sample_data) -> None:
+    test_app, test_user = sample_data
     # Make the collection
     response = client.post(
         f"/apps/{test_app.id}/users/{test_user.id}/collections",
@@ -34,8 +34,8 @@ def test_get_collection_by_id(client, test_data) -> None:
     assert "id" in data
 
 
-def test_get_collection_by_name(client, test_data) -> None:
-    test_app, test_user = test_data
+def test_get_collection_by_name(client, sample_data) -> None:
+    test_app, test_user = sample_data
     # Make the collection
     response = client.post(
         f"/apps/{test_app.id}/users/{test_user.id}/collections",
@@ -54,8 +54,8 @@ def test_get_collection_by_name(client, test_data) -> None:
     assert "id" in data
 
 
-def test_update_collection(client, test_data) -> None:
-    test_app, test_user = test_data
+def test_update_collection(client, sample_data) -> None:
+    test_app, test_user = sample_data
     # Make the collection
     response = client.post(
         f"/apps/{test_app.id}/users/{test_user.id}/collections",
@@ -75,8 +75,8 @@ def test_update_collection(client, test_data) -> None:
     assert "id" in data
 
 
-def test_delete_collection(client, test_data) -> None:
-    test_app, test_user = test_data
+def test_delete_collection(client, sample_data) -> None:
+    test_app, test_user = sample_data
     # Make the collection
     response = client.post(
         f"/apps/{test_app.id}/users/{test_user.id}/collections",

@@ -122,7 +122,7 @@ def client(db_session):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def test_data(db_session):
+async def sample_data(db_session):
     """Helper function to create test data"""
     # Create test app
     test_app = models.App(name=str(uuid.uuid4()), metadata={})
