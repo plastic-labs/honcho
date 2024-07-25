@@ -17,7 +17,6 @@ async def auth(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
 ):
     if not USE_AUTH_SERVICE:
-        print("Test of Auth")
         return True
     print(credentials)
     if not credentials or credentials.credentials != "test":

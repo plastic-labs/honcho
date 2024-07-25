@@ -1,8 +1,9 @@
 import datetime
+import os
 import uuid
 from typing import Optional, Sequence
 
-from openai import OpenAI
+from openai import AzureOpenAI, OpenAI
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # from sqlalchemy.orm import Session
 from . import models, schemas
 
-openai_client = OpenAI()
+openai_client = AzureOpenAI(
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+)
 
 ########################################################
 # app methods
@@ -39,7 +44,7 @@ async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
     honcho_app = models.App(name=app.name, h_metadata=app.metadata)
     db.add(honcho_app)
     await db.commit()
-    await db.refresh(honcho_app)
+    # await db.refresh(honcho_app)
     return honcho_app
 
 
@@ -50,12 +55,12 @@ async def update_app(
     if honcho_app is None:
         raise ValueError("App not found")
     if app.name is not None:
-        honcho_app.content = app.name
+        honcho_app.name = app.name
     if app.metadata is not None:
         honcho_app.h_metadata = app.metadata
 
     await db.commit()
-    await db.refresh(honcho_app)
+    # await db.refresh(honcho_app)
     return honcho_app
 
 
@@ -83,7 +88,7 @@ async def create_user(
     )
     db.add(honcho_user)
     await db.commit()
-    await db.refresh(honcho_user)
+    # await db.refresh(honcho_user)
     return honcho_user
 
 
@@ -139,12 +144,12 @@ async def update_user(
     if honcho_user is None:
         raise ValueError("User not found")
     if user.name is not None:
-        honcho_user.content = user.name
+        honcho_user.name = user.name
     if user.metadata is not None:
         honcho_user.h_metadata = user.metadata
 
     await db.commit()
-    await db.refresh(honcho_user)
+    # await db.refresh(honcho_user)
     return honcho_user
 
 
@@ -228,8 +233,18 @@ async def create_session(
         h_metadata=session.metadata,
     )
     db.add(honcho_session)
+    # print("====== Testing State of ORM Object ====")
+    # print(honcho_session)
+    # print("=======================================")
+    #
+    # await db.flush()
+    #
+    # print("====== Testing State of ORM Object ====")
+    # print(honcho_session)
+    # print("=======================================")
+
     await db.commit()
-    await db.refresh(honcho_session)
+    # await db.refresh(honcho_session)
     return honcho_session
 
 
@@ -250,7 +265,7 @@ async def update_session(
     ):  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
     await db.commit()
-    await db.refresh(honcho_session)
+    # await db.refresh(honcho_session)
     return honcho_session
 
 
@@ -300,7 +315,7 @@ async def create_message(
     db.add(honcho_message)
     await db.commit()
     # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
-    await db.refresh(honcho_message)
+    # await db.refresh(honcho_message)
     return honcho_message
 
 
@@ -372,7 +387,7 @@ async def update_message(
     ):  # Need to explicitly be there won't make it empty by default
         honcho_message.h_metadata = message.metadata
     await db.commit()
-    await db.refresh(honcho_message)
+    # await db.refresh(honcho_message)
     return honcho_message
 
 
@@ -388,7 +403,7 @@ async def create_metamessage(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
 ):
-    message = get_message(
+    message = await get_message(
         db,
         app_id=app_id,
         session_id=session_id,
@@ -407,7 +422,7 @@ async def create_metamessage(
 
     db.add(honcho_metamessage)
     await db.commit()
-    await db.refresh(honcho_metamessage)
+    # await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
@@ -498,7 +513,7 @@ async def update_metamessage(
     if metamessage.metamessage_type is not None:
         honcho_metamessage.metamessage_type = metamessage.metamessage_type
     await db.commit()
-    await db.refresh(honcho_metamessage)
+    # await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
@@ -582,7 +597,7 @@ async def create_collection(
     except IntegrityError:
         await db.rollback()
         raise ValueError("Collection already exists") from None
-    await db.refresh(honcho_collection)
+    # await db.refresh(honcho_collection)
     return honcho_collection
 
 
@@ -601,12 +616,13 @@ async def update_collection(
     if collection.metadata is not None:
         honcho_collection.h_metadata = collection.metadata
     try:
-        honcho_collection.name = collection.name
-        await db.commit()
+        if collection.name is not None:
+            honcho_collection.name = collection.name
+            await db.commit()
     except IntegrityError:
         await db.rollback()
         raise ValueError("Collection already exists") from None
-    await db.refresh(honcho_collection)
+    # await db.refresh(honcho_collection)
     return honcho_collection
 
 
@@ -700,7 +716,7 @@ async def query_documents(
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     response = openai_client.embeddings.create(
-        input=query, model="text-embedding-3-small"
+        input=query, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
     )
     embedding_query = response.data[0].embedding
     stmt = (
@@ -736,7 +752,7 @@ async def create_document(
         raise ValueError("Session not found or does not belong to user")
 
     response = openai_client.embeddings.create(
-        input=document.content, model="text-embedding-3-small"
+        input=document.content, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
     )
 
     embedding = response.data[0].embedding
@@ -749,7 +765,7 @@ async def create_document(
     )
     db.add(honcho_document)
     await db.commit()
-    await db.refresh(honcho_document)
+    # await db.refresh(honcho_document)
     return honcho_document
 
 
@@ -773,7 +789,7 @@ async def update_document(
     if document.content is not None:
         honcho_document.content = document.content
         response = openai_client.embeddings.create(
-            input=document.content, model="text-embedding-3-small"
+            input=document.content, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
         )
         embedding = response.data[0].embedding
         honcho_document.embedding = embedding
@@ -782,7 +798,7 @@ async def update_document(
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
     await db.commit()
-    await db.refresh(honcho_document)
+    # await db.refresh(honcho_document)
     return honcho_document
 
 

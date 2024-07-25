@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.10] — 2024-07-23
+
+### Added
+
+* Test cases for Storage API
+* Sentry tracing and profiling
+* Additional Error handling
+
+### Changed
+
+* Document API uses same embedding endpoint as deriver
+* CRUD operations use one less database call by removing extra refresh
+* Use database for timestampz rather than API
+* Pydantic schemas to use modern syntax
+
+### Fixed
+
+* Deriver queue resolution
+
+
 ## [0.0.9] — 2024-05-16
 
 ### Added

@@ -1,6 +1,7 @@
 version: "3.8"
 services:
   api:
+    image: honcho:latest
     build:
       context: .
       dockerfile: Dockerfile
