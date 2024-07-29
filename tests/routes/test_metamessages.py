@@ -7,9 +7,7 @@ from src import models  # Import your SQLAlchemy models
 async def test_create_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.id, location_id="test_location", metadata={}
-    )
+    test_session = models.Session(user_id=test_user.id, metadata={})
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
@@ -39,9 +37,7 @@ async def test_create_metamessage(client, db_session, sample_data):
 async def test_get_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.id, location_id="test_location", metadata={}
-    )
+    test_session = models.Session(user_id=test_user.id, metadata={})
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
@@ -73,9 +69,7 @@ async def test_get_metamessage(client, db_session, sample_data):
 async def test_update_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.id, location_id="test_location", metadata={}
-    )
+    test_session = models.Session(user_id=test_user.id, metadata={})
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
