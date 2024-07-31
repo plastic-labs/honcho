@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "honcho"
-version = "0.0.10"
+version = "0.0.11"
 description = "Honcho Server"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
