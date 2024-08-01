@@ -1,19 +1,15 @@
-import asyncio
 import logging
-import os
 import re
 import uuid
 from typing import List
 
-import sentry_sdk
-import uvloop
 from dotenv import load_dotenv
-from sentry_sdk.integrations.asyncio import AsyncioIntegration
+from rich import print as rprint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import crud, models, schemas
-from .db import SessionLocal
+from .. import crud, models, schemas
+from ..db import SessionLocal
 from .voe import (
     CheckVoeList,
     UserPredictionThought,
@@ -81,7 +77,7 @@ async def process_ai_message(
     """
     Process an AI message. Make a prediction about what the user is going to say to it.
     """
-    print(f"\033[92mProcessing AI message: {content}")
+    rprint(f"[green]Processing AI message: {content}[/green]")
 
     subquery = (
         select(models.Message.created_at)
@@ -141,7 +137,7 @@ async def process_ai_message(
     )
 
     if user_prediction_thought_revision_response.content == "None":
-        print("\033[94mModel predicted no changes to the user prediction thought")
+        rprint("[blue]Model predicted no changes to the user prediction thought")
         await add_metamessage(
             db,
             message_id,
@@ -171,27 +167,29 @@ async def process_ai_message(
     await db.commit()
 
     # debugging
-    print("\033[94m=================")
-    print("\033[94mUser Prediction Thought Prompt:")
-    content_lines = str(user_prediction_thought).split("\n")
-    for line in content_lines:
-        print(f"\033[94m{line}")
-    print("\033[94mUser Prediction Thought:")
-    content_lines = str(user_prediction_thought_response.content).split("\n")
-    for line in content_lines:
-        print(f"\033[94m{line}")
-    print("\033[94m=================\033[0m")
+    rprint("[blue]=================")
 
-    print("\033[95m=================")
-    print("\033[95mUser Prediction Thought Revision:")
-    content_lines = str(user_prediction_thought_revision).split("\n")
-    for line in content_lines:
-        print(f"\033[95m{line}")
-    print("\033[95mUser Prediction Thought Revision Response:")
-    content_lines = str(user_prediction_thought_revision_response.content).split("\n")
-    for line in content_lines:
-        print(f"\033[95m{line}")
-    print("\033[95m=================\033[0m")
+    rprint("[blue]User Prediction Thought Prompt:")
+    content_lines = str(user_prediction_thought)
+    rprint(f"[blue]{content_lines}")
+
+    rprint("[blue]User Prediction Thought:")
+    content_lines = str(user_prediction_thought_response.content)
+    rprint(f"[blue]{content_lines}")
+
+    rprint("[blue]=================")
+
+    rprint("[medium_purple1]=================")
+
+    rprint("[medium_purple1]User Prediction Thought Revision:")
+    content_lines = str(user_prediction_thought_revision)
+    rprint(f"[medium_purple1]{content_lines}")
+
+    rprint("[medium_purple1]User Prediction Thought Revision Response:")
+    content_lines = str(user_prediction_thought_revision_response.content)
+    rprint(f"[medium_purple1]{content_lines}")
+
+    rprint("[medium_purple1]=================")
 
 
 async def process_user_message(
@@ -206,7 +204,7 @@ async def process_user_message(
     """
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
-    print(f"\033[93mProcessing User Message: {content}")
+    rprint(f"[orange1]Processing User Message: {content}")
     subquery = (
         select(models.Message.created_at)
         .where(models.Message.id == message_id)
@@ -226,7 +224,7 @@ async def process_user_message(
     ai_message = response.scalar_one_or_none()
 
     if ai_message and ai_message.content:
-        print(f"\033[93mAI Message: {ai_message.content}")
+        rprint(f"[orange1]AI Message: {ai_message.content}")
         metamessages_stmt = (
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.id)
@@ -241,7 +239,7 @@ async def process_user_message(
         metamessage = response.scalar_one_or_none()
 
         if metamessage and metamessage.content:
-            print(f"\033[93mMetamessage: {metamessage.content}")
+            rprint(f"[orange1]Metamessage: {metamessage.content}")
 
             # VoE thought
             voe_thought = VoeThought(
@@ -259,32 +257,29 @@ async def process_user_message(
             voe_derive_facts_response = await voe_derive_facts.call_async()
 
             # debugging
-            print("\033[93m=================")
-            print("\033[93mVoe Thought Prompt:")
-            content_lines = str(voe_thought).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print("\033[93mVoe Thought:")
-            content_lines = str(voe_thought_response.content).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print("\033[93m=================\033[0m")
+            rprint("[orange1]=================")
+            rprint("[orange1]Voe Thought Prompt:")
+            content_lines = str(voe_thought)
+            rprint(f"[orange1]{content_lines}")
+            rprint("[orange1]Voe Thought:")
+            content_lines = str(voe_thought_response.content)
+            rprint(f"[orange1]{content_lines}")
+            rprint("[orange1]=================")
 
-            print("\033[93m=================")
-            print("\033[93mVoe Derive Facts Prompt:")
-            content_lines = str(voe_derive_facts).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print("\033[93mVoe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_response.content).split("\n")
-            for line in content_lines:
-                print(f"\033[93m{line}")
-            print("\033[93m=================\033[0m")
+            rprint("[orange1]================")
+            rprint("[orange1]Voe Derive Facts Prompt:")
+            content_lines = str(voe_derive_facts)
+            rprint(f"[orange1]{content_lines}")
+
+            rprint("[orange1]Voe Derive Facts Response:")
+            content_lines = str(voe_derive_facts_response.content)
+            rprint(f"[orange1]{content_lines}")
+            rprint("[orange1]=================")
 
             facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
-            print("\033[93m=================")
-            print("\033[93mThe Facts Themselves:")
-            print(facts)
+            rprint("[orange1]=================")
+            rprint("[orange1]The Facts Themselves:")
+            rprint(facts)
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
             for fact in new_facts:
@@ -297,11 +292,11 @@ async def process_user_message(
                         user_id=user_id,
                         collection_id=collection_id,
                     )
-                    print(f"\033[93mReturned Document: {doc.content}")
+                    rprint(f"[orange1]Returned Document: {doc.content}")
         else:
             raise Exception("\033[91mUser Thought Prediction Revision NOT READY YET")
     else:
-        print("\033[91mNo AI message before this user message")
+        rprint("[red]No AI message before this user message[/red]")
         return
 
 
@@ -313,7 +308,7 @@ async def check_dups(
     check_duplication = CheckVoeList(existing_facts=[], new_fact="")
     result = None
     new_facts = []
-    global_existing_facts = []  # for debugging
+    # global_existing_facts = []  # for debugging
     for fact in facts:
         async with SessionLocal() as db:
             result = await crud.query_documents(
@@ -327,91 +322,26 @@ async def check_dups(
         existing_facts = [document.content for document in result]
         if len(existing_facts) == 0:
             new_facts.append(fact)
-            print(f"New Fact: {fact}")
+            rprint(f"[light_steel_blue]New Fact: {fact}")
             continue
 
-        global_existing_facts.extend(existing_facts)  # for debugging
+        # global_existing_facts.extend(existing_facts)  # for debugging
 
         check_duplication.existing_facts = existing_facts
         check_duplication.new_fact = fact
         response = await check_duplication.call_async()
-        print("==================")
-        print("Dedupe Responses")
-        print(response.content)
-        print("==================")
+        rprint("[light_steel_blue]==================")
+        rprint(f"[light_steel_blue]Dedupe Responses: {response.content}")
+        rprint("[light_steel_blue]==================")
         if response.content == "true":
             new_facts.append(fact)
-            print(f"New Fact: {fact}")
+            rprint(f"[light_steel_blue]New Fact: {fact}")
             continue
 
-    print("===================")
-    print(f"Existing Facts: {global_existing_facts}")
-    print(f"Net New Facts {new_facts}")
-    print("===================")
+    rprint("[light_steel_blue]===================")
+    # rprint("[light_steel_blue]Existing Facts:")
+    # rprint(global_existing_facts)
+    rprint("[light_steel_blue]Net New Facts:")
+    rprint(new_facts)
+    rprint("[light_steel_blue]===================")
     return new_facts
-
-
-async def dequeue(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
-    async with semaphore, SessionLocal() as db:
-        try:
-            result = await db.execute(
-                select(models.QueueItem)
-                .order_by(models.QueueItem.id)
-                .where(models.QueueItem.processed == False)
-                .with_for_update(skip_locked=True)
-                .limit(1)
-            )
-            item = result.scalar_one_or_none()
-
-            if item:
-                print("========")
-                print("Processing item")
-                print("========")
-                await process_item(db, payload=item.payload)
-                item.processed = True
-                await db.commit()
-            else:
-                # No items to process, set the queue_empty_flag
-                queue_empty_flag.set()
-
-        except Exception as e:
-            print("==========")
-            print("Exception")
-            print(e)
-            print("==========")
-            await db.rollback()
-
-
-async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
-    while True:
-        if queue_empty_flag.is_set():
-            await asyncio.sleep(1)  # Sleep briefly if the queue is empty
-            queue_empty_flag.clear()  # Reset the flag
-            continue
-        if semaphore.locked():
-            await asyncio.sleep(2)  # Sleep briefly if the semaphore is fully locked
-            continue
-        task = asyncio.create_task(dequeue(semaphore, queue_empty_flag))
-        await asyncio.sleep(0)  # Yield control to allow tasks to run
-
-
-async def main():
-    SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
-    if SENTRY_ENABLED:
-        sentry_sdk.init(
-            dsn=os.getenv("SENTRY_DSN"),
-            enable_tracing=True,
-            traces_sample_rate=1.0,
-            profiles_sample_rate=1.0,
-            integrations=[
-                AsyncioIntegration(),
-            ],
-        )
-    semaphore = asyncio.Semaphore(1)  # Limit to 5 concurrent dequeuing operations
-    queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
-    await polling_loop(semaphore, queue_empty_flag)
-
-
-if __name__ == "__main__":
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-    asyncio.run(main())

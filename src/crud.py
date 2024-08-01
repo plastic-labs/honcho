@@ -189,7 +189,6 @@ async def get_sessions(
     db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    location_id: Optional[str] = None,
     reverse: Optional[bool] = False,
     is_active: Optional[bool] = False,
     filter: Optional[dict] = None,
@@ -212,9 +211,6 @@ async def get_sessions(
     else:
         stmt = stmt.order_by(models.Session.created_at)
 
-    if location_id is not None:
-        stmt = stmt.where(models.Session.location_id == location_id)
-
     return stmt
 
 
@@ -229,7 +225,6 @@ async def create_session(
         raise ValueError("User not found")
     honcho_session = models.Session(
         user_id=user_id,
-        location_id=session.location_id,
         h_metadata=session.metadata,
     )
     db.add(honcho_session)

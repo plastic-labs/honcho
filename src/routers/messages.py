@@ -5,7 +5,6 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.db import SessionLocal
@@ -25,7 +24,9 @@ async def enqueue(payload: dict):
             processed_payload = {
                 k: str(v) if isinstance(v, uuid.UUID) else v for k, v in payload.items()
             }
-            item = QueueItem(payload=processed_payload)
+            item = QueueItem(
+                payload=processed_payload, session_id=payload["session_id"]
+            )
             db.add(item)
             await db.commit()
             return

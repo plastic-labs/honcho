@@ -67,7 +67,6 @@ class Session(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, index=True, default=uuid.uuid4
     )
-    location_id: Mapped[str] = mapped_column(String(512), index=True, default="default")
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -78,7 +77,7 @@ class Session(Base):
     user = relationship("User", back_populates="sessions")
 
     def __repr__(self) -> str:
-        return f"Session(id={self.id}, user_id={self.user_id}, location_id={self.location_id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"Session(id={self.id}, user_id={self.user_id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Message(Base):
@@ -160,5 +159,15 @@ class Document(Base):
 class QueueItem(Base):
     __tablename__ = "queue"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"), index=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ActiveQueueSession(Base):
+    __tablename__ = "active_queue_sessions"
+
+    session_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True)
+    last_updated: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), onupdate=func.now()
+    )

@@ -121,6 +121,11 @@ async def update_collection(
     db=db,
     auth=Depends(auth),
 ):
+    if collection.name is None and collection.metadata is None:
+        raise HTTPException(
+            status_code=406,
+            detail="error invalid collection configuration - atleast 1 field must be provided",
+        )
     if collection.name is not None and collection.name == "honcho":
         raise HTTPException(
             status_code=406,

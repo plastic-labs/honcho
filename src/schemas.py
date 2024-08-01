@@ -28,18 +28,11 @@ class App(AppBase):
     @field_validator("metadata", mode="before")
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
-        # if "h_metadata" in values:
-        #     return values["h_metadata"]
-        # return {}
 
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class UserBase(BaseModel):
@@ -68,18 +61,10 @@ class User(UserBase):
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
 
-    # @validator("metadata", pre=True, allow_reuse=True)
-    # def fetch_h_metadata(cls, value, values):
-    #     if "h_metadata" in values:
-    #         return values["h_metadata"]
-    #     return {}
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class MessageBase(BaseModel):
@@ -109,18 +94,10 @@ class Message(MessageBase):
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
 
-    # @validator("metadata", pre=True, allow_reuse=True)
-    # def fetch_h_metadata(cls, value, values):
-    #     if "h_metadata" in values:
-    #         return values["h_metadata"]
-    #     return {}
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class SessionBase(BaseModel):
@@ -128,7 +105,6 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    location_id: str
     metadata: dict | None = {}
 
 
@@ -141,7 +117,6 @@ class Session(SessionBase):
     # messages: list[Message]
     is_active: bool
     user_id: uuid.UUID
-    location_id: str
     h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
@@ -150,18 +125,10 @@ class Session(SessionBase):
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
 
-    # @validator("metadata", pre=True, allow_reuse=True)
-    # def fetch_h_metadata(cls, value, values):
-    #     if "h_metadata" in values:
-    #         return values["h_metadata"]
-    #     return {}
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class MetamessageBase(BaseModel):
@@ -194,19 +161,10 @@ class Metamessage(MetamessageBase):
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
 
-    # @validator("metadata", pre=True, allow_reuse=True)
-    # def fetch_h_metadata(cls, value, values):
-    #     if "h_metadata" in values:
-    #         return values["h_metadata"]
-    #     return {}
-
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class CollectionBase(BaseModel):
@@ -235,26 +193,18 @@ class Collection(CollectionBase):
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
 
-    # @validator("metadata", pre=True, allow_reuse=True)
-    # def fetch_h_metadata(cls, value, values):
-    #     if "h_metadata" in values:
-    #         return values["h_metadata"]
-    #     return {}
-
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class DocumentBase(BaseModel):
-    content: str
+    pass
 
 
 class DocumentCreate(DocumentBase):
+    content: str
     metadata: dict | None = {}
 
 
@@ -275,19 +225,10 @@ class Document(DocumentBase):
     def fetch_h_metadata(cls, value, info):
         return info.data.get("h_metadata", {})
 
-    # @validator("metadata", pre=True, allow_reuse=True)
-    # def fetch_h_metadata(cls, value, values):
-    #     if "h_metadata" in values:
-    #         return values["h_metadata"]
-    #     return {}
-
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
-    # class Config:
-    #     from_attributes = True
-    #     json_schema_extra = {"exclude": ["h_metadata"]}
 
 
 class AgentChat(BaseModel):

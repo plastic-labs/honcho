@@ -916,37 +916,38 @@ files = [
 
 [[package]]
 name = "mirascope"
-version = "0.15.2"
+version = "0.18.2"
 description = "An intuitive approach to building with LLMs"
 optional = false
 python-versions = "<4.0,>=3.9"
 files = [
-    {file = "mirascope-0.15.2-py3-none-any.whl", hash = "sha256:ff8eaedc9ab840d7e99e00b7ccec4391320ba576140274833180b7535a8b791d"},
-    {file = "mirascope-0.15.2.tar.gz", hash = "sha256:b76e2c1eaaa6c05f3949a5d4e855843468e51d81c368f41da5c6054576f5faab"},
+    {file = "mirascope-0.18.2-py3-none-any.whl", hash = "sha256:239a9814b8795cce138a7aeaed15d6f2048aeaad6be7cdd52798252ad4370ff6"},
+    {file = "mirascope-0.18.2.tar.gz", hash = "sha256:49fd6df6a02a55e3973224e30eb0b8b2f3ff93a698380fa75244c457b1bcf357"},
 ]
 
 [package.dependencies]
-docstring-parser = ">=0.15,<0.16"
+docstring-parser = ">=0.15,<1.0"
 openai = ">=1.6.0,<2.0.0"
 pydantic = ">=2.0.2,<3.0.0"
 tenacity = ">=8.2.3,<9.0.0"
 
 [package.extras]
-all = ["anthropic (>=0.23.1,<0.27.0)", "chromadb (>=0.4.24,<1.0.0)", "cohere (>=5.2.5,<5.4.0)", "google-generativeai (>=0.4.0,<1.0.0)", "groq (>=0.4.2,<0.7.0)", "hyperdx-opentelemetry (>=0.1.0,<0.2.0)", "langfuse (>=2.30.0,<3.0.0)", "logfire (>=0.33.0,<1.0.0)", "mirascope-cli (>=0.1.3,<1.0.0)", "mistralai (>=0.1.6,<1.0.0)", "opentelemetry-api (>=1.22.0,<2.0.0)", "opentelemetry-sdk (>=1.22.0,<2.0.0)", "pinecone-client (>=3.2.2,<4.0.0)", "wandb (>=0.16.4,<1.0.0)", "weave (>=0.50.2,<1.0.0)"]
-anthropic = ["anthropic (>=0.23.1,<0.27.0)"]
+all = ["anthropic (>=0.27.0,<1.0.0)", "chromadb (>=0.4.24,<1.0.0)", "cohere (>=5.5.7,<6.0.0)", "google-generativeai (>=0.4.0,<1.0.0)", "groq (>=0.7.0,<1.0.0)", "hyperdx-opentelemetry (>=0.1.0,<0.2.0)", "langfuse (>=2.30.0,<3.0.0)", "logfire (>=0.41.0,<1.0.0)", "mirascope-cli (>=0.1.3,<1.0.0)", "mistralai (>=0.1.6,<1.0.0)", "opentelemetry-api (>=1.22.0,<2.0.0)", "opentelemetry-sdk (>=1.22.0,<2.0.0)", "pinecone-client (>=4.1.2,<5.0.0)", "wandb (>=0.16.4,<1.0.0)", "weave (>=0.50.2,<1.0.0)", "weaviate-client (>=4.6.3,<5.0.0)"]
+anthropic = ["anthropic (>=0.27.0,<1.0.0)"]
 chromadb = ["chromadb (>=0.4.24,<1.0.0)"]
 cli = ["mirascope-cli (>=0.1.3,<1.0.0)"]
-cohere = ["cohere (>=5.2.5,<5.4.0)"]
+cohere = ["cohere (>=5.5.7,<6.0.0)"]
 gemini = ["google-generativeai (>=0.4.0,<1.0.0)"]
-groq = ["groq (>=0.4.2,<0.7.0)"]
+groq = ["groq (>=0.7.0,<1.0.0)"]
 hyperdx = ["hyperdx-opentelemetry (>=0.1.0,<0.2.0)"]
 langfuse = ["langfuse (>=2.30.0,<3.0.0)"]
-logfire = ["logfire (>=0.33.0,<1.0.0)"]
+logfire = ["logfire (>=0.41.0,<1.0.0)"]
 mistral = ["mistralai (>=0.1.6,<1.0.0)"]
 opentelemetry = ["opentelemetry-api (>=1.22.0,<2.0.0)", "opentelemetry-sdk (>=1.22.0,<2.0.0)"]
-pinecone = ["pinecone-client (>=3.2.2,<4.0.0)"]
+pinecone = ["pinecone-client (>=4.1.2,<5.0.0)"]
 wandb = ["wandb (>=0.16.4,<1.0.0)"]
 weave = ["weave (>=0.50.2,<1.0.0)"]
+weaviate = ["weaviate-client (>=4.6.3,<5.0.0)"]
 
 [[package]]
 name = "numpy"
@@ -2398,4 +2399,4 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "146b17854cf49174cb8d6ed17672a11a3d1310e27fa521de569f6341855e6c5d"
+content-hash = "f9a40ce12efcdba7d8455722924e3669e9399102180ea0581cf5e3f4e4300b73"

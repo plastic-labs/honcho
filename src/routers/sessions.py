@@ -22,7 +22,6 @@ async def get_sessions(
     request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    location_id: Optional[str] = None,
     is_active: Optional[bool] = False,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
@@ -35,8 +34,6 @@ async def get_sessions(
         app_id (uuid.UUID): The ID of the app representing the client application using
         honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
-        location_id (str, optional): Optional Location ID representing the location of a
-        session
 
     Returns:
         list[schemas.Session]: List of Session objects
@@ -53,7 +50,6 @@ async def get_sessions(
             db,
             app_id=app_id,
             user_id=user_id,
-            location_id=location_id,
             reverse=reverse,
             is_active=is_active,
             filter=data,
@@ -77,7 +73,7 @@ async def create_session(
         application using honcho
         user_id (uuid.UUID): The User ID representing the user, managed by the user
         session (schemas.SessionCreate): The Session object containing any
-        metadata and a location ID
+        metadata
 
     Returns:
         schemas.Session: The Session object of the new Session
