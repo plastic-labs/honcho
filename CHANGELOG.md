@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.11] — 2024-08-01
+
+### Added
+
+* `session_id` column to `QueueItem` Table
+* `ActiveQueueSession` Table to track which sessions are being actively
+processed
+* Queue can process multiple sessions at once
+
+### Changed
+
+* Sessions do not require a `location_id`
+* Detailed printing using `rich`
+
 ## [0.0.10] — 2024-07-23
 
 ### Added
