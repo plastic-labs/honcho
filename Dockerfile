@@ -1,6 +1,6 @@
 # https://pythonspeed.com/articles/base-image-python-docker-images/
 # https://testdriven.io/blog/docker-best-practices/
-FROM python:3.10-slim-bullseye
+FROM python:3.11-slim-bullseye
 
 RUN apt-get update && apt-get install -y build-essential
 
@@ -36,5 +36,5 @@ COPY --chown=app:app src/ /app/src/
 EXPOSE 8000
 
 # https://stackoverflow.com/questions/29663459/python-app-does-not-print-anything-when-running-detached-in-docker
-CMD ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "fastapi", "run", "src/main.py"]
 
