@@ -11,16 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import crud, models, schemas
 from ..db import SessionLocal
 from .voe import (
-    CheckVoeList,
-    UserPredictionThought,
-    UserPredictionThoughtRevision,
-    VoeDeriveFacts,
-    VoeThought,
+    user_prediction_thought,
+    user_prediction_thought_revision,
+    voe_thought,
+    voe_derive_facts,
+    check_voe_list,
 )
 
 load_dotenv()
 
-# Turn of SQLAlchemy Echo logging
+# Turn off SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
@@ -102,12 +102,11 @@ async def process_ai_message(
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
     # user prediction thought
-    user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
-    user_prediction_thought_response = await user_prediction_thought.call_async()
+    user_prediction_thought_response = await user_prediction_thought(chat_history_str)
 
     ## query the collection to build the context
     additional_data = re.findall(
-        r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
+        r"\d+\.\s([^\n]+)", user_prediction_thought_response
     )
     additional_data_set = set()
     additional_data_list = []
@@ -127,41 +126,38 @@ async def process_ai_message(
     context_str = "\n".join([document.content for document in additional_data_list])
 
     # user prediction thought revision given the context
-    user_prediction_thought_revision = UserPredictionThoughtRevision(
-        user_prediction_thought=user_prediction_thought_response.content,
+    user_prediction_thought_revision_response = await user_prediction_thought_revision(
+        user_prediction_thought=user_prediction_thought_response,
         retrieved_context=context_str,
         chat_history=chat_history_str,
     )
-    user_prediction_thought_revision_response = (
-        await user_prediction_thought_revision.call_async()
-    )
 
-    if user_prediction_thought_revision_response.content == "None":
+    if user_prediction_thought_revision_response == "None":
         rprint("[blue]Model predicted no changes to the user prediction thought")
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought",
-            user_prediction_thought_response.content,
+            user_prediction_thought_response,
         )
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought_revision",
-            user_prediction_thought_response.content,
+            user_prediction_thought_response,
         )
     else:
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought",
-            user_prediction_thought_response.content,
+            user_prediction_thought_response,
         )
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought_revision",
-            user_prediction_thought_revision_response.content,
+            user_prediction_thought_revision_response,
         )
 
     await db.commit()
@@ -174,7 +170,7 @@ async def process_ai_message(
     rprint(f"[blue]{content_lines}")
 
     rprint("[blue]User Prediction Thought:")
-    content_lines = str(user_prediction_thought_response.content)
+    content_lines = str(user_prediction_thought_response)
     rprint(f"[blue]{content_lines}")
 
     rprint("[blue]=================")
@@ -186,7 +182,7 @@ async def process_ai_message(
     rprint(f"[medium_purple1]{content_lines}")
 
     rprint("[medium_purple1]User Prediction Thought Revision Response:")
-    content_lines = str(user_prediction_thought_revision_response.content)
+    content_lines = str(user_prediction_thought_revision_response)
     rprint(f"[medium_purple1]{content_lines}")
 
     rprint("[medium_purple1]=================")
@@ -242,19 +238,18 @@ async def process_user_message(
             rprint(f"[orange1]Metamessage: {metamessage.content}")
 
             # VoE thought
-            voe_thought = VoeThought(
-                user_prediction_thought_revision=metamessage.content, actual=content
+            voe_thought_response = await voe_thought(
+                user_prediction_thought_revision=metamessage.content,
+                actual=content
             )
-            voe_thought_response = await voe_thought.call_async()
 
             # VoE derive facts
-            voe_derive_facts = VoeDeriveFacts(
+            voe_derive_facts_response = await voe_derive_facts(
                 ai_message=ai_message.content,
                 user_prediction_thought_revision=metamessage.content,
                 actual=content,
-                voe_thought=voe_thought_response.content,
+                voe_thought=voe_thought_response,
             )
-            voe_derive_facts_response = await voe_derive_facts.call_async()
 
             # debugging
             rprint("[orange1]=================")
@@ -262,7 +257,7 @@ async def process_user_message(
             content_lines = str(voe_thought)
             rprint(f"[orange1]{content_lines}")
             rprint("[orange1]Voe Thought:")
-            content_lines = str(voe_thought_response.content)
+            content_lines = str(voe_thought_response)
             rprint(f"[orange1]{content_lines}")
             rprint("[orange1]=================")
 
@@ -272,11 +267,11 @@ async def process_user_message(
             rprint(f"[orange1]{content_lines}")
 
             rprint("[orange1]Voe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_response.content)
+            content_lines = str(voe_derive_facts_response)
             rprint(f"[orange1]{content_lines}")
             rprint("[orange1]=================")
 
-            facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
+            facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response)
             rprint("[orange1]=================")
             rprint("[orange1]The Facts Themselves:")
             rprint(facts)
@@ -305,10 +300,8 @@ async def check_dups(
 ):
     """Check that we're not storing duplicate facts"""
 
-    check_duplication = CheckVoeList(existing_facts=[], new_fact="")
     result = None
     new_facts = []
-    # global_existing_facts = []  # for debugging
     for fact in facts:
         async with SessionLocal() as db:
             result = await crud.query_documents(
@@ -325,22 +318,16 @@ async def check_dups(
             rprint(f"[light_steel_blue]New Fact: {fact}")
             continue
 
-        # global_existing_facts.extend(existing_facts)  # for debugging
-
-        check_duplication.existing_facts = existing_facts
-        check_duplication.new_fact = fact
-        response = await check_duplication.call_async()
+        is_new_fact = await check_voe_list(existing_facts, fact)
         rprint("[light_steel_blue]==================")
-        rprint(f"[light_steel_blue]Dedupe Responses: {response.content}")
+        rprint(f"[light_steel_blue]Dedupe Responses: {is_new_fact}")
         rprint("[light_steel_blue]==================")
-        if response.content == "true":
+        if is_new_fact:
             new_facts.append(fact)
             rprint(f"[light_steel_blue]New Fact: {fact}")
             continue
 
     rprint("[light_steel_blue]===================")
-    # rprint("[light_steel_blue]Existing Facts:")
-    # rprint(global_existing_facts)
     rprint("[light_steel_blue]Net New Facts:")
     rprint(new_facts)
     rprint("[light_steel_blue]===================")

@@ -25,6 +25,7 @@ opentelemetry-exporter-otlp = "^1.24.0"
 opentelemetry-instrumentation-sqlalchemy = "^0.45b0"
 opentelemetry-instrumentation-logging = "^0.45b0"
 rich = "^13.7.1"
+anthropic = "^0.34.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.2.2"
