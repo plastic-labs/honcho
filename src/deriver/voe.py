@@ -11,23 +11,29 @@ async def user_prediction_thought(chat_history: str) -> str:
         max_tokens=1024,
         system=[{
                 "type": "text",
-                "text": "Generate a \"thought\" that makes a theory of mind prediction about what the user will say based on the way the conversation has been going. Also list other pieces of data that would help improve your prediction."
+                "text": """
+Generate a prediction about what the user will say based on the way the given conversation has been going. Use your theory of mind skills to impute the user's unobservable mental state. Also list other pieces of data that would help improve your prediction. Be precise and succinct, provide only the output as formatted below, no preface or commentary.
+
+<prediction>
+{prediction goes here}
+</prediction>
+
+<additional-data>
+{numbered list goes here}
+</additional-data>
+"""
         }],
         messages=[
             {
                 "role": "user",
-                "content": f'''Conversation:
+                "content": f'''
+Conversation:
 <conversation>
 {chat_history}
 </conversation>
-
-Generate the additional pieces of data as a numbered list.'''
-        },
-        {
-            "role": "assistant",
-            "content": "Thought:"
-        }
-    ]
+'''
+            }
+        ]
     )
     return response.content[0].text
 
@@ -37,12 +43,21 @@ async def user_prediction_thought_revision(user_prediction_thought: str, retriev
         max_tokens=1024,
         system=[{
             "type": "text",
-            "text": "You are tasked with revising theory of mind \"thoughts\" about what the user is going to say."
+            "text": """
+Revise the theory of mind prediction based on the additional data provided in the following format:
+
+<revision>
+{revised theory of mind prediction goes here}
+</revision>
+
+Be succinct and precise, provide only the output as formatted above. If you believe there are no changes to be made, output "None".
+"""
         }],
         messages=[
             {
                 "role": "user",
-                "content": f'''Here is the thought generated previously:
+                "content": f'''
+Here is the thought generated previously:
 
 <thought>
 {user_prediction_thought}
@@ -59,12 +74,7 @@ And here's the conversation history that was used to generate the original thoug
 <history>
 {chat_history}
 </history>
-
-Given the thought, conversation history, and personal data, make changes to the thought. If there are no changes to be made, output "None".'''
-            },
-            {
-                "role": "assistant",
-                "content": "thought revision:"
+'''
             }
         ]
     )
@@ -76,21 +86,26 @@ async def voe_thought(user_prediction_thought_revision: str, actual: str) -> str
         max_tokens=1024,
         system=[{
             "type": "text",
-            "text": "Below is a \"thought\" about what the user was going to say, and then what the user actually said. Generate a theory of mind prediction about the user based on the difference between the \"thought\" and actual response."
+            "text": '''
+Compare the prediction with the actual user message and assess whether or not the prediction sufficiently captured the actual user message. Be precise and succinct, provide only the output formatted as follows:
+
+<assessment>
+{assessment goes here}
+</assessment>
+'''
         }],
         messages=[
             {
                 "role": "user",
                 "content": f'''
-<thought>
+<prediction>
 {user_prediction_thought_revision}
-</thought>
+</prediction>
 
 <actual>
 {actual}
 </actual>
-
-Provide the theory of mind prediction solely in reference to the Actual statement, i.e. do not generate something that negates the thought. Do not speculate anything about the user.'''
+'''
             }
         ]
     )
@@ -102,12 +117,17 @@ async def voe_derive_facts(ai_message: str, user_prediction_thought_revision: st
         max_tokens=1024,
         system=[{
             "type": "text",
-            "text": "Below is the most recent AI message we sent to a user, a \"thought\" about what the user was going to say to that, what the user actually responded with, and a theory of mind prediction about the user's response. Derive a fact (or list of facts) about the user based on the difference between the original thought and their actual response plus the theory of mind prediction about that response."
+            "text": '''
+We've been employing a method called Violation of Expectation to better assist a user in conversation. From a previous set of instances, we've generated a prediction about what the user would say in response to the assistant (denoted as "thought") as well as a prediction about how well that thought predicted the actual user message (denoted as "voe-thought").
+
+Derive a fact (or set of facts) about the user based on the difference between the thought and their actual response plus the voe-thought. Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".
+'''
         }],
         messages=[
             {
                 "role": "user",
-                "content": f'''Most recent AI message:
+                "content": f'''
+Most recent AI message:
 <ai_message>
 {ai_message}
 </ai_message>
@@ -126,8 +146,7 @@ Theory of mind prediction about that response:
 <voe_thought>
 {voe_thought}
 </voe_thought>
-
-Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out. Your response should be a numbered list with each item on a new line, for example: `\n\n1. foo\n\n2. bar\n\n3. baz`. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".'''
+'''
             }
         ]
     )
