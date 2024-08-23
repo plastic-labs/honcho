@@ -35,6 +35,12 @@ async def add_metamessage(db, message_id, metamessage_type, content):
     db.add(metamessage)
 
 
+def parse_xml_content(text, tag):
+    pattern = f"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
 async def process_item(db: AsyncSession, payload: dict):
     collection: models.Collection
     collection = await crud.get_collection_by_name(
@@ -103,27 +109,25 @@ async def process_ai_message(
 
     # user prediction thought
     user_prediction_thought_response = await user_prediction_thought(chat_history_str)
-
+    prediction = parse_xml_content(user_prediction_thought_response, "prediction")
+    additional_data = parse_xml_content(user_prediction_thought_response, "additional-data")
+    if additional_data:
+        additional_data = [item.split('. ', 1)[1] for item in additional_data.split('\n') if item.strip()]
+    else:
+        additional_data = []
+        
     ## query the collection to build the context
-    additional_data = re.findall(
-        r"\d+\.\s([^\n]+)", user_prediction_thought_response
+    response = await crud.query_documents(
+        db,
+        app_id=app_id,
+        user_id=user_id,
+        collection_id=collection_id,
+        query="\n".join(additional_data),
+        top_k=15,
     )
-    additional_data_set = set()
-    additional_data_list = []
-    for d in additional_data:
-        response = await crud.query_documents(
-            db,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-            query=d,
-            top_k=3,
-        )
-        for document in response:
-            additional_data_set.add(document)
-        additional_data_list = list(additional_data_set)
+    additional_data_list = [document.content for document in response]
 
-    context_str = "\n".join([document.content for document in additional_data_list])
+    context_str = "\n".join(additional_data_list)
 
     # user prediction thought revision given the context
     user_prediction_thought_revision_response = await user_prediction_thought_revision(
@@ -131,44 +135,45 @@ async def process_ai_message(
         retrieved_context=context_str,
         chat_history=chat_history_str,
     )
+    revision = parse_xml_content(user_prediction_thought_revision_response, "revision")
 
-    if user_prediction_thought_revision_response == "None":
+    if not revision:
         rprint("[blue]Model predicted no changes to the user prediction thought")
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought",
-            user_prediction_thought_response,
+            prediction,
         )
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought_revision",
-            user_prediction_thought_response,
+            prediction,
         )
     else:
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought",
-            user_prediction_thought_response,
+            prediction,
         )
         await add_metamessage(
             db,
             message_id,
             "user_prediction_thought_revision",
-            user_prediction_thought_revision_response,
+            revision,
         )
 
     await db.commit()
 
 
     rprint("[blue]User Prediction Thought:")
-    content_lines = str(user_prediction_thought_response)
+    content_lines = str(prediction)
     rprint(f"[blue]{content_lines}")
 
     rprint("[deep_pink1]User Prediction Thought Revision Response:")
-    content_lines = str(user_prediction_thought_revision_response)
+    content_lines = str(revision)
     rprint(f"[deep_pink1]{content_lines}")
 
 
@@ -226,26 +231,31 @@ async def process_user_message(
                 user_prediction_thought_revision=metamessage.content,
                 actual=content
             )
+            voe_thought_parsed = parse_xml_content(voe_thought_response, "assessment")
 
             # VoE derive facts
             voe_derive_facts_response = await voe_derive_facts(
                 ai_message=ai_message.content,
                 user_prediction_thought_revision=metamessage.content,
                 actual=content,
-                voe_thought=voe_thought_response,
+                voe_thought=voe_thought_parsed,
             )
+            voe_derive_facts_parsed = parse_xml_content(voe_derive_facts_response, "facts")
 
             rprint("[orange1]Voe Thought:")
-            content_lines = str(voe_thought_response)
+            content_lines = str(voe_thought_parsed)
             rprint(f"[orange1]{content_lines}")
 
             rprint("[orange1]Voe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_response)
+            content_lines = str(voe_derive_facts_parsed)
             rprint(f"[orange1]{content_lines}")
 
-            facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response)
-            rprint("[orange1]The Facts Themselves:")
-            rprint(facts)
+            if voe_derive_facts_parsed != "None":
+                facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_parsed)
+                rprint("[orange1]The Facts Themselves:")
+                rprint(facts)
+            else:
+                facts = []
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
 
             for fact in new_facts:
