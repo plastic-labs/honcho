@@ -1,7 +1,7 @@
 import logging
 import re
 import uuid
-from typing import List
+from typing import List, Union
 
 from dotenv import load_dotenv
 from rich import print as rprint
@@ -162,30 +162,14 @@ async def process_ai_message(
 
     await db.commit()
 
-    # debugging
-    rprint("[blue]=================")
-
-    rprint("[blue]User Prediction Thought Prompt:")
-    content_lines = str(user_prediction_thought)
-    rprint(f"[blue]{content_lines}")
 
     rprint("[blue]User Prediction Thought:")
     content_lines = str(user_prediction_thought_response)
     rprint(f"[blue]{content_lines}")
 
-    rprint("[blue]=================")
-
-    rprint("[medium_purple1]=================")
-
-    rprint("[medium_purple1]User Prediction Thought Revision:")
-    content_lines = str(user_prediction_thought_revision)
-    rprint(f"[medium_purple1]{content_lines}")
-
-    rprint("[medium_purple1]User Prediction Thought Revision Response:")
+    rprint("[deep_pink1]User Prediction Thought Revision Response:")
     content_lines = str(user_prediction_thought_revision_response)
-    rprint(f"[medium_purple1]{content_lines}")
-
-    rprint("[medium_purple1]=================")
+    rprint(f"[deep_pink1]{content_lines}")
 
 
 async def process_user_message(
@@ -251,28 +235,15 @@ async def process_user_message(
                 voe_thought=voe_thought_response,
             )
 
-            # debugging
-            rprint("[orange1]=================")
-            rprint("[orange1]Voe Thought Prompt:")
-            content_lines = str(voe_thought)
-            rprint(f"[orange1]{content_lines}")
             rprint("[orange1]Voe Thought:")
             content_lines = str(voe_thought_response)
-            rprint(f"[orange1]{content_lines}")
-            rprint("[orange1]=================")
-
-            rprint("[orange1]================")
-            rprint("[orange1]Voe Derive Facts Prompt:")
-            content_lines = str(voe_derive_facts)
             rprint(f"[orange1]{content_lines}")
 
             rprint("[orange1]Voe Derive Facts Response:")
             content_lines = str(voe_derive_facts_response)
             rprint(f"[orange1]{content_lines}")
-            rprint("[orange1]=================")
 
             facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response)
-            rprint("[orange1]=================")
             rprint("[orange1]The Facts Themselves:")
             rprint(facts)
             new_facts = await check_dups(app_id, user_id, collection_id, facts)
@@ -302,33 +273,28 @@ async def check_dups(
 
     result = None
     new_facts = []
-    for fact in facts:
-        async with SessionLocal() as db:
-            result = await crud.query_documents(
-                db=db,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-                query=fact,
-                top_k=5,
-            )
-        existing_facts = [document.content for document in result]
-        if len(existing_facts) == 0:
-            new_facts.append(fact)
-            rprint(f"[light_steel_blue]New Fact: {fact}")
-            continue
+    async with SessionLocal() as db:
+        result = await crud.query_documents(
+            db=db,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            query="\n".join(facts),
+            top_k=15,
+        )
+    existing_facts = [document.content for document in result]
+    if len(existing_facts) == 0:  # we just never had any facts
+        rprint(f"[light_steel_blue]We have no existing facts.\n New facts: {facts}")
+    else:
+        checked_list = await check_voe_list(existing_facts, facts)   # this returns a numbered list or "None"
+        if checked_list != "None":
+            new_facts_list = checked_list.split('\n')
+            for fact in new_facts_list:
+                if fact.strip():  # Check if the fact is not empty
+                    fact_content = fact.split('. ', 1)[1] if '. ' in fact else fact
+                    new_facts.append(fact_content.strip())
+                    rprint(f"[light_steel_blue]New Fact: {fact_content.strip()}")
+        else:
+            rprint("[light_steel_blue]No new facts found")
 
-        is_new_fact = await check_voe_list(existing_facts, fact)
-        rprint("[light_steel_blue]==================")
-        rprint(f"[light_steel_blue]Dedupe Responses: {is_new_fact}")
-        rprint("[light_steel_blue]==================")
-        if is_new_fact:
-            new_facts.append(fact)
-            rprint(f"[light_steel_blue]New Fact: {fact}")
-            continue
-
-    rprint("[light_steel_blue]===================")
-    rprint("[light_steel_blue]Net New Facts:")
-    rprint(new_facts)
-    rprint("[light_steel_blue]===================")
     return new_facts

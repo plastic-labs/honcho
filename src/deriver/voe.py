@@ -152,13 +152,13 @@ Theory of mind prediction about that response:
     )
     return response.content[0].text
 
-async def check_voe_list(existing_facts: List[str], new_fact: str) -> bool:
+async def check_voe_list(existing_facts: List[str], new_facts: List[str]):
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
         system=[{
             "type": "text",
-            "text": "Your job is to compare the existing list of facts to the new fact and determine if the existing list sufficiently represents the new one or not."
+            "text": "Your job is to compare the existing list of facts to the new facts and determine if the existing list sufficiently represents the facts in the new list or not."
         }],
         messages=[
             {
@@ -168,11 +168,11 @@ async def check_voe_list(existing_facts: List[str], new_fact: str) -> bool:
 {existing_facts}
 </existing_facts>
 
-<new_fact>
-{new_fact}
-</new_fact>
+<new_facts>
+{new_facts}
+</new_facts>
 
-If you believe the new fact is sufficiently new given the ones in the list, output true. If not, output false. Do not provide extra commentary, only output a boolean value.'''
+If you believe there are new facts that are sufficiently different from the ones in the list, output those new facts in a numbered list. If not, output "None". Do not provide extra commentary.'''
             }
         ]
     )
