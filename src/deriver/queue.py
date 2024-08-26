@@ -33,7 +33,7 @@ async def get_next_message_for_session(
     return result.scalar_one_or_none()
 
 
-async def process_session_messages(session_id: str):
+async def process_session_messages(session_id: str, enable_timing: bool = False):
     async with SessionLocal() as db:
         try:
             while True:
@@ -41,7 +41,7 @@ async def process_session_messages(session_id: str):
                 if not message:
                     break
 
-                await process_item(db, payload=message.payload)
+                await process_item(db, payload=message.payload, enable_timing=enable_timing)
                 message.processed = True
                 await db.commit()
 
@@ -89,7 +89,7 @@ async def get_available_sessions(db: AsyncSession, limit: int) -> Sequence[Any]:
 
 
 async def schedule_session(
-    semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event
+    semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event, enable_timing: bool
 ):
     async with semaphore, SessionLocal() as db:
         try:
@@ -109,7 +109,8 @@ async def schedule_session(
                         await db.commit()
 
                         # If successful, create a task for this session
-                        asyncio.create_task(process_session_messages(session_id))
+                        # Pass enable_timing to process_session_messages
+                        asyncio.create_task(process_session_messages(session_id, enable_timing))
                     except IntegrityError:
                         # If the session is already in active_sessions, skip it
                         await db.rollback()
@@ -127,7 +128,7 @@ async def schedule_session(
             await db.rollback()
 
 
-async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
+async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event, enable_timing: bool):
     while True:
         if queue_empty_flag.is_set():
             await asyncio.sleep(1)  # Sleep briefly if the queue is empty
@@ -136,11 +137,11 @@ async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.E
         if semaphore.locked():
             await asyncio.sleep(1)  # Sleep briefly if the semaphore is fully locked
             continue
-        await schedule_session(semaphore, queue_empty_flag)
+        await schedule_session(semaphore, queue_empty_flag, enable_timing)
         # await asyncio.sleep(0)  # Yield control to allow tasks to run
 
 
-async def main():
+async def main(enable_timing: bool = False):
     SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
     if SENTRY_ENABLED:
         sentry_sdk.init(
@@ -154,4 +155,4 @@ async def main():
         )
     semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent dequeuing operations
     queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
-    await polling_loop(semaphore, queue_empty_flag)
+    await polling_loop(semaphore, queue_empty_flag, enable_timing)

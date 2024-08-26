@@ -8,8 +8,8 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# from sqlalchemy.orm import Session
 from . import models, schemas
+from .deriver.timing import timing_decorator, csv_file_path
 
 openai_client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
@@ -701,6 +701,7 @@ async def get_document(
     return document
 
 
+@timing_decorator(csv_file_path)
 async def query_documents(
     db: AsyncSession,
     app_id: uuid.UUID,
@@ -709,6 +710,7 @@ async def query_documents(
     query: str,
     filter: Optional[dict] = None,
     top_k: int = 5,
+    enable_timing: bool = False,
 ) -> Sequence[models.Document]:
     response = openai_client.embeddings.create(
         input=query, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
@@ -732,12 +734,14 @@ async def query_documents(
     return result.scalars().all()
 
 
+@timing_decorator(csv_file_path)
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
+    enable_timing: bool = False,
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
     collection = await get_collection_by_id(
@@ -764,6 +768,7 @@ async def create_document(
     return honcho_document
 
 
+@timing_decorator(csv_file_path)
 async def update_document(
     db: AsyncSession,
     document: schemas.DocumentUpdate,
@@ -771,6 +776,7 @@ async def update_document(
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
+    enable_timing: bool = False,
 ) -> bool:
     honcho_document = await get_document(
         db,
@@ -797,12 +803,16 @@ async def update_document(
     return honcho_document
 
 
+
+
+@timing_decorator(csv_file_path)
 async def delete_document(
     db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     collection_id: uuid.UUID,
     document_id: uuid.UUID,
+    enable_timing: bool = False,
 ) -> bool:
     stmt = (
         select(models.Document)
