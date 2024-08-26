@@ -1,11 +1,14 @@
 import os
 from typing import List
 from anthropic import AsyncAnthropic
+from .timing import timing_decorator, csv_file_path
 
 # Initialize the Anthropic client
 anthropic = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-async def user_prediction_thought(chat_history: str) -> str:
+# Add the timing decorator to each function and include enable_timing parameter
+@timing_decorator(csv_file_path)
+async def user_prediction_thought(chat_history: str, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -37,7 +40,8 @@ Conversation:
     )
     return response.content[0].text
 
-async def user_prediction_thought_revision(user_prediction_thought: str, retrieved_context: str, chat_history: str) -> str:
+@timing_decorator(csv_file_path)
+async def user_prediction_thought_revision(user_prediction_thought: str, retrieved_context: str, chat_history: str, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -80,7 +84,8 @@ And here's the conversation history that was used to generate the original thoug
     )
     return response.content[0].text
 
-async def voe_thought(user_prediction_thought_revision: str, actual: str) -> str:
+@timing_decorator(csv_file_path)
+async def voe_thought(user_prediction_thought_revision: str, actual: str, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -111,16 +116,23 @@ Compare the prediction with the actual user message and assess whether or not th
     )
     return response.content[0].text
 
-async def voe_derive_facts(ai_message: str, user_prediction_thought_revision: str, actual: str, voe_thought: str) -> str:
+@timing_decorator(csv_file_path)
+async def voe_derive_facts(ai_message: str, user_prediction_thought_revision: str, actual: str, voe_thought: str, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
-        max_tokens=1024,
+        max_tokens=512,
         system=[{
             "type": "text",
             "text": '''
 We've been employing a method called Violation of Expectation to better assist a user in conversation. From a previous set of instances, we've generated a prediction about what the user would say in response to the assistant (denoted as "thought") as well as a prediction about how well that thought predicted the actual user message (denoted as "voe-thought").
 
-Derive a fact (or set of facts) about the user based on the difference between the thought and their actual response plus the voe-thought. Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".
+Derive a fact (or set of facts) about the user in numbered list format based on the difference between the thought and their actual response plus the voe-thought. Provide the fact(s) solely in reference to the Actual response and theory of mind prediction about that response; i.e. do not derive a fact that negates the thought about what they were going to say. Do not speculate anything about the user. Each fact must contain enough specificity to stand alone. If there are many facts, list them out in a numbered list. If there's nothing to derive (i.e. the statements are sufficiently similar), print "None".
+
+Provide your response in the following XML format:
+
+<facts>
+{facts go here}
+</facts>
 '''
         }],
         messages=[
@@ -152,7 +164,8 @@ Theory of mind prediction about that response:
     )
     return response.content[0].text
 
-async def check_voe_list(existing_facts: List[str], new_facts: List[str]):
+@timing_decorator(csv_file_path)
+async def check_voe_list(existing_facts: List[str], new_facts: List[str], enable_timing: bool = False):
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,

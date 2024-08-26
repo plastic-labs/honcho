@@ -17,8 +17,7 @@ from .voe import (
     voe_derive_facts,
     check_voe_list,
 )
-
-load_dotenv()
+from .timing import timing_decorator, csv_file_path
 
 # Turn off SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -34,14 +33,12 @@ async def add_metamessage(db, message_id, metamessage_type, content):
     )
     db.add(metamessage)
 
-
 def parse_xml_content(text, tag):
     pattern = f"<{tag}>(.*?)</{tag}>"
     match = re.search(pattern, text, re.DOTALL)
     return match.group(1).strip() if match else ""
 
-
-async def process_item(db: AsyncSession, payload: dict):
+async def process_item(db: AsyncSession, payload: dict, enable_timing: bool = False):
     collection: models.Collection
     collection = await crud.get_collection_by_name(
         db, payload["app_id"], payload["user_id"], "honcho"
@@ -63,6 +60,7 @@ async def process_item(db: AsyncSession, payload: dict):
         collection_id,
         payload["message_id"],
         db,
+        enable_timing, 
     ]
     if payload["is_user"]:
         await process_user_message(*processing_args)
@@ -70,7 +68,7 @@ async def process_item(db: AsyncSession, payload: dict):
         await process_ai_message(*processing_args)
     return
 
-
+@timing_decorator(csv_file_path)
 async def process_ai_message(
     content: str,
     app_id: uuid.UUID,
@@ -79,6 +77,7 @@ async def process_ai_message(
     collection_id: uuid.UUID,
     message_id: uuid.UUID,
     db: AsyncSession,
+    enable_timing: bool = False,
 ):
     """
     Process an AI message. Make a prediction about what the user is going to say to it.
@@ -108,7 +107,7 @@ async def process_ai_message(
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
     # user prediction thought
-    user_prediction_thought_response = await user_prediction_thought(chat_history_str)
+    user_prediction_thought_response = await user_prediction_thought(chat_history_str, enable_timing=enable_timing)
     prediction = parse_xml_content(user_prediction_thought_response, "prediction")
     additional_data = parse_xml_content(user_prediction_thought_response, "additional-data")
     if additional_data:
@@ -134,6 +133,7 @@ async def process_ai_message(
         user_prediction_thought=user_prediction_thought_response,
         retrieved_context=context_str,
         chat_history=chat_history_str,
+        enable_timing=enable_timing
     )
     revision = parse_xml_content(user_prediction_thought_revision_response, "revision")
 
@@ -176,7 +176,7 @@ async def process_ai_message(
     content_lines = str(revision)
     rprint(f"[deep_pink1]{content_lines}")
 
-
+@timing_decorator(csv_file_path)
 async def process_user_message(
     content: str,
     app_id: uuid.UUID,
@@ -185,6 +185,7 @@ async def process_user_message(
     collection_id: uuid.UUID,
     message_id: uuid.UUID,
     db: AsyncSession,
+    enable_timing: bool = False,
 ):
     """
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
@@ -229,7 +230,8 @@ async def process_user_message(
             # VoE thought
             voe_thought_response = await voe_thought(
                 user_prediction_thought_revision=metamessage.content,
-                actual=content
+                actual=content,
+                enable_timing=enable_timing
             )
             voe_thought_parsed = parse_xml_content(voe_thought_response, "assessment")
 
@@ -239,6 +241,7 @@ async def process_user_message(
                 user_prediction_thought_revision=metamessage.content,
                 actual=content,
                 voe_thought=voe_thought_parsed,
+                enable_timing=enable_timing
             )
             voe_derive_facts_parsed = parse_xml_content(voe_derive_facts_response, "facts")
 
@@ -256,7 +259,7 @@ async def process_user_message(
                 rprint(facts)
             else:
                 facts = []
-            new_facts = await check_dups(app_id, user_id, collection_id, facts)
+            new_facts = await check_dups(app_id, user_id, collection_id, facts, enable_timing=enable_timing)
 
             for fact in new_facts:
                 create_document = schemas.DocumentCreate(content=fact)
@@ -275,9 +278,9 @@ async def process_user_message(
         rprint("[red]No AI message before this user message[/red]")
         return
 
-
+@timing_decorator(csv_file_path)
 async def check_dups(
-    app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str]
+    app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str], enable_timing: bool = False
 ):
     """Check that we're not storing duplicate facts"""
 
@@ -296,7 +299,7 @@ async def check_dups(
     if len(existing_facts) == 0:  # we just never had any facts
         rprint(f"[light_steel_blue]We have no existing facts.\n New facts: {facts}")
     else:
-        checked_list = await check_voe_list(existing_facts, facts)   # this returns a numbered list or "None"
+        checked_list = await check_voe_list(existing_facts, facts, enable_timing=enable_timing)
         if checked_list != "None":
             new_facts_list = checked_list.split('\n')
             for fact in new_facts_list:

@@ -1,0 +1,15 @@
+session_id,date,function,execution_time
+None,2024-08-26,user_prediction_thought,2.251444101333618
+None,2024-08-26,user_prediction_thought_revision,0.7803189754486084
+None,2024-08-26,voe_thought,1.8023560047149658
+None,2024-08-26,voe_derive_facts,1.620779037475586
+None,2024-08-26,check_dups,6.229485034942627
+None,2024-08-26,user_prediction_thought,2.593308210372925
+None,2024-08-26,user_prediction_thought_revision,0.9600739479064941
+None,2024-08-26,voe_thought,1.295861005783081
+None,2024-08-26,voe_derive_facts,2.74762225151062
+None,2024-08-26,check_dups,5.326452970504761
+None,2024-08-26,user_prediction_thought,1.8752529621124268
+None,2024-08-26,user_prediction_thought_revision,0.8640880584716797
+None,2024-08-26,voe_thought,1.1320743560791016
+None,2024-08-26,voe_derive_facts,2.158203125
