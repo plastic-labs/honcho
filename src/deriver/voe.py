@@ -1,4 +1,5 @@
 import os
+import uuid
 from typing import List
 from anthropic import AsyncAnthropic
 from .timing import timing_decorator, csv_file_path
@@ -8,7 +9,7 @@ anthropic = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 # Add the timing decorator to each function and include enable_timing parameter
 @timing_decorator(csv_file_path)
-async def user_prediction_thought(chat_history: str, enable_timing: bool = False) -> str:
+async def user_prediction_thought(chat_history: str, session_id: uuid.UUID, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -41,7 +42,7 @@ Conversation:
     return response.content[0].text
 
 @timing_decorator(csv_file_path)
-async def user_prediction_thought_revision(user_prediction_thought: str, retrieved_context: str, chat_history: str, enable_timing: bool = False) -> str:
+async def user_prediction_thought_revision(user_prediction_thought: str, retrieved_context: str, chat_history: str, session_id: uuid.UUID, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -85,7 +86,7 @@ And here's the conversation history that was used to generate the original thoug
     return response.content[0].text
 
 @timing_decorator(csv_file_path)
-async def voe_thought(user_prediction_thought_revision: str, actual: str, enable_timing: bool = False) -> str:
+async def voe_thought(user_prediction_thought_revision: str, actual: str, session_id: uuid.UUID, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -117,7 +118,7 @@ Compare the prediction with the actual user message and assess whether or not th
     return response.content[0].text
 
 @timing_decorator(csv_file_path)
-async def voe_derive_facts(ai_message: str, user_prediction_thought_revision: str, actual: str, voe_thought: str, enable_timing: bool = False) -> str:
+async def voe_derive_facts(ai_message: str, user_prediction_thought_revision: str, actual: str, voe_thought: str, session_id: uuid.UUID, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=512,
@@ -165,7 +166,7 @@ Theory of mind prediction about that response:
     return response.content[0].text
 
 @timing_decorator(csv_file_path)
-async def check_voe_list(existing_facts: List[str], new_facts: List[str], enable_timing: bool = False):
+async def check_voe_list(existing_facts: List[str], facts: List[str], session_id: uuid.UUID, enable_timing: bool = False) -> str:
     response = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1024,
@@ -182,7 +183,7 @@ async def check_voe_list(existing_facts: List[str], new_facts: List[str], enable
 </existing_facts>
 
 <new_facts>
-{new_facts}
+{facts}
 </new_facts>
 
 If you believe there are new facts that are sufficiently different from the ones in the list, output those new facts in a numbered list. If not, output "None". Do not provide extra commentary.'''
