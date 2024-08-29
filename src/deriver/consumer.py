@@ -1,9 +1,7 @@
 import logging
 import re
 import uuid
-from typing import List, Union
-
-from dotenv import load_dotenv
+from typing import List
 from rich import print as rprint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -107,7 +105,7 @@ async def process_ai_message(
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
     # user prediction thought
-    user_prediction_thought_response = await user_prediction_thought(chat_history_str, enable_timing=enable_timing)
+    user_prediction_thought_response = await user_prediction_thought(chat_history_str, session_id=session_id, enable_timing=enable_timing)
     prediction = parse_xml_content(user_prediction_thought_response, "prediction")
     additional_data = parse_xml_content(user_prediction_thought_response, "additional-data")
     if additional_data:
@@ -133,6 +131,7 @@ async def process_ai_message(
         user_prediction_thought=user_prediction_thought_response,
         retrieved_context=context_str,
         chat_history=chat_history_str,
+        session_id=session_id,
         enable_timing=enable_timing
     )
     revision = parse_xml_content(user_prediction_thought_revision_response, "revision")
@@ -231,6 +230,7 @@ async def process_user_message(
             voe_thought_response = await voe_thought(
                 user_prediction_thought_revision=metamessage.content,
                 actual=content,
+                session_id=session_id,
                 enable_timing=enable_timing
             )
             voe_thought_parsed = parse_xml_content(voe_thought_response, "assessment")
@@ -241,6 +241,7 @@ async def process_user_message(
                 user_prediction_thought_revision=metamessage.content,
                 actual=content,
                 voe_thought=voe_thought_parsed,
+                session_id=session_id,
                 enable_timing=enable_timing
             )
             voe_derive_facts_parsed = parse_xml_content(voe_derive_facts_response, "facts")
@@ -259,7 +260,7 @@ async def process_user_message(
                 rprint(facts)
             else:
                 facts = []
-            new_facts = await check_dups(app_id, user_id, collection_id, facts, enable_timing=enable_timing)
+            new_facts = await check_dups(app_id, user_id, collection_id, facts, session_id=session_id, enable_timing=enable_timing)
 
             for fact in new_facts:
                 create_document = schemas.DocumentCreate(content=fact)
@@ -280,7 +281,8 @@ async def process_user_message(
 
 @timing_decorator(csv_file_path)
 async def check_dups(
-    app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str], enable_timing: bool = False
+    app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str], session_id: uuid.UUID,  # Add this parameter
+    enable_timing: bool = False
 ):
     """Check that we're not storing duplicate facts"""
 
@@ -299,7 +301,7 @@ async def check_dups(
     if len(existing_facts) == 0:  # we just never had any facts
         rprint(f"[light_steel_blue]We have no existing facts.\n New facts: {facts}")
     else:
-        checked_list = await check_voe_list(existing_facts, facts, enable_timing=enable_timing)
+        checked_list = await check_voe_list(existing_facts, facts, session_id=session_id, enable_timing=enable_timing)
         if checked_list != "None":
             new_facts_list = checked_list.split('\n')
             for fact in new_facts_list:
