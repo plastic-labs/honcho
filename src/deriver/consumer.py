@@ -95,15 +95,15 @@ async def process_ai_message(
     result = await db.execute(messages_stmt)
     messages = result.scalars().all()[::-1]
 
-    chat_history_str = "\n".join(
-        [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
-    )
+    chat_history_str = "\n".join([
+        f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages
+    ])
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
     # user prediction thought
     user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
-    user_prediction_thought_response = await user_prediction_thought.call_async()
+    user_prediction_thought_response = user_prediction_thought.call()
 
     ## query the collection to build the context
     additional_data = re.findall(
@@ -132,9 +132,7 @@ async def process_ai_message(
         retrieved_context=context_str,
         chat_history=chat_history_str,
     )
-    user_prediction_thought_revision_response = (
-        await user_prediction_thought_revision.call_async()
-    )
+    user_prediction_thought_revision_response = user_prediction_thought_revision.call()
 
     if user_prediction_thought_revision_response.content == "None":
         rprint("[blue]Model predicted no changes to the user prediction thought")
@@ -245,7 +243,7 @@ async def process_user_message(
             voe_thought = VoeThought(
                 user_prediction_thought_revision=metamessage.content, actual=content
             )
-            voe_thought_response = await voe_thought.call_async()
+            voe_thought_response = voe_thought.call()
 
             # VoE derive facts
             voe_derive_facts = VoeDeriveFacts(
@@ -254,7 +252,7 @@ async def process_user_message(
                 actual=content,
                 voe_thought=voe_thought_response.content,
             )
-            voe_derive_facts_response = await voe_derive_facts.call_async()
+            voe_derive_facts_response = voe_derive_facts.call()
 
             # debugging
             rprint("[orange1]=================")
@@ -329,7 +327,7 @@ async def check_dups(
 
         check_duplication.existing_facts = existing_facts
         check_duplication.new_fact = fact
-        response = await check_duplication.call_async()
+        response = check_duplication.call()
         rprint("[light_steel_blue]==================")
         rprint(f"[light_steel_blue]Dedupe Responses: {response.content}")
         rprint("[light_steel_blue]==================")

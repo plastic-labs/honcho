@@ -3,9 +3,11 @@ from typing import List
 
 from mirascope.base import BaseConfig
 from mirascope.openai import OpenAICall, OpenAICallParams, azure_client_wrapper
+from pydantic import ConfigDict
 
 
 class HonchoCall(OpenAICall):
+    model_config = ConfigDict(arbitrary_types_allowed=True)
     configuration = BaseConfig(
         client_wrappers=[
             azure_client_wrapper(
