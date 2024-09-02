@@ -8,7 +8,7 @@ kill_timeout = '5s'
 [build]
 
 [processes]
-  api = 'python -m fastapi run src/main.py'
+  api = 'fastapi run src/main.py'
   deriver = 'python -m src.deriver'
 
 [http_service]

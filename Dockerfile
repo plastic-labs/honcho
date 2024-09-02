@@ -13,7 +13,7 @@ ENV PYTHONFAULTHANDLER=1 \
   PIP_NO_CACHE_DIR=off \
   PIP_DISABLE_PIP_VERSION_CHECK=on \
   PIP_DEFAULT_TIMEOUT=100 \
-  POETRY_VERSION=1.4.1
+  POETRY_VERSION=1.8.3
 
 RUN pip install "poetry==$POETRY_VERSION"
 
@@ -23,7 +23,7 @@ COPY poetry.lock pyproject.toml /app/
 
 # Project initialization:
 RUN poetry config virtualenvs.create false \
-  && poetry install --no-root --no-interaction --no-ansi --without dev
+  && poetry install --no-root --no-interaction --no-ansi
 
 WORKDIR /app
 
@@ -36,5 +36,5 @@ COPY --chown=app:app src/ /app/src/
 EXPOSE 8000
 
 # https://stackoverflow.com/questions/29663459/python-app-does-not-print-anything-when-running-detached-in-docker
-CMD ["python", "-m", "fastapi", "run", "src/main.py"]
+CMD ["fastapi", "run", "src/main.py"]
 
