@@ -4,27 +4,27 @@ version = "0.0.11"
 description = "Honcho Server"
 authors = ["Plastic Labs <hello@plasticlabs.ai>"]
 readme = "README.md"
+package-mode = false
 
 [tool.poetry.dependencies]
 python = "^3.9"
 fastapi = "^0.111.0"
 python-dotenv = "^1.0.0"
 sqlalchemy = "^2.0.30"
-slowapi = "^0.1.9"
 fastapi-pagination = "^0.12.24"
 pgvector = "^0.2.5"
-openai = "^1.12.0"
 sentry-sdk = {extras = ["fastapi", "sqlalchemy"], version = "^2.3.1"}
 greenlet = "^3.0.3"
 psycopg = {extras= ["binary"], version="^3.1.19"}
 httpx = "^0.27.0"
-mirascope = "^0.18.2"
 opentelemetry-instrumentation-fastapi = "^0.45b0"
 opentelemetry-sdk = "^1.24.0"
 opentelemetry-exporter-otlp = "^1.24.0"
 opentelemetry-instrumentation-sqlalchemy = "^0.45b0"
 opentelemetry-instrumentation-logging = "^0.45b0"
 rich = "^13.7.1"
+mirascope = "^0.18.0"
+openai = "^1.43.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.2.2"

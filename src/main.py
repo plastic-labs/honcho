@@ -34,10 +34,6 @@ from opentelemetry.sdk.trace.export import (
     ConsoleSpanExporter,
     SimpleSpanProcessor,
 )
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
-from slowapi.util import get_remote_address
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.routers import (
@@ -230,18 +226,6 @@ if OPENTELEMTRY_ENABLED:
 
 router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
 
-# Create a Limiter instance
-limiter = Limiter(key_func=get_remote_address, default_limits=["100/minute"])
-
-# Add SlowAPI middleware to the application
-app.state.limiter = limiter
-app.add_exception_handler(
-    exc_class_or_status_code=RateLimitExceeded,
-    handler=_rate_limit_exceeded_handler,  # type: ignore
-)
-app.add_middleware(SlowAPIMiddleware)
-
-
 add_pagination(app)
 
 
@@ -249,13 +233,11 @@ add_pagination(app)
 async def http_exception_handler(request, exc):
     current_span = trace.get_current_span()
     if (current_span is not None) and (current_span.is_recording()):
-        current_span.set_attributes(
-            {
-                "http.status_text": str(exc.detail),
-                "otel.status_description": f"{exc.status_code} / {str(exc.detail)}",
-                "otel.status_code": "ERROR",
-            }
-        )
+        current_span.set_attributes({
+            "http.status_text": str(exc.detail),
+            "otel.status_description": f"{exc.status_code} / {str(exc.detail)}",
+            "otel.status_code": "ERROR",
+        })
     return PlainTextResponse(
         json.dumps({"detail": str(exc.detail)}), status_code=exc.status_code
     )
