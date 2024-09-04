@@ -231,5 +231,9 @@ class Document(DocumentBase):
     )
 
 
+class AgentQuery(BaseModel):
+    queries: str | list[str]
+
+
 class AgentChat(BaseModel):
     content: str

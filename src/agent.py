@@ -17,11 +17,13 @@ class Dialectic(OpenAICall):
     ---
     query: {agent_input}
     context: {retrieved_facts}
+    conversation_history: {chat_history}
     ---
     Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
     """
     agent_input: str
     retrieved_facts: str
+    chat_history: list[str]
 
     configuration = BaseConfig(
         client_wrappers=[
@@ -35,7 +37,21 @@ class Dialectic(OpenAICall):
     call_params = OpenAICallParams(
         model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
     )
-    # call_params = OpenAICallParams(model="gpt-4o-2024-05-13")
+
+
+async def chat_history(
+    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
+) -> list[str]:
+    stmt = await crud.get_messages(db, app_id, user_id, session_id)
+    results = await db.execute(stmt)
+    messages = results.scalars()
+    history = []
+    for message in messages:
+        if message.is_user:
+            history.append(f"user:{message.content}")
+        else:
+            history.append(f"assistant:{message.content}")
+    return history
 
 
 async def prep_inference(
@@ -43,7 +59,7 @@ async def prep_inference(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     query: str,
-):
+) -> None | list[str]:
     collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
     retrieved_facts = None
     if collection is None:
@@ -61,35 +77,79 @@ async def prep_inference(
             user_id=user_id,
             collection_id=collection.id,
             query=query,
-            top_k=1,
+            top_k=3,
         )
         if len(retrieved_documents) > 0:
-            retrieved_facts = retrieved_documents[0].content
+            retrieved_facts = [d.content for d in retrieved_documents]
 
-    chain = Dialectic(
-        agent_input=query,
-        retrieved_facts=retrieved_facts if retrieved_facts else "None",
-    )
-    return chain
+    return retrieved_facts
+
+
+# async def chat(
+#     app_id: uuid.UUID,
+#     user_id: uuid.UUID,
+#     query: str,
+#     db: AsyncSession,
+#     stream: bool = False,
+# ):
+#     retrieved_facts = await prep_inference(db, app_id, user_id, query)
+#     facts = "None"
+#     if retrieved_facts is not None:
+#         facts = "\n".join(retrieved_facts)
+#     chain = Dialectic(
+#         agent_input=query,
+#         retrieved_facts=facts,
+#     )
+#
+#     if stream:
+#         return chain.stream_async()
+#     response = chain.call()
+#     return schemas.AgentChat(content=response.content)
 
 
 async def chat(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    query: str,
+    session_id: uuid.UUID,
+    queries: schemas.AgentQuery,
     db: AsyncSession,
+    stream: bool = False,
 ):
-    chain = await prep_inference(db, app_id, user_id, query)
-    response = await chain.call_async()
+    if isinstance(queries.queries, str):
+        questions = [queries.queries]
+    else:
+        questions = queries.queries
 
+    all_facts = set()
+    for query in questions:
+        retrieved_facts = await prep_inference(db, app_id, user_id, query)
+        if retrieved_facts is not None:
+            all_facts.update(retrieved_facts)
+    facts = "None"
+    if len(all_facts) > 0:
+        facts = "\n".join(all_facts)
+    query = "\n".join(questions)
+    history = await chat_history(db, app_id, user_id, session_id)
+    chain = Dialectic(
+        agent_input=query,
+        retrieved_facts=facts,
+        chat_history=history,
+    )
+    if stream:
+        return chain.stream_async()
+    response = chain.call()
     return schemas.AgentChat(content=response.content)
 
 
-async def stream(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    query: str,
-    db: AsyncSession,
-):
-    chain = await prep_inference(db, app_id, user_id, query)
-    return chain.stream_async()
+# async def stream(
+#     app_id: uuid.UUID,
+#     user_id: uuid.UUID,
+#     query: str,
+#     db: AsyncSession,
+# ):
+#     retrieved_facts = await prep_inference(db, app_id, user_id, query)
+#     chain = Dialectic(
+#         agent_input=query,
+#         retrieved_facts=retrieved_facts if retrieved_facts else "None",
+#     )
+#     return chain.stream_async()

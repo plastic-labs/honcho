@@ -188,20 +188,22 @@ async def get_session(
     return honcho_session
 
 
-@router.get("/{session_id}/chat", response_model=schemas.AgentChat)
-async def get_chat(
-    request: Request,
+@router.post("/{session_id}/chat", response_model=schemas.AgentChat)
+async def chat(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    query: str,
+    query: schemas.AgentQuery,
     db=db,
     auth=Depends(auth),
 ):
-    return await agent.chat(app_id=app_id, user_id=user_id, query=query, db=db)
+    print(query)
+    return await agent.chat(
+        app_id=app_id, user_id=user_id, session_id=session_id, queries=query, db=db
+    )
 
 
-@router.get(
+@router.post(
     "/{session_id}/chat/stream",
     responses={
         200: {
@@ -217,12 +219,19 @@ async def get_chat_stream(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    query: str,
+    query: schemas.AgentQuery,
     db=db,
     auth=Depends(auth),
 ):
     async def parse_stream():
-        stream = await agent.stream(app_id=app_id, user_id=user_id, query=query, db=db)
+        stream = await agent.chat(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            queries=query,
+            db=db,
+            stream=True,
+        )
         async for chunk in stream:
             yield chunk.content
 
