@@ -233,6 +233,7 @@ class Document(DocumentBase):
 
 class AgentQuery(BaseModel):
     queries: str | list[str]
+    collections: str | list[str] = "honcho"
 
 
 class AgentChat(BaseModel):
