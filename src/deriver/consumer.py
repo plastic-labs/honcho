@@ -95,9 +95,9 @@ async def process_ai_message(
     result = await db.execute(messages_stmt)
     messages = result.scalars().all()[::-1]
 
-    chat_history_str = "\n".join([
-        f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages
-    ])
+    chat_history_str = "\n".join(
+        [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+    )
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
@@ -203,6 +203,8 @@ async def process_user_message(
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
     rprint(f"[orange1]Processing User Message: {content}")
+
+    # Get the AI message directly preceding this User message
     subquery = (
         select(models.Message.created_at)
         .where(models.Message.id == message_id)
@@ -223,6 +225,7 @@ async def process_user_message(
 
     if ai_message and ai_message.content:
         rprint(f"[orange1]AI Message: {ai_message.content}")
+        # Get the User Thought Revision Associated with this AI Message
         metamessages_stmt = (
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.id)
@@ -292,7 +295,8 @@ async def process_user_message(
                     )
                     rprint(f"[orange1]Returned Document: {doc.content}")
         else:
-            raise Exception("\033[91mUser Thought Prediction Revision NOT READY YET")
+            rprint("[red] No Prediction Associated with this Message")
+            return
     else:
         rprint("[red]No AI message before this user message[/red]")
         return
