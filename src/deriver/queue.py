@@ -94,7 +94,7 @@ async def schedule_session(
     async with semaphore, SessionLocal() as db:
         try:
             available_slots = semaphore._value
-            print(available_slots)
+            # print(available_slots)
             new_sessions = await get_available_sessions(db, available_slots)
 
             if new_sessions:
