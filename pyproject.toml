@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "0.0.11"
+version = "0.0.12"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -26,8 +26,8 @@ dependencies = [
     "mirascope>=0.18.0",
     "openai>=1.43.0",
 ]
-[project.optional-dependencies]
-test = [
+[tool.uv]
+dev-dependencies = [
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",

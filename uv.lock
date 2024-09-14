@@ -455,7 +455,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "0.0.11"
+version = "0.0.12"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi", extra = ["standard"] },
@@ -477,8 +477,8 @@ dependencies = [
     { name = "sqlalchemy" },
 ]
 
-[package.optional-dependencies]
-test = [
+[package.dev-dependencies]
+dev = [
     { name = "coverage" },
     { name = "interrogate" },
     { name = "pytest" },
@@ -488,12 +488,10 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "coverage", marker = "extra == 'test'", specifier = ">=7.6.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.111.0" },
     { name = "fastapi-pagination", specifier = ">=0.12.24" },
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "interrogate", marker = "extra == 'test'", specifier = ">=1.7.0" },
     { name = "mirascope", specifier = ">=0.18.0" },
     { name = "openai", specifier = ">=1.43.0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.24.0" },
@@ -503,13 +501,19 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.24.0" },
     { name = "pgvector", specifier = ">=0.2.5" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1.19" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.2.2" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=0.23.7" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.7.1" },
     { name = "sentry-sdk", extras = ["fastapi", "sqlalchemy"], specifier = ">=2.3.1" },
     { name = "sqlalchemy", specifier = ">=2.0.30" },
-    { name = "sqlalchemy-utils", marker = "extra == 'test'", specifier = ">=0.41.2" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "coverage", specifier = ">=7.6.0" },
+    { name = "interrogate", specifier = ">=1.7.0" },
+    { name = "pytest", specifier = ">=8.2.2" },
+    { name = "pytest-asyncio", specifier = ">=0.23.7" },
+    { name = "sqlalchemy-utils", specifier = ">=0.41.2" },
 ]
 
 [[package]]

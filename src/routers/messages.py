@@ -28,12 +28,16 @@ async def enqueue(payload: dict):
             session_id=payload["session_id"],
         )
         # Check if metadata has a "deriver" key
-        deriver_disabled = session.h_metadata.get("deriver_disabled")
-        if deriver_disabled is not None and deriver_disabled is not False:
-            print("=====================")
-            print(f"Deriver is not enabled on session {payload['session_id']}")
-            print("=====================")
-            # If deriver is not enabled, do not enqueue
+        if session is not None:
+            deriver_disabled = session.h_metadata.get("deriver_disabled")
+            if deriver_disabled is not None and deriver_disabled is not False:
+                print("=====================")
+                print(f"Deriver is not enabled on session {payload['session_id']}")
+                print("=====================")
+                # If deriver is not enabled, do not enqueue
+                return
+        else:
+            # Session doesn't exist return
             return
         try:
             processed_payload = {
