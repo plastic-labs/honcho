@@ -125,12 +125,12 @@ def client(db_session):
 async def sample_data(db_session):
     """Helper function to create test data"""
     # Create test app
-    test_app = models.App(name=str(uuid.uuid4()), metadata={})
+    test_app = models.App(name=str(uuid.uuid4()))
     db_session.add(test_app)
     await db_session.flush()
 
     # Create test user
-    test_user = models.User(name=str(uuid.uuid4()), app_id=test_app.id, metadata={})
+    test_user = models.User(name=str(uuid.uuid4()), app_id=test_app.id)
     db_session.add(test_user)
     await db_session.flush()
 
