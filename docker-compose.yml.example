@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   api:
     image: honcho:latest
@@ -18,7 +17,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    entrypoint: ["python", "-m", "src.deriver"]
+    entrypoint: ["uv", "run", "python", "-m", "src.deriver"]
     depends_on:
       database:
         condition: service_healthy
