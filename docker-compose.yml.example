@@ -26,7 +26,7 @@ services:
     env_file:
       - .env
   database:
-    image: ankane/pgvector
+    image: pgvector/pgvector:pg15
     restart: always
     ports:
       - 5432:5432
