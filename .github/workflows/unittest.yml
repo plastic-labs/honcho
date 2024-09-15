@@ -11,12 +11,13 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      postgres:
+      database:
         image: pgvector/pgvector:pg15
         env:
-          POSTGRES_DB: test
+          POSTGRES_DB: testdb
           POSTGRES_USER: testuser
           POSTGRES_PASSWORD: testpwd
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -45,7 +46,7 @@ jobs:
     - name: Run Tests
       run: uv run pytest
       env:
-        CONNECTION_URI: postgresql+psycopg://testuser:testpwd@postgres:5432/test
+        CONNECTION_URI: postgresql+psycopg://testuser:testpwd@database:5432/testdb
         USE_AUTH_SERVICE: false
         SENTRY_ENABLED: false
         OPENTELEMETRY_ENABLED: false
