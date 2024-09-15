@@ -15,8 +15,8 @@ jobs:
         image: pgvector/pgvector:pg15
         env:
           POSTGRES_DB: test_db
-          POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: testpwd
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
@@ -45,7 +45,7 @@ jobs:
     - name: Run Tests
       run: uv run pytest -x
       env:
-        CONNECTION_URI: postgresql+psycopg://testuser:testpwd@localhost:5432/test_db
+        CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
         USE_AUTH_SERVICE: false
         SENTRY_ENABLED: false
         OPENTELEMETRY_ENABLED: false
