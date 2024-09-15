@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # Test database URL
 # TODO use environment variable
 CONNECTION_URI = make_url(os.getenv("CONNECTION_URI"))
-TEST_DB_URL = CONNECTION_URI.set(database="test")
+TEST_DB_URL = CONNECTION_URI.set(database="postgres")
 DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
 
