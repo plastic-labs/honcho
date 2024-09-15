@@ -45,7 +45,7 @@ jobs:
     - name: Run Tests
       run: uv run pytest
       env:
-        CONNECTION_URI: postgresql+psycopg://testuser:testpwd@localhost:5432/test
+        CONNECTION_URI: postgresql+psycopg://testuser:testpwd@postgres:5432/test
         USE_AUTH_SERVICE: false
         SENTRY_ENABLED: false
         OPENTELEMETRY_ENABLED: false
