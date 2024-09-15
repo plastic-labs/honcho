@@ -44,7 +44,7 @@ jobs:
       run: uv sync --all-extras --dev
 
     - name: Run Tests
-      run: uv run pytest
+      run: uv run pytest -x
       env:
         CONNECTION_URI: postgresql+psycopg://postgres:postgres@database:5432/postgres
         USE_AUTH_SERVICE: false
