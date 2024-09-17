@@ -79,24 +79,11 @@ async def prep_inference(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     query: str,
-<<<<<<< HEAD
-) -> str:
-    collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
-    retrieved_facts = None
-    if collection is None:
-        collection_create = schemas.CollectionCreate(name="honcho", metadata={})
-        collection = await crud.create_collection(
-            db,
-            collection=collection_create,
-            app_id=app_id,
-            user_id=user_id,
-=======
     collection_name: str,
 ) -> None | list[str]:
     async with SessionLocal() as db:
         collection = await crud.get_collection_by_name(
             db, app_id, user_id, collection_name
->>>>>>> main
         )
         retrieved_facts = None
         if collection:
@@ -111,17 +98,6 @@ async def prep_inference(
             if len(retrieved_documents) > 0:
                 retrieved_facts = [d.content for d in retrieved_documents]
 
-<<<<<<< HEAD
-    prompt = f"""
-    You are tasked with responding to the query based on the context provided. 
-    ---
-    query: {query}
-    context: {retrieved_facts if retrieved_facts else "None"}
-    ---
-    Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
-    """
-    return prompt
-=======
         return retrieved_facts
 
 
@@ -157,44 +133,10 @@ async def fact_generator(
         facts = "\n".join(fact_set_copy)
     return facts
 
->>>>>>> main
 
 async def chat(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-<<<<<<< HEAD
-    query: str,
-    db: AsyncSession,
-) -> schemas.AgentChat:
-    prompt = await prep_inference(db, app_id, user_id, query)
-    response = await anthropic.messages.create(
-        model="claude-3-5-sonnet-20240620",
-        max_tokens=1024,
-        messages=[
-            {"role": "user", "content": prompt}
-        ]
-    )
-    return schemas.AgentChat(content=response.content[0].text)
-
-async def stream(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    query: str,
-    db: AsyncSession,
-) -> AsyncGenerator[str, None]:
-    prompt = await prep_inference(db, app_id, user_id, query)
-    stream = await anthropic.messages.create(
-        model="claude-3-5-sonnet-20240620",
-        max_tokens=1024,
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        stream=True
-    )
-    async for chunk in stream:
-        if chunk.type == "content_block_delta":
-            yield chunk.delta.text
-=======
     session_id: uuid.UUID,
     query: schemas.AgentQuery,
     stream: bool = False,
@@ -224,4 +166,3 @@ async def stream(
         return chain.stream_async()
     response = chain.call()
     return schemas.AgentChat(content=response.content)
->>>>>>> main
