@@ -11,4 +11,4 @@ docker-compose.yml.example
 .github/**
 .vscode/**
 data/**
-
+.venv

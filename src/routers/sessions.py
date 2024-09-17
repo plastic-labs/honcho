@@ -2,7 +2,7 @@ import json
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -19,7 +19,6 @@ router = APIRouter(
 
 @router.get("", response_model=Page[schemas.Session])
 async def get_sessions(
-    request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     is_active: Optional[bool] = False,
@@ -59,7 +58,6 @@ async def get_sessions(
 
 @router.post("", response_model=schemas.Session)
 async def create_session(
-    request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session: schemas.SessionCreate,
@@ -93,7 +91,6 @@ async def create_session(
 
 @router.put("/{session_id}", response_model=schemas.Session)
 async def update_session(
-    request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
@@ -126,7 +123,6 @@ async def update_session(
 
 @router.delete("/{session_id}")
 async def delete_session(
-    request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
@@ -159,7 +155,6 @@ async def delete_session(
 
 @router.get("/{session_id}", response_model=schemas.Session)
 async def get_session(
-    request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
@@ -188,20 +183,21 @@ async def get_session(
     return honcho_session
 
 
-@router.get("/{session_id}/chat", response_model=schemas.AgentChat)
-async def get_chat(
-    request: Request,
+@router.post("/{session_id}/chat", response_model=schemas.AgentChat)
+async def chat(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    query: str,
-    db=db,
+    query: schemas.AgentQuery,
     auth=Depends(auth),
 ):
-    return await agent.chat(app_id=app_id, user_id=user_id, query=query, db=db)
+    print(query)
+    return await agent.chat(
+        app_id=app_id, user_id=user_id, session_id=session_id, query=query
+    )
 
 
-@router.get(
+@router.post(
     "/{session_id}/chat/stream",
     responses={
         200: {
@@ -213,16 +209,20 @@ async def get_chat(
     },
 )
 async def get_chat_stream(
-    request: Request,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    query: str,
-    db=db,
+    query: schemas.AgentQuery,
     auth=Depends(auth),
 ):
     async def parse_stream():
-        stream = await agent.stream(app_id=app_id, user_id=user_id, query=query, db=db)
+        stream = await agent.chat(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            query=query,
+            stream=True,
+        )
         async for chunk in stream:
             yield chunk.content
 

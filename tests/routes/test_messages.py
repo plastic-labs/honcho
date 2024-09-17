@@ -7,7 +7,7 @@ from src import models  # Import your SQLAlchemy models
 async def test_create_message(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.id, metadata={})
+    test_session = models.Session(user_id=test_user.id)
     db_session.add(test_session)
     await db_session.commit()
 
@@ -31,11 +31,11 @@ async def test_create_message(client, db_session, sample_data):
 async def test_get_messages(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session and message
-    test_session = models.Session(user_id=test_user.id, metadata={})
+    test_session = models.Session(user_id=test_user.id)
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.id, content="Test message", is_user=True, metadata={}
+        session_id=test_session.id, content="Test message", is_user=True
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -56,11 +56,11 @@ async def test_get_messages(client, db_session, sample_data):
 async def test_update_message(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session and message
-    test_session = models.Session(user_id=test_user.id, metadata={})
+    test_session = models.Session(user_id=test_user.id)
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.id, content="Test message", is_user=True, metadata={}
+        session_id=test_session.id, content="Test message", is_user=True
     )
     db_session.add(test_message)
     await db_session.commit()
