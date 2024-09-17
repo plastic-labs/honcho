@@ -55,7 +55,7 @@ async def tom_inference(chat_history: str, session_id: uuid.UUID, user_represent
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Hi Claude! So glad you're excited to help. I think it'll be super helpful to have you making predictions about my mental state, so you can align as closely to me as possible to provide me the best response you can. Here's the conversation and representation:\n<conversation>\n{chat_history}\n</conversation>\n<representation>\n{user_representation}\n</representation>\nRemember to output your prediction based on the format specified above! Thanks Claude!"
+                        "text": f"Hi Claude! So glad you're excited to help. I think it'll be super helpful to have you making predictions about my mental state, so you can align as closely to me as possible to provide me the best response you can. Here's the conversation and representation:\n<conversation>\n{chat_history}\n</conversation>\n<representation>\n{user_representation}\n</representation>\nRemember to output your prediction based on the format specified above! Thanks Claude!",
                     }
                 ]
             }
