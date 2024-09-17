@@ -1,20 +1,12 @@
 import logging
-import re
 import uuid
-from typing import List
+import re
 from rich import print as rprint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import crud, models, schemas
-from ..db import SessionLocal
-from .voe import (
-    user_prediction_thought,
-    user_prediction_thought_revision,
-    voe_thought,
-    voe_derive_facts,
-    check_voe_list,
-)
+from .. import models
+from .voe import tom_inference, user_representation
 from .timing import timing_decorator, csv_file_path
 
 # Turn off SQLAlchemy Echo logging
@@ -37,28 +29,14 @@ def parse_xml_content(text, tag):
     return match.group(1).strip() if match else ""
 
 async def process_item(db: AsyncSession, payload: dict, enable_timing: bool = False):
-    collection: models.Collection
-    collection = await crud.get_collection_by_name(
-        db, payload["app_id"], payload["user_id"], "honcho"
-    )
-    if collection is None:
-        collection_create = schemas.CollectionCreate(name="honcho", metadata={})
-        collection = await crud.create_collection(
-            db,
-            collection=collection_create,
-            app_id=payload["app_id"],
-            user_id=payload["user_id"],
-        )
-    collection_id = collection.id
     processing_args = [
         payload["content"],
         payload["app_id"],
         payload["user_id"],
         payload["session_id"],
-        collection_id,
         payload["message_id"],
         db,
-        enable_timing, 
+        enable_timing,
     ]
     if payload["is_user"]:
         await process_user_message(*processing_args)
@@ -66,13 +44,13 @@ async def process_item(db: AsyncSession, payload: dict, enable_timing: bool = Fa
         await process_ai_message(*processing_args)
     return
 
+
 @timing_decorator(csv_file_path)
 async def process_ai_message(
     content: str,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    collection_id: uuid.UUID,
     message_id: uuid.UUID,
     db: AsyncSession,
     enable_timing: bool = False,
@@ -104,76 +82,23 @@ async def process_ai_message(
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
-    # user prediction thought
-    user_prediction_thought_response = await user_prediction_thought(chat_history_str, session_id=session_id, enable_timing=enable_timing)
-    prediction = parse_xml_content(user_prediction_thought_response, "prediction")
-    additional_data = parse_xml_content(user_prediction_thought_response, "additional-data")
-    if additional_data:
-        additional_data = [item.split('. ', 1)[1] for item in additional_data.split('\n') if item.strip()]
-    else:
-        additional_data = []
-        
-    ## query the collection to build the context
-    response = await crud.query_documents(
+    tom_inference_response = await tom_inference(chat_history_str, session_id=session_id, enable_timing=enable_timing)
+
+    prediction = parse_xml_content(tom_inference_response, "prediction")
+
+    await add_metamessage(
         db,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection_id,
-        query="\n".join(additional_data),
-        top_k=15,
+        message_id,
+        "tom_inference",
+        prediction,
     )
-    additional_data_list = [document.content for document in response]
-
-    context_str = "\n".join(additional_data_list)
-
-    # user prediction thought revision given the context
-    user_prediction_thought_revision_response = await user_prediction_thought_revision(
-        user_prediction_thought=user_prediction_thought_response,
-        retrieved_context=context_str,
-        chat_history=chat_history_str,
-        session_id=session_id,
-        enable_timing=enable_timing
-    )
-    revision = parse_xml_content(user_prediction_thought_revision_response, "revision")
-
-    if not revision:
-        rprint("[blue]Model predicted no changes to the user prediction thought")
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought",
-            prediction,
-        )
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought_revision",
-            prediction,
-        )
-    else:
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought",
-            prediction,
-        )
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought_revision",
-            revision,
-        )
 
     await db.commit()
 
 
-    rprint("[blue]User Prediction Thought:")
+    rprint("[blue]Tom Inference:")
     content_lines = str(prediction)
     rprint(f"[blue]{content_lines}")
-
-    rprint("[deep_pink1]User Prediction Thought Revision Response:")
-    content_lines = str(revision)
-    rprint(f"[deep_pink1]{content_lines}")
 
 @timing_decorator(csv_file_path)
 async def process_user_message(
@@ -181,7 +106,6 @@ async def process_user_message(
     app_id: uuid.UUID,
     user_id: uuid.UUID,
     session_id: uuid.UUID,
-    collection_id: uuid.UUID,
     message_id: uuid.UUID,
     db: AsyncSession,
     enable_timing: bool = False,
@@ -210,106 +134,56 @@ async def process_user_message(
 
     if ai_message and ai_message.content:
         rprint(f"[orange1]AI Message: {ai_message.content}")
-        metamessages_stmt = (
+        
+        # Fetch the tom_inference metamessage
+        tom_inference_stmt = (
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.id)
-            .where(
-                models.Metamessage.metamessage_type
-                == "user_prediction_thought_revision"
-            )
+            .where(models.Metamessage.metamessage_type == "tom_inference")
             .order_by(models.Metamessage.created_at.asc())
             .limit(1)
         )
-        response = await db.execute(metamessages_stmt)
-        metamessage = response.scalar_one_or_none()
+        response = await db.execute(tom_inference_stmt)
+        tom_inference_metamessage = response.scalar_one_or_none()
 
-        if metamessage and metamessage.content:
-            rprint(f"[orange1]Metamessage: {metamessage.content}")
+        if tom_inference_metamessage and tom_inference_metamessage.content:
+            rprint(f"[orange1]Tom Inference: {tom_inference_metamessage.content}")
 
-            # VoE thought
-            voe_thought_response = await voe_thought(
-                user_prediction_thought_revision=metamessage.content,
-                actual=content,
+            # Fetch the existing user representation
+            user_representation_stmt = (
+                select(models.Metamessage)
+                .where(models.Metamessage.message_id == ai_message.id)
+                .where(models.Metamessage.metamessage_type == "user_representation")
+                .order_by(models.Metamessage.created_at.desc())
+                .limit(1)
+            )
+            response = await db.execute(user_representation_stmt)
+            existing_representation = response.scalar_one_or_none()
+
+            existing_representation_content = existing_representation.content if existing_representation else "None"
+
+            # Call user_representation
+            user_representation_response = await user_representation(
+                chat_history=f"{ai_message.content}\nhuman: {content}",
                 session_id=session_id,
+                user_representation=existing_representation_content,
+                tom_inference=tom_inference_metamessage.content,
                 enable_timing=enable_timing
             )
-            voe_thought_parsed = parse_xml_content(voe_thought_response, "assessment")
 
-            # VoE derive facts
-            voe_derive_facts_response = await voe_derive_facts(
-                ai_message=ai_message.content,
-                user_prediction_thought_revision=metamessage.content,
-                actual=content,
-                voe_thought=voe_thought_parsed,
-                session_id=session_id,
-                enable_timing=enable_timing
+            # Store the user_representation response as a metamessage
+            await add_metamessage(
+                db,
+                message_id,
+                "user_representation",
+                user_representation_response,
             )
-            voe_derive_facts_parsed = parse_xml_content(voe_derive_facts_response, "facts")
 
-            rprint("[orange1]Voe Thought:")
-            content_lines = str(voe_thought_parsed)
-            rprint(f"[orange1]{content_lines}")
+            rprint("[orange1]User Representation:")
+            rprint(f"[orange1]{user_representation_response}")
 
-            rprint("[orange1]Voe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_parsed)
-            rprint(f"[orange1]{content_lines}")
-
-            if voe_derive_facts_parsed != "None":
-                facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_parsed)
-                rprint("[orange1]The Facts Themselves:")
-                rprint(facts)
-            else:
-                facts = []
-            new_facts = await check_dups(app_id, user_id, collection_id, facts, session_id=session_id, enable_timing=enable_timing)
-
-            for fact in new_facts:
-                create_document = schemas.DocumentCreate(content=fact)
-                async with SessionLocal() as db:
-                    doc = await crud.create_document(
-                        db,
-                        document=create_document,
-                        app_id=app_id,
-                        user_id=user_id,
-                        collection_id=collection_id,
-                    )
-                    rprint(f"[orange1]Returned Document: {doc.content}")
         else:
-            raise Exception("\033[91mUser Thought Prediction Revision NOT READY YET")
+            raise Exception("\033[91mTom Inference NOT READY YET")
     else:
         rprint("[red]No AI message before this user message[/red]")
         return
-
-@timing_decorator(csv_file_path)
-async def check_dups(
-    app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str], session_id: uuid.UUID,  # Add this parameter
-    enable_timing: bool = False
-):
-    """Check that we're not storing duplicate facts"""
-
-    result = None
-    new_facts = []
-    async with SessionLocal() as db:
-        result = await crud.query_documents(
-            db=db,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-            query="\n".join(facts),
-            top_k=15,
-        )
-    existing_facts = [document.content for document in result]
-    if len(existing_facts) == 0:  # we just never had any facts
-        rprint(f"[light_steel_blue]We have no existing facts.\n New facts: {facts}")
-    else:
-        checked_list = await check_voe_list(existing_facts, facts, session_id=session_id, enable_timing=enable_timing)
-        if checked_list != "None":
-            new_facts_list = checked_list.split('\n')
-            for fact in new_facts_list:
-                if fact.strip():  # Check if the fact is not empty
-                    fact_content = fact.split('. ', 1)[1] if '. ' in fact else fact
-                    new_facts.append(fact_content.strip())
-                    rprint(f"[light_steel_blue]New Fact: {fact_content.strip()}")
-        else:
-            rprint("[light_steel_blue]No new facts found")
-
-    return new_facts
