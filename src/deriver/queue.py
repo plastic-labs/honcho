@@ -94,6 +94,7 @@ async def schedule_session(
     async with semaphore, SessionLocal() as db:
         try:
             available_slots = semaphore._value
+            # print(available_slots)
             new_sessions = await get_available_sessions(db, available_slots)
 
             if new_sessions:
@@ -153,6 +154,6 @@ async def main(enable_timing: bool = False):
                 AsyncioIntegration(),
             ],
         )
-    semaphore = asyncio.Semaphore(5)  # Limit to 5 concurrent dequeuing operations
+    semaphore = asyncio.Semaphore(6)  # Limit to 5 concurrent dequeuing operations
     queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
     await polling_loop(semaphore, queue_empty_flag, enable_timing)

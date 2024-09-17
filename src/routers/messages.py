@@ -20,6 +20,25 @@ router = APIRouter(
 
 async def enqueue(payload: dict):
     async with SessionLocal() as db:
+        # Get Session and Check metadata
+        session = await crud.get_session(
+            db,
+            app_id=payload["app_id"],
+            user_id=payload["user_id"],
+            session_id=payload["session_id"],
+        )
+        # Check if metadata has a "deriver" key
+        if session is not None:
+            deriver_disabled = session.h_metadata.get("deriver_disabled")
+            if deriver_disabled is not None and deriver_disabled is not False:
+                print("=====================")
+                print(f"Deriver is not enabled on session {payload['session_id']}")
+                print("=====================")
+                # If deriver is not enabled, do not enqueue
+                return
+        else:
+            # Session doesn't exist return
+            return
         try:
             processed_payload = {
                 k: str(v) if isinstance(v, uuid.UUID) else v for k, v in payload.items()
@@ -68,8 +87,6 @@ async def create_message_for_session(
         honcho_message = await crud.create_message(
             db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
         )
-        print("=======")
-        print("Should be enqueued")
         payload = {
             "app_id": app_id,
             "user_id": user_id,
