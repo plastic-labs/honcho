@@ -2,13 +2,11 @@ import os
 import uuid
 from typing import List
 from anthropic import AsyncAnthropic
-from .timing import timing_decorator, csv_file_path
 
 # Initialize the Anthropic client
 anthropic = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-@timing_decorator(csv_file_path)
-async def tom_inference(chat_history: str, session_id: uuid.UUID, user_representation: str = "None", enable_timing: bool = False) -> str:
+async def tom_inference(chat_history: str, session_id: uuid.UUID, user_representation: str = "None") -> str:
     message = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1000,
@@ -63,8 +61,7 @@ async def tom_inference(chat_history: str, session_id: uuid.UUID, user_represent
     )
     return message.content[0].text
 
-@timing_decorator(csv_file_path)
-async def user_representation(chat_history: str, session_id: uuid.UUID, user_representation: str = "None", tom_inference: str = "None", enable_timing: bool = False) -> str:
+async def user_representation(chat_history: str, session_id: uuid.UUID, user_representation: str = "None", tom_inference: str = "None") -> str:
     message = await anthropic.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1000,
