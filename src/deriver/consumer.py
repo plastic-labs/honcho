@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
 from .voe import tom_inference, user_representation
-from .timing import timing_decorator, csv_file_path
 
 # Turn off SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -28,7 +27,7 @@ def parse_xml_content(text, tag):
     match = re.search(pattern, text, re.DOTALL)
     return match.group(1).strip() if match else ""
 
-async def process_item(db: AsyncSession, payload: dict, enable_timing: bool = False):
+async def process_item(db: AsyncSession, payload: dict):
     processing_args = [
         payload["content"],
         payload["app_id"],
@@ -36,7 +35,6 @@ async def process_item(db: AsyncSession, payload: dict, enable_timing: bool = Fa
         payload["session_id"],
         payload["message_id"],
         db,
-        enable_timing,
     ]
     if payload["is_user"]:
         await process_user_message(*processing_args)
@@ -45,7 +43,6 @@ async def process_item(db: AsyncSession, payload: dict, enable_timing: bool = Fa
     return
 
 
-@timing_decorator(csv_file_path)
 async def process_ai_message(
     content: str,
     app_id: uuid.UUID,
@@ -53,7 +50,6 @@ async def process_ai_message(
     session_id: uuid.UUID,
     message_id: uuid.UUID,
     db: AsyncSession,
-    enable_timing: bool = False,
 ):
     """
     Process an AI message. Make a prediction about what the user is going to say to it.
@@ -82,7 +78,7 @@ async def process_ai_message(
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
-    tom_inference_response = await tom_inference(chat_history_str, session_id=session_id, enable_timing=enable_timing)
+    tom_inference_response = await tom_inference(chat_history_str, session_id=session_id)
 
     prediction = parse_xml_content(tom_inference_response, "prediction")
 
@@ -101,7 +97,6 @@ async def process_ai_message(
     rprint(f"[blue]{content_lines}")
 
 
-@timing_decorator(csv_file_path)
 async def process_user_message(
     content: str,
     app_id: uuid.UUID,
@@ -109,7 +104,6 @@ async def process_user_message(
     session_id: uuid.UUID,
     message_id: uuid.UUID,
     db: AsyncSession,
-    enable_timing: bool = False,
 ):
     """
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
@@ -169,7 +163,6 @@ async def process_user_message(
                 session_id=session_id,
                 user_representation=existing_representation_content,
                 tom_inference=tom_inference_metamessage.content,
-                enable_timing=enable_timing
             )
 
             # Store the user_representation response as a metamessage
