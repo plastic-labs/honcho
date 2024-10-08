@@ -9,7 +9,6 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import models, schemas
-from .deriver.timing import timing_decorator, csv_file_path
 
 openai_client = AzureOpenAI(
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
@@ -701,7 +700,6 @@ async def get_document(
     return document
 
 
-@timing_decorator(csv_file_path)
 async def query_documents(
     db: AsyncSession,
     app_id: uuid.UUID,
@@ -734,7 +732,6 @@ async def query_documents(
     return result.scalars().all()
 
 
-@timing_decorator(csv_file_path)
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
@@ -768,7 +765,6 @@ async def create_document(
     return honcho_document
 
 
-@timing_decorator(csv_file_path)
 async def update_document(
     db: AsyncSession,
     document: schemas.DocumentUpdate,
@@ -804,8 +800,6 @@ async def update_document(
 
 
 
-
-@timing_decorator(csv_file_path)
 async def delete_document(
     db: AsyncSession,
     app_id: uuid.UUID,
