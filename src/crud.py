@@ -424,8 +424,8 @@ async def get_metamessages(
     db: AsyncSession,
     app_id: uuid.UUID,
     user_id: uuid.UUID,
-    session_id: uuid.UUID,
     message_id: Optional[uuid.UUID],
+    session_id: Optional[uuid.UUID] = None,
     metamessage_type: Optional[str] = None,
     filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
@@ -438,8 +438,10 @@ async def get_metamessages(
         .join(models.App, models.App.id == models.User.app_id)
         .where(models.App.id == app_id)
         .where(models.User.id == user_id)
-        .where(models.Message.session_id == session_id)
     )
+
+    if session_id is not None:
+        stmt = stmt.where(models.Session.id == session_id)
 
     if message_id is not None:
         stmt = stmt.where(models.Metamessage.message_id == message_id)
@@ -797,7 +799,6 @@ async def update_document(
     await db.commit()
     # await db.refresh(honcho_document)
     return honcho_document
-
 
 
 async def delete_document(
