@@ -223,7 +223,7 @@ async def get_chat_stream(
             query=query,
             stream=True,
         )
-        async for chunk in stream:
+        for chunk in stream:
             yield chunk.content
 
     return StreamingResponse(
