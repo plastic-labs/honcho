@@ -1,21 +1,22 @@
 import asyncio
 import os
 import uuid
-from typing import AsyncGenerator, Set, Iterable
+from collections.abc import Iterable
 
+from anthropic import Anthropic
 from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from anthropic import Anthropic, AsyncAnthropic
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas, models
+from src import crud, models, schemas
 from src.db import SessionLocal
 
 load_dotenv()
 
+
 class AsyncSet:
     def __init__(self):
-        self._set: Set[str] = set()
+        self._set: set[str] = set()
         self._lock = asyncio.Lock()
 
     async def add(self, item: str):
@@ -26,18 +27,20 @@ class AsyncSet:
         async with self._lock:
             self._set.update(items)
 
-    def get_set(self) -> Set[str]:
+    def get_set(self) -> set[str]:
         return self._set.copy()
 
 
 class Dialectic:
-    def __init__(self, agent_input: str, user_representation: str, chat_history: list[str]):
+    def __init__(
+        self, agent_input: str, user_representation: str, chat_history: list[str]
+    ):
         self.agent_input = agent_input
         self.user_representation = user_representation
         self.chat_history = chat_history
-        self.client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    async def call(self):
+    def call(self):
         prompt = f"""
         You are tasked with responding to the query based on the context provided. 
         <query>{self.agent_input}</query>
@@ -45,15 +48,15 @@ class Dialectic:
         <conversation_history>{self.chat_history}</conversation_history>
         Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
         """
-        
-        response = await self.client.completions.create(
+
+        response = self.client.completions.create(
             model="claude-3-5-sonnet-20240620",
             prompt=prompt,
             max_tokens_to_sample=300,
         )
         return response
 
-    async def stream_async(self):
+    def stream(self):
         prompt = f"""
         You are tasked with responding to the query based on the context provided. 
         <query>{self.agent_input}</query>
@@ -61,14 +64,13 @@ class Dialectic:
         <conversation_history>{self.chat_history}</conversation_history>
         Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
         """
-        
-        async for response in await self.client.completions.create(
+
+        yield from self.client.completions.create(
             model="claude-3-5-sonnet-20240620",
             prompt=prompt,
             max_tokens_to_sample=300,
             stream=True,
-        ):
-            yield response
+        )
 
 
 async def chat_history(
@@ -102,7 +104,11 @@ async def get_latest_user_representation(
     )
     result = await db.execute(stmt)
     representation = result.scalar_one_or_none()
-    return representation.content if representation else "No user representation available."
+    return (
+        representation.content
+        if representation
+        else "No user representation available."
+    )
 
 
 async def chat(
@@ -130,6 +136,6 @@ async def chat(
     )
 
     if stream:
-        return chain.stream_async()
-    response = await chain.call()
+        return chain.stream()
+    response = chain.call()
     return schemas.AgentChat(content=response.completion)

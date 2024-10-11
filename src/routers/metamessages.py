@@ -12,7 +12,12 @@ from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages",
-    tags=["messages"],
+    tags=["metamessages"],
+)
+
+router_user_level = APIRouter(
+    prefix="/apps/{app_id}/users/{user_id}/metamessages",
+    tags=["metamessages"],
 )
 
 
@@ -102,6 +107,51 @@ async def get_metamessages(
         )
     except ValueError:
         raise HTTPException(status_code=404, detail="Session not found") from None
+
+
+@router_user_level.get("", response_model=Page[schemas.Metamessage])
+async def get_metamessages_by_user(
+    request: Request,
+    app_id: uuid.UUID,
+    user_id: uuid.UUID,
+    metamessage_type: Optional[str] = None,
+    reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
+    db=db,
+    auth=Depends(auth),
+):
+    """Paginate through the user metamessages for a user
+
+    Args:
+        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        user_id (str): The User ID representing the user, managed by the user
+        reverse (bool): Whether to reverse the order of the metamessages
+
+    Returns:
+        list[schemas.Message]: List of Message objects
+
+    Raises:
+        HTTPException: If the session is not found
+
+    """
+    try:
+        data = None
+        if filter is not None:
+            data = json.loads(filter)
+        return await paginate(
+            db,
+            await crud.get_metamessages(
+                db,
+                app_id=app_id,
+                user_id=user_id,
+                message_id=None,
+                metamessage_type=metamessage_type,
+                reverse=reverse,
+                filter=data,
+            ),
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="User not found") from None
 
 
 @router.get(
