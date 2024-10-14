@@ -46,15 +46,20 @@ class Dialectic:
         <query>{self.agent_input}</query>
         <context>{self.user_representation}</context>
         <conversation_history>{self.chat_history}</conversation_history>
-        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
+        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
         """
 
-        response = self.client.completions.create(
+        response = self.client.messages.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
             model="claude-3-5-sonnet-20240620",
-            prompt=prompt,
-            max_tokens_to_sample=300,
+            max_tokens=300,
         )
-        return response
+        return response.content
 
     def stream(self):
         prompt = f"""
@@ -62,13 +67,18 @@ class Dialectic:
         <query>{self.agent_input}</query>
         <context>{self.user_representation}</context>
         <conversation_history>{self.chat_history}</conversation_history>
-        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
+        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
         """
 
-        yield from self.client.completions.create(
+        yield from self.client.messages.create(
             model="claude-3-5-sonnet-20240620",
-            prompt=prompt,
-            max_tokens_to_sample=300,
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            max_tokens=300,
             stream=True,
         )
 
@@ -94,12 +104,13 @@ async def get_latest_user_representation(
 ) -> str:
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Metamessage.message_id == models.Message.id)
-        .where(models.Message.app_id == app_id)
-        .where(models.Message.user_id == user_id)
-        .where(models.Message.session_id == session_id)
+        .join(models.Message, models.Message.id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.id)
+        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.App, models.App.id == models.User.app_id)
+        .where(models.App.id == app_id)
+        .where(models.User.id == user_id)
         .where(models.Metamessage.metamessage_type == "user_representation")
-        .order_by(models.Metamessage.created_at.desc())
         .limit(1)
     )
     result = await db.execute(stmt)
@@ -138,4 +149,4 @@ async def chat(
     if stream:
         return chain.stream()
     response = chain.call()
-    return schemas.AgentChat(content=response.completion)
+    return schemas.AgentChat(content=response[0].text)

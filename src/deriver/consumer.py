@@ -173,8 +173,11 @@ async def process_user_message(
                 user_representation_response,
             )
 
-            rprint("[orange1]User Representation:")
-            rprint(f"[orange1]{user_representation_response}")
+            # parse the user_representation response
+            user_representation_response = parse_xml_content(user_representation_response, "representation")
+
+            rprint("[bright_magenta]User Representation:")
+            rprint(f"[bright_magenta]{user_representation_response}")
 
         else:
             raise Exception("\033[91mTom Inference NOT READY YET")
