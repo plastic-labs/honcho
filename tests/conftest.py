@@ -130,7 +130,7 @@ async def sample_data(db_session):
     await db_session.flush()
 
     # Create test user
-    test_user = models.User(name=str(generate_nanoid()), app_id=test_app.id)
+    test_user = models.User(name=str(generate_nanoid()), app_id=test_app.public_id)
     db_session.add(test_user)
     await db_session.flush()
 

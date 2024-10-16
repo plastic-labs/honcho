@@ -34,7 +34,7 @@ class App(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
 
 
 class User(Base):
@@ -46,7 +46,7 @@ class User(Base):
         String(21), index=True, unique=True, default=generate_nanoid
     )
     name: Mapped[str] = mapped_column(String(512), index=True)
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -58,7 +58,7 @@ class User(Base):
     __table_args__ = (UniqueConstraint("name", "app_id", name="unique_name_app_user"),)
 
     def __repr__(self) -> str:
-        return f"User(id={self.id}, app_id={self.app_id}, user_id={self.user_id}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"User(id={self.id}, app_id={self.app_id}, user_id={self.id}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Session(Base):
@@ -70,7 +70,7 @@ class Session(Base):
         String(21), index=True, unique=True, default=generate_nanoid
     )
     is_active: Mapped[bool] = mapped_column(default=True)
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -95,7 +95,7 @@ class Message(Base):
     )
     is_user: Mapped[bool]
     content: Mapped[str] = mapped_column(String(65535))
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -125,7 +125,7 @@ class Metamessage(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
 
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
@@ -144,7 +144,7 @@ class Collection(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
@@ -166,7 +166,7 @@ class Document(Base):
     public_id: Mapped[str] = mapped_column(
         String(21), index=True, unique=True, default=generate_nanoid
     )
-    h_metadata: Mapped[dict] = mapped_column("h_metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     content: Mapped[str] = mapped_column(String(65535))
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(

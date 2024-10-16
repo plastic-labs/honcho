@@ -1,6 +1,6 @@
 import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AppBase(BaseModel):
@@ -18,14 +18,24 @@ class AppUpdate(AppBase):
 
 
 class App(AppBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     name: str
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
     created_at: datetime.datetime
+
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
@@ -44,15 +54,25 @@ class UserUpdate(UserBase):
 
 
 class User(UserBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     name: str
     app_id: str
     created_at: datetime.datetime
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
+
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
@@ -71,16 +91,26 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     content: str
     is_user: bool
     session_id: str
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
     created_at: datetime.datetime
+
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
@@ -97,16 +127,27 @@ class SessionUpdate(SessionBase):
 
 
 class Session(SessionBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     # messages: list[Message]
     is_active: bool
     user_id: str
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
+
     created_at: datetime.datetime
+
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
@@ -128,17 +169,26 @@ class MetamessageUpdate(MetamessageBase):
 
 
 class Metamessage(MetamessageBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     metamessage_type: str
     content: str
     message_id: str
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
     created_at: datetime.datetime
+
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
@@ -157,15 +207,25 @@ class CollectionUpdate(CollectionBase):
 
 
 class Collection(CollectionBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     name: str
     user_id: str
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
     created_at: datetime.datetime
+
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
@@ -184,15 +244,25 @@ class DocumentUpdate(DocumentBase):
 
 
 class Document(DocumentBase):
-    id: str = Field(alias="public_id")
+    public_id: str = Field(exclude=True)
+    id: str
     content: str
-    metadata: dict = Field(alias="h_metadata")
+    h_metadata: dict = Field(exclude=True)
+    metadata: dict
     created_at: datetime.datetime
     collection_id: str
 
+    @field_validator("metadata", mode="before")
+    def fetch_h_metadata(cls, value, info):
+        return info.data.get("h_metadata", {})
+
+    @field_validator("id", mode="before")
+    def internal_to_public(cls, value, info):
+        return info.data.get("public_id", {})
+
     model_config = ConfigDict(
         from_attributes=True,
-        populate_by_name=True,
+        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
     )
 
 
