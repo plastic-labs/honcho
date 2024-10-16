@@ -42,9 +42,7 @@ async def enqueue(payload: dict):
             processed_payload = {
                 k: str(v) if isinstance(v, str) else v for k, v in payload.items()
             }
-            item = QueueItem(
-                payload=processed_payload, session_id=payload["session_id"]
-            )
+            item = QueueItem(payload=processed_payload, session_id=session.id)
             db.add(item)
             await db.commit()
             return
