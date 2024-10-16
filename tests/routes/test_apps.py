@@ -12,6 +12,9 @@ def test_create_app(client):
     print(response)
     assert response.status_code == 200
     data = response.json()
+    print("===================")
+    print(data)
+    print("===================")
     assert data["name"] == name
     assert data["metadata"] == {"key": "value"}
     assert "id" in data
@@ -45,11 +48,11 @@ def test_get_or_create_existing_app(client):
 
 def test_get_app_by_id(client, sample_data):
     test_app, _ = sample_data
-    response = client.get(f"/apps/{test_app.id}")
+    response = client.get(f"/apps/{test_app.public_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_app.name
-    assert data["id"] == str(test_app.id)
+    assert data["id"] == str(test_app.public_id)
 
 
 def test_get_app_by_name(client, sample_data):
@@ -58,14 +61,14 @@ def test_get_app_by_name(client, sample_data):
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_app.name
-    assert data["id"] == str(test_app.id)
+    assert data["id"] == str(test_app.public_id)
 
 
 def test_update_app(client, sample_data):
     test_app, _ = sample_data
     new_name = str(generate_nanoid())
     response = client.put(
-        f"/apps/{test_app.id}",
+        f"/apps/{test_app.public_id}",
         json={"name": new_name, "metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
