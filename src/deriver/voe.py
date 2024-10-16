@@ -1,24 +1,11 @@
-import os
-from typing import List
-
-from mirascope.base import BaseConfig
-from mirascope.openai import OpenAICall, OpenAICallParams, azure_client_wrapper
+from mirascope.openai import OpenAICall, OpenAICallParams
 from pydantic import ConfigDict
 
 
 class HonchoCall(OpenAICall):
     model_config = ConfigDict(arbitrary_types_allowed=True)
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),  # type: ignore
-            )
-        ]
-    )
     call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"),  # type: ignore
+        model="gpt-4o",  # type: ignore
         temperature=1.2,
         top_p=0.5,
     )
@@ -143,5 +130,5 @@ class CheckVoeList(HonchoCall):
     
     If you believe the new fact is sufficiently new given the ones in the list, output true. If not, output false. Do not provide extra commentary, only output a boolean value.
     '''
-    existing_facts: List[str]
+    existing_facts: list[str]
     new_fact: str

@@ -1,11 +1,9 @@
 import asyncio
-import os
 import uuid
-from typing import Iterable, Set
+from collections.abc import Iterable
 
 from dotenv import load_dotenv
-from mirascope.base import BaseConfig
-from mirascope.openai import OpenAICall, OpenAICallParams, azure_client_wrapper
+from mirascope.openai import OpenAICall, OpenAICallParams
 
 from src import crud, schemas
 from src.db import SessionLocal
@@ -15,7 +13,7 @@ load_dotenv()
 
 class AsyncSet:
     def __init__(self):
-        self._set: Set[str] = set()
+        self._set: set[str] = set()
         self._lock = asyncio.Lock()
 
     async def add(self, item: str):
@@ -26,7 +24,7 @@ class AsyncSet:
         async with self._lock:
             self._set.update(items)
 
-    def get_set(self) -> Set[str]:
+    def get_set(self) -> set[str]:
         return self._set.copy()
 
 
@@ -44,18 +42,7 @@ class Dialectic(OpenAICall):
     retrieved_facts: str
     chat_history: list[str]
 
-    configuration = BaseConfig(
-        client_wrappers=[
-            azure_client_wrapper(
-                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-                api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-            )
-        ]
-    )
-    call_params = OpenAICallParams(
-        model=os.getenv("AZURE_OPENAI_DEPLOYMENT"), temperature=1.2, top_p=0.5
-    )
+    call_params = OpenAICallParams(model="gpt-4o", temperature=1.2, top_p=0.5)
 
 
 async def chat_history(
