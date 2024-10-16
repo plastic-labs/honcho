@@ -25,6 +25,7 @@ dependencies = [
     "rich>=13.7.1",
     "mirascope>=0.18.0",
     "openai>=1.43.0",
+    "nanoid>=2.0.0",
 ]
 [tool.uv]
 dev-dependencies = [

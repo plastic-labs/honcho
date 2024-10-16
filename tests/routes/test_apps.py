@@ -1,4 +1,4 @@
-import uuid
+from nanoid import generate as generate_nanoid
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +7,7 @@ from src import models  # Import your SQLAlchemy models
 
 
 def test_create_app(client):
-    name = str(uuid.uuid4())
+    name = str(generate_nanoid())
     response = client.post("/apps", json={"name": name, "metadata": {"key": "value"}})
     print(response)
     assert response.status_code == 200
@@ -18,7 +18,7 @@ def test_create_app(client):
 
 
 def test_get_or_create_app(client):
-    name = str(uuid.uuid4())
+    name = str(generate_nanoid())
     response = client.get(f"/apps/name/{name}")
     assert response.status_code == 404
     response = client.get(f"/apps/get_or_create/{name}")
@@ -29,7 +29,7 @@ def test_get_or_create_app(client):
 
 
 def test_get_or_create_existing_app(client):
-    name = str(uuid.uuid4())
+    name = str(generate_nanoid())
     response = client.get(f"/apps/name/{name}")
     assert response.status_code == 404
     response = client.post("/apps", json={"name": name, "metadata": {"key": "value"}})
@@ -63,7 +63,7 @@ def test_get_app_by_name(client, sample_data):
 
 def test_update_app(client, sample_data):
     test_app, _ = sample_data
-    new_name = str(uuid.uuid4())
+    new_name = str(generate_nanoid())
     response = client.put(
         f"/apps/{test_app.id}",
         json={"name": new_name, "metadata": {"new_key": "new_value"}},

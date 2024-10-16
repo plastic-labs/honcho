@@ -1,5 +1,4 @@
 import asyncio
-import uuid
 from collections.abc import Iterable
 
 from dotenv import load_dotenv
@@ -45,9 +44,7 @@ class Dialectic(OpenAICall):
     call_params = OpenAICallParams(model="gpt-4o", temperature=1.2, top_p=0.5)
 
 
-async def chat_history(
-    app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
-) -> list[str]:
+async def chat_history(app_id: str, user_id: str, session_id: str) -> list[str]:
     async with SessionLocal() as db:
         stmt = await crud.get_messages(db, app_id, user_id, session_id)
         results = await db.execute(stmt)
@@ -62,8 +59,8 @@ async def chat_history(
 
 
 async def prep_inference(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     query: str,
     collection_name: str,
 ) -> None | list[str]:
@@ -88,8 +85,8 @@ async def prep_inference(
 
 
 async def generate_facts(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     fact_set: AsyncSet,
     collection_name: str,
     questions: list[str],
@@ -103,8 +100,8 @@ async def generate_facts(
 
 
 async def fact_generator(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     collections: list[str],
     questions: list[str],
 ):
@@ -121,9 +118,9 @@ async def fact_generator(
 
 
 async def chat(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     query: schemas.AgentQuery,
     stream: bool = False,
 ):

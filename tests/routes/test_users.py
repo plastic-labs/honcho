@@ -1,9 +1,9 @@
-import uuid
+from nanoid import generate as generate_nanoid
 
 
 def test_create_user(client, sample_data):
     test_app, _ = sample_data
-    name = str(uuid.uuid4())
+    name = str(generate_nanoid())
     response = client.post(
         f"/apps/{test_app.id}/users",
         json={"name": name, "metadata": {"user_key": "user_value"}},
@@ -35,7 +35,7 @@ def test_get_user_by_name(client, sample_data):
 
 def test_get_or_create_user(client, sample_data):
     test_app, _ = sample_data
-    name = str(uuid.uuid4())
+    name = str(generate_nanoid())
     response = client.get(f"/apps/{test_app.id}/users/name/{name}")
     assert response.status_code == 404
     response = client.get(f"/apps/{test_app.id}/users/get_or_create/{name}")
@@ -56,7 +56,7 @@ def test_get_or_create_user(client, sample_data):
 
 def test_update_user(client, sample_data):
     test_app, test_user = sample_data
-    new_name = str(uuid.uuid4())
+    new_name = str(generate_nanoid())
     response = client.put(
         f"/apps/{test_app.id}/users/{test_user.id}",
         json={"name": new_name, "metadata": {"new_key": "new_value"}},
