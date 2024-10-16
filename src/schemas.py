@@ -1,7 +1,6 @@
 import datetime
-import uuid
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AppBase(BaseModel):
@@ -19,19 +18,14 @@ class AppUpdate(AppBase):
 
 
 class App(AppBase):
-    id: uuid.UUID
+    id: str = Field(alias="public_id")
     name: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    metadata: dict = Field(alias="h_metadata")
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        populate_by_name=True,
     )
 
 
@@ -50,20 +44,15 @@ class UserUpdate(UserBase):
 
 
 class User(UserBase):
-    id: uuid.UUID
+    id: str = Field(alias="public_id")
     name: str
-    app_id: uuid.UUID
+    app_id: str
     created_at: datetime.datetime
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
+    metadata: dict = Field(alias="h_metadata")
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        populate_by_name=True,
     )
 
 
@@ -82,21 +71,16 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
+    id: str = Field(alias="public_id")
     content: str
     is_user: bool
-    session_id: uuid.UUID
-    id: uuid.UUID
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    session_id: str
+    metadata: dict = Field(alias="h_metadata")
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        populate_by_name=True,
     )
 
 
@@ -113,21 +97,16 @@ class SessionUpdate(SessionBase):
 
 
 class Session(SessionBase):
-    id: uuid.UUID
+    id: str = Field(alias="public_id")
     # messages: list[Message]
     is_active: bool
-    user_id: uuid.UUID
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    user_id: str
+    metadata: dict = Field(alias="h_metadata")
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        populate_by_name=True,
     )
 
 
@@ -138,31 +117,27 @@ class MetamessageBase(BaseModel):
 class MetamessageCreate(MetamessageBase):
     metamessage_type: str
     content: str
-    message_id: uuid.UUID
+    message_id: str
     metadata: dict | None = {}
 
 
 class MetamessageUpdate(MetamessageBase):
-    message_id: uuid.UUID
+    message_id: str
     metamessage_type: str | None = None
     metadata: dict | None = None
 
 
 class Metamessage(MetamessageBase):
+    id: str = Field(alias="public_id")
     metamessage_type: str
     content: str
-    id: uuid.UUID
-    message_id: uuid.UUID
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    message_id: str
+    metadata: dict = Field(alias="h_metadata")
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
 
     model_config = ConfigDict(
         from_attributes=True,
+        populate_by_name=True,
         json_schema_extra={"exclude": ["h_metadata"]},
     )
 
@@ -182,20 +157,15 @@ class CollectionUpdate(CollectionBase):
 
 
 class Collection(CollectionBase):
-    id: uuid.UUID
+    id: str = Field(alias="public_id")
     name: str
-    user_id: uuid.UUID
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    user_id: str
+    metadata: dict = Field(alias="h_metadata")
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        populate_by_name=True,
     )
 
 
@@ -214,20 +184,15 @@ class DocumentUpdate(DocumentBase):
 
 
 class Document(DocumentBase):
-    id: uuid.UUID
+    id: str = Field(alias="public_id")
     content: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    metadata: dict = Field(alias="h_metadata")
     created_at: datetime.datetime
-    collection_id: uuid.UUID
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
+    collection_id: str
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata"]},
+        populate_by_name=True,
     )
 
 

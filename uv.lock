@@ -463,6 +463,7 @@ dependencies = [
     { name = "greenlet" },
     { name = "httpx" },
     { name = "mirascope" },
+    { name = "nanoid" },
     { name = "openai" },
     { name = "opentelemetry-exporter-otlp" },
     { name = "opentelemetry-instrumentation-fastapi" },
@@ -493,6 +494,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mirascope", specifier = ">=0.18.0" },
+    { name = "nanoid", specifier = ">=2.0.0" },
     { name = "openai", specifier = ">=1.43.0" },
     { name = "opentelemetry-exporter-otlp", specifier = ">=1.24.0" },
     { name = "opentelemetry-instrumentation-fastapi", specifier = ">=0.45b0" },
@@ -778,6 +780,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f4/2c/6d574324f8314751454f11917517ec7567125985b6495c1dff63f8b6e76e/mirascope-0.18.3.tar.gz", hash = "sha256:a9cfb099ed58cc41247f734fdc1bc8c8993c074b6b8297e5912195885b43315e", size = 85423 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/35/ba/024ae6eeb9593d3fd7b6c47852800c3cd60fceb496c846dc1b7e20d68bd3/mirascope-0.18.3-py3-none-any.whl", hash = "sha256:2abc00f55feec29295ffd09a54a6403768a1c78085612e8caee0379cba26ea19", size = 113671 },
+]
+
+[[package]]
+name = "nanoid"
+version = "2.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/9d/0250bf5935d88e214df469d35eccc0f6ff7e9db046fc8a9aeb4b2a192775/nanoid-2.0.0.tar.gz", hash = "sha256:5a80cad5e9c6e9ae3a41fa2fb34ae189f7cb420b2a5d8f82bd9d23466e4efa68", size = 3290 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2e/0d/8630f13998638dc01e187fadd2e5c6d42d127d08aeb4943d231664d6e539/nanoid-2.0.0-py3-none-any.whl", hash = "sha256:90aefa650e328cffb0893bbd4c236cfd44c48bc1f2d0b525ecc53c3187b653bb", size = 5844 },
 ]
 
 [[package]]

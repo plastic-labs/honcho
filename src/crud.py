@@ -1,7 +1,6 @@
 import datetime
-import os
-import uuid
-from typing import Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -21,8 +20,8 @@ openai_client = OpenAI()
 ########################################################
 
 
-async def get_app(db: AsyncSession, app_id: uuid.UUID) -> Optional[models.App]:
-    stmt = select(models.App).where(models.App.id == app_id)
+async def get_app(db: AsyncSession, app_id: str) -> Optional[models.App]:
+    stmt = select(models.App).where(models.App.public_id == app_id)
     result = await db.execute(stmt)
     app = result.scalar_one_or_none()
     return app
@@ -48,7 +47,7 @@ async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
 
 
 async def update_app(
-    db: AsyncSession, app_id: uuid.UUID, app: schemas.AppUpdate
+    db: AsyncSession, app_id: str, app: schemas.AppUpdate
 ) -> models.App:
     honcho_app = await get_app(db, app_id)
     if honcho_app is None:
@@ -63,7 +62,7 @@ async def update_app(
     return honcho_app
 
 
-# def delete_app(db: AsyncSession, app_id: uuid.UUID) -> bool:
+# def delete_app(db: AsyncSession, app_id: str) -> bool:
 #     existing_app = get_app(db, app_id)
 #     if existing_app is None:
 #         return False
@@ -78,7 +77,7 @@ async def update_app(
 
 
 async def create_user(
-    db: AsyncSession, app_id: uuid.UUID, user: schemas.UserCreate
+    db: AsyncSession, app_id: str, user: schemas.UserCreate
 ) -> models.User:
     honcho_user = models.User(
         app_id=app_id,
@@ -92,12 +91,12 @@ async def create_user(
 
 
 async def get_user(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID
+    db: AsyncSession, app_id: str, user_id: str
 ) -> Optional[models.User]:
     stmt = (
         select(models.User)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
     )
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
@@ -105,7 +104,7 @@ async def get_user(
 
 
 async def get_user_by_name(
-    db: AsyncSession, app_id: uuid.UUID, name: str
+    db: AsyncSession, app_id: str, name: str
 ) -> Optional[models.User]:
     stmt = (
         select(models.User)
@@ -119,7 +118,7 @@ async def get_user_by_name(
 
 async def get_users(
     db: AsyncSession,
-    app_id: uuid.UUID,
+    app_id: str,
     reverse: bool = False,
     filter: Optional[dict] = None,
 ) -> Select:
@@ -137,7 +136,7 @@ async def get_users(
 
 
 async def update_user(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, user: schemas.UserUpdate
+    db: AsyncSession, app_id: str, user_id: str, user: schemas.UserUpdate
 ) -> models.User:
     honcho_user = await get_user(db, app_id, user_id)
     if honcho_user is None:
@@ -152,7 +151,7 @@ async def update_user(
     return honcho_user
 
 
-# def delete_user(db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+# def delete_user(db: AsyncSession, app_id: str, user_id: str) -> bool:
 #     existing_user = get_user(db, app_id, user_id)
 #     if existing_user is None:
 #         return False
@@ -167,15 +166,15 @@ async def update_user(
 
 async def get_session(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    session_id: uuid.UUID,
-    user_id: Optional[uuid.UUID] = None,
+    app_id: str,
+    session_id: str,
+    user_id: Optional[str] = None,
 ) -> Optional[models.Session]:
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.Session.id == session_id)
+        .where(models.Session.public_id == session_id)
     )
     if user_id is not None:
         stmt = stmt.where(models.Session.user_id == user_id)
@@ -186,15 +185,15 @@ async def get_session(
 
 async def get_sessions(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     reverse: Optional[bool] = False,
     is_active: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.id == models.Session.user_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
         .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
     )
@@ -216,8 +215,8 @@ async def get_sessions(
 async def create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
 ) -> models.Session:
     honcho_user = await get_user(db, app_id=app_id, user_id=user_id)
     if honcho_user is None:
@@ -245,9 +244,9 @@ async def create_session(
 async def update_session(
     db: AsyncSession,
     session: schemas.SessionUpdate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
 ) -> bool:
     honcho_session = await get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
@@ -264,12 +263,12 @@ async def update_session(
 
 
 async def delete_session(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
+    db: AsyncSession, app_id: str, user_id: str, session_id: str
 ) -> bool:
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.id == models.Session.user_id)
-        .where(models.Session.id == session_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .where(models.Session.public_id == session_id)
         .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
     )
@@ -290,9 +289,9 @@ async def delete_session(
 async def create_message(
     db: AsyncSession,
     message: schemas.MessageCreate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
 ) -> models.Message:
     honcho_session = await get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
@@ -315,19 +314,19 @@ async def create_message(
 
 async def get_messages(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Message)
-        .join(models.Session, models.Session.id == models.Message.session_id)
-        .join(models.User, models.User.id == models.Session.user_id)
-        .join(models.App, models.App.id == models.User.app_id)
-        .where(models.App.id == app_id)
-        .where(models.User.id == user_id)
+        .join(models.Session, models.Session.public_id == models.Message.session_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
         .where(models.Message.session_id == session_id)
     )
 
@@ -344,20 +343,20 @@ async def get_messages(
 
 async def get_message(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
-        .join(models.Session, models.Session.id == models.Message.session_id)
-        .join(models.User, models.User.id == models.Session.user_id)
-        .join(models.App, models.App.id == models.User.app_id)
-        .where(models.App.id == app_id)
-        .where(models.User.id == user_id)
+        .join(models.Session, models.Session.public_id == models.Message.session_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
         .where(models.Message.session_id == session_id)
-        .where(models.Message.id == message_id)
+        .where(models.Message.public_id == message_id)
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -366,10 +365,10 @@ async def get_message(
 async def update_message(
     db: AsyncSession,
     message: schemas.MessageUpdate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
 ) -> bool:
     honcho_message = await get_message(
         db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
@@ -393,9 +392,9 @@ async def update_message(
 async def create_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageCreate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
 ):
     message = await get_message(
         db,
@@ -422,22 +421,22 @@ async def create_metamessage(
 
 async def get_metamessages(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: Optional[uuid.UUID],
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: Optional[str],
     metamessage_type: Optional[str] = None,
     filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
 ) -> Select:
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Message.id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.id)
-        .join(models.User, models.User.id == models.Session.user_id)
-        .join(models.App, models.App.id == models.User.app_id)
-        .where(models.App.id == app_id)
-        .where(models.User.id == user_id)
+        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.public_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
         .where(models.Message.session_id == session_id)
     )
 
@@ -460,23 +459,23 @@ async def get_metamessages(
 
 async def get_metamessage(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
-    metamessage_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
+    metamessage_id: str,
 ) -> Optional[models.Metamessage]:
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Message.id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.id)
-        .join(models.User, models.User.id == models.Session.user_id)
-        .join(models.App, models.App.id == models.User.app_id)
-        .where(models.App.id == app_id)
-        .where(models.User.id == user_id)
+        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.public_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
         .where(models.Message.session_id == session_id)
         .where(models.Metamessage.message_id == message_id)
-        .where(models.Metamessage.id == metamessage_id)
+        .where(models.Metamessage.public_id == metamessage_id)
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
@@ -485,10 +484,10 @@ async def get_metamessage(
 async def update_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageUpdate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    metamessage_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    metamessage_id: str,
 ) -> bool:
     honcho_metamessage = await get_metamessage(
         db,
@@ -520,17 +519,17 @@ async def update_metamessage(
 
 async def get_collections(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     """Get a distinct list of the names of collections associated with a user"""
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
     )
 
     if filter is not None:
@@ -545,14 +544,14 @@ async def get_collections(
 
 
 async def get_collection_by_id(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
+    db: AsyncSession, app_id: str, user_id: str, collection_id: str
 ) -> Optional[models.Collection]:
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
-        .where(models.Collection.id == collection_id)
+        .where(models.User.public_id == user_id)
+        .where(models.Collection.public_id == collection_id)
     )
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
@@ -560,13 +559,13 @@ async def get_collection_by_id(
 
 
 async def get_collection_by_name(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, name: str
+    db: AsyncSession, app_id: str, user_id: str, name: str
 ) -> Optional[models.Collection]:
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
         .where(models.Collection.name == name)
     )
     result = await db.execute(stmt)
@@ -577,8 +576,8 @@ async def get_collection_by_name(
 async def create_collection(
     db: AsyncSession,
     collection: schemas.CollectionCreate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
 ) -> models.Collection:
     honcho_collection = models.Collection(
         user_id=user_id,
@@ -598,9 +597,9 @@ async def create_collection(
 async def update_collection(
     db: AsyncSession,
     collection: schemas.CollectionUpdate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
 ) -> models.Collection:
     honcho_collection = await get_collection_by_id(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
@@ -621,7 +620,7 @@ async def update_collection(
 
 
 async def delete_collection(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID
+    db: AsyncSession, app_id: str, user_id: str, collection_id: str
 ) -> bool:
     """
     Delete a Collection and all documents associated with it. Takes advantage of
@@ -629,10 +628,10 @@ async def delete_collection(
     """
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
-        .where(models.Collection.id == collection_id)
+        .where(models.User.public_id == user_id)
+        .where(models.Collection.public_id == collection_id)
     )
     result = await db.execute(stmt)
     honcho_collection = result.scalar_one_or_none()
@@ -652,18 +651,21 @@ async def delete_collection(
 
 async def get_documents(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Document)
-        .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(
+            models.Collection,
+            models.Collection.public_id == models.Document.collection_id,
+        )
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
         .where(models.Document.collection_id == collection_id)
     )
 
@@ -680,19 +682,22 @@ async def get_documents(
 
 async def get_document(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    document_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    document_id: str,
 ) -> Optional[models.Document]:
     stmt = (
         select(models.Document)
-        .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(
+            models.Collection,
+            models.Collection.public_id == models.Document.collection_id,
+        )
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
         .where(models.Document.collection_id == collection_id)
-        .where(models.Document.id == document_id)
+        .where(models.Document.public_id == document_id)
     )
 
     result = await db.execute(stmt)
@@ -702,9 +707,9 @@ async def get_document(
 
 async def query_documents(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     query: str,
     filter: Optional[dict] = None,
     top_k: int = 5,
@@ -715,10 +720,13 @@ async def query_documents(
     embedding_query = response.data[0].embedding
     stmt = (
         select(models.Document)
-        .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(
+            models.Collection,
+            models.Collection.public_id == models.Document.collection_id,
+        )
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
         .where(models.Document.collection_id == collection_id)
         # .limit(top_k)
     )
@@ -734,9 +742,9 @@ async def query_documents(
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
     collection = await get_collection_by_id(
@@ -766,10 +774,10 @@ async def create_document(
 async def update_document(
     db: AsyncSession,
     document: schemas.DocumentUpdate,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    document_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    document_id: str,
 ) -> bool:
     honcho_document = await get_document(
         db,
@@ -798,19 +806,22 @@ async def update_document(
 
 async def delete_document(
     db: AsyncSession,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    document_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    document_id: str,
 ) -> bool:
     stmt = (
         select(models.Document)
-        .join(models.Collection, models.Collection.id == models.Document.collection_id)
-        .join(models.User, models.User.id == models.Collection.user_id)
+        .join(
+            models.Collection,
+            models.Collection.public_id == models.Document.collection_id,
+        )
+        .join(models.User, models.User.public_id == models.Collection.user_id)
         .where(models.User.app_id == app_id)
-        .where(models.User.id == user_id)
+        .where(models.User.public_id == user_id)
         .where(models.Document.collection_id == collection_id)
-        .where(models.Document.id == document_id)
+        .where(models.Document.public_id == document_id)
     )
     result = await db.execute(stmt)
     document = result.scalar_one_or_none()
