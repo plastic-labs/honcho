@@ -3,7 +3,8 @@ import os
 import uuid
 from typing import Optional, Sequence
 
-from openai import AzureOpenAI, OpenAI
+from dotenv import load_dotenv
+from openai import OpenAI
 from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,11 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # from sqlalchemy.orm import Session
 from . import models, schemas
 
-openai_client = AzureOpenAI(
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-)
+load_dotenv(override=True)
+
+openai_client = OpenAI()
 
 ########################################################
 # app methods
@@ -711,7 +710,7 @@ async def query_documents(
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     response = openai_client.embeddings.create(
-        input=query, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
+        model="text-embedding-3-small", input=query
     )
     embedding_query = response.data[0].embedding
     stmt = (
@@ -747,7 +746,7 @@ async def create_document(
         raise ValueError("Session not found or does not belong to user")
 
     response = openai_client.embeddings.create(
-        input=document.content, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
+        input=document.content, model="text-embedding-3-small"
     )
 
     embedding = response.data[0].embedding
@@ -784,7 +783,7 @@ async def update_document(
     if document.content is not None:
         honcho_document.content = document.content
         response = openai_client.embeddings.create(
-            input=document.content, model=os.getenv("AZURE_OPENAI_EMBED_DEPLOYMENT")
+            input=document.content, model="text-embedding-3-small"
         )
         embedding = response.data[0].embedding
         honcho_document.embedding = embedding
