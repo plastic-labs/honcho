@@ -482,6 +482,7 @@ dependencies = [
 dev = [
     { name = "coverage" },
     { name = "interrogate" },
+    { name = "py-spy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "sqlalchemy-utils" },
@@ -513,6 +514,7 @@ requires-dist = [
 dev = [
     { name = "coverage", specifier = ">=7.6.0" },
     { name = "interrogate", specifier = ">=1.7.0" },
+    { name = "py-spy", specifier = ">=0.3.14" },
     { name = "pytest", specifier = ">=8.2.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.7" },
     { name = "sqlalchemy-utils", specifier = ">=0.41.2" },
@@ -1179,6 +1181,20 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/98/ff/fec109ceb715d2a6b4c4a85a61af3b40c723a961e8828319fbcb15b868dc/py-1.11.0.tar.gz", hash = "sha256:51c75c4126074b472f746a24399ad32f6053d1b34b68d2fa41e558e6f4a98719", size = 207796 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f6/f0/10642828a8dfb741e5f3fbaac830550a518a775c7fff6f04a007259b0548/py-1.11.0-py2.py3-none-any.whl", hash = "sha256:607c53218732647dff4acdfcd50cb62615cedf612e72d1724fb1a0cc6405b378", size = 98708 },
+]
+
+[[package]]
+name = "py-spy"
+version = "0.3.14"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b4/ff/9f10044630e55eb6fca1c32a00710901be9410b71031711fae6690acc643/py_spy-0.3.14-py2.py3-none-macosx_10_7_x86_64.whl", hash = "sha256:5b342cc5feb8d160d57a7ff308de153f6be68dcf506ad02b4d67065f2bae7f45", size = 1576751 },
+    { url = "https://files.pythonhosted.org/packages/4c/f3/ace9005f101cb7d41bd69081ea4d095950a31bb6df8a26cf142928e7658f/py_spy-0.3.14-py2.py3-none-macosx_10_9_x86_64.macosx_11_0_arm64.macosx_10_9_universal2.whl", hash = "sha256:fe7efe6c91f723442259d428bf1f9ddb9c1679828866b353d539345ca40d9dd2", size = 3049462 },
+    { url = "https://files.pythonhosted.org/packages/5e/53/404550ee909148afbffd9c93723001f895656a6be1ecb57598c12f08e429/py_spy-0.3.14-py2.py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:590905447241d789d9de36cff9f52067b6f18d8b5e9fb399242041568d414461", size = 2578909 },
+    { url = "https://files.pythonhosted.org/packages/3d/14/47fa8b0cb7e9c95117682dfcfaf6245256553bdff7ca83ba4b89db226858/py_spy-0.3.14-py2.py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:fd6211fe7f587b3532ba9d300784326d9a6f2b890af7bf6fff21a029ebbc812b", size = 2703439 },
+    { url = "https://files.pythonhosted.org/packages/e6/6b/d49bc425ab0369f8f2661af047202fb45f7aa804b971db461775b035c8db/py_spy-0.3.14-py2.py3-none-manylinux_2_5_i686.manylinux1_i686.whl", hash = "sha256:3e8e48032e71c94c3dd51694c39e762e4bbfec250df5bf514adcdd64e79371e0", size = 2709489 },
+    { url = "https://files.pythonhosted.org/packages/c2/d2/082de8db2285a652a00a39f2bcffaaf0b0c9c378f4830bb5983d2600b2dd/py_spy-0.3.14-py2.py3-none-manylinux_2_5_x86_64.manylinux1_x86_64.whl", hash = "sha256:f59b0b52e56ba9566305236375e6fc68888261d0d36b5addbe3cf85affbefc0e", size = 3012916 },
+    { url = "https://files.pythonhosted.org/packages/9d/eb/1749a892ada87c65320503d8be2aa31ba1e034cc818aead54ec45d347719/py_spy-0.3.14-py2.py3-none-win_amd64.whl", hash = "sha256:8f5b311d09f3a8e33dbd0d44fc6e37b715e8e0c7efefafcda8bfd63b31ab5a31", size = 1446535 },
 ]
 
 [[package]]
