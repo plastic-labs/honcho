@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -20,7 +19,7 @@ router = APIRouter(
 @router.post("", response_model=schemas.User)
 async def create_user(
     request: Request,
-    app_id: uuid.UUID,
+    app_id: str,
     user: schemas.UserCreate,
     db=db,
     auth=Depends(auth),
@@ -28,7 +27,7 @@ async def create_user(
     """Create a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user (schemas.UserCreate): The User object containing any metadata
 
@@ -48,7 +47,7 @@ async def create_user(
 @router.get("", response_model=Page[schemas.User])
 async def get_users(
     request: Request,
-    app_id: uuid.UUID,
+    app_id: str,
     reverse: bool = False,
     filter: Optional[str] = None,
     db=db,
@@ -57,7 +56,7 @@ async def get_users(
     """Get All Users for an App
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client
+        app_id (str): The ID of the app representing the client
         application using honcho
 
     Returns:
@@ -76,7 +75,7 @@ async def get_users(
 @router.get("/name/{name}", response_model=schemas.User)
 async def get_user_by_name(
     request: Request,
-    app_id: uuid.UUID,
+    app_id: str,
     name: str,
     db=db,
     auth=Depends(auth),
@@ -84,7 +83,7 @@ async def get_user_by_name(
     """Get a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
 
@@ -101,15 +100,15 @@ async def get_user_by_name(
 @router.get("/{user_id}", response_model=schemas.User)
 async def get_user(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     db=db,
     auth=Depends(auth),
 ):
     """Get a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
 
@@ -125,12 +124,12 @@ async def get_user(
 
 @router.get("/get_or_create/{name}", response_model=schemas.User)
 async def get_or_create_user(
-    request: Request, app_id: uuid.UUID, name: str, db=db, auth=Depends(auth)
+    request: Request, app_id: str, name: str, db=db, auth=Depends(auth)
 ):
     """Get or Create a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
 
@@ -149,8 +148,8 @@ async def get_or_create_user(
 @router.put("/{user_id}", response_model=schemas.User)
 async def update_user(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     user: schemas.UserUpdate,
     db=db,
     auth=Depends(auth),
@@ -158,7 +157,7 @@ async def update_user(
     """Update a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
         user (schemas.UserCreate): The User object containing any metadata

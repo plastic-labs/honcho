@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,8 +18,8 @@ router = APIRouter(
 @router.get("", response_model=Page[schemas.Collection])
 async def get_collections(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
@@ -29,9 +28,9 @@ async def get_collections(
     """Get All Collections for a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client
+        app_id (str): The ID of the app representing the client
         application using honcho
-        user_id (uuid.UUID): The User ID representing the user, managed by the user
+        user_id (str): The User ID representing the user, managed by the user
 
     Returns:
         list[schemas.Collection]: List of Collection objects
@@ -51,8 +50,8 @@ async def get_collections(
 @router.get("/name/{name}", response_model=schemas.Collection)
 async def get_collection_by_name(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     name: str,
     db=db,
     auth=Depends(auth),
@@ -70,9 +69,9 @@ async def get_collection_by_name(
 @router.get("/{collection_id}", response_model=schemas.Collection)
 async def get_collection_by_id(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     db=db,
     auth=Depends(auth),
 ) -> schemas.Collection:
@@ -89,8 +88,8 @@ async def get_collection_by_id(
 @router.post("", response_model=schemas.Collection)
 async def create_collection(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     collection: schemas.CollectionCreate,
     db=db,
     auth=Depends(auth),
@@ -114,9 +113,9 @@ async def create_collection(
 @router.put("/{collection_id}", response_model=schemas.Collection)
 async def update_collection(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     collection: schemas.CollectionUpdate,
     db=db,
     auth=Depends(auth),
@@ -150,9 +149,9 @@ async def update_collection(
 @router.delete("/{collection_id}")
 async def delete_collection(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     db=db,
     auth=Depends(auth),
 ):

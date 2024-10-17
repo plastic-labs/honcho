@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,9 +18,9 @@ router = APIRouter(
 @router.post("", response_model=schemas.Metamessage)
 async def create_metamessage(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     metamessage: schemas.MetamessageCreate,
     db=db,
     auth=Depends(auth),
@@ -29,7 +28,7 @@ async def create_metamessage(
     """Adds a message to a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
@@ -57,10 +56,10 @@ async def create_metamessage(
 @router.get("", response_model=Page[schemas.Metamessage])
 async def get_metamessages(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: Optional[uuid.UUID] = None,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: Optional[str] = None,
     metamessage_type: Optional[str] = None,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
@@ -70,7 +69,7 @@ async def get_metamessages(
     """Get all messages for a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
@@ -110,18 +109,18 @@ async def get_metamessages(
 )
 async def get_metamessage(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
-    metamessage_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
+    metamessage_id: str,
     db=db,
     auth=Depends(auth),
 ):
     """Get a specific Metamessage by ID
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
@@ -151,10 +150,10 @@ async def get_metamessage(
 )
 async def update_metamessage(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    metamessage_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    metamessage_id: str,
     metamessage: schemas.MetamessageUpdate,
     db=db,
     auth=Depends(auth),
