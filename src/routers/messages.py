@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
@@ -41,11 +40,9 @@ async def enqueue(payload: dict):
             return
         try:
             processed_payload = {
-                k: str(v) if isinstance(v, uuid.UUID) else v for k, v in payload.items()
+                k: str(v) if isinstance(v, str) else v for k, v in payload.items()
             }
-            item = QueueItem(
-                payload=processed_payload, session_id=payload["session_id"]
-            )
+            item = QueueItem(payload=processed_payload, session_id=session.id)
             db.add(item)
             await db.commit()
             return
@@ -60,9 +57,9 @@ async def enqueue(payload: dict):
 @router.post("", response_model=schemas.Message)
 async def create_message_for_session(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     message: schemas.MessageCreate,
     background_tasks: BackgroundTasks,
     db=db,
@@ -71,7 +68,7 @@ async def create_message_for_session(
     """Adds a message to a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using honcho
+        app_id (str): The ID of the app representing the client application using honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to add the message to
         message (schemas.MessageCreate): The Message object to add containing the message content and type
@@ -109,9 +106,9 @@ async def create_message_for_session(
 @router.get("", response_model=Page[schemas.Message])
 async def get_messages(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
@@ -120,7 +117,7 @@ async def get_messages(
     """Get all messages for a session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
         user_id (str): The User ID representing the user, managed by the user
         session_id (int): The ID of the Session to retrieve
@@ -155,10 +152,10 @@ async def get_messages(
 @router.get("/{message_id}", response_model=schemas.Message)
 async def get_message(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
     db=db,
     auth=Depends(auth),
 ):
@@ -174,10 +171,10 @@ async def get_message(
 @router.put("/{message_id}", response_model=schemas.Message)
 async def update_message(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
     message: schemas.MessageUpdate,
     db=db,
     auth=Depends(auth),

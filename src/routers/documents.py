@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -19,9 +18,9 @@ router = APIRouter(
 @router.get("", response_model=Page[schemas.Document])
 async def get_documents(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
@@ -56,10 +55,10 @@ async def get_documents(
 )
 async def get_document(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    document_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    document_id: str,
     db=db,
     auth=Depends(auth),
 ):
@@ -80,9 +79,9 @@ async def get_document(
 @router.get("/query", response_model=Sequence[schemas.Document])
 async def query_documents(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     query: str,
     top_k: int = 5,
     filter: Optional[str] = None,
@@ -108,9 +107,9 @@ async def query_documents(
 @router.post("", response_model=schemas.Document)
 async def create_document(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
     document: schemas.DocumentCreate,
     db=db,
     auth=Depends(auth),
@@ -135,10 +134,10 @@ async def create_document(
 )
 async def update_document(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    document_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    document_id: str,
     document: schemas.DocumentUpdate,
     db=db,
     auth=Depends(auth),
@@ -165,10 +164,10 @@ async def update_document(
 @router.delete("/{document_id}")
 async def delete_document(
     request: Request,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    document_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    document_id: str,
     db=db,
     auth=Depends(auth),
 ):

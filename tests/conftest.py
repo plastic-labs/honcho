@@ -1,7 +1,7 @@
 import logging  # noqa: I001
 import os
 import sys
-import uuid
+from nanoid import generate as generate_nanoid
 
 import pytest
 import pytest_asyncio
@@ -125,12 +125,12 @@ def client(db_session):
 async def sample_data(db_session):
     """Helper function to create test data"""
     # Create test app
-    test_app = models.App(name=str(uuid.uuid4()))
+    test_app = models.App(name=str(generate_nanoid()))
     db_session.add(test_app)
     await db_session.flush()
 
     # Create test user
-    test_user = models.User(name=str(uuid.uuid4()), app_id=test_app.id)
+    test_user = models.User(name=str(generate_nanoid()), app_id=test_app.public_id)
     db_session.add(test_user)
     await db_session.flush()
 

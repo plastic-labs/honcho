@@ -1,13 +1,7 @@
-import os
 import traceback
-import uuid
-from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from psycopg.errors import UniqueViolation
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
@@ -20,13 +14,11 @@ router = APIRouter(
 
 
 @router.get("/{app_id}", response_model=schemas.App)
-async def get_app(
-    request: Request, app_id: uuid.UUID, db=db, auth: dict = Depends(auth)
-):
+async def get_app(request: Request, app_id: str, db=db, auth: dict = Depends(auth)):
     """Get an App by ID
 
     Args:
-        app_id (uuid.UUID): The ID of the app
+        app_id (str): The ID of the app
 
     Returns:
         schemas.App: App object
@@ -125,7 +117,7 @@ async def get_or_create_app(request: Request, name: str, db=db, auth=Depends(aut
 @router.put("/{app_id}", response_model=schemas.App)
 async def update_app(
     request: Request,
-    app_id: uuid.UUID,
+    app_id: str,
     app: schemas.AppUpdate,
     db=db,
     auth=Depends(auth),
@@ -133,7 +125,7 @@ async def update_app(
     """Update an App
 
     Args:
-        app_id (uuid.UUID): The ID of the app to update
+        app_id (str): The ID of the app to update
         app (schemas.AppUpdate): The App object containing any new metadata
 
     Returns:

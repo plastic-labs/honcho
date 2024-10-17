@@ -1,7 +1,5 @@
 import logging
 import re
-import uuid
-from typing import List
 
 from dotenv import load_dotenv
 from rich import print as rprint
@@ -67,11 +65,11 @@ async def process_item(db: AsyncSession, payload: dict):
 
 async def process_ai_message(
     content: str,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    collection_id: str,
+    message_id: str,
     db: AsyncSession,
 ):
     """
@@ -192,11 +190,11 @@ async def process_ai_message(
 
 async def process_user_message(
     content: str,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    collection_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    collection_id: str,
+    message_id: str,
     db: AsyncSession,
 ):
     """
@@ -302,9 +300,7 @@ async def process_user_message(
         return
 
 
-async def check_dups(
-    app_id: uuid.UUID, user_id: uuid.UUID, collection_id: uuid.UUID, facts: List[str]
-):
+async def check_dups(app_id: str, user_id: str, collection_id: str, facts: list[str]):
     """Check that we're not storing duplicate facts"""
 
     check_duplication = CheckVoeList(existing_facts=[], new_fact="")
