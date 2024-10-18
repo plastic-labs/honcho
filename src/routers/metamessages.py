@@ -1,7 +1,6 @@
-import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -58,15 +57,13 @@ async def create_metamessage(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-@router.get("", response_model=Page[schemas.Metamessage])
+@router.post("/list", response_model=Page[schemas.Metamessage])
 async def get_metamessages(
     app_id: str,
     user_id: str,
     session_id: str,
-    message_id: Optional[str] = None,
-    metamessage_type: Optional[str] = None,
+    options: schemas.MetamessageGet,
     reverse: Optional[bool] = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     """Get all messages for a session
@@ -86,9 +83,6 @@ async def get_metamessages(
 
     """
     try:
-        data = None
-        if filter is not None:
-            data = json.loads(filter)
         return await paginate(
             db,
             await crud.get_metamessages(
@@ -96,9 +90,9 @@ async def get_metamessages(
                 app_id=app_id,
                 user_id=user_id,
                 session_id=session_id,
-                message_id=message_id,
-                metamessage_type=metamessage_type,
-                filter=data,
+                message_id=options.message_id,
+                metamessage_type=options.metamessage_type,
+                filter=options.filter,
                 reverse=reverse,
             ),
         )
@@ -106,13 +100,12 @@ async def get_metamessages(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-@router_user_level.get("", response_model=Page[schemas.Metamessage])
+@router_user_level.post("/list", response_model=Page[schemas.Metamessage])
 async def get_metamessages_by_user(
     app_id: str,
     user_id: str,
-    metamessage_type: Optional[str] = None,
+    options: schemas.MetamessageGetUserLevel,
     reverse: Optional[bool] = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     """Paginate through the user metamessages for a user
@@ -130,18 +123,15 @@ async def get_metamessages_by_user(
 
     """
     try:
-        data = None
-        if filter is not None:
-            data = json.loads(filter)
         return await paginate(
             db,
             await crud.get_metamessages(
                 db,
                 app_id=app_id,
                 user_id=user_id,
-                metamessage_type=metamessage_type,
+                metamessage_type=options.metamessage_type,
                 reverse=reverse,
-                filter=data,
+                filter=options.filter,
             ),
         )
     except ValueError:

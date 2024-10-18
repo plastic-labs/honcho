@@ -9,7 +9,7 @@ class AppBase(BaseModel):
 
 class AppCreate(AppBase):
     name: str
-    metadata: dict | None = {}
+    metadata: dict = {}
 
 
 class AppUpdate(AppBase):
@@ -45,7 +45,11 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     name: str
-    metadata: dict | None = {}
+    metadata: dict = {}
+
+
+class UserGet(UserBase):
+    filter: dict | None = None
 
 
 class UserUpdate(UserBase):
@@ -83,7 +87,11 @@ class MessageBase(BaseModel):
 class MessageCreate(MessageBase):
     content: str
     is_user: bool
-    metadata: dict | None = {}
+    metadata: dict = {}
+
+
+class MessageGet(MessageBase):
+    filter: dict | None = None
 
 
 class MessageUpdate(MessageBase):
@@ -119,7 +127,12 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    metadata: dict | None = {}
+    metadata: dict = {}
+
+
+class SessionGet(SessionBase):
+    filter: dict | None = None
+    is_active: bool = False
 
 
 class SessionUpdate(SessionBase):
@@ -162,6 +175,17 @@ class MetamessageCreate(MetamessageBase):
     metadata: dict | None = {}
 
 
+class MetamessageGet(MetamessageBase):
+    metamessage_type: str | None = None
+    message_id: str | None = None
+    filter: dict | None = None
+
+
+class MetamessageGetUserLevel(MessageBase):
+    filter: dict | None = None
+    metamessage_type: str | None = None
+
+
 class MetamessageUpdate(MetamessageBase):
     message_id: str
     metamessage_type: str | None = None
@@ -201,6 +225,10 @@ class CollectionCreate(CollectionBase):
     metadata: dict | None = {}
 
 
+class CollectionGet(CollectionBase):
+    filter: dict | None = None
+
+
 class CollectionUpdate(CollectionBase):
     name: str | None = None
     metadata: dict | None = None
@@ -236,6 +264,10 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     content: str
     metadata: dict | None = {}
+
+
+class DocumentGet(DocumentBase):
+    filter: dict | None = None
 
 
 class DocumentUpdate(DocumentBase):

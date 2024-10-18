@@ -1,4 +1,3 @@
-import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,12 +15,12 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=Page[schemas.Collection])
+@router.post("/list", response_model=Page[schemas.Collection])
 async def get_collections(
     app_id: str,
     user_id: str,
+    options: schemas.CollectionGet,
     reverse: Optional[bool] = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     """Get All Collections for a User
@@ -35,13 +34,10 @@ async def get_collections(
         list[schemas.Collection]: List of Collection objects
 
     """
-    data = None
-    if filter is not None:
-        data = json.loads(filter)
     return await paginate(
         db,
         await crud.get_collections(
-            db, app_id=app_id, user_id=user_id, filter=data, reverse=reverse
+            db, app_id=app_id, user_id=user_id, filter=options.filter, reverse=reverse
         ),
     )
 

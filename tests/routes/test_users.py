@@ -45,13 +45,30 @@ def test_get_or_create_user(client, sample_data):
     assert "id" in data
 
 
-# def test_get_users(client, sample_data):
-#     test_app, _ = sample_data
-#     response = client.get(f"/apps/{test_app.public_id}/users")
-#     assert response.status_code == 200
-#     data = response.json()
-#     assert "items" in data
-#     assert len(data["items"]) > 0
+def test_get_users(client, sample_data):
+    test_app, _ = sample_data
+    response = client.post(
+        f"/apps/{test_app.public_id}/users",
+        json={"name": str(generate_nanoid()), "metadata": {"user_key": "user_value"}},
+    )
+    response = client.post(
+        f"/apps/{test_app.public_id}/users",
+        json={"name": str(generate_nanoid()), "metadata": {"user_key": "user_value"}},
+    )
+    response = client.post(
+        f"/apps/{test_app.public_id}/users",
+        json={"name": str(generate_nanoid()), "metadata": {"user_key": "user_value2"}},
+    )
+    response = client.post(
+        f"/apps/{test_app.public_id}/users/list",
+        json={"filter": {"user_key": "user_value"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert len(data["items"]) > 0
+    assert len(data["items"]) == 2
+    assert data["items"][0]["metadata"] == {"user_key": "user_value"}
 
 
 def test_update_user(client, sample_data):
