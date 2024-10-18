@@ -1,7 +1,7 @@
-import json
-from typing import Optional, Sequence
+from collections.abc import Sequence
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -16,19 +16,16 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=Page[schemas.Document])
+@router.post("/list", response_model=Page[schemas.Document])
 async def get_documents(
     app_id: str,
     user_id: str,
     collection_id: str,
+    options: schemas.DocumentGet,
     reverse: Optional[bool] = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     try:
-        data = None
-        if filter is not None:
-            data = json.loads(filter)
         return await paginate(
             db,
             await crud.get_documents(
@@ -36,7 +33,7 @@ async def get_documents(
                 app_id=app_id,
                 user_id=user_id,
                 collection_id=collection_id,
-                filter=data,
+                filter=options.filter,
                 reverse=reverse,
             ),
         )

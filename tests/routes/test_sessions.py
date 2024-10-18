@@ -7,6 +7,18 @@ def test_create_session(client, sample_data):
     test_app, test_user = sample_data
     response = client.post(
         f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == {}
+    assert "id" in data
+
+
+def test_create_session_with_metadata(client, sample_data):
+    test_app, test_user = sample_data
+    response = client.post(
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
         json={
             "metadata": {"session_key": "session_value"},
         },
@@ -32,14 +44,49 @@ async def test_get_sessions(client, db_session, sample_data):
     assert data["metadata"] == {"test_key": "test_value"}
     assert "id" in data
 
-    response = client.get(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
+    response = client.post(
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"test_key": "test_value"}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
+
+
+@pytest.mark.asyncio
+async def test_empty_update_session(client, db_session, sample_data):
+    test_app, test_user = sample_data
+    # Create a test session
+    test_session = models.Session(user_id=test_user.public_id, metadata={})
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.put(
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}",
+        json={},
+    )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_update_delete_metadata(client, db_session, sample_data):
+    test_app, test_user = sample_data
+    # Create a test session
+    test_session = models.Session(
+        user_id=test_user.public_id, metadata={"default": "value"}
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.put(
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}",
+        json={"metadata": {}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == {}
 
 
 @pytest.mark.asyncio

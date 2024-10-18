@@ -57,7 +57,7 @@ async def create_metamessage(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-@router.post("/get", response_model=Page[schemas.Metamessage])
+@router.post("/list", response_model=Page[schemas.Metamessage])
 async def get_metamessages(
     app_id: str,
     user_id: str,
@@ -100,7 +100,7 @@ async def get_metamessages(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-@router_user_level.post("/get", response_model=Page[schemas.Metamessage])
+@router_user_level.post("/list", response_model=Page[schemas.Metamessage])
 async def get_metamessages_by_user(
     app_id: str,
     user_id: str,

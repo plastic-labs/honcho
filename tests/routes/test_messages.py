@@ -41,7 +41,7 @@ async def test_get_messages(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/get",
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
         json={},
     )
     assert response.status_code == 200
@@ -77,7 +77,7 @@ async def test_get_filtered_messages(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/get",
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
         json={"filter": {"key": "value2"}},
     )
     assert response.status_code == 200

@@ -1,4 +1,3 @@
-import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -43,11 +42,11 @@ async def create_user(
         ) from e
 
 
-@router.get("", response_model=Page[schemas.User])
+@router.post("/list", response_model=Page[schemas.User])
 async def get_users(
     app_id: str,
+    options: schemas.UserGet,
     reverse: bool = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     """Get All Users for an App
@@ -60,12 +59,9 @@ async def get_users(
         list[schemas.User]: List of User objects
 
     """
-    data = None
-    if filter is not None:
-        data = json.loads(filter)
-
     return await paginate(
-        db, await crud.get_users(db, app_id=app_id, reverse=reverse, filter=data)
+        db,
+        await crud.get_users(db, app_id=app_id, reverse=reverse, filter=options.filter),
     )
 
 
