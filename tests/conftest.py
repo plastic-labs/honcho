@@ -23,6 +23,7 @@ logging.basicConfig(
     stream=sys.stdout,  # This ensures the output goes to stdout
 )
 logger = logging.getLogger(__name__)
+logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 # Test database URL
 # TODO use environment variable

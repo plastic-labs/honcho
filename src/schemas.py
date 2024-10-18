@@ -86,6 +86,10 @@ class MessageCreate(MessageBase):
     metadata: dict | None = {}
 
 
+class MessageGet(MessageBase):
+    filter: dict | None = None
+
+
 class MessageUpdate(MessageBase):
     metadata: dict | None = None
 
@@ -160,6 +164,17 @@ class MetamessageCreate(MetamessageBase):
     content: str
     message_id: str
     metadata: dict | None = {}
+
+
+class MetamessageGet(MetamessageBase):
+    metamessage_type: str | None = None
+    message_id: str | None = None
+    filter: dict | None = None
+
+
+class MetamessageGetUserLevel(MessageBase):
+    filter: dict | None = None
+    metamessage_type: str | None = None
 
 
 class MetamessageUpdate(MetamessageBase):

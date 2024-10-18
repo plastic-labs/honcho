@@ -55,7 +55,7 @@ async def test_get_metamessage(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.get(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/{test_metamessage.public_id}?message_id={test_message.public_id}"
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/{test_metamessage.public_id}/?message_id={test_message.public_id}"
     )
     assert response.status_code == 200
     data = response.json()
@@ -107,8 +107,9 @@ async def test_get_metamessages(client, db_session, sample_data):
     db_session.add(test_metamessage_4)
     await db_session.commit()
 
-    response = client.get(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages?metamessage_type=test_type"
+    response = client.post(
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/get",
+        json={"metamessage_type": "test_type"},
     )
 
     assert response.status_code == 200
@@ -179,8 +180,9 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
     db_session.add(test_metamessage_4)
     await db_session.commit()
 
-    response = client.get(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages?metamessage_type=test_type"
+    response = client.post(
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/get",
+        json={"metamessage_type": "test_type"},
     )
     assert response.status_code == 200
     data = response.json()
