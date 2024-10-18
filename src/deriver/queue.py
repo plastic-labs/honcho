@@ -154,7 +154,6 @@ async def main():
                 AsyncioIntegration(),
             ],
         )
-    semaphore = asyncio.Semaphore(6)  # Limit to 5 concurrent dequeuing operations
+    semaphore = asyncio.Semaphore(2)  # Limit to 5 concurrent dequeuing operations
     queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
     await polling_loop(semaphore, queue_empty_flag)
-

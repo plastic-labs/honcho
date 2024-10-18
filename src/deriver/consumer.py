@@ -59,15 +59,15 @@ async def process_ai_message(
     rprint(f"[green]Processing AI message: {content}[/green]")
 
     subquery = (
-        select(models.Message.created_at)
+        select(models.Message.id)
         .where(models.Message.public_id == message_id)
         .scalar_subquery()
     )
     messages_stmt = (
         select(models.Message)
         .where(models.Message.session_id == session_id)
-        .order_by(models.Message.created_at.desc())
-        .where(models.Message.created_at < subquery)
+        .order_by(models.Message.id.desc())
+        .where(models.Message.id < subquery)
         .limit(10)
     )
 
@@ -113,7 +113,7 @@ async def process_user_message(
     """
     rprint(f"[orange1]Processing User Message: {content}")
     subquery = (
-        select(models.Message.created_at)
+        select(models.Message.id)
         .where(models.Message.public_id == message_id)
         .scalar_subquery()
     )
@@ -122,8 +122,8 @@ async def process_user_message(
         select(models.Message)
         .where(models.Message.session_id == session_id)
         .where(models.Message.is_user == False)
-        .order_by(models.Message.created_at.desc())
-        .where(models.Message.created_at < subquery)
+        .order_by(models.Message.id.desc())
+        .where(models.Message.id < subquery)
         .limit(1)
     )
 
@@ -138,7 +138,7 @@ async def process_user_message(
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.public_id)
             .where(models.Metamessage.metamessage_type == "tom_inference")
-            .order_by(models.Metamessage.created_at.asc())
+            .order_by(models.Metamessage.id.asc())
             .limit(1)
         )
         response = await db.execute(tom_inference_stmt)
@@ -152,7 +152,7 @@ async def process_user_message(
                 select(models.Metamessage)
                 .where(models.Metamessage.message_id == ai_message.public_id)
                 .where(models.Metamessage.metamessage_type == "user_representation")
-                .order_by(models.Metamessage.created_at.desc())
+                .order_by(models.Metamessage.id.desc())
                 .limit(1)
             )
             response = await db.execute(user_representation_stmt)
