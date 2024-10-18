@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -14,6 +14,7 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
     tags=["messages"],
+    dependencies=[Depends(auth)],
 )
 
 
@@ -56,14 +57,12 @@ async def enqueue(payload: dict):
 
 @router.post("", response_model=schemas.Message)
 async def create_message_for_session(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     message: schemas.MessageCreate,
     background_tasks: BackgroundTasks,
     db=db,
-    auth=Depends(auth),
 ):
     """Adds a message to a session
 
@@ -88,7 +87,7 @@ async def create_message_for_session(
             "app_id": app_id,
             "user_id": user_id,
             "session_id": session_id,
-            "message_id": honcho_message.id,
+            "message_id": honcho_message.public_id,
             "is_user": honcho_message.is_user,
             "content": honcho_message.content,
             "metadata": honcho_message.h_metadata,
@@ -105,14 +104,12 @@ async def create_message_for_session(
 
 @router.get("", response_model=Page[schemas.Message])
 async def get_messages(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     """Get all messages for a session
 
@@ -151,13 +148,11 @@ async def get_messages(
 
 @router.get("/{message_id}", response_model=schemas.Message)
 async def get_message(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     message_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """ """
     honcho_message = await crud.get_message(
@@ -170,14 +165,12 @@ async def get_message(
 
 @router.put("/{message_id}", response_model=schemas.Message)
 async def update_message(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     message_id: str,
     message: schemas.MessageUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     """Update's the metadata of a message"""
     if message.metadata is None:

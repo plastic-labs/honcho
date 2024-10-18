@@ -20,7 +20,7 @@ load_dotenv()
 
 
 async def get_next_message_for_session(
-    db: AsyncSession, session_id: str
+    db: AsyncSession, session_id: int
 ) -> Optional[models.QueueItem]:
     result = await db.execute(
         select(models.QueueItem)
@@ -33,7 +33,7 @@ async def get_next_message_for_session(
     return result.scalar_one_or_none()
 
 
-async def process_session_messages(session_id: str):
+async def process_session_messages(session_id: int):
     async with SessionLocal() as db:
         try:
             while True:
@@ -110,6 +110,7 @@ async def schedule_session(
                         await db.commit()
 
                         # If successful, create a task for this session
+                        # Pass enable_timing to process_session_messages
                         asyncio.create_task(process_session_messages(session_id))
                     except IntegrityError:
                         # If the session is already in active_sessions, skip it
@@ -153,6 +154,6 @@ async def main():
                 AsyncioIntegration(),
             ],
         )
-    semaphore = asyncio.Semaphore(6)  # Limit to 5 concurrent dequeuing operations
+    semaphore = asyncio.Semaphore(2)  # Limit to 5 concurrent dequeuing operations
     queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
     await polling_loop(semaphore, queue_empty_flag)
