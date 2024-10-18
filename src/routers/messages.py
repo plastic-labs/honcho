@@ -87,7 +87,7 @@ async def create_message_for_session(
             "app_id": app_id,
             "user_id": user_id,
             "session_id": session_id,
-            "message_id": honcho_message.id,
+            "message_id": honcho_message.public_id,
             "is_user": honcho_message.is_user,
             "content": honcho_message.content,
             "metadata": honcho_message.h_metadata,
