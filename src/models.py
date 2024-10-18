@@ -58,7 +58,7 @@ class User(Base):
     __table_args__ = (UniqueConstraint("name", "app_id", name="unique_name_app_user"),)
 
     def __repr__(self) -> str:
-        return f"User(id={self.id}, app_id={self.app_id}, user_id={self.id}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"User(id={self.id}, app_id={self.app_id}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Session(Base):

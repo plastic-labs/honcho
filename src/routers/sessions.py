@@ -13,6 +13,7 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
     tags=["sessions"],
+    dependencies=[Depends(auth)],
 )
 
 
@@ -24,7 +25,6 @@ async def get_sessions(
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     """Get All Sessions for a User
 
@@ -61,7 +61,6 @@ async def create_session(
     user_id: str,
     session: schemas.SessionCreate,
     db=db,
-    auth=Depends(auth),
 ):
     """Create a Session for a User
 
@@ -95,7 +94,6 @@ async def update_session(
     session_id: str,
     session: schemas.SessionUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     """Update the metadata of a Session
 
@@ -126,7 +124,6 @@ async def delete_session(
     user_id: str,
     session_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Delete a session by marking it as inactive
 
@@ -158,7 +155,6 @@ async def get_session(
     user_id: str,
     session_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Get a specific session for a user by ID
 
@@ -188,7 +184,6 @@ async def chat(
     user_id: str,
     session_id: str,
     query: schemas.AgentQuery,
-    auth=Depends(auth),
 ):
     print(query)
     return await agent.chat(
@@ -212,7 +207,6 @@ async def get_chat_stream(
     user_id: str,
     session_id: str,
     query: schemas.AgentQuery,
-    auth=Depends(auth),
 ):
     async def parse_stream():
         stream = await agent.chat(
@@ -222,7 +216,7 @@ async def get_chat_stream(
             query=query,
             stream=True,
         )
-        async for chunk in stream:
+        for chunk in stream:
             yield chunk.content
 
     return StreamingResponse(

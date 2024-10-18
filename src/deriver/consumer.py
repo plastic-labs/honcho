@@ -1,24 +1,14 @@
 import logging
 import re
 
-from dotenv import load_dotenv
 from rich import print as rprint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import crud, models, schemas
-from ..db import SessionLocal
-from .voe import (
-    CheckVoeList,
-    UserPredictionThought,
-    UserPredictionThoughtRevision,
-    VoeDeriveFacts,
-    VoeThought,
-)
+from .. import models
+from .voe import tom_inference, user_representation
 
-load_dotenv()
-
-# Turn of SQLAlchemy Echo logging
+# Turn off SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
@@ -33,26 +23,18 @@ async def add_metamessage(db, message_id, metamessage_type, content):
     db.add(metamessage)
 
 
+def parse_xml_content(text, tag):
+    pattern = f"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
 async def process_item(db: AsyncSession, payload: dict):
-    collection: models.Collection
-    collection = await crud.get_collection_by_name(
-        db, payload["app_id"], payload["user_id"], "honcho"
-    )
-    if collection is None:
-        collection_create = schemas.CollectionCreate(name="honcho", metadata={})
-        collection = await crud.create_collection(
-            db,
-            collection=collection_create,
-            app_id=payload["app_id"],
-            user_id=payload["user_id"],
-        )
-    collection_id = collection.id
     processing_args = [
         payload["content"],
         payload["app_id"],
         payload["user_id"],
         payload["session_id"],
-        collection_id,
         payload["message_id"],
         db,
     ]
@@ -68,7 +50,6 @@ async def process_ai_message(
     app_id: str,
     user_id: str,
     session_id: str,
-    collection_id: str,
     message_id: str,
     db: AsyncSession,
 ):
@@ -78,15 +59,15 @@ async def process_ai_message(
     rprint(f"[green]Processing AI message: {content}[/green]")
 
     subquery = (
-        select(models.Message.created_at)
-        .where(models.Message.id == message_id)
+        select(models.Message.id)
+        .where(models.Message.public_id == message_id)
         .scalar_subquery()
     )
     messages_stmt = (
         select(models.Message)
         .where(models.Message.session_id == session_id)
-        .order_by(models.Message.created_at.desc())
-        .where(models.Message.created_at < subquery)
+        .order_by(models.Message.id.desc())
+        .where(models.Message.id < subquery)
         .limit(10)
     )
 
@@ -99,93 +80,24 @@ async def process_ai_message(
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
-    # user prediction thought
-    user_prediction_thought = UserPredictionThought(chat_history=chat_history_str)
-    user_prediction_thought_response = user_prediction_thought.call()
-
-    ## query the collection to build the context
-    additional_data = re.findall(
-        r"\d+\.\s([^\n]+)", user_prediction_thought_response.content
+    tom_inference_response = await tom_inference(
+        chat_history_str, session_id=session_id
     )
-    additional_data_set = set()
-    additional_data_list = []
-    for d in additional_data:
-        response = await crud.query_documents(
-            db,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-            query=d,
-            top_k=3,
-        )
-        for document in response:
-            additional_data_set.add(document)
-        additional_data_list = list(additional_data_set)
 
-    context_str = "\n".join([document.content for document in additional_data_list])
+    prediction = parse_xml_content(tom_inference_response, "prediction")
 
-    # user prediction thought revision given the context
-    user_prediction_thought_revision = UserPredictionThoughtRevision(
-        user_prediction_thought=user_prediction_thought_response.content,
-        retrieved_context=context_str,
-        chat_history=chat_history_str,
+    await add_metamessage(
+        db,
+        message_id,
+        "tom_inference",
+        prediction,
     )
-    user_prediction_thought_revision_response = user_prediction_thought_revision.call()
-
-    if user_prediction_thought_revision_response.content == "None":
-        rprint("[blue]Model predicted no changes to the user prediction thought")
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought",
-            user_prediction_thought_response.content,
-        )
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought_revision",
-            user_prediction_thought_response.content,
-        )
-    else:
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought",
-            user_prediction_thought_response.content,
-        )
-        await add_metamessage(
-            db,
-            message_id,
-            "user_prediction_thought_revision",
-            user_prediction_thought_revision_response.content,
-        )
 
     await db.commit()
 
-    # debugging
-    rprint("[blue]=================")
-
-    rprint("[blue]User Prediction Thought Prompt:")
-    content_lines = str(user_prediction_thought)
+    rprint("[blue]Tom Inference:")
+    content_lines = str(prediction)
     rprint(f"[blue]{content_lines}")
-
-    rprint("[blue]User Prediction Thought:")
-    content_lines = str(user_prediction_thought_response.content)
-    rprint(f"[blue]{content_lines}")
-
-    rprint("[blue]=================")
-
-    rprint("[medium_purple1]=================")
-
-    rprint("[medium_purple1]User Prediction Thought Revision:")
-    content_lines = str(user_prediction_thought_revision)
-    rprint(f"[medium_purple1]{content_lines}")
-
-    rprint("[medium_purple1]User Prediction Thought Revision Response:")
-    content_lines = str(user_prediction_thought_revision_response.content)
-    rprint(f"[medium_purple1]{content_lines}")
-
-    rprint("[medium_purple1]=================")
 
 
 async def process_user_message(
@@ -193,7 +105,6 @@ async def process_user_message(
     app_id: str,
     user_id: str,
     session_id: str,
-    collection_id: str,
     message_id: str,
     db: AsyncSession,
 ):
@@ -201,11 +112,9 @@ async def process_user_message(
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
     rprint(f"[orange1]Processing User Message: {content}")
-
-    # Get the AI message directly preceding this User message
     subquery = (
-        select(models.Message.created_at)
-        .where(models.Message.id == message_id)
+        select(models.Message.id)
+        .where(models.Message.public_id == message_id)
         .scalar_subquery()
     )
 
@@ -213,8 +122,8 @@ async def process_user_message(
         select(models.Message)
         .where(models.Message.session_id == session_id)
         .where(models.Message.is_user == False)
-        .order_by(models.Message.created_at.desc())
-        .where(models.Message.created_at < subquery)
+        .order_by(models.Message.id.desc())
+        .where(models.Message.id < subquery)
         .limit(1)
     )
 
@@ -223,123 +132,62 @@ async def process_user_message(
 
     if ai_message and ai_message.content:
         rprint(f"[orange1]AI Message: {ai_message.content}")
-        # Get the User Thought Revision Associated with this AI Message
-        metamessages_stmt = (
+
+        # Fetch the tom_inference metamessage
+        tom_inference_stmt = (
             select(models.Metamessage)
-            .where(models.Metamessage.message_id == ai_message.id)
-            .where(
-                models.Metamessage.metamessage_type
-                == "user_prediction_thought_revision"
-            )
-            .order_by(models.Metamessage.created_at.asc())
+            .where(models.Metamessage.message_id == ai_message.public_id)
+            .where(models.Metamessage.metamessage_type == "tom_inference")
+            .order_by(models.Metamessage.id.asc())
             .limit(1)
         )
-        response = await db.execute(metamessages_stmt)
-        metamessage = response.scalar_one_or_none()
+        response = await db.execute(tom_inference_stmt)
+        tom_inference_metamessage = response.scalar_one_or_none()
 
-        if metamessage and metamessage.content:
-            rprint(f"[orange1]Metamessage: {metamessage.content}")
+        if tom_inference_metamessage and tom_inference_metamessage.content:
+            rprint(f"[orange1]Tom Inference: {tom_inference_metamessage.content}")
 
-            # VoE thought
-            voe_thought = VoeThought(
-                user_prediction_thought_revision=metamessage.content, actual=content
+            # Fetch the existing user representation
+            user_representation_stmt = (
+                select(models.Metamessage)
+                .where(models.Metamessage.message_id == ai_message.public_id)
+                .where(models.Metamessage.metamessage_type == "user_representation")
+                .order_by(models.Metamessage.id.desc())
+                .limit(1)
             )
-            voe_thought_response = voe_thought.call()
+            response = await db.execute(user_representation_stmt)
+            existing_representation = response.scalar_one_or_none()
 
-            # VoE derive facts
-            voe_derive_facts = VoeDeriveFacts(
-                ai_message=ai_message.content,
-                user_prediction_thought_revision=metamessage.content,
-                actual=content,
-                voe_thought=voe_thought_response.content,
+            existing_representation_content = (
+                existing_representation.content if existing_representation else "None"
             )
-            voe_derive_facts_response = voe_derive_facts.call()
 
-            # debugging
-            rprint("[orange1]=================")
-            rprint("[orange1]Voe Thought Prompt:")
-            content_lines = str(voe_thought)
-            rprint(f"[orange1]{content_lines}")
-            rprint("[orange1]Voe Thought:")
-            content_lines = str(voe_thought_response.content)
-            rprint(f"[orange1]{content_lines}")
-            rprint("[orange1]=================")
+            # Call user_representation
+            user_representation_response = await user_representation(
+                chat_history=f"{ai_message.content}\nhuman: {content}",
+                session_id=session_id,
+                user_representation=existing_representation_content,
+                tom_inference=tom_inference_metamessage.content,
+            )
 
-            rprint("[orange1]================")
-            rprint("[orange1]Voe Derive Facts Prompt:")
-            content_lines = str(voe_derive_facts)
-            rprint(f"[orange1]{content_lines}")
+            # Store the user_representation response as a metamessage
+            await add_metamessage(
+                db,
+                message_id,
+                "user_representation",
+                user_representation_response,
+            )
 
-            rprint("[orange1]Voe Derive Facts Response:")
-            content_lines = str(voe_derive_facts_response.content)
-            rprint(f"[orange1]{content_lines}")
-            rprint("[orange1]=================")
+            # parse the user_representation response
+            user_representation_response = parse_xml_content(
+                user_representation_response, "representation"
+            )
 
-            facts = re.findall(r"\d+\.\s([^\n]+)", voe_derive_facts_response.content)
-            rprint("[orange1]=================")
-            rprint("[orange1]The Facts Themselves:")
-            rprint(facts)
-            new_facts = await check_dups(app_id, user_id, collection_id, facts)
+            rprint("[bright_magenta]User Representation:")
+            rprint(f"[bright_magenta]{user_representation_response}")
 
-            for fact in new_facts:
-                create_document = schemas.DocumentCreate(content=fact)
-                async with SessionLocal() as db:
-                    doc = await crud.create_document(
-                        db,
-                        document=create_document,
-                        app_id=app_id,
-                        user_id=user_id,
-                        collection_id=collection_id,
-                    )
-                    rprint(f"[orange1]Returned Document: {doc.content}")
         else:
-            rprint("[red] No Prediction Associated with this Message")
-            return
+            raise Exception("\033[91mTom Inference NOT READY YET")
     else:
         rprint("[red]No AI message before this user message[/red]")
         return
-
-
-async def check_dups(app_id: str, user_id: str, collection_id: str, facts: list[str]):
-    """Check that we're not storing duplicate facts"""
-
-    check_duplication = CheckVoeList(existing_facts=[], new_fact="")
-    result = None
-    new_facts = []
-    # global_existing_facts = []  # for debugging
-    for fact in facts:
-        async with SessionLocal() as db:
-            result = await crud.query_documents(
-                db=db,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-                query=fact,
-                top_k=5,
-            )
-        existing_facts = [document.content for document in result]
-        if len(existing_facts) == 0:
-            new_facts.append(fact)
-            rprint(f"[light_steel_blue]New Fact: {fact}")
-            continue
-
-        # global_existing_facts.extend(existing_facts)  # for debugging
-
-        check_duplication.existing_facts = existing_facts
-        check_duplication.new_fact = fact
-        response = check_duplication.call()
-        rprint("[light_steel_blue]==================")
-        rprint(f"[light_steel_blue]Dedupe Responses: {response.content}")
-        rprint("[light_steel_blue]==================")
-        if response.content == "true":
-            new_facts.append(fact)
-            rprint(f"[light_steel_blue]New Fact: {fact}")
-            continue
-
-    rprint("[light_steel_blue]===================")
-    # rprint("[light_steel_blue]Existing Facts:")
-    # rprint(global_existing_facts)
-    rprint("[light_steel_blue]Net New Facts:")
-    rprint(new_facts)
-    rprint("[light_steel_blue]===================")
-    return new_facts

@@ -11,19 +11,24 @@ from src.security import auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages",
-    tags=["messages"],
+    tags=["metamessages"],
+    dependencies=[Depends(auth)],
+)
+
+router_user_level = APIRouter(
+    prefix="/apps/{app_id}/users/{user_id}/metamessages",
+    tags=["metamessages"],
+    dependencies=[Depends(auth)],
 )
 
 
 @router.post("", response_model=schemas.Metamessage)
 async def create_metamessage(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     metamessage: schemas.MetamessageCreate,
     db=db,
-    auth=Depends(auth),
 ):
     """Adds a message to a session
 
@@ -55,7 +60,6 @@ async def create_metamessage(
 
 @router.get("", response_model=Page[schemas.Metamessage])
 async def get_metamessages(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
@@ -64,7 +68,6 @@ async def get_metamessages(
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     """Get all messages for a session
 
@@ -103,19 +106,59 @@ async def get_metamessages(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
+@router_user_level.get("", response_model=Page[schemas.Metamessage])
+async def get_metamessages_by_user(
+    app_id: str,
+    user_id: str,
+    metamessage_type: Optional[str] = None,
+    reverse: Optional[bool] = False,
+    filter: Optional[str] = None,
+    db=db,
+):
+    """Paginate through the user metamessages for a user
+
+    Args:
+        app_id (str): The ID of the app representing the client application using honcho
+        user_id (str): The User ID representing the user, managed by the user
+        reverse (bool): Whether to reverse the order of the metamessages
+
+    Returns:
+        list[schemas.Message]: List of Message objects
+
+    Raises:
+        HTTPException: If the session is not found
+
+    """
+    try:
+        data = None
+        if filter is not None:
+            data = json.loads(filter)
+        return await paginate(
+            db,
+            await crud.get_metamessages(
+                db,
+                app_id=app_id,
+                user_id=user_id,
+                metamessage_type=metamessage_type,
+                reverse=reverse,
+                filter=data,
+            ),
+        )
+    except ValueError:
+        raise HTTPException(status_code=404, detail="User not found") from None
+
+
 @router.get(
     "/{metamessage_id}",
     response_model=schemas.Metamessage,
 )
 async def get_metamessage(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     message_id: str,
     metamessage_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Get a specific Metamessage by ID
 
@@ -149,14 +192,12 @@ async def get_metamessage(
     response_model=schemas.Metamessage,
 )
 async def update_metamessage(
-    request: Request,
     app_id: str,
     user_id: str,
     session_id: str,
     metamessage_id: str,
     metamessage: schemas.MetamessageUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     """Update's the metadata of a metamessage"""
     if metamessage.metadata is None:

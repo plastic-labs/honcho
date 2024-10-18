@@ -1,6 +1,6 @@
 import traceback
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from src import crud, schemas
@@ -10,11 +10,12 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps",
     tags=["apps"],
+    dependencies=[Depends(auth)],
 )
 
 
 @router.get("/{app_id}", response_model=schemas.App)
-async def get_app(request: Request, app_id: str, db=db, auth: dict = Depends(auth)):
+async def get_app(app_id: str, db=db):
     """Get an App by ID
 
     Args:
@@ -31,9 +32,7 @@ async def get_app(request: Request, app_id: str, db=db, auth: dict = Depends(aut
 
 
 @router.get("/name/{name}", response_model=schemas.App)
-async def get_app_by_name(
-    request: Request, name: str, db=db, auth: dict = Depends(auth)
-):
+async def get_app_by_name(name: str, db=db):
     """Get an App by Name
 
     Args:
@@ -50,9 +49,7 @@ async def get_app_by_name(
 
 
 @router.post("", response_model=schemas.App)
-async def create_app(
-    request: Request, app: schemas.AppCreate, db=db, auth=Depends(auth)
-):
+async def create_app(app: schemas.AppCreate, db=db):
     """Create an App
 
     Args:
@@ -97,7 +94,7 @@ async def create_app(
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.App)
-async def get_or_create_app(request: Request, name: str, db=db, auth=Depends(auth)):
+async def get_or_create_app(name: str, db=db):
     """Get or Create an App
 
     Args:
@@ -110,17 +107,15 @@ async def get_or_create_app(request: Request, name: str, db=db, auth=Depends(aut
     print("name", name)
     app = await crud.get_app_by_name(db=db, name=name)
     if app is None:
-        app = await create_app(request=request, db=db, app=schemas.AppCreate(name=name))
+        app = await create_app(db=db, app=schemas.AppCreate(name=name))
     return app
 
 
 @router.put("/{app_id}", response_model=schemas.App)
 async def update_app(
-    request: Request,
     app_id: str,
     app: schemas.AppUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     """Update an App
 

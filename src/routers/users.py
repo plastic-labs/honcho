@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy.exc import IntegrityError
@@ -13,16 +13,15 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps/{app_id}/users",
     tags=["users"],
+    dependencies=[Depends(auth)],
 )
 
 
 @router.post("", response_model=schemas.User)
 async def create_user(
-    request: Request,
     app_id: str,
     user: schemas.UserCreate,
     db=db,
-    auth=Depends(auth),
 ):
     """Create a User
 
@@ -46,12 +45,10 @@ async def create_user(
 
 @router.get("", response_model=Page[schemas.User])
 async def get_users(
-    request: Request,
     app_id: str,
     reverse: bool = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     """Get All Users for an App
 
@@ -74,11 +71,9 @@ async def get_users(
 
 @router.get("/name/{name}", response_model=schemas.User)
 async def get_user_by_name(
-    request: Request,
     app_id: str,
     name: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Get a User
 
@@ -99,11 +94,9 @@ async def get_user_by_name(
 
 @router.get("/{user_id}", response_model=schemas.User)
 async def get_user(
-    request: Request,
     app_id: str,
     user_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Get a User
 
@@ -123,9 +116,7 @@ async def get_user(
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.User)
-async def get_or_create_user(
-    request: Request, app_id: str, name: str, db=db, auth=Depends(auth)
-):
+async def get_or_create_user(app_id: str, name: str, db=db):
     """Get or Create a User
 
     Args:
@@ -140,19 +131,17 @@ async def get_or_create_user(
     user = await crud.get_user_by_name(db, app_id=app_id, name=name)
     if user is None:
         user = await create_user(
-            request=request, db=db, app_id=app_id, user=schemas.UserCreate(name=name)
+            db=db, app_id=app_id, user=schemas.UserCreate(name=name)
         )
     return user
 
 
 @router.put("/{user_id}", response_model=schemas.User)
 async def update_user(
-    request: Request,
     app_id: str,
     user_id: str,
     user: schemas.UserUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     """Update a User
 

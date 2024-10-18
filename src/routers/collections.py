@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -12,18 +12,17 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections",
     tags=["collections"],
+    dependencies=[Depends(auth)],
 )
 
 
 @router.get("", response_model=Page[schemas.Collection])
 async def get_collections(
-    request: Request,
     app_id: str,
     user_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     """Get All Collections for a User
 
@@ -49,12 +48,10 @@ async def get_collections(
 
 @router.get("/name/{name}", response_model=schemas.Collection)
 async def get_collection_by_name(
-    request: Request,
     app_id: str,
     user_id: str,
     name: str,
     db=db,
-    auth=Depends(auth),
 ) -> schemas.Collection:
     honcho_collection = await crud.get_collection_by_name(
         db, app_id=app_id, user_id=user_id, name=name
@@ -68,12 +65,10 @@ async def get_collection_by_name(
 
 @router.get("/{collection_id}", response_model=schemas.Collection)
 async def get_collection_by_id(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     db=db,
-    auth=Depends(auth),
 ) -> schemas.Collection:
     honcho_collection = await crud.get_collection_by_id(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
@@ -87,12 +82,10 @@ async def get_collection_by_id(
 
 @router.post("", response_model=schemas.Collection)
 async def create_collection(
-    request: Request,
     app_id: str,
     user_id: str,
     collection: schemas.CollectionCreate,
     db=db,
-    auth=Depends(auth),
 ):
     if collection.name == "honcho":
         raise HTTPException(
@@ -112,13 +105,11 @@ async def create_collection(
 
 @router.put("/{collection_id}", response_model=schemas.Collection)
 async def update_collection(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     collection: schemas.CollectionUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     if collection.name is None and collection.metadata is None:
         raise HTTPException(
@@ -148,12 +139,10 @@ async def update_collection(
 
 @router.delete("/{collection_id}")
 async def delete_collection(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     try:
         await crud.delete_collection(

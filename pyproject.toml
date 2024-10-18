@@ -23,8 +23,8 @@ dependencies = [
     "opentelemetry-instrumentation-sqlalchemy>=0.45b0",
     "opentelemetry-instrumentation-logging>=0.45b0",
     "rich>=13.7.1",
-    "mirascope>=0.18.0",
     "openai>=1.43.0",
+    "anthropic>=0.36.0",
     "nanoid>=2.0.0",
 ]
 [tool.uv]

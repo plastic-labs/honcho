@@ -198,7 +198,7 @@ app = FastAPI(
     summary="An API for adding personalization to AI Apps",
     description="""This API is used to store data and get insights about users for AI
     applications""",
-    version="0.0.11",
+    version="0.0.12",
     contact={
         "name": "Plastic Labs",
         "url": "https://plasticlabs.ai",
@@ -233,11 +233,13 @@ add_pagination(app)
 async def http_exception_handler(request, exc):
     current_span = trace.get_current_span()
     if (current_span is not None) and (current_span.is_recording()):
-        current_span.set_attributes({
-            "http.status_text": str(exc.detail),
-            "otel.status_description": f"{exc.status_code} / {str(exc.detail)}",
-            "otel.status_code": "ERROR",
-        })
+        current_span.set_attributes(
+            {
+                "http.status_text": str(exc.detail),
+                "otel.status_description": f"{exc.status_code} / {str(exc.detail)}",
+                "otel.status_code": "ERROR",
+            }
+        )
     return PlainTextResponse(
         json.dumps({"detail": str(exc.detail)}), status_code=exc.status_code
     )
@@ -248,5 +250,6 @@ app.include_router(users.router)
 app.include_router(sessions.router)
 app.include_router(messages.router)
 app.include_router(metamessages.router)
+app.include_router(metamessages.router_user_level)
 app.include_router(collections.router)
 app.include_router(documents.router)

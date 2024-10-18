@@ -175,3 +175,5 @@ cython_debug/
 supabase/
 
 docs/node_modules
+
+timing_logs.csv

@@ -8,7 +8,6 @@ from sqlalchemy import Select, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# from sqlalchemy.orm import Session
 from . import models, schemas
 
 load_dotenv(override=True)
@@ -423,8 +422,8 @@ async def get_metamessages(
     db: AsyncSession,
     app_id: str,
     user_id: str,
-    session_id: str,
-    message_id: Optional[str],
+    session_id: Optional[str] = None,
+    message_id: Optional[str] = None,
     metamessage_type: Optional[str] = None,
     filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
@@ -437,8 +436,10 @@ async def get_metamessages(
         .join(models.App, models.App.public_id == models.User.app_id)
         .where(models.App.public_id == app_id)
         .where(models.User.public_id == user_id)
-        .where(models.Message.session_id == session_id)
     )
+
+    if session_id is not None:
+        stmt = stmt.where(models.Session.public_id == session_id)
 
     if message_id is not None:
         stmt = stmt.where(models.Metamessage.message_id == message_id)

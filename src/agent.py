@@ -1,10 +1,13 @@
 import asyncio
+import os
 from collections.abc import Iterable
 
+from anthropic import Anthropic
 from dotenv import load_dotenv
-from mirascope.openai import OpenAICall, OpenAICallParams
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, models, schemas
 from src.db import SessionLocal
 
 load_dotenv()
@@ -27,21 +30,56 @@ class AsyncSet:
         return self._set.copy()
 
 
-class Dialectic(OpenAICall):
-    prompt_template = """
-    You are tasked with responding to the query based on the context provided. 
-    ---
-    query: {agent_input}
-    context: {retrieved_facts}
-    conversation_history: {chat_history}
-    ---
-    Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return None. 
-    """
-    agent_input: str
-    retrieved_facts: str
-    chat_history: list[str]
+class Dialectic:
+    def __init__(
+        self, agent_input: str, user_representation: str, chat_history: list[str]
+    ):
+        self.agent_input = agent_input
+        self.user_representation = user_representation
+        self.chat_history = chat_history
+        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-    call_params = OpenAICallParams(model="gpt-4o", temperature=1.2, top_p=0.5)
+    def call(self):
+        prompt = f"""
+        You are tasked with responding to the query based on the context provided. 
+        <query>{self.agent_input}</query>
+        <context>{self.user_representation}</context>
+        <conversation_history>{self.chat_history}</conversation_history>
+        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
+        """
+
+        response = self.client.messages.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            model="claude-3-5-sonnet-20240620",
+            max_tokens=300,
+        )
+        return response.content
+
+    def stream(self):
+        prompt = f"""
+        You are tasked with responding to the query based on the context provided. 
+        <query>{self.agent_input}</query>
+        <context>{self.user_representation}</context>
+        <conversation_history>{self.chat_history}</conversation_history>
+        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
+        """
+
+        yield from self.client.messages.create(
+            model="claude-3-5-sonnet-20240620",
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt,
+                }
+            ],
+            max_tokens=300,
+            stream=True,
+        )
 
 
 async def chat_history(app_id: str, user_id: str, session_id: str) -> list[str]:
@@ -58,63 +96,27 @@ async def chat_history(app_id: str, user_id: str, session_id: str) -> list[str]:
         return history
 
 
-async def prep_inference(
-    app_id: str,
-    user_id: str,
-    query: str,
-    collection_name: str,
-) -> None | list[str]:
-    async with SessionLocal() as db:
-        collection = await crud.get_collection_by_name(
-            db, app_id, user_id, collection_name
-        )
-        retrieved_facts = None
-        if collection:
-            retrieved_documents = await crud.query_documents(
-                db=db,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection.id,
-                query=query,
-                top_k=3,
-            )
-            if len(retrieved_documents) > 0:
-                retrieved_facts = [d.content for d in retrieved_documents]
-
-        return retrieved_facts
-
-
-async def generate_facts(
-    app_id: str,
-    user_id: str,
-    fact_set: AsyncSet,
-    collection_name: str,
-    questions: list[str],
-):
-    async def fetch_facts(query):
-        retrieved_facts = await prep_inference(app_id, user_id, query, collection_name)
-        if retrieved_facts is not None:
-            await fact_set.update(retrieved_facts)
-
-    await asyncio.gather(*[fetch_facts(query) for query in questions])
-
-
-async def fact_generator(
-    app_id: str,
-    user_id: str,
-    collections: list[str],
-    questions: list[str],
-):
-    fact_set = AsyncSet()
-    fact_tasks = [
-        generate_facts(app_id, user_id, fact_set, col, questions) for col in collections
-    ]
-    await asyncio.gather(*fact_tasks)
-    fact_set_copy = fact_set.get_set()
-    facts = "None"
-    if fact_set_copy and len(fact_set_copy) > 0:
-        facts = "\n".join(fact_set_copy)
-    return facts
+async def get_latest_user_representation(
+    db: AsyncSession, app_id: str, user_id: str, session_id: str
+) -> str:
+    stmt = (
+        select(models.Metamessage)
+        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.public_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
+        .where(models.Metamessage.metamessage_type == "user_representation")
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    representation = result.scalar_one_or_none()
+    return (
+        representation.content
+        if representation
+        else "No user representation available."
+    )
 
 
 async def chat(
@@ -125,27 +127,23 @@ async def chat(
     stream: bool = False,
 ):
     questions = [query.queries] if isinstance(query.queries, str) else query.queries
-
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
 
-    collections = (
-        [query.collections] if isinstance(query.collections, str) else query.collections
-    )
+    async with SessionLocal() as db:
+        # Run user representation retrieval and chat history retrieval concurrently
+        user_rep_task = get_latest_user_representation(db, app_id, user_id, session_id)
+        history_task = chat_history(app_id, user_id, session_id)
 
-    # Run fact generation and chat history retrieval concurrently
-    fact_task = fact_generator(app_id, user_id, collections, questions)
-    history_task = chat_history(app_id, user_id, session_id)
-
-    # Wait for both tasks to complete
-    facts, history = await asyncio.gather(fact_task, history_task)
+        # Wait for both tasks to complete
+        user_representation, history = await asyncio.gather(user_rep_task, history_task)
 
     chain = Dialectic(
         agent_input=final_query,
-        retrieved_facts=facts,
+        user_representation=user_representation,
         chat_history=history,
     )
 
     if stream:
-        return chain.stream_async()
+        return chain.stream()
     response = chain.call()
-    return schemas.AgentChat(content=response.content)
+    return schemas.AgentChat(content=response[0].text)

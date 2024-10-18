@@ -12,19 +12,18 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents",
     tags=["documents"],
+    dependencies=[Depends(auth)],
 )
 
 
 @router.get("", response_model=Page[schemas.Document])
 async def get_documents(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     try:
         data = None
@@ -54,13 +53,11 @@ async def get_documents(
     response_model=schemas.Document,
 )
 async def get_document(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     document_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     honcho_document = await crud.get_document(
         db,
@@ -78,7 +75,6 @@ async def get_document(
 
 @router.get("/query", response_model=Sequence[schemas.Document])
 async def query_documents(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
@@ -86,7 +82,6 @@ async def query_documents(
     top_k: int = 5,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     if top_k is not None and top_k > 50:
         top_k = 50  # TODO see if we need to paginate this
@@ -106,13 +101,11 @@ async def query_documents(
 
 @router.post("", response_model=schemas.Document)
 async def create_document(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     document: schemas.DocumentCreate,
     db=db,
-    auth=Depends(auth),
 ):
     try:
         return await crud.create_document(
@@ -133,14 +126,12 @@ async def create_document(
     response_model=schemas.Document,
 )
 async def update_document(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     document_id: str,
     document: schemas.DocumentUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     if document.content is None and document.metadata is None:
         raise HTTPException(
@@ -163,13 +154,11 @@ async def update_document(
 
 @router.delete("/{document_id}")
 async def delete_document(
-    request: Request,
     app_id: str,
     user_id: str,
     collection_id: str,
     document_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     response = await crud.delete_document(
         db,
