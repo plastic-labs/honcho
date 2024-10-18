@@ -1,6 +1,6 @@
 import logging
-import uuid
 import re
+
 from rich import print as rprint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,10 +22,12 @@ async def add_metamessage(db, message_id, metamessage_type, content):
     )
     db.add(metamessage)
 
+
 def parse_xml_content(text, tag):
     pattern = f"<{tag}>(.*?)</{tag}>"
     match = re.search(pattern, text, re.DOTALL)
     return match.group(1).strip() if match else ""
+
 
 async def process_item(db: AsyncSession, payload: dict):
     processing_args = [
@@ -45,10 +47,10 @@ async def process_item(db: AsyncSession, payload: dict):
 
 async def process_ai_message(
     content: str,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
     db: AsyncSession,
 ):
     """
@@ -58,7 +60,7 @@ async def process_ai_message(
 
     subquery = (
         select(models.Message.created_at)
-        .where(models.Message.id == message_id)
+        .where(models.Message.public_id == message_id)
         .scalar_subquery()
     )
     messages_stmt = (
@@ -78,7 +80,9 @@ async def process_ai_message(
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
-    tom_inference_response = await tom_inference(chat_history_str, session_id=session_id)
+    tom_inference_response = await tom_inference(
+        chat_history_str, session_id=session_id
+    )
 
     prediction = parse_xml_content(tom_inference_response, "prediction")
 
@@ -91,7 +95,6 @@ async def process_ai_message(
 
     await db.commit()
 
-
     rprint("[blue]Tom Inference:")
     content_lines = str(prediction)
     rprint(f"[blue]{content_lines}")
@@ -99,10 +102,10 @@ async def process_ai_message(
 
 async def process_user_message(
     content: str,
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
-    message_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    message_id: str,
     db: AsyncSession,
 ):
     """
@@ -111,7 +114,7 @@ async def process_user_message(
     rprint(f"[orange1]Processing User Message: {content}")
     subquery = (
         select(models.Message.created_at)
-        .where(models.Message.id == message_id)
+        .where(models.Message.public_id == message_id)
         .scalar_subquery()
     )
 
@@ -129,11 +132,11 @@ async def process_user_message(
 
     if ai_message and ai_message.content:
         rprint(f"[orange1]AI Message: {ai_message.content}")
-        
+
         # Fetch the tom_inference metamessage
         tom_inference_stmt = (
             select(models.Metamessage)
-            .where(models.Metamessage.message_id == ai_message.id)
+            .where(models.Metamessage.message_id == ai_message.public_id)
             .where(models.Metamessage.metamessage_type == "tom_inference")
             .order_by(models.Metamessage.created_at.asc())
             .limit(1)
@@ -147,7 +150,7 @@ async def process_user_message(
             # Fetch the existing user representation
             user_representation_stmt = (
                 select(models.Metamessage)
-                .where(models.Metamessage.message_id == ai_message.id)
+                .where(models.Metamessage.message_id == ai_message.public_id)
                 .where(models.Metamessage.metamessage_type == "user_representation")
                 .order_by(models.Metamessage.created_at.desc())
                 .limit(1)
@@ -155,7 +158,9 @@ async def process_user_message(
             response = await db.execute(user_representation_stmt)
             existing_representation = response.scalar_one_or_none()
 
-            existing_representation_content = existing_representation.content if existing_representation else "None"
+            existing_representation_content = (
+                existing_representation.content if existing_representation else "None"
+            )
 
             # Call user_representation
             user_representation_response = await user_representation(
@@ -174,7 +179,9 @@ async def process_user_message(
             )
 
             # parse the user_representation response
-            user_representation_response = parse_xml_content(user_representation_response, "representation")
+            user_representation_response = parse_xml_content(
+                user_representation_response, "representation"
+            )
 
             rprint("[bright_magenta]User Representation:")
             rprint(f"[bright_magenta]{user_representation_response}")

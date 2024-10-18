@@ -1,6 +1,5 @@
 import asyncio
 import os
-import uuid
 from collections.abc import Iterable
 
 from anthropic import Anthropic
@@ -83,9 +82,7 @@ class Dialectic:
         )
 
 
-async def chat_history(
-    app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
-) -> list[str]:
+async def chat_history(app_id: str, user_id: str, session_id: str) -> list[str]:
     async with SessionLocal() as db:
         stmt = await crud.get_messages(db, app_id, user_id, session_id)
         results = await db.execute(stmt)
@@ -100,16 +97,16 @@ async def chat_history(
 
 
 async def get_latest_user_representation(
-    db: AsyncSession, app_id: uuid.UUID, user_id: uuid.UUID, session_id: uuid.UUID
+    db: AsyncSession, app_id: str, user_id: str, session_id: str
 ) -> str:
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Message.id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.id)
-        .join(models.User, models.User.id == models.Session.user_id)
-        .join(models.App, models.App.id == models.User.app_id)
-        .where(models.App.id == app_id)
-        .where(models.User.id == user_id)
+        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
+        .join(models.Session, models.Message.session_id == models.Session.public_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
         .where(models.Metamessage.metamessage_type == "user_representation")
         .limit(1)
     )
@@ -123,9 +120,9 @@ async def get_latest_user_representation(
 
 
 async def chat(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     query: schemas.AgentQuery,
     stream: bool = False,
 ):
