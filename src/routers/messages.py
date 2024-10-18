@@ -1,4 +1,3 @@
-import json
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -102,13 +101,13 @@ async def create_message_for_session(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-@router.get("", response_model=Page[schemas.Message])
+@router.post("/list", response_model=Page[schemas.Message])
 async def get_messages(
     app_id: str,
     user_id: str,
     session_id: str,
+    options: schemas.MessageGet,
     reverse: Optional[bool] = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     """Get all messages for a session
@@ -128,9 +127,9 @@ async def get_messages(
 
     """
     try:
-        data = None
-        if filter is not None:
-            data = json.loads(filter)
+        filter = options.filter
+        if options.filter == {}:
+            filter = None
         return await paginate(
             db,
             await crud.get_messages(
@@ -138,7 +137,7 @@ async def get_messages(
                 app_id=app_id,
                 user_id=user_id,
                 session_id=session_id,
-                filter=data,
+                filter=filter,
                 reverse=reverse,
             ),
         )

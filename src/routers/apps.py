@@ -59,28 +59,6 @@ async def create_app(app: schemas.AppCreate, db=db):
         schemas.App: Created App object
 
     """
-    # USE_AUTH_SERVICE = os.getenv("USE_AUTH_SERVICE", "False").lower() == "true"
-    # if USE_AUTH_SERVICE:
-    #     AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://localhost:8001")
-    #     authorization: Optional[str] = request.headers.get("Authorization")
-    #     if authorization:
-    #         scheme, _, token = authorization.partition(" ")
-    #         if token is not None:
-    #             honcho_app = await crud.create_app(db, app=app)
-    #             # if token == "default":
-    #             #     return honcho_app
-    #             res = httpx.put(
-    #                 f"{AUTH_SERVICE_URL}/organizations",
-    #                 json={
-    #                     "id": str(honcho_app.id),
-    #                     "name": honcho_app.name,
-    #                     "token": token,
-    #                 },
-    #             )
-    #             data = res.json()
-    #             if data:
-    #                 return honcho_app
-    # else:
     try:
         honcho_app = await crud.create_app(db, app=app)
         return honcho_app
