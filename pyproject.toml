@@ -35,9 +35,6 @@ dev-dependencies = [
     "interrogate>=1.7.0",
 ]
 
-[tool.uv.sources]
-honcho-ai = { git = "https://github.com/plastic-labs/honcho-python/", branch = "next" }
-
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
 select = [
