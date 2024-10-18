@@ -1,5 +1,4 @@
 import json
-import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,25 +13,25 @@ from src.security import auth
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
     tags=["sessions"],
+    dependencies=[Depends(auth)],
 )
 
 
 @router.get("", response_model=Page[schemas.Session])
 async def get_sessions(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     is_active: Optional[bool] = False,
     reverse: Optional[bool] = False,
     filter: Optional[str] = None,
     db=db,
-    auth=Depends(auth),
 ):
     """Get All Sessions for a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
-        user_id (uuid.UUID): The User ID representing the user, managed by the user
+        user_id (str): The User ID representing the user, managed by the user
 
     Returns:
         list[schemas.Session]: List of Session objects
@@ -58,18 +57,17 @@ async def get_sessions(
 
 @router.post("", response_model=schemas.Session)
 async def create_session(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
     session: schemas.SessionCreate,
     db=db,
-    auth=Depends(auth),
 ):
     """Create a Session for a User
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client
+        app_id (str): The ID of the app representing the client
         application using honcho
-        user_id (uuid.UUID): The User ID representing the user, managed by the user
+        user_id (str): The User ID representing the user, managed by the user
         session (schemas.SessionCreate): The Session object containing any
         metadata
 
@@ -91,20 +89,19 @@ async def create_session(
 
 @router.put("/{session_id}", response_model=schemas.Session)
 async def update_session(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     session: schemas.SessionUpdate,
     db=db,
-    auth=Depends(auth),
 ):
     """Update the metadata of a Session
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
-        user_id (uuid.UUID): The User ID representing the user, managed by the user
-        session_id (uuid.UUID): The ID of the Session to update
+        user_id (str): The User ID representing the user, managed by the user
+        session_id (str): The ID of the Session to update
         session (schemas.SessionUpdate): The Session object containing any new metadata
 
     Returns:
@@ -123,19 +120,18 @@ async def update_session(
 
 @router.delete("/{session_id}")
 async def delete_session(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Delete a session by marking it as inactive
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
-        user_id (uuid.UUID): The User ID representing the user, managed by the user
-        session_id (uuid.UUID): The ID of the Session to delete
+        user_id (str): The User ID representing the user, managed by the user
+        session_id (str): The ID of the Session to delete
 
     Returns:
         dict: A message indicating that the session was deleted
@@ -155,19 +151,18 @@ async def delete_session(
 
 @router.get("/{session_id}", response_model=schemas.Session)
 async def get_session(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     db=db,
-    auth=Depends(auth),
 ):
     """Get a specific session for a user by ID
 
     Args:
-        app_id (uuid.UUID): The ID of the app representing the client application using
+        app_id (str): The ID of the app representing the client application using
         honcho
-        user_id (uuid.UUID): The User ID representing the user, managed by the user
-        session_id (uuid.UUID): The ID of the Session to retrieve
+        user_id (str): The User ID representing the user, managed by the user
+        session_id (str): The ID of the Session to retrieve
 
     Returns:
         schemas.Session: The Session object of the requested Session
@@ -185,11 +180,10 @@ async def get_session(
 
 @router.post("/{session_id}/chat", response_model=schemas.AgentChat)
 async def chat(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     query: schemas.AgentQuery,
-    auth=Depends(auth),
 ):
     print(query)
     return await agent.chat(
@@ -209,11 +203,10 @@ async def chat(
     },
 )
 async def get_chat_stream(
-    app_id: uuid.UUID,
-    user_id: uuid.UUID,
-    session_id: uuid.UUID,
+    app_id: str,
+    user_id: str,
+    session_id: str,
     query: schemas.AgentQuery,
-    auth=Depends(auth),
 ):
     async def parse_stream():
         stream = await agent.chat(

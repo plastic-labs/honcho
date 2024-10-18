@@ -1,11 +1,11 @@
-import uuid
+from nanoid import generate as generate_nanoid
 
 
 def test_create_user(client, sample_data):
     test_app, _ = sample_data
-    name = str(uuid.uuid4())
+    name = str(generate_nanoid())
     response = client.post(
-        f"/apps/{test_app.id}/users",
+        f"/apps/{test_app.public_id}/users",
         json={"name": name, "metadata": {"user_key": "user_value"}},
     )
     assert response.status_code == 200
@@ -17,28 +17,28 @@ def test_create_user(client, sample_data):
 
 def test_get_user_by_id(client, sample_data):
     test_app, test_user = sample_data
-    response = client.get(f"/apps/{test_app.id}/users/{test_user.id}")
+    response = client.get(f"/apps/{test_app.public_id}/users/{test_user.public_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_user.name
-    assert data["id"] == str(test_user.id)
+    assert data["id"] == str(test_user.public_id)
 
 
 def test_get_user_by_name(client, sample_data):
     test_app, test_user = sample_data
-    response = client.get(f"/apps/{test_app.id}/users/name/{test_user.name}")
+    response = client.get(f"/apps/{test_app.public_id}/users/name/{test_user.name}")
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_user.name
-    assert data["id"] == str(test_user.id)
+    assert data["id"] == str(test_user.public_id)
 
 
 def test_get_or_create_user(client, sample_data):
     test_app, _ = sample_data
-    name = str(uuid.uuid4())
-    response = client.get(f"/apps/{test_app.id}/users/name/{name}")
+    name = str(generate_nanoid())
+    response = client.get(f"/apps/{test_app.public_id}/users/name/{name}")
     assert response.status_code == 404
-    response = client.get(f"/apps/{test_app.id}/users/get_or_create/{name}")
+    response = client.get(f"/apps/{test_app.public_id}/users/get_or_create/{name}")
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == name
@@ -47,7 +47,7 @@ def test_get_or_create_user(client, sample_data):
 
 # def test_get_users(client, sample_data):
 #     test_app, _ = sample_data
-#     response = client.get(f"/apps/{test_app.id}/users")
+#     response = client.get(f"/apps/{test_app.public_id}/users")
 #     assert response.status_code == 200
 #     data = response.json()
 #     assert "items" in data
@@ -56,9 +56,9 @@ def test_get_or_create_user(client, sample_data):
 
 def test_update_user(client, sample_data):
     test_app, test_user = sample_data
-    new_name = str(uuid.uuid4())
+    new_name = str(generate_nanoid())
     response = client.put(
-        f"/apps/{test_app.id}/users/{test_user.id}",
+        f"/apps/{test_app.public_id}/users/{test_user.public_id}",
         json={"name": new_name, "metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
