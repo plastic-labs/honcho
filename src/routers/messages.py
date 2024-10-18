@@ -101,7 +101,7 @@ async def create_message_for_session(
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
-@router.post("/get", response_model=Page[schemas.Message])
+@router.post("/list", response_model=Page[schemas.Message])
 async def get_messages(
     app_id: str,
     user_id: str,

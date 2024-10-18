@@ -1,4 +1,3 @@
-import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,13 +16,12 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=Page[schemas.Session])
+@router.post("/list", response_model=Page[schemas.Session])
 async def get_sessions(
     app_id: str,
     user_id: str,
-    is_active: Optional[bool] = False,
+    options: schemas.SessionGet,
     reverse: Optional[bool] = False,
-    filter: Optional[str] = None,
     db=db,
 ):
     """Get All Sessions for a User
@@ -37,11 +35,6 @@ async def get_sessions(
         list[schemas.Session]: List of Session objects
 
     """
-
-    data = None
-    if filter is not None:
-        data = json.loads(filter)
-
     return await paginate(
         db,
         await crud.get_sessions(
@@ -49,8 +42,8 @@ async def get_sessions(
             app_id=app_id,
             user_id=user_id,
             reverse=reverse,
-            is_active=is_active,
-            filter=data,
+            is_active=options.is_active,
+            filter=options.filter,
         ),
     )
 
