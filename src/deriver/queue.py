@@ -1,7 +1,8 @@
 import asyncio
 import os
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any, Optional, Sequence
+from typing import Any, Optional
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -154,6 +155,7 @@ async def main():
                 AsyncioIntegration(),
             ],
         )
-    semaphore = asyncio.Semaphore(2)  # Limit to 5 concurrent dequeuing operations
+    workers = int(os.getenv("DERIVER_WORKERS", 1)) + 1
+    semaphore = asyncio.Semaphore(workers)  # Limit to 5 concurrent dequeuing operations
     queue_empty_flag = asyncio.Event()  # Event to signal when the queue is empty
     await polling_loop(semaphore, queue_empty_flag)
