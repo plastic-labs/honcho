@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - `session_id` column to `QueueItem` Table
-- `ActiveQueueSession` Table to track which sessions are being actively
+- `ActiveQueueSession` Table to track, which sessions are being actively
   processed
 - Queue can process multiple sessions at once
 
