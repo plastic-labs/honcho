@@ -225,18 +225,7 @@ async def create_session(
         h_metadata=session.metadata,
     )
     db.add(honcho_session)
-    # print("====== Testing State of ORM Object ====")
-    # print(honcho_session)
-    # print("=======================================")
-    #
-    # await db.flush()
-    #
-    # print("====== Testing State of ORM Object ====")
-    # print(honcho_session)
-    # print("=======================================")
-
     await db.commit()
-    # await db.refresh(honcho_session)
     return honcho_session
 
 
@@ -319,9 +308,6 @@ async def get_messages(
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
-    print("============")
-    print(filter)
-    print("============")
     stmt = (
         select(models.Message)
         .join(models.Session, models.Session.public_id == models.Message.session_id)
@@ -339,10 +325,6 @@ async def get_messages(
         stmt = stmt.order_by(models.Message.created_at.desc())
     else:
         stmt = stmt.order_by(models.Message.created_at)
-
-    print("============")
-    print(stmt)
-    print("============")
 
     return stmt
 
