@@ -2592,6 +2592,27 @@
         "required": ["queries"],
         "title": "AgentQuery"
       },
+      "AgentQuery": {
+        "properties": {
+          "queries": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Queries"
+          }
+        },
+        "type": "object",
+        "required": ["queries"],
+        "title": "AgentQuery"
+      },
       "App": {
         "properties": {
           "id": { "type": "string", "title": "Id" },
@@ -3211,3 +3232,4 @@
     "securitySchemes": { "HTTPBearer": { "type": "http", "scheme": "bearer" } }
   }
 }
+
