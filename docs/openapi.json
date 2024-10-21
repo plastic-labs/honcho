@@ -4,7 +4,17 @@
     "title": "Honcho API",
     "summary": "An API for adding personalization to AI Apps",
     "description": "This API is used to store data and get insights about users for AI\n    applications",
-    "version": "0.0.11"
+    "contact": {
+      "name": "Plastic Labs",
+      "url": "https://plasticlabs.ai/",
+      "email": "hello@plasticlabs.ai"
+    },
+    "license": {
+      "name": "GNU Affero General Public License v3.0",
+      "identifier": "AGPL-3.0-only",
+      "url": "https://github.com/plastic-labs/honcho/blob/main/LICENSE"
+    },
+    "version": "0.0.12"
   },
   "servers": [
     {
@@ -17,14 +27,14 @@
     }
   ],
   "paths": {
-    "/apps/{app_id}": {
+    "/v1/apps/{app_id}": {
       "get": {
         "tags": [
           "apps"
         ],
         "summary": "Get App",
-        "description": "Get an App by ID\n\nArgs:\n    app_id (uuid.UUID): The ID of the app\n\nReturns:\n    schemas.App: App object",
-        "operationId": "get_app_apps__app_id__get",
+        "description": "Get an App by ID\n\nArgs:\n    app_id (str): The ID of the app\n\nReturns:\n    schemas.App: App object",
+        "operationId": "get_app_v1_apps__app_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -38,7 +48,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           }
@@ -68,11 +77,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.get('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e');\n\n  console.log(app.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.get('app_id');\n\n  console.log(app.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\napp = client.apps.get(\n    \"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(app.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\napp = client.apps.get(\n    \"app_id\",\n)\nprint(app.id)"
           }
         ]
       },
@@ -81,8 +90,8 @@
           "apps"
         ],
         "summary": "Update App",
-        "description": "Update an App\n\nArgs:\n    app_id (uuid.UUID): The ID of the app to update\n    app (schemas.AppUpdate): The App object containing any new metadata\n\nReturns:\n    schemas.App: The App object of the updated App",
-        "operationId": "update_app_apps__app_id__put",
+        "description": "Update an App\n\nArgs:\n    app_id (str): The ID of the app to update\n    app (schemas.AppUpdate): The App object containing any new metadata\n\nReturns:\n    schemas.App: The App object of the updated App",
+        "operationId": "update_app_v1_apps__app_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -96,7 +105,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           }
@@ -136,23 +144,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.update('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e');\n\n  console.log(app.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.update('app_id');\n\n  console.log(app.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\napp = client.apps.update(\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(app.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\napp = client.apps.update(\n    app_id=\"app_id\",\n)\nprint(app.id)"
           }
         ]
       }
     },
-    "/apps/name/{name}": {
+    "/v1/apps/name/{name}": {
       "get": {
         "tags": [
           "apps"
         ],
         "summary": "Get App By Name",
         "description": "Get an App by Name\n\nArgs:\n    app_name (str): The name of the app\n\nReturns:\n    schemas.App: App object",
-        "operationId": "get_app_by_name_apps_name__name__get",
+        "operationId": "get_app_by_name_v1_apps_name__name__get",
         "security": [
           {
             "HTTPBearer": []
@@ -204,14 +212,14 @@
         ]
       }
     },
-    "/apps": {
+    "/v1/apps": {
       "post": {
         "tags": [
           "apps"
         ],
         "summary": "Create App",
         "description": "Create an App\n\nArgs:\n    app (schemas.AppCreate): The App object containing any metadata\n\nReturns:\n    schemas.App: Created App object",
-        "operationId": "create_app_apps_post",
+        "operationId": "create_app_v1_apps_post",
         "requestBody": {
           "content": {
             "application/json": {
@@ -262,14 +270,14 @@
         ]
       }
     },
-    "/apps/get_or_create/{name}": {
+    "/v1/apps/get_or_create/{name}": {
       "get": {
         "tags": [
           "apps"
         ],
         "summary": "Get Or Create App",
         "description": "Get or Create an App\n\nArgs:\n    app_name (str): The name of the app\n\nReturns:\n    schemas.App: App object",
-        "operationId": "get_or_create_app_apps_get_or_create__name__get",
+        "operationId": "get_or_create_app_v1_apps_get_or_create__name__get",
         "security": [
           {
             "HTTPBearer": []
@@ -321,14 +329,14 @@
         ]
       }
     },
-    "/apps/{app_id}/users": {
+    "/v1/apps/{app_id}/users": {
       "post": {
         "tags": [
           "users"
         ],
         "summary": "Create User",
-        "description": "Create a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user (schemas.UserCreate): The User object containing any metadata\n\nReturns:\n    schemas.User: Created User object",
-        "operationId": "create_user_apps__app_id__users_post",
+        "description": "Create a User\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user (schemas.UserCreate): The User object containing any metadata\n\nReturns:\n    schemas.User: Created User object",
+        "operationId": "create_user_v1_apps__app_id__users_post",
         "security": [
           {
             "HTTPBearer": []
@@ -342,7 +350,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           }
@@ -382,21 +389,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.create('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e', { name: 'name' });\n\n  console.log(user.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.create('app_id', { name: 'name' });\n\n  console.log(user.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.create(\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    name=\"name\",\n)\nprint(user.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.create(\n    app_id=\"app_id\",\n    name=\"name\",\n)\nprint(user.id)"
           }
         ]
-      },
-      "get": {
+      }
+    },
+    "/v1/apps/{app_id}/users/list": {
+      "post": {
         "tags": [
           "users"
         ],
         "summary": "Get Users",
-        "description": "Get All Users for an App\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client\n    application using honcho\n\nReturns:\n    list[schemas.User]: List of User objects",
-        "operationId": "get_users_apps__app_id__users_get",
+        "description": "Get All Users for an App\n\nArgs:\n    app_id (str): The ID of the app representing the client\n    application using honcho\n\nReturns:\n    list[schemas.User]: List of User objects",
+        "operationId": "get_users_v1_apps__app_id__users_list_post",
         "security": [
           {
             "HTTPBearer": []
@@ -410,7 +419,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -422,22 +430,6 @@
               "type": "boolean",
               "default": false,
               "title": "Reverse"
-            }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Filter"
             }
           },
           {
@@ -468,6 +460,16 @@
             "description": "Page size"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserGet"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -493,23 +495,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const user of client.apps.users.list('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e')) {\n    console.log(user.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const user of client.apps.users.list('app_id')) {\n    console.log(user.id);\n  }\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.list(\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\npage = page.items[0]\nprint(page.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.list(\n    app_id=\"app_id\",\n)\npage = page.items[0]\nprint(page.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/name/{name}": {
+    "/v1/apps/{app_id}/users/name/{name}": {
       "get": {
         "tags": [
           "users"
         ],
         "summary": "Get User By Name",
-        "description": "Get a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    schemas.User: User object",
-        "operationId": "get_user_by_name_apps__app_id__users_name__name__get",
+        "description": "Get a User\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    schemas.User: User object",
+        "operationId": "get_user_by_name_v1_apps__app_id__users_name__name__get",
         "security": [
           {
             "HTTPBearer": []
@@ -523,7 +525,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -562,23 +563,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.getByName('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e', 'name');\n\n  console.log(user.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.getByName('app_id', 'name');\n\n  console.log(user.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.get_by_name(\n    name=\"name\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(user.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.get_by_name(\n    name=\"name\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}": {
+    "/v1/apps/{app_id}/users/{user_id}": {
       "get": {
         "tags": [
           "users"
         ],
         "summary": "Get User",
-        "description": "Get a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    schemas.User: User object",
-        "operationId": "get_user_apps__app_id__users__user_id__get",
+        "description": "Get a User\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    schemas.User: User object",
+        "operationId": "get_user_v1_apps__app_id__users__user_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -592,7 +593,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -602,7 +602,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           }
@@ -632,11 +631,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.get(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(user.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.get('app_id', 'user_id');\n\n  console.log(user.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.get(\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(user.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.get(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
           }
         ]
       },
@@ -645,8 +644,8 @@
           "users"
         ],
         "summary": "Update User",
-        "description": "Update a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    user (schemas.UserCreate): The User object containing any metadata\n\nReturns:\n    schemas.User: Updated User object",
-        "operationId": "update_user_apps__app_id__users__user_id__put",
+        "description": "Update a User\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    user (schemas.UserCreate): The User object containing any metadata\n\nReturns:\n    schemas.User: Updated User object",
+        "operationId": "update_user_v1_apps__app_id__users__user_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -660,7 +659,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -670,7 +668,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           }
@@ -710,23 +707,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.update(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(user.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.update('app_id', 'user_id');\n\n  console.log(user.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.update(\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(user.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.update(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/get_or_create/{name}": {
+    "/v1/apps/{app_id}/users/get_or_create/{name}": {
       "get": {
         "tags": [
           "users"
         ],
         "summary": "Get Or Create User",
-        "description": "Get or Create a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    schemas.User: User object",
-        "operationId": "get_or_create_user_apps__app_id__users_get_or_create__name__get",
+        "description": "Get or Create a User\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    schemas.User: User object",
+        "operationId": "get_or_create_user_v1_apps__app_id__users_get_or_create__name__get",
         "security": [
           {
             "HTTPBearer": []
@@ -740,7 +737,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -779,23 +775,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.getOrCreate('182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e', 'name');\n\n  console.log(user.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.getOrCreate('app_id', 'name');\n\n  console.log(user.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.get_or_create(\n    name=\"name\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(user.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nuser = client.apps.users.get_or_create(\n    name=\"name\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions": {
-      "get": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/list": {
+      "post": {
         "tags": [
           "sessions"
         ],
         "summary": "Get Sessions",
-        "description": "Get All Sessions for a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (uuid.UUID): The User ID representing the user, managed by the user\n\nReturns:\n    list[schemas.Session]: List of Session objects",
-        "operationId": "get_sessions_apps__app_id__users__user_id__sessions_get",
+        "description": "Get All Sessions for a User\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    list[schemas.Session]: List of Session objects",
+        "operationId": "get_sessions_v1_apps__app_id__users__user_id__sessions_list_post",
         "security": [
           {
             "HTTPBearer": []
@@ -809,7 +805,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -819,25 +814,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
-            }
-          },
-          {
-            "name": "is_active",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "default": false,
-              "title": "Is Active"
             }
           },
           {
@@ -855,22 +832,6 @@
               ],
               "default": false,
               "title": "Reverse"
-            }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Filter"
             }
           },
           {
@@ -901,6 +862,16 @@
             "description": "Page size"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionGet"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -926,21 +897,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const session of client.apps.users.sessions.list(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  )) {\n    console.log(session.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const session of client.apps.users.sessions.list('app_id', 'user_id')) {\n    console.log(session.id);\n  }\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.sessions.list(\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\npage = page.items[0]\nprint(page.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.sessions.list(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\npage = page.items[0]\nprint(page.id)"
           }
         ]
-      },
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/sessions": {
       "post": {
         "tags": [
           "sessions"
         ],
         "summary": "Create Session",
-        "description": "Create a Session for a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client\n    application using honcho\n    user_id (uuid.UUID): The User ID representing the user, managed by the user\n    session (schemas.SessionCreate): The Session object containing any\n    metadata\n\nReturns:\n    schemas.Session: The Session object of the new Session",
-        "operationId": "create_session_apps__app_id__users__user_id__sessions_post",
+        "description": "Create a Session for a User\n\nArgs:\n    app_id (str): The ID of the app representing the client\n    application using honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session (schemas.SessionCreate): The Session object containing any\n    metadata\n\nReturns:\n    schemas.Session: The Session object of the new Session",
+        "operationId": "create_session_v1_apps__app_id__users__user_id__sessions_post",
         "security": [
           {
             "HTTPBearer": []
@@ -954,7 +927,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -964,7 +936,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           }
@@ -1004,23 +975,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.create(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(session.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.create('app_id', 'user_id');\n\n  console.log(session.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.create(\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(session.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\nprint(session.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}": {
       "put": {
         "tags": [
           "sessions"
         ],
         "summary": "Update Session",
-        "description": "Update the metadata of a Session\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (uuid.UUID): The User ID representing the user, managed by the user\n    session_id (uuid.UUID): The ID of the Session to update\n    session (schemas.SessionUpdate): The Session object containing any new metadata\n\nReturns:\n    schemas.Session: The Session object of the updated Session",
-        "operationId": "update_session_apps__app_id__users__user_id__sessions__session_id__put",
+        "description": "Update the metadata of a Session\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (str): The ID of the Session to update\n    session (schemas.SessionUpdate): The Session object containing any new metadata\n\nReturns:\n    schemas.Session: The Session object of the updated Session",
+        "operationId": "update_session_v1_apps__app_id__users__user_id__sessions__session_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -1034,7 +1005,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1044,7 +1014,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1054,7 +1023,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           }
@@ -1094,11 +1062,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.update(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(session.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.update('app_id', 'user_id', 'session_id');\n\n  console.log(session.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.update(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(session.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.update(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(session.id)"
           }
         ]
       },
@@ -1107,8 +1075,8 @@
           "sessions"
         ],
         "summary": "Delete Session",
-        "description": "Delete a session by marking it as inactive\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (uuid.UUID): The User ID representing the user, managed by the user\n    session_id (uuid.UUID): The ID of the Session to delete\n\nReturns:\n    dict: A message indicating that the session was deleted\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "delete_session_apps__app_id__users__user_id__sessions__session_id__delete",
+        "description": "Delete a session by marking it as inactive\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (str): The ID of the Session to delete\n\nReturns:\n    dict: A message indicating that the session was deleted\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "delete_session_v1_apps__app_id__users__user_id__sessions__session_id__delete",
         "security": [
           {
             "HTTPBearer": []
@@ -1122,7 +1090,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1132,7 +1099,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1142,7 +1108,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           }
@@ -1170,11 +1135,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const sessionDeleteResponse = await client.apps.users.sessions.delete(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(sessionDeleteResponse);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.delete('app_id', 'user_id', 'session_id');\n\n  console.log(session);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession_delete_response = client.apps.users.sessions.delete(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(session_delete_response)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.delete(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(session)"
           }
         ]
       },
@@ -1183,8 +1148,8 @@
           "sessions"
         ],
         "summary": "Get Session",
-        "description": "Get a specific session for a user by ID\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (uuid.UUID): The User ID representing the user, managed by the user\n    session_id (uuid.UUID): The ID of the Session to retrieve\n\nReturns:\n    schemas.Session: The Session object of the requested Session\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "get_session_apps__app_id__users__user_id__sessions__session_id__get",
+        "description": "Get a specific session for a user by ID\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (str): The ID of the Session to retrieve\n\nReturns:\n    schemas.Session: The Session object of the requested Session\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "get_session_v1_apps__app_id__users__user_id__sessions__session_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -1198,7 +1163,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1208,7 +1172,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1218,7 +1181,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           }
@@ -1248,22 +1210,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.get(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(session.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.get('app_id', 'user_id', 'session_id');\n\n  console.log(session.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.get(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(session.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession = client.apps.users.sessions.get(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(session.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}/chat": {
-      "get": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/chat": {
+      "post": {
         "tags": [
           "sessions"
         ],
-        "summary": "Get Chat",
-        "operationId": "get_chat_apps__app_id__users__user_id__sessions__session_id__chat_get",
+        "summary": "Chat",
+        "operationId": "chat_v1_apps__app_id__users__user_id__sessions__session_id__chat_post",
         "security": [
           {
             "HTTPBearer": []
@@ -1277,7 +1239,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1287,7 +1248,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1297,20 +1257,20 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
-            }
-          },
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Query"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentQuery"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1336,22 +1296,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const agentChat = await client.apps.users.sessions.chat(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { query: 'query' },\n  );\n\n  console.log(agentChat.content);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const agentChat = await client.apps.users.sessions.chat('app_id', 'user_id', 'session_id', {\n    queries: 'string',\n  });\n\n  console.log(agentChat.content);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nagent_chat = client.apps.users.sessions.chat(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    query=\"query\",\n)\nprint(agent_chat.content)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nagent_chat = client.apps.users.sessions.chat(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    queries=\"string\",\n)\nprint(agent_chat.content)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}/chat/stream": {
-      "get": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/chat/stream": {
+      "post": {
         "tags": [
           "sessions"
         ],
         "summary": "Get Chat Stream",
-        "operationId": "get_chat_stream_apps__app_id__users__user_id__sessions__session_id__chat_stream_get",
+        "operationId": "get_chat_stream_v1_apps__app_id__users__user_id__sessions__session_id__chat_stream_post",
         "security": [
           {
             "HTTPBearer": []
@@ -1365,7 +1325,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1375,7 +1334,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1385,20 +1343,20 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
-            }
-          },
-          {
-            "name": "query",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Query"
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentQuery"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Chat stream",
@@ -1428,23 +1386,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const sessionStreamResponse = await client.apps.users.sessions.stream(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { query: 'query' },\n  );\n\n  console.log(sessionStreamResponse);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const response = await client.apps.users.sessions.stream('app_id', 'user_id', 'session_id', {\n    queries: 'string',\n  });\n\n  console.log(response);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nsession_stream_response = client.apps.users.sessions.stream(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    query=\"query\",\n)\nprint(session_stream_response)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nresponse = client.apps.users.sessions.stream(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    queries=\"string\",\n)\nprint(response)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages": {
       "post": {
         "tags": [
           "messages"
         ],
         "summary": "Create Message For Session",
-        "description": "Adds a message to a session\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to add the message to\n    message (schemas.MessageCreate): The Message object to add containing the\n    message content and type\n\nReturns:\n    schemas.Message: The Message object of the added message\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "create_message_for_session_apps__app_id__users__user_id__sessions__session_id__messages_post",
+        "description": "Adds a message to a session\n\nArgs:\n    app_id (str): The ID of the app representing the client application using honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to add the message to\n    message (schemas.MessageCreate): The Message object to add containing the message content and type\n\nReturns:\n    schemas.Message: The Message object of the added message\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "create_message_for_session_v1_apps__app_id__users__user_id__sessions__session_id__messages_post",
         "security": [
           {
             "HTTPBearer": []
@@ -1458,7 +1416,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1468,7 +1425,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1478,7 +1434,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           }
@@ -1518,21 +1473,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const message = await client.apps.users.sessions.messages.create(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { content: 'content', is_user: true },\n  );\n\n  console.log(message.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const message = await client.apps.users.sessions.messages.create('app_id', 'user_id', 'session_id', {\n    content: 'content',\n    is_user: true,\n  });\n\n  console.log(message.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmessage = client.apps.users.sessions.messages.create(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    content=\"content\",\n    is_user=True,\n)\nprint(message.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmessage = client.apps.users.sessions.messages.create(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    content=\"content\",\n    is_user=True,\n)\nprint(message.id)"
           }
         ]
-      },
-      "get": {
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/list": {
+      "post": {
         "tags": [
           "messages"
         ],
         "summary": "Get Messages",
-        "description": "Get all messages for a session\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to retrieve\n    reverse (bool): Whether to reverse the order of the messages\n\nReturns:\n    list[schemas.Message]: List of Message objects\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "get_messages_apps__app_id__users__user_id__sessions__session_id__messages_get",
+        "description": "Get all messages for a session\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to retrieve\n    reverse (bool): Whether to reverse the order of the messages\n\nReturns:\n    list[schemas.Message]: List of Message objects\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "get_messages_v1_apps__app_id__users__user_id__sessions__session_id__messages_list_post",
         "security": [
           {
             "HTTPBearer": []
@@ -1546,7 +1503,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1556,7 +1512,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1566,7 +1521,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           },
@@ -1585,22 +1539,6 @@
               ],
               "default": false,
               "title": "Reverse"
-            }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Filter"
             }
           },
           {
@@ -1631,6 +1569,16 @@
             "description": "Page size"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageGet"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1656,22 +1604,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const message of client.apps.users.sessions.messages.list(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  )) {\n    console.log(message.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const message of client.apps.users.sessions.messages.list('app_id', 'user_id', 'session_id')) {\n    console.log(message.id);\n  }\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.sessions.messages.list(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\npage = page.items[0]\nprint(page.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.sessions.messages.list(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\npage = page.items[0]\nprint(page.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/{message_id}": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/{message_id}": {
       "get": {
         "tags": [
           "messages"
         ],
         "summary": "Get Message",
-        "operationId": "get_message_apps__app_id__users__user_id__sessions__session_id__messages__message_id__get",
+        "operationId": "get_message_v1_apps__app_id__users__user_id__sessions__session_id__messages__message_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -1685,7 +1633,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1695,7 +1642,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1705,7 +1651,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           },
@@ -1715,7 +1660,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Message Id"
             }
           }
@@ -1745,11 +1689,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const message = await client.apps.users.sessions.messages.get(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(message.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const message = await client.apps.users.sessions.messages.get(\n    'app_id',\n    'user_id',\n    'session_id',\n    'message_id',\n  );\n\n  console.log(message.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmessage = client.apps.users.sessions.messages.get(\n    message_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(message.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmessage = client.apps.users.sessions.messages.get(\n    message_id=\"message_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    session_id=\"session_id\",\n)\nprint(message.id)"
           }
         ]
       },
@@ -1759,7 +1703,7 @@
         ],
         "summary": "Update Message",
         "description": "Update's the metadata of a message",
-        "operationId": "update_message_apps__app_id__users__user_id__sessions__session_id__messages__message_id__put",
+        "operationId": "update_message_v1_apps__app_id__users__user_id__sessions__session_id__messages__message_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -1773,7 +1717,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1783,7 +1726,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1793,7 +1735,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           },
@@ -1803,7 +1744,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Message Id"
             }
           }
@@ -1843,23 +1783,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const message = await client.apps.users.sessions.messages.update(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(message.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const message = await client.apps.users.sessions.messages.update(\n    'app_id',\n    'user_id',\n    'session_id',\n    'message_id',\n  );\n\n  console.log(message.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmessage = client.apps.users.sessions.messages.update(\n    message_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(message.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmessage = client.apps.users.sessions.messages.update(\n    message_id=\"message_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    session_id=\"session_id\",\n)\nprint(message.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages": {
       "post": {
         "tags": [
-          "messages"
+          "metamessages"
         ],
         "summary": "Create Metamessage",
-        "description": "Adds a metamessage to a session\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to add the metamessage to\n    metamessage (schemas.MetamessageCreate): The Metamessage object to add containing the\n    metamessage content and type\n\nReturns:\n    schemas.Metamessage: The Metamessage object of the added metamessage\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "create_metamessage_apps__app_id__users__user_id__sessions__session_id__metamessages_post",
+        "description": "Adds a message to a session\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to add the message to\n    metamessage (schemas.MeteamessageCreate): The metamessage creation object\n\nReturns:\n    schemas.Metamessage: The Metamessage object of the added metamessage\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "create_metamessage_v1_apps__app_id__users__user_id__sessions__session_id__metamessages_post",
         "security": [
           {
             "HTTPBearer": []
@@ -1873,7 +1813,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1883,7 +1822,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1893,7 +1831,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           }
@@ -1933,21 +1870,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.create(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    {\n      content: 'content',\n      message_id: '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n      metamessage_type: 'metamessage_type',\n    },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.create(\n    'app_id',\n    'user_id',\n    'session_id',\n    { content: 'content', message_id: 'message_id', metamessage_type: 'metamessage_type' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmetamessage = client.apps.users.sessions.metamessages.create(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    content=\"content\",\n    message_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    metamessage_type=\"metamessage_type\",\n)\nprint(metamessage.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmetamessage = client.apps.users.sessions.metamessages.create(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    content=\"content\",\n    message_id=\"message_id\",\n    metamessage_type=\"metamessage_type\",\n)\nprint(metamessage.id)"
           }
         ]
-      },
-      "get": {
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages/list": {
+      "post": {
         "tags": [
-          "messages"
+          "metamessages"
         ],
         "summary": "Get Metamessages",
-        "description": "Get all messages for a session\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to retrieve\n    reverse (bool): Whether to reverse the order of the metamessages\n\nReturns:\n    list[schemas.Message]: List of Message objects\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "get_metamessages_apps__app_id__users__user_id__sessions__session_id__metamessages_get",
+        "description": "Get all messages for a session\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to retrieve\n    reverse (bool): Whether to reverse the order of the metamessages\n\nReturns:\n    list[schemas.Message]: List of Message objects\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "get_metamessages_v1_apps__app_id__users__user_id__sessions__session_id__metamessages_list_post",
         "security": [
           {
             "HTTPBearer": []
@@ -1961,7 +1900,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -1971,7 +1909,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -1981,41 +1918,7 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
-            }
-          },
-          {
-            "name": "message_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Message Id"
-            }
-          },
-          {
-            "name": "metamessage_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Metamessage Type"
             }
           },
           {
@@ -2033,22 +1936,6 @@
               ],
               "default": false,
               "title": "Reverse"
-            }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Filter"
             }
           },
           {
@@ -2079,6 +1966,16 @@
             "description": "Page size"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetamessageGet"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2104,23 +2001,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const metamessage of client.apps.users.sessions.metamessages.list(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  )) {\n    console.log(metamessage.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const metamessage of client.apps.users.sessions.metamessages.list(\n    'app_id',\n    'user_id',\n    'session_id',\n  )) {\n    console.log(metamessage.id);\n  }\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.sessions.metamessages.list(\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\npage = page.items[0]\nprint(page.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.sessions.metamessages.list(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\npage = page.items[0]\nprint(page.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages/{metamessage_id}": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages/{metamessage_id}": {
       "get": {
         "tags": [
-          "messages"
+          "metamessages"
         ],
         "summary": "Get Metamessage",
-        "description": "Get a specific Metamessage by ID\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to retrieve\n\nReturns:\n    schemas.Session: The Session object of the requested Session\n\nRaises:\n    HTTPException: If the session is not found",
-        "operationId": "get_metamessage_apps__app_id__users__user_id__sessions__session_id__metamessages__metamessage_id__get",
+        "description": "Get a specific Metamessage by ID\n\nArgs:\n    app_id (str): The ID of the app representing the client application using\n    honcho\n    user_id (str): The User ID representing the user, managed by the user\n    session_id (int): The ID of the Session to retrieve\n\nReturns:\n    schemas.Session: The Session object of the requested Session\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "get_metamessage_v1_apps__app_id__users__user_id__sessions__session_id__metamessages__metamessage_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -2134,7 +2031,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2144,7 +2040,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2154,7 +2049,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           },
@@ -2164,7 +2058,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Metamessage Id"
             }
           },
@@ -2174,7 +2067,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Message Id"
             }
           }
@@ -2204,21 +2096,21 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.get(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { message_id: '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.get(\n    'app_id',\n    'user_id',\n    'session_id',\n    'metamessage_id',\n    { message_id: 'message_id' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmetamessage = client.apps.users.sessions.metamessages.get(\n    metamessage_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    message_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(metamessage.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmetamessage = client.apps.users.sessions.metamessages.get(\n    metamessage_id=\"metamessage_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    session_id=\"session_id\",\n    message_id=\"message_id\",\n)\nprint(metamessage.id)"
           }
         ]
       },
       "put": {
         "tags": [
-          "messages"
+          "metamessages"
         ],
         "summary": "Update Metamessage",
         "description": "Update's the metadata of a metamessage",
-        "operationId": "update_metamessage_apps__app_id__users__user_id__sessions__session_id__metamessages__metamessage_id__put",
+        "operationId": "update_metamessage_v1_apps__app_id__users__user_id__sessions__session_id__metamessages__metamessage_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -2232,7 +2124,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2242,7 +2133,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2252,7 +2142,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Session Id"
             }
           },
@@ -2262,7 +2151,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Metamessage Id"
             }
           }
@@ -2302,23 +2190,23 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.update(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { message_id: '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.update(\n    'app_id',\n    'user_id',\n    'session_id',\n    'metamessage_id',\n    { message_id: 'message_id' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmetamessage = client.apps.users.sessions.metamessages.update(\n    metamessage_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    session_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    message_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(metamessage.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\nmetamessage = client.apps.users.sessions.metamessages.update(\n    metamessage_id=\"metamessage_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    session_id=\"session_id\",\n    message_id=\"message_id\",\n)\nprint(metamessage.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/collections": {
-      "get": {
+    "/v1/apps/{app_id}/users/{user_id}/metamessages/list": {
+      "post": {
         "tags": [
-          "collections"
+          "metamessages"
         ],
-        "summary": "Get Collections",
-        "description": "Get All Collections for a User\n\nArgs:\n    app_id (uuid.UUID): The ID of the app representing the client\n    application using honcho\n    user_id (uuid.UUID): The User ID representing the user, managed by the user\n\nReturns:\n    list[schemas.Collection]: List of Collection objects",
-        "operationId": "get_collections_apps__app_id__users__user_id__collections_get",
+        "summary": "Get Metamessages By User",
+        "description": "Paginate through the user metamessages for a user\n\nArgs:\n    app_id (str): The ID of the app representing the client application using honcho\n    user_id (str): The User ID representing the user, managed by the user\n    reverse (bool): Whether to reverse the order of the metamessages\n\nReturns:\n    list[schemas.Message]: List of Message objects\n\nRaises:\n    HTTPException: If the session is not found",
+        "operationId": "get_metamessages_by_user_v1_apps__app_id__users__user_id__metamessages_list_post",
         "security": [
           {
             "HTTPBearer": []
@@ -2332,7 +2220,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2342,7 +2229,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2361,22 +2247,6 @@
               ],
               "default": false,
               "title": "Reverse"
-            }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Filter"
             }
           },
           {
@@ -2407,6 +2277,138 @@
             "description": "Page size"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetamessageGetUserLevel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Metamessage_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const metamessage of client.apps.users.metamessages.list('app_id', 'user_id')) {\n    console.log(metamessage.id);\n  }\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.metamessages.list(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\npage = page.items[0]\nprint(page.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/collections/list": {
+      "post": {
+        "tags": [
+          "collections"
+        ],
+        "summary": "Get Collections",
+        "description": "Get All Collections for a User\n\nArgs:\n    app_id (str): The ID of the app representing the client\n    application using honcho\n    user_id (str): The User ID representing the user, managed by the user\n\nReturns:\n    list[schemas.Collection]: List of Collection objects",
+        "operationId": "get_collections_v1_apps__app_id__users__user_id__collections_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "App Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": false,
+              "title": "Reverse"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionGet"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2432,99 +2434,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const collection of client.apps.users.collections.list(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  )) {\n    console.log(collection.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const collection of client.apps.users.collections.list('app_id', 'user_id')) {\n    console.log(collection.id);\n  }\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.collections.list(\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\npage = page.items[0]\nprint(page.id)"
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "collections"
-        ],
-        "summary": "Create Collection",
-        "operationId": "create_collection_apps__app_id__users__user_id__collections_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {}
-        ],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "App Id"
-            }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CollectionCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Collection"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.create(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { name: 'name' },\n  );\n\n  console.log(collection.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.create(\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    name=\"name\",\n)\nprint(collection.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.collections.list(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\npage = page.items[0]\nprint(page.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/collections/name/{name}": {
+    "/v1/apps/{app_id}/users/{user_id}/collections/name/{name}": {
       "get": {
         "tags": [
           "collections"
         ],
         "summary": "Get Collection By Name",
-        "operationId": "get_collection_by_name_apps__app_id__users__user_id__collections_name__name__get",
+        "operationId": "get_collection_by_name_v1_apps__app_id__users__user_id__collections_name__name__get",
         "security": [
           {
             "HTTPBearer": []
@@ -2538,7 +2463,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2548,7 +2472,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2587,22 +2510,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.getByName(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    'name',\n  );\n\n  console.log(collection.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.getByName('app_id', 'user_id', 'name');\n\n  console.log(collection.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.get_by_name(\n    name=\"name\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(collection.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.get_by_name(\n    name=\"name\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(collection.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/collections/{collection_id}": {
+    "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}": {
       "get": {
         "tags": [
           "collections"
         ],
         "summary": "Get Collection By Id",
-        "operationId": "get_collection_by_id_apps__app_id__users__user_id__collections__collection_id__get",
+        "operationId": "get_collection_by_id_v1_apps__app_id__users__user_id__collections__collection_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -2616,7 +2539,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2626,7 +2548,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2636,7 +2557,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           }
@@ -2666,11 +2586,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.get(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(collection.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.get('app_id', 'user_id', 'collection_id');\n\n  console.log(collection.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.get(\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(collection.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.get(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(collection.id)"
           }
         ]
       },
@@ -2679,7 +2599,7 @@
           "collections"
         ],
         "summary": "Update Collection",
-        "operationId": "update_collection_apps__app_id__users__user_id__collections__collection_id__put",
+        "operationId": "update_collection_v1_apps__app_id__users__user_id__collections__collection_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -2693,7 +2613,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2703,7 +2622,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2713,7 +2631,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           }
@@ -2753,11 +2670,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.update(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(collection.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.update('app_id', 'user_id', 'collection_id');\n\n  console.log(collection.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.update(\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(collection.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.update(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(collection.id)"
           }
         ]
       },
@@ -2766,7 +2683,7 @@
           "collections"
         ],
         "summary": "Delete Collection",
-        "operationId": "delete_collection_apps__app_id__users__user_id__collections__collection_id__delete",
+        "operationId": "delete_collection_v1_apps__app_id__users__user_id__collections__collection_id__delete",
         "security": [
           {
             "HTTPBearer": []
@@ -2780,7 +2697,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2790,7 +2706,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -2800,7 +2715,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           }
@@ -2828,22 +2742,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collectionDeleteResponse = await client.apps.users.collections.delete(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(collectionDeleteResponse);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.delete('app_id', 'user_id', 'collection_id');\n\n  console.log(collection);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection_delete_response = client.apps.users.collections.delete(\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(collection_delete_response)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.delete(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(collection)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents": {
-      "get": {
+    "/v1/apps/{app_id}/users/{user_id}/collections": {
+      "post": {
         "tags": [
-          "documents"
+          "collections"
         ],
-        "summary": "Get Documents",
-        "operationId": "get_documents_apps__app_id__users__user_id__collections__collection_id__documents_get",
+        "summary": "Create Collection",
+        "operationId": "create_collection_v1_apps__app_id__users__user_id__collections_post",
         "security": [
           {
             "HTTPBearer": []
@@ -2857,7 +2771,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -2867,7 +2780,83 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
+              "title": "User Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Collection"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.create('app_id', 'user_id', { name: 'name' });\n\n  console.log(collection.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection = client.apps.users.collections.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    name=\"name\",\n)\nprint(collection.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents/list": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Get Documents",
+        "operationId": "get_documents_v1_apps__app_id__users__user_id__collections__collection_id__documents_list_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "App Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
               "title": "User Id"
             }
           },
@@ -2877,7 +2866,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           },
@@ -2896,22 +2884,6 @@
               ],
               "default": false,
               "title": "Reverse"
-            }
-          },
-          {
-            "name": "filter",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Filter"
             }
           },
           {
@@ -2942,6 +2914,16 @@
             "description": "Page size"
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentGet"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2967,109 +2949,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const document of client.apps.users.collections.documents.list(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  )) {\n    console.log(document.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const document of client.apps.users.collections.documents.list(\n    'app_id',\n    'user_id',\n    'collection_id',\n  )) {\n    console.log(document.id);\n  }\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.collections.documents.list(\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\npage = page.items[0]\nprint(page.id)"
-          }
-        ]
-      },
-      "post": {
-        "tags": [
-          "documents"
-        ],
-        "summary": "Create Document",
-        "operationId": "create_document_apps__app_id__users__user_id__collections__collection_id__documents_post",
-        "security": [
-          {
-            "HTTPBearer": []
-          },
-          {}
-        ],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "App Id"
-            }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "User Id"
-            }
-          },
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Collection Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DocumentCreate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Document"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.create(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { content: 'content' },\n  );\n\n  console.log(document.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.create(\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    content=\"content\",\n)\nprint(document.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\npage = client.apps.users.collections.documents.list(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\npage = page.items[0]\nprint(page.id)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents/{document_id}": {
+    "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents/{document_id}": {
       "get": {
         "tags": [
           "documents"
         ],
         "summary": "Get Document",
-        "operationId": "get_document_apps__app_id__users__user_id__collections__collection_id__documents__document_id__get",
+        "operationId": "get_document_v1_apps__app_id__users__user_id__collections__collection_id__documents__document_id__get",
         "security": [
           {
             "HTTPBearer": []
@@ -3083,7 +2978,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -3093,7 +2987,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -3103,7 +2996,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           },
@@ -3113,7 +3005,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Document Id"
             }
           }
@@ -3143,11 +3034,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.get(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(document.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.get(\n    'app_id',\n    'user_id',\n    'collection_id',\n    'document_id',\n  );\n\n  console.log(document.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.get(\n    document_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(document.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.get(\n    document_id=\"document_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    collection_id=\"collection_id\",\n)\nprint(document.id)"
           }
         ]
       },
@@ -3156,7 +3047,7 @@
           "documents"
         ],
         "summary": "Update Document",
-        "operationId": "update_document_apps__app_id__users__user_id__collections__collection_id__documents__document_id__put",
+        "operationId": "update_document_v1_apps__app_id__users__user_id__collections__collection_id__documents__document_id__put",
         "security": [
           {
             "HTTPBearer": []
@@ -3170,7 +3061,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -3180,7 +3070,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -3190,7 +3079,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           },
@@ -3200,7 +3088,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Document Id"
             }
           }
@@ -3240,11 +3127,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.update(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(document.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.update(\n    'app_id',\n    'user_id',\n    'collection_id',\n    'document_id',\n  );\n\n  console.log(document.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.update(\n    document_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(document.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.update(\n    document_id=\"document_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    collection_id=\"collection_id\",\n)\nprint(document.id)"
           }
         ]
       },
@@ -3253,7 +3140,7 @@
           "documents"
         ],
         "summary": "Delete Document",
-        "operationId": "delete_document_apps__app_id__users__user_id__collections__collection_id__documents__document_id__delete",
+        "operationId": "delete_document_v1_apps__app_id__users__user_id__collections__collection_id__documents__document_id__delete",
         "security": [
           {
             "HTTPBearer": []
@@ -3267,7 +3154,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -3277,7 +3163,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -3287,7 +3172,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           },
@@ -3297,7 +3181,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Document Id"
             }
           }
@@ -3325,22 +3208,22 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const documentDeleteResponse = await client.apps.users.collections.documents.delete(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n  );\n\n  console.log(documentDeleteResponse);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.delete(\n    'app_id',\n    'user_id',\n    'collection_id',\n    'document_id',\n  );\n\n  console.log(document);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument_delete_response = client.apps.users.collections.documents.delete(\n    document_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n)\nprint(document_delete_response)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.delete(\n    document_id=\"document_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    collection_id=\"collection_id\",\n)\nprint(document)"
           }
         ]
       }
     },
-    "/apps/{app_id}/users/{user_id}/collections/{collection_id}/query": {
+    "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents/query": {
       "get": {
         "tags": [
           "documents"
         ],
         "summary": "Query Documents",
-        "operationId": "query_documents_apps__app_id__users__user_id__collections__collection_id__query_get",
+        "operationId": "query_documents_v1_apps__app_id__users__user_id__collections__collection_id__documents_query_get",
         "security": [
           {
             "HTTPBearer": []
@@ -3354,7 +3237,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "App Id"
             }
           },
@@ -3364,7 +3246,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "User Id"
             }
           },
@@ -3374,7 +3255,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Collection Id"
             }
           },
@@ -3424,7 +3304,7 @@
                   "items": {
                     "$ref": "#/components/schemas/Document"
                   },
-                  "title": "Response Query Documents Apps  App Id  Users  User Id  Collections  Collection Id Documents Query Get"
+                  "title": "Response Query Documents V1 Apps  App Id  Users  User Id  Collections  Collection Id  Documents Query Get"
                 }
               }
             }
@@ -3443,11 +3323,97 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collectionQueryResponse = await client.apps.users.collections.query(\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    '182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e',\n    { query: 'query' },\n  );\n\n  console.log(collectionQueryResponse);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const documents = await client.apps.users.collections.documents.query(\n    'app_id',\n    'user_id',\n    'collection_id',\n    { query: 'query' },\n  );\n\n  console.log(documents);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ncollection_query_response = client.apps.users.collections.query(\n    collection_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    app_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    user_id=\"182bd5e5-6e1a-4fe4-a799-aa6d9a6ab26e\",\n    query=\"query\",\n)\nprint(collection_query_response)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocuments = client.apps.users.collections.documents.query(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    query=\"query\",\n)\nprint(documents)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Create Document",
+        "operationId": "create_document_v1_apps__app_id__users__user_id__collections__collection_id__documents_post",
+        "security": [
+          {
+            "HTTPBearer": []
+          },
+          {}
+        ],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "App Id"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "User Id"
+            }
+          },
+          {
+            "name": "collection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Collection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DocumentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Document"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const document = await client.apps.users.collections.documents.create(\n    'app_id',\n    'user_id',\n    'collection_id',\n    { content: 'content' },\n  );\n\n  console.log(document.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    # This is the default and can be omitted\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),\n)\ndocument = client.apps.users.collections.documents.create(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    content=\"content\",\n)\nprint(document.id)"
           }
         ]
       }
@@ -3468,11 +3434,33 @@
         ],
         "title": "AgentChat"
       },
+      "AgentQuery": {
+        "properties": {
+          "queries": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            ],
+            "title": "Queries"
+          }
+        },
+        "type": "object",
+        "required": [
+          "queries"
+        ],
+        "title": "AgentQuery"
+      },
       "App": {
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
             "title": "Id"
           },
           "name": {
@@ -3499,7 +3487,8 @@
         ],
         "title": "App",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "AppCreate": {
@@ -3509,17 +3498,10 @@
             "title": "Name"
           },
           "metadata": {
-            "anyOf": [
-              {
-                "type": "object",
-                "additionalProperties": true
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "object",
             "title": "Metadata",
-            "default": {}
+            "default": {},
+            "additionalProperties": true
           }
         },
         "type": "object",
@@ -3561,7 +3543,6 @@
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
             "title": "Id"
           },
           "name": {
@@ -3570,7 +3551,6 @@
           },
           "user_id": {
             "type": "string",
-            "format": "uuid",
             "title": "User Id"
           },
           "metadata": {
@@ -3594,7 +3574,8 @@
         ],
         "title": "Collection",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "CollectionCreate": {
@@ -3622,6 +3603,24 @@
           "name"
         ],
         "title": "CollectionCreate"
+      },
+      "CollectionGet": {
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter"
+          }
+        },
+        "type": "object",
+        "title": "CollectionGet"
       },
       "CollectionUpdate": {
         "properties": {
@@ -3656,7 +3655,6 @@
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
             "title": "Id"
           },
           "content": {
@@ -3675,7 +3673,6 @@
           },
           "collection_id": {
             "type": "string",
-            "format": "uuid",
             "title": "Collection Id"
           }
         },
@@ -3689,7 +3686,8 @@
         ],
         "title": "Document",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "DocumentCreate": {
@@ -3718,19 +3716,26 @@
         ],
         "title": "DocumentCreate"
       },
-      "DocumentUpdate": {
+      "DocumentGet": {
         "properties": {
-          "content": {
+          "filter": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "object",
+                "additionalProperties": true
               },
               {
                 "type": "null"
               }
             ],
-            "title": "Content"
-          },
+            "title": "Filter"
+          }
+        },
+        "type": "object",
+        "title": "DocumentGet"
+      },
+      "DocumentUpdate": {
+        "properties": {
           "metadata": {
             "anyOf": [
               {
@@ -3742,6 +3747,17 @@
               }
             ],
             "title": "Metadata"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
           }
         },
         "type": "object",
@@ -3762,6 +3778,10 @@
       },
       "Message": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "content": {
             "type": "string",
             "title": "Content"
@@ -3772,13 +3792,7 @@
           },
           "session_id": {
             "type": "string",
-            "format": "uuid",
             "title": "Session Id"
-          },
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
           },
           "metadata": {
             "type": "object",
@@ -3793,16 +3807,17 @@
         },
         "type": "object",
         "required": [
+          "id",
           "content",
           "is_user",
           "session_id",
-          "id",
           "metadata",
           "created_at"
         ],
         "title": "Message",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "MessageCreate": {
@@ -3816,6 +3831,22 @@
             "title": "Is User"
           },
           "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "default": {},
+            "additionalProperties": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "content",
+          "is_user"
+        ],
+        "title": "MessageCreate"
+      },
+      "MessageGet": {
+        "properties": {
+          "filter": {
             "anyOf": [
               {
                 "type": "object",
@@ -3825,16 +3856,11 @@
                 "type": "null"
               }
             ],
-            "title": "Metadata",
-            "default": {}
+            "title": "Filter"
           }
         },
         "type": "object",
-        "required": [
-          "content",
-          "is_user"
-        ],
-        "title": "MessageCreate"
+        "title": "MessageGet"
       },
       "MessageUpdate": {
         "properties": {
@@ -3856,6 +3882,10 @@
       },
       "Metamessage": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "metamessage_type": {
             "type": "string",
             "title": "Metamessage Type"
@@ -3864,14 +3894,8 @@
             "type": "string",
             "title": "Content"
           },
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "title": "Id"
-          },
           "message_id": {
             "type": "string",
-            "format": "uuid",
             "title": "Message Id"
           },
           "metadata": {
@@ -3887,16 +3911,17 @@
         },
         "type": "object",
         "required": [
+          "id",
           "metamessage_type",
           "content",
-          "id",
           "message_id",
           "metadata",
           "created_at"
         ],
         "title": "Metamessage",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "MetamessageCreate": {
@@ -3911,7 +3936,6 @@
           },
           "message_id": {
             "type": "string",
-            "format": "uuid",
             "title": "Message Id"
           },
           "metadata": {
@@ -3936,11 +3960,79 @@
         ],
         "title": "MetamessageCreate"
       },
+      "MetamessageGet": {
+        "properties": {
+          "metamessage_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metamessage Type"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message Id"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter"
+          }
+        },
+        "type": "object",
+        "title": "MetamessageGet"
+      },
+      "MetamessageGetUserLevel": {
+        "properties": {
+          "filter": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter"
+          },
+          "metamessage_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metamessage Type"
+          }
+        },
+        "type": "object",
+        "title": "MetamessageGetUserLevel"
+      },
       "MetamessageUpdate": {
         "properties": {
           "message_id": {
             "type": "string",
-            "format": "uuid",
             "title": "Message Id"
           },
           "metamessage_type": {
@@ -4211,7 +4303,6 @@
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
             "title": "Id"
           },
           "is_active": {
@@ -4220,7 +4311,6 @@
           },
           "user_id": {
             "type": "string",
-            "format": "uuid",
             "title": "User Id"
           },
           "metadata": {
@@ -4244,12 +4334,25 @@
         ],
         "title": "Session",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "SessionCreate": {
         "properties": {
           "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "default": {},
+            "additionalProperties": true
+          }
+        },
+        "type": "object",
+        "title": "SessionCreate"
+      },
+      "SessionGet": {
+        "properties": {
+          "filter": {
             "anyOf": [
               {
                 "type": "object",
@@ -4259,15 +4362,16 @@
                 "type": "null"
               }
             ],
-            "title": "Metadata",
-            "default": {}
+            "title": "Filter"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active",
+            "default": false
           }
         },
         "type": "object",
-        "required": [
-          "location_id"
-        ],
-        "title": "SessionCreate"
+        "title": "SessionGet"
       },
       "SessionUpdate": {
         "properties": {
@@ -4291,7 +4395,6 @@
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
             "title": "Id"
           },
           "name": {
@@ -4300,7 +4403,6 @@
           },
           "app_id": {
             "type": "string",
-            "format": "uuid",
             "title": "App Id"
           },
           "created_at": {
@@ -4324,7 +4426,8 @@
         ],
         "title": "User",
         "exclude": [
-          "h_metadata"
+          "h_metadata",
+          "public_id"
         ]
       },
       "UserCreate": {
@@ -4334,6 +4437,21 @@
             "title": "Name"
           },
           "metadata": {
+            "type": "object",
+            "title": "Metadata",
+            "default": {},
+            "additionalProperties": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "UserCreate"
+      },
+      "UserGet": {
+        "properties": {
+          "filter": {
             "anyOf": [
               {
                 "type": "object",
@@ -4343,15 +4461,11 @@
                 "type": "null"
               }
             ],
-            "title": "Metadata",
-            "default": {}
+            "title": "Filter"
           }
         },
         "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "UserCreate"
+        "title": "UserGet"
       },
       "UserUpdate": {
         "properties": {
