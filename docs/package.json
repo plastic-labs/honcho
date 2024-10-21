@@ -5,13 +5,13 @@
   "main": ".pnp.js",
   "scripts": {
     "dev": "mintlify dev",
-    "openapi": "npx @mintlify/scraping@latest openapi-file openapi.json -o api-reference/endpoint",
+    "openapi": "npx @mintlify/scraping openapi-file openapi.json -o api-reference/endpoint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
     "@mintlify/scraping": "^3.0.92",
-    "mintlify": "^4.0.132"
+    "mintlify": "^4.0.245"
   }
 }

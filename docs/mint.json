@@ -61,34 +61,23 @@
     },
     {
       "group": "Getting Started",
-      "pages": [
-        "guides/overview"
-      ]
+      "pages": ["guides/overview"]
     },
     {
       "group": "Application Interfaces",
-      "pages": [
-        "guides/discord"
-      ]
+      "pages": ["guides/discord"]
     },
     {
       "group": "Integrations",
-      "pages": [
-        "guides/langchain"
-      ]
+      "pages": ["guides/langchain"]
     },
     {
       "group": "Personal Memory",
-      "pages": [
-        "guides/simple-memory",
-        "guides/dialectic-endpoint"
-      ]
+      "pages": ["guides/simple-memory", "guides/dialectic-endpoint"]
     },
     {
       "group": "API Documentation",
-      "pages": [
-        "api-reference/introduction"
-      ]
+      "pages": ["api-reference/introduction"]
     },
     {
       "group": "apps",
@@ -119,8 +108,8 @@
         "api-reference/endpoint/sessions/get-session",
         "api-reference/endpoint/sessions/update-session",
         "api-reference/endpoint/sessions/delete-session",
-        "api-reference/endpoint/sessions/get-chat",
-        "api-reference/endpoint/sessions/get-chat-stream"
+        "api-reference/endpoint/sessions/chat",
+        "api-reference/endpoint/sessions/chat-stream"
       ]
     },
     {
@@ -129,11 +118,17 @@
         "api-reference/endpoint/messages/get-messages",
         "api-reference/endpoint/messages/create-message-for-session",
         "api-reference/endpoint/messages/get-message",
-        "api-reference/endpoint/messages/update-message",
-        "api-reference/endpoint/messages/get-metamessages",
-        "api-reference/endpoint/messages/create-metamessage",
-        "api-reference/endpoint/messages/get-metamessage",
-        "api-reference/endpoint/messages/update-metamessage"
+        "api-reference/endpoint/messages/update-message"
+      ]
+    },
+    {
+      "group": "metamessages",
+      "pages": [
+        "api-reference/endpoint/metamessages/create-metamessage",
+        "api-reference/endpoint/metamessages/get-metamessages",
+        "api-reference/endpoint/metamessages/get-metamessage",
+        "api-reference/endpoint/metamessages/update-metamessage",
+        "api-reference/endpoint/metamessages/get-metamessages-by-user"
       ]
     },
     {
@@ -164,9 +159,7 @@
     "github": "https://github.com/plastic-labs",
     "linkedin": "https://www.linkedin.com/company/plasticlabs"
   },
-  "openapi": [
-    "/openapi.json"
-  ],
+  "openapi": ["/openapi.json"],
   "analytics": {
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
