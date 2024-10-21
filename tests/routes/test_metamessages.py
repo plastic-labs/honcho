@@ -17,7 +17,7 @@ async def test_create_metamessage(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages",
         json={
             "message_id": str(test_message.public_id),
             "content": "Test Metamessage",
@@ -55,7 +55,7 @@ async def test_get_metamessage(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.get(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/{test_metamessage.public_id}/?message_id={test_message.public_id}"
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/{test_metamessage.public_id}/?message_id={test_message.public_id}"
     )
     assert response.status_code == 200
     data = response.json()
@@ -108,7 +108,7 @@ async def test_get_metamessages(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/list",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/list",
         json={"metamessage_type": "test_type"},
     )
 
@@ -181,7 +181,7 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
         json={"metamessage_type": "test_type"},
     )
     assert response.status_code == 200
@@ -218,7 +218,7 @@ async def test_update_metamessage(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.put(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/{test_metamessage.public_id}",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/metamessages/{test_metamessage.public_id}",
         json={
             "message_id": str(test_message.public_id),
             "metadata": {"new_key": "new_value"},

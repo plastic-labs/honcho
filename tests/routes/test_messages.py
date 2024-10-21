@@ -12,7 +12,7 @@ async def test_create_message(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages",
         json={
             "content": "Test message",
             "is_user": True,
@@ -41,7 +41,7 @@ async def test_get_messages(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
         json={},
     )
     assert response.status_code == 200
@@ -77,7 +77,7 @@ async def test_get_filtered_messages(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
         json={"filter": {"key": "value2"}},
     )
     assert response.status_code == 200
@@ -104,7 +104,7 @@ async def test_update_message(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.put(
-        f"/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/{test_message.public_id}",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/{test_message.public_id}",
         json={"metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
