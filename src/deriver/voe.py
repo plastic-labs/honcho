@@ -47,6 +47,7 @@ async def tom_inference(
                     {
                         "type": "text",
                         "text": "Hello there! I'm Claude, an AI assistant. I'm excited to explore what you could be thinking! To start, could you please provide the conversation and the representation of you if it exists?",
+                        "cache_control": {"type": "emphemeral"},
                     }
                 ],
             },
@@ -108,6 +109,7 @@ async def user_representation(
                     {
                         "type": "text",
                         "text": "Hello there! I'm Claude, an AI assistant. I'm excited to explore how best to represent you! To start, could you please provide the conversation, the other instance's theory of mind prediction, and the representation of you if they exist?",
+                        "cache_control": {"type": "emphemeral"},
                     }
                 ],
             },
