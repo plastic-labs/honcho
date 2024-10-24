@@ -1,15 +1,15 @@
 import os
 
-from anthropic import AsyncAnthropic
+from anthropic import Anthropic
 
 # Initialize the Anthropic client
-anthropic = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
 async def tom_inference(
     chat_history: str, session_id: str, user_representation: str = "None"
 ) -> str:
-    message = await anthropic.messages.create(
+    message = anthropic.beta.prompt_caching.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1000,
         temperature=0,
@@ -47,6 +47,7 @@ async def tom_inference(
                     {
                         "type": "text",
                         "text": "Hello there! I'm Claude, an AI assistant. I'm excited to explore what you could be thinking! To start, could you please provide the conversation and the representation of you if it exists?",
+                        "cache_control": {"type": "ephemeral"},
                     }
                 ],
             },
@@ -70,7 +71,7 @@ async def user_representation(
     user_representation: str = "None",
     tom_inference: str = "None",
 ) -> str:
-    message = await anthropic.messages.create(
+    message = anthropic.beta.prompt_caching.messages.create(
         model="claude-3-5-sonnet-20240620",
         max_tokens=1000,
         temperature=0,
@@ -108,6 +109,7 @@ async def user_representation(
                     {
                         "type": "text",
                         "text": "Hello there! I'm Claude, an AI assistant. I'm excited to explore how best to represent you! To start, could you please provide the conversation, the other instance's theory of mind prediction, and the representation of you if they exist?",
+                        "cache_control": {"type": "ephemeral"},
                     }
                 ],
             },
