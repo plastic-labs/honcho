@@ -1,7 +1,7 @@
 import logging
 import re
 
-from rich import print as rprint
+from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,8 @@ from .voe import tom_inference, user_representation
 
 # Turn off SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
+
+console = Console(markup=False)
 
 
 # FIXME see if this is SAFE
@@ -56,7 +58,7 @@ async def process_ai_message(
     """
     Process an AI message. Make a prediction about what the user is going to say to it.
     """
-    rprint(f"[green]Processing AI message: {content}[/green]")
+    console.print(f"Processing AI message: {content}", style="green")
 
     subquery = (
         select(models.Message.id)
@@ -95,9 +97,9 @@ async def process_ai_message(
 
     await db.commit()
 
-    rprint("[blue]Tom Inference:")
+    console.print("Tom Inference:", style="blue")
     content_lines = str(prediction)
-    rprint(f"[blue]{content_lines}")
+    console.print(content_lines, style="blue")
 
 
 async def process_user_message(
@@ -111,7 +113,7 @@ async def process_user_message(
     """
     Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
     """
-    rprint(f"[orange1]Processing User Message: {content}")
+    console.print(f"Processing User Message: {content}", style="orange1")
     subquery = (
         select(models.Message.id)
         .where(models.Message.public_id == message_id)
@@ -131,7 +133,7 @@ async def process_user_message(
     ai_message = response.scalar_one_or_none()
 
     if ai_message and ai_message.content:
-        rprint(f"[orange1]AI Message: {ai_message.content}")
+        console.print(f"AI Message: {ai_message.content}", style="orange1")
 
         # Fetch the tom_inference metamessage
         tom_inference_stmt = (
@@ -145,7 +147,9 @@ async def process_user_message(
         tom_inference_metamessage = response.scalar_one_or_none()
 
         if tom_inference_metamessage and tom_inference_metamessage.content:
-            rprint(f"[orange1]Tom Inference: {tom_inference_metamessage.content}")
+            console.print(
+                f"Tom Inference: {tom_inference_metamessage.content}", style="orange1"
+            )
 
             # Fetch the existing user representation
             user_representation_stmt = (
@@ -183,11 +187,11 @@ async def process_user_message(
                 user_representation_response, "representation"
             )
 
-            rprint("[bright_magenta]User Representation:")
-            rprint(f"[bright_magenta]{user_representation_response}")
+            console.print("User Representation:", style="bright_magenta")
+            console.print(user_representation_response, style="bright_magenta")
 
         else:
             raise Exception("\033[91mTom Inference NOT READY YET")
     else:
-        rprint("[red]No AI message before this user message[/red]")
+        console.print("No AI message before this user message", style="red")
         return
