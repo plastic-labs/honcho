@@ -215,3 +215,22 @@ async def get_chat_stream(
     return StreamingResponse(
         content=parse_stream(), media_type="text/event-stream", status_code=200
     )
+
+
+@router.get("/{session_id}/clone", response_model=schemas.Session)
+async def clone_session(
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    db=db,
+    message_id: Optional[str] = None,
+    deepcopy: bool = False,
+):
+    return await crud.clone_session(
+        db,
+        app_id=app_id,
+        user_id=user_id,
+        original_session_id=session_id,
+        cutoff_message_id=message_id,
+        deep_copy=deepcopy,
+    )

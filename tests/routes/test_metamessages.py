@@ -80,25 +80,25 @@ async def test_get_metamessages(client, db_session, sample_data):
     test_metamessage_1 = models.Metamessage(
         message_id=test_message.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_2 = models.Metamessage(
         message_id=test_message.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_3 = models.Metamessage(
         message_id=test_message.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_4 = models.Metamessage(
         message_id=test_message.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type_2",
     )
     db_session.add(test_metamessage_1)
@@ -153,25 +153,25 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
     test_metamessage_1 = models.Metamessage(
         message_id=test_message_1.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_2 = models.Metamessage(
         message_id=test_message_2.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_3 = models.Metamessage(
         message_id=test_message_3.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_4 = models.Metamessage(
         message_id=test_message_3.public_id,
         content="Test Metamessage",
-        metadata={},
+        h_metadata={},
         metamessage_type="test_type_2",
     )
     db_session.add(test_metamessage_1)
@@ -186,9 +186,6 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
     )
     assert response.status_code == 200
     data = response.json()
-    print("=======")
-    print(data)
-    print("=======")
     assert len(data["items"]) > 0
     assert len(data["items"]) == 3
     assert data["items"][0]["content"] == "Test Metamessage"
