@@ -360,10 +360,6 @@ async def clone_session(
         zip([message.public_id for message in messages_to_clone], new_message_ids)
     )
 
-    print("========== Deep Copy ============")
-    print(deep_copy)
-    print("========== Deep Copy ============")
-
     # Handle metamessages if deep copy is requested
     if deep_copy and message_id_map:
         # Fetch all metamessages in a single query
@@ -372,10 +368,6 @@ async def clone_session(
         )
         metamessages_result = await db.scalars(stmt)
         metamessages = metamessages_result.all()
-
-        print("========== Deep Copy ============")
-        print(metamessages)
-        print("========== Deep Copy ============")
 
         if metamessages:
             # Prepare bulk insert data for metamessages
