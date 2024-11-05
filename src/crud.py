@@ -4,9 +4,10 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from sqlalchemy import Select, select
+from sqlalchemy import Select, cast, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import BigInteger
 
 from . import models, schemas
 
@@ -267,6 +268,132 @@ async def delete_session(
     honcho_session.is_active = False
     await db.commit()
     return True
+
+
+async def clone_session(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    original_session_id: str,
+    cutoff_message_id: Optional[str] = None,
+    deep_copy: bool = True,
+) -> models.Session:
+    """
+    Clone a session and its messages. If cutoff_message_id is provided,
+    only clone messages up to and including that message.
+
+    Args:
+        db: SQLAlchemy session
+        app_id: ID of the app the target session is in
+        user_id: ID of the user the target session belongs to
+        original_session_id: ID of the session to clone
+        cutoff_message_id: Optional ID of the last message to include in the clone
+
+    Returns:
+        The newly created session
+    """
+    # Get the original session
+    stmt = (
+        select(models.Session)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .where(models.Session.public_id == original_session_id)
+        .where(models.Session.user_id == user_id)
+        .where(models.User.app_id == app_id)
+    )
+    original_session = await db.scalar(stmt)
+    if not original_session:
+        raise ValueError("Original session not found")
+
+    # If cutoff_message_id is provided, verify it belongs to the session
+    cutoff_message = None
+    if cutoff_message_id is not None:
+        stmt = select(models.Message).where(
+            models.Message.public_id == cutoff_message_id,
+            models.Message.session_id == original_session_id,
+        )
+        cutoff_message = await db.scalar(stmt)
+        if not cutoff_message:
+            raise ValueError(
+                "Message not found or doesn't belong to the specified session"
+            )
+
+    # Create new session
+    new_session = models.Session(
+        user_id=original_session.user_id,
+        h_metadata=original_session.h_metadata,
+    )
+    db.add(new_session)
+    await db.flush()  # Flush to get the new session ID
+
+    # Build query for messages to clone
+    stmt = select(models.Message).where(
+        models.Message.session_id == original_session_id
+    )
+    if cutoff_message_id is not None and cutoff_message is not None:
+        stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
+    stmt = stmt.order_by(models.Message.id)
+
+    # Fetch messages to clone
+    messages_to_clone_scalars = await db.scalars(stmt)
+    messages_to_clone = messages_to_clone_scalars.all()
+
+    if not messages_to_clone:
+        return new_session
+
+    # Prepare bulk insert data
+    new_messages = [
+        {
+            "session_id": new_session.public_id,
+            "content": message.content,
+            "is_user": message.is_user,
+            "h_metadata": message.h_metadata,
+        }
+        for message in messages_to_clone
+    ]
+
+    stmt = insert(models.Message).returning(models.Message.public_id)
+    result = await db.execute(stmt, new_messages)
+    new_message_ids = result.scalars().all()
+
+    # Create mapping of old to new message IDs
+    message_id_map = dict(
+        zip([message.public_id for message in messages_to_clone], new_message_ids)
+    )
+
+    print("========== Deep Copy ============")
+    print(deep_copy)
+    print("========== Deep Copy ============")
+
+    # Handle metamessages if deep copy is requested
+    if deep_copy and message_id_map:
+        # Fetch all metamessages in a single query
+        stmt = select(models.Metamessage).where(
+            models.Metamessage.message_id.in_(message_id_map.keys())
+        )
+        metamessages_result = await db.scalars(stmt)
+        metamessages = metamessages_result.all()
+
+        print("========== Deep Copy ============")
+        print(metamessages)
+        print("========== Deep Copy ============")
+
+        if metamessages:
+            # Prepare bulk insert data for metamessages
+            new_metamessages = [
+                {
+                    "message_id": message_id_map[meta.message_id],
+                    "metamessage_type": meta.metamessage_type,
+                    "content": meta.content,
+                    "h_metadata": meta.h_metadata,
+                }
+                for meta in metamessages
+            ]
+
+            # Bulk insert metamessages using modern insert syntax
+            stmt = insert(models.Metamessage)
+            await db.execute(stmt, new_metamessages)
+
+    return new_session
 
 
 ########################################################
