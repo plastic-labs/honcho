@@ -223,14 +223,14 @@ async def clone_session(
     user_id: str,
     session_id: str,
     db=db,
-    messageId: Optional[str] = None,
-    deepCopy: bool = False,
+    message_id: Optional[str] = None,
+    deep_copy: bool = False,
 ):
     return await crud.clone_session(
         db,
         app_id=app_id,
         user_id=user_id,
         original_session_id=session_id,
-        cutoff_message_id=messageId,
-        deep_copy=deepCopy,
+        cutoff_message_id=message_id,
+        deep_copy=deep_copy,
     )
