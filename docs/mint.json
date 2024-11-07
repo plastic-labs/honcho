@@ -109,7 +109,8 @@
         "api-reference/endpoint/sessions/update-session",
         "api-reference/endpoint/sessions/delete-session",
         "api-reference/endpoint/sessions/chat",
-        "api-reference/endpoint/sessions/chat-stream"
+        "api-reference/endpoint/sessions/chat-stream",
+        "api-reference/endpoint/sessions/clone-session"
       ]
     },
     {
@@ -159,7 +160,7 @@
     "github": "https://github.com/plastic-labs",
     "linkedin": "https://www.linkedin.com/company/plasticlabs"
   },
-  "openapi": ["/openapi.json"],
+  "openapi": ["/openapi.yml"],
   "analytics": {
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
