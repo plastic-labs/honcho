@@ -385,6 +385,8 @@ async def clone_session(
             stmt = insert(models.Metamessage)
             await db.execute(stmt, new_metamessages)
 
+    await db.commit()
+
     return new_session
 
 
