@@ -215,7 +215,7 @@ async def test_partial_clone_session(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?messageId={test_message2.public_id}",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?message_id={test_message2.public_id}",
     )
     assert response.status_code == 200
     data = response.json()
@@ -297,7 +297,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?deepCopy=true",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?deep_copy=true",
     )
     assert response.status_code == 200
     data = response.json()
@@ -405,7 +405,7 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?deepCopy=true&messageId={test_message.public_id}",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?deep_copy=true&message_id={test_message.public_id}",
     )
     assert response.status_code == 200
     data = response.json()
