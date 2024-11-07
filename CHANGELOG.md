@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.13] — 2024-11-07
+
+### Added
+
+- Ability to clone session for a user to achieve more [loom-like](https://github.com/socketteer/loom/) behavior
+
 ## [0.0.12] — 2024-10-21
 
 ### Added
