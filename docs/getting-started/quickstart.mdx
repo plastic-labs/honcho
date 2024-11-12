@@ -49,7 +49,7 @@ Next, we want to register an application with the Honcho client:
 <CodeGroup>
 
 ```python Python
-app = client.apps.get_or_create(
+app = honcho.apps.get_or_create(
     name="string",
 )
 ```
@@ -81,11 +81,11 @@ Now let's create a session for that application. Honcho is a user context manage
 <CodeGroup>
 
 ```python Python
-session = client.apps.users.sessions.create(user.id, app.id, location_id=default)
+session = honcho.apps.users.sessions.create(user.id, app.id)
 ```
 
 ```javascript NodeJS
-const session = client.apps.users.sessions.create(app.id, user.id, { location_id: "default"}) -> Session
+const session = honcho.apps.users.sessions.create(app.id, user.id) -> Session
 ```
 
 </CodeGroup>
@@ -95,11 +95,11 @@ Let's add a user message and an AI message to that session:
 <CodeGroup>
 
 ```python Python
-client.apps.users.sessions.messages.create(session.id, app.id, user.id, content="Test", is_user=True)
+honcho.apps.users.sessions.messages.create(session.id, app.id, user.id, content="Test", is_user=True)
 ```
 
 ```javascript NodeJS
-client.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "Test", is_user: true })
+honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "Test", is_user: true })
 ```
 
 </CodeGroup>
@@ -109,7 +109,7 @@ You can also easily query Honcho to get the session objects for that user with t
 <CodeGroup>
 
 ```python Python
-async for session in client.apps.users.list(app.id, user.id):
+async for session in honcho.apps.users.list(app.id, user.id):
   doSomethingWith(session)
 ```
 
@@ -124,4 +124,4 @@ for await (const session of honcho.apps.users.sessions.list(app.id, user.id)) {
 
 This is a super simple overview of how to get up and running with the Honcho SDK. We covered the basic methods for reading and writing from the hosted storage service. Next, we'll cover alternative forms of hosting Honcho.
 
-For a more detailed look at the SDK check out the SDK reference [here](https://api.python.honcho.dev/).
+For a more detailed look at the SDK check out the SDK reference [here](/api-reference).
