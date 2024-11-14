@@ -108,6 +108,7 @@ async def get_latest_user_representation(
         .where(models.App.public_id == app_id)
         .where(models.User.public_id == user_id)
         .where(models.Metamessage.metamessage_type == "user_representation")
+        .order_by(models.Metamessage.id.desc())  # get the most recent
         .limit(1)
     )
     result = await db.execute(stmt)
