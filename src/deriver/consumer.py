@@ -1,6 +1,7 @@
 import logging
 import re
 
+import sentry_sdk
 from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +48,7 @@ async def process_item(db: AsyncSession, payload: dict):
     return
 
 
+@sentry_sdk.trace
 async def process_ai_message(
     content: str,
     app_id: str,
@@ -102,6 +104,7 @@ async def process_ai_message(
     console.print(content_lines, style="blue")
 
 
+@sentry_sdk.trace
 async def process_user_message(
     content: str,
     app_id: str,

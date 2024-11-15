@@ -78,7 +78,7 @@ def test_get_documents(client, sample_data):
     )
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 3
+    assert len(data["items"]) == 3
 
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection['id']}/documents/list",
@@ -86,9 +86,9 @@ def test_get_documents(client, sample_data):
     )
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 2
-    assert data[0]["metadata"]["test"] == "key"
-    assert data[1]["metadata"]["test"] == "key"
+    assert len(data["items"]) == 2
+    assert data["items"][0]["metadata"]["test"] == "key"
+    assert data["items"][1]["metadata"]["test"] == "key"
 
 
 def test_query_documents(client, sample_data):

@@ -1,11 +1,13 @@
 import os
 
 from anthropic import Anthropic
+import sentry_sdk
 
 # Initialize the Anthropic client
 anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 
+@sentry_sdk.trace
 async def tom_inference(
     chat_history: str, session_id: str, user_representation: str = "None"
 ) -> str:
@@ -65,6 +67,7 @@ async def tom_inference(
     return message.content[0].text
 
 
+@sentry_sdk.trace
 async def user_representation(
     chat_history: str,
     session_id: str,
