@@ -34,6 +34,7 @@ async def get_next_message_for_session(
     return result.scalar_one_or_none()
 
 
+@sentry_sdk.trace
 async def process_session_messages(session_id: int):
     async with SessionLocal() as db:
         try:
@@ -41,10 +42,15 @@ async def process_session_messages(session_id: int):
                 message = await get_next_message_for_session(db, session_id)
                 if not message:
                     break
-
-                await process_item(db, payload=message.payload)
-                message.processed = True
-                await db.commit()
+                try:
+                    await process_item(db, payload=message.payload)
+                except Exception as e:
+                    print(e)
+                    sentry_sdk.capture_exception(e)
+                finally:
+                    # Prevent malformed messages from stalling a queue indefinitely
+                    message.processed = True
+                    await db.commit()
 
                 # Update last_updated to show this session is still being processed
                 await db.execute(
@@ -63,6 +69,7 @@ async def process_session_messages(session_id: int):
             await db.commit()
 
 
+@sentry_sdk.trace
 async def get_available_sessions(db: AsyncSession, limit: int) -> Sequence[Any]:
     # First, clean up stale sessions (e.g., older than 5 minutes)
     five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
@@ -89,45 +96,48 @@ async def get_available_sessions(db: AsyncSession, limit: int) -> Sequence[Any]:
     return result.scalars().all()
 
 
+@sentry_sdk.trace
 async def schedule_session(
     semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event
 ):
-    async with semaphore, SessionLocal() as db:
-        try:
-            available_slots = semaphore._value
-            # print(available_slots)
-            new_sessions = await get_available_sessions(db, available_slots)
+    async with (
+        semaphore,
+        SessionLocal() as db,
+    ):
+        with sentry_sdk.start_transaction(
+            op="deriver_schedule_session", name="Schedule Deriver Session"
+        ):
+            try:
+                # available_slots = semaphore._value
+                # print(available_slots)
+                new_sessions = await get_available_sessions(db, 1)
 
-            if new_sessions:
-                tasks = []
-                for session_id in new_sessions:
-                    try:
-                        # Try to insert the session into active_sessions
-                        await db.execute(
-                            insert(models.ActiveQueueSession).values(
-                                session_id=session_id
+                if new_sessions:
+                    for session_id in new_sessions:
+                        try:
+                            # Try to insert the session into active_sessions
+                            await db.execute(
+                                insert(models.ActiveQueueSession).values(
+                                    session_id=session_id
+                                )
                             )
-                        )
-                        await db.commit()
+                            await db.commit()
 
-                        # If successful, create a task for this session
-                        # Pass enable_timing to process_session_messages
-                        asyncio.create_task(process_session_messages(session_id))
-                    except IntegrityError:
-                        # If the session is already in active_sessions, skip it
-                        await db.rollback()
+                            # If successful, create a task for this session
+                            await process_session_messages(session_id)
+                        except IntegrityError:
+                            # If the session is already in active_sessions, skip it
+                            await db.rollback()
 
-                if tasks:
-                    await asyncio.gather(*tasks)
-            else:
-                # No items to process, set the queue_empty_flag
-                queue_empty_flag.set()
-        except Exception as e:
-            rprint("==========")
-            rprint("Exception")
-            rprint(e)
-            rprint("==========")
-            await db.rollback()
+                else:
+                    # No items to process, set the queue_empty_flag
+                    queue_empty_flag.set()
+            except Exception as e:
+                rprint("==========")
+                rprint("Exception")
+                rprint(e)
+                rprint("==========")
+                await db.rollback()
 
 
 async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.Event):
@@ -139,8 +149,9 @@ async def polling_loop(semaphore: asyncio.Semaphore, queue_empty_flag: asyncio.E
         if semaphore.locked():
             await asyncio.sleep(1)  # Sleep briefly if the semaphore is fully locked
             continue
-        await schedule_session(semaphore, queue_empty_flag)
-        # await asyncio.sleep(0)  # Yield control to allow tasks to run
+        # Create a task instead of awaiting
+        asyncio.create_task(schedule_session(semaphore, queue_empty_flag))
+        await asyncio.sleep(0)  # Give other tasks a chance to run
 
 
 async def main():
@@ -149,8 +160,8 @@ async def main():
         sentry_sdk.init(
             dsn=os.getenv("SENTRY_DSN"),
             enable_tracing=True,
-            traces_sample_rate=1.0,
-            profiles_sample_rate=1.0,
+            traces_sample_rate=0.4,
+            profiles_sample_rate=0.4,
             integrations=[
                 AsyncioIntegration(),
             ],

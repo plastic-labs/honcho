@@ -22,17 +22,7 @@ async def create_user(
     user: schemas.UserCreate,
     db=db,
 ):
-    """Create a User
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user (schemas.UserCreate): The User object containing any metadata
-
-    Returns:
-        schemas.User: Created User object
-
-    """
+    """Create a new User"""
     print("running create_user")
     try:
         return await crud.create_user(db, app_id=app_id, user=user)
@@ -49,16 +39,7 @@ async def get_users(
     reverse: bool = False,
     db=db,
 ):
-    """Get All Users for an App
-
-    Args:
-        app_id (str): The ID of the app representing the client
-        application using honcho
-
-    Returns:
-        list[schemas.User]: List of User objects
-
-    """
+    """Get All Users for an App"""
     return await paginate(
         db,
         await crud.get_users(db, app_id=app_id, reverse=reverse, filter=options.filter),
@@ -71,17 +52,7 @@ async def get_user_by_name(
     name: str,
     db=db,
 ):
-    """Get a User
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-
-    Returns:
-        schemas.User: User object
-
-    """
+    """Get a User by name"""
     user = await crud.get_user_by_name(db, app_id=app_id, name=name)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -94,17 +65,7 @@ async def get_user(
     user_id: str,
     db=db,
 ):
-    """Get a User
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-
-    Returns:
-        schemas.User: User object
-
-    """
+    """Get a User by ID"""
     user = await crud.get_user(db, app_id=app_id, user_id=user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User not found")
@@ -113,17 +74,7 @@ async def get_user(
 
 @router.get("/get_or_create/{name}", response_model=schemas.User)
 async def get_or_create_user(app_id: str, name: str, db=db):
-    """Get or Create a User
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-
-    Returns:
-        schemas.User: User object
-
-    """
+    """Get a User or create a new one by the input name"""
     user = await crud.get_user_by_name(db, app_id=app_id, name=name)
     if user is None:
         user = await create_user(
@@ -139,18 +90,7 @@ async def update_user(
     user: schemas.UserUpdate,
     db=db,
 ):
-    """Update a User
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-        user (schemas.UserCreate): The User object containing any metadata
-
-    Returns:
-        schemas.User: Updated User object
-
-    """
+    """Update a User's name and/or metadata"""
     try:
         return await crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
     except ValueError as e:

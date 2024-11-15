@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.14] — 2024-11-14
+
+### Changed
+
+- Query Documents endpoint is a POST request for better DX
+- `String` columns are now `TEXT` columns to match postgres best practices
+- Docstrings to have better stainless generations
+
+### Fixed
+
+- Dialectic API to use most recent user representation
+- Prepared Statements Transient Error with `psycopg`
+- Queue parallel worker scheduling
+
 ## [0.0.13] — 2024-11-07
 
 ### Added

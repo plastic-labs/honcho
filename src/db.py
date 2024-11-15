@@ -5,11 +5,11 @@ from sqlalchemy import MetaData, create_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
-# from sqlalchemy.ext.declarative import declarative_base
-
 load_dotenv()
 
-connect_args = {}
+connect_args = {
+    "prepare_threshold": None,
+}
 
 # if (
 #     os.environ["DATABASE_TYPE"] == "sqlite"
