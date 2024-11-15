@@ -79,13 +79,14 @@ async def query_documents(
     user_id: str,
     collection_id: str,
     options: schemas.DocumentQuery,
-    top_k: int = 5,
     db=db,
 ):
-    """Cosiner Similarity Search for Documents"""
-    if top_k is not None and top_k > 50:
-        top_k = 50  # TODO see if we need to paginate this
+    """Cosine Similarity Search for Documents"""
+
     try:
+        top_k = options.top_k
+        if top_k is not None and top_k > 50:
+            top_k = 50  # TODO see if we need to paginate this
         filter = options.filter
         if options.filter == {}:
             filter = None

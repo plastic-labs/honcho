@@ -273,6 +273,7 @@ class DocumentGet(DocumentBase):
 class DocumentQuery(DocumentBase):
     query: str
     filter: dict | None = None
+    top_k: int = 5
 
 
 class DocumentUpdate(DocumentBase):
