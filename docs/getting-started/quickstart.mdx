@@ -55,7 +55,7 @@ app = client.apps.get_or_create(
 ```
 
 ```javascript NodeJS
-const app = await honcho.apps.getOrCreate({ name: 'string' });
+const app = await honcho.apps.getOrCreate("Example");
 ```
 
 </CodeGroup>
@@ -71,7 +71,7 @@ user = honcho.apps.users.create(app_id=app.id, name="User")
 ```
 
 ```javascript NodeJS
-const user = honcho.apps.users.create(app.id, {name: "User" })
+const user = await honcho.apps.users.create(app.id, { name: "User" });
 ```
 
 </CodeGroup>
@@ -85,7 +85,9 @@ session = client.apps.users.sessions.create(user.id, app.id, location_id=default
 ```
 
 ```javascript NodeJS
-const session = client.apps.users.sessions.create(app.id, user.id, { location_id: "default"}) -> Session
+const session = await honcho.apps.users.sessions.create(app.id, user.id, {
+  metadata: { location_id: "default" },
+});
 ```
 
 </CodeGroup>
@@ -99,7 +101,10 @@ client.apps.users.sessions.messages.create(session.id, app.id, user.id, content=
 ```
 
 ```javascript NodeJS
-client.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "Test", is_user: true })
+honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
+  content: "Test",
+  is_user: true,
+});
 ```
 
 </CodeGroup>
@@ -124,4 +129,7 @@ for await (const session of honcho.apps.users.sessions.list(app.id, user.id)) {
 
 This is a super simple overview of how to get up and running with the Honcho SDK. We covered the basic methods for reading and writing from the hosted storage service. Next, we'll cover alternative forms of hosting Honcho.
 
-For a more detailed look at the SDK check out the SDK reference [here](https://api.python.honcho.dev/).
+For a more detailed look at the SDK, check out the SDK references:
+
+- [Honcho Python SDK](https://github.com/plastic-labs/honcho-python/blob/main/api.md)
+- [Honcho NodeJS SDK](https://github.com/plastic-labs/honcho-node/blob/main/api.md)
