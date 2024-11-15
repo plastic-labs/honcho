@@ -1,6 +1,7 @@
 import logging
 import re
 
+import sentry_sdk
 from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,6 +48,7 @@ async def process_item(db: AsyncSession, payload: dict):
     return
 
 
+@sentry_sdk.trace
 async def process_ai_message(
     content: str,
     app_id: str,
@@ -102,6 +104,7 @@ async def process_ai_message(
     console.print(content_lines, style="blue")
 
 
+@sentry_sdk.trace
 async def process_user_message(
     content: str,
     app_id: str,
@@ -140,7 +143,9 @@ async def process_user_message(
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.public_id)
             .where(models.Metamessage.metamessage_type == "tom_inference")
-            .order_by(models.Metamessage.id.asc())
+            .order_by(
+                models.Metamessage.id.asc()
+            )  # Get the earliest tom inference on this message
             .limit(1)
         )
         response = await db.execute(tom_inference_stmt)
@@ -151,14 +156,26 @@ async def process_user_message(
                 f"Tom Inference: {tom_inference_metamessage.content}", style="orange1"
             )
 
-            # Fetch the existing user representation
+            # Fetch the latest user representation
             user_representation_stmt = (
                 select(models.Metamessage)
-                .where(models.Metamessage.message_id == ai_message.public_id)
+                .join(
+                    models.Message,
+                    models.Message.public_id == models.Metamessage.message_id,
+                )
+                .join(
+                    models.Session,
+                    models.Message.session_id == models.Session.public_id,
+                )
+                .join(models.User, models.User.public_id == models.Session.user_id)
+                .join(models.App, models.App.public_id == models.User.app_id)
+                .where(models.App.public_id == app_id)
+                .where(models.User.public_id == user_id)
                 .where(models.Metamessage.metamessage_type == "user_representation")
-                .order_by(models.Metamessage.id.desc())
+                .order_by(models.Metamessage.id.desc())  # get the most recent
                 .limit(1)
             )
+
             response = await db.execute(user_representation_stmt)
             existing_representation = response.scalar_one_or_none()
 
@@ -191,7 +208,9 @@ async def process_user_message(
             console.print(user_representation_response, style="bright_magenta")
 
         else:
-            raise Exception("\033[91mTom Inference NOT READY YET")
+            raise Exception(
+                f"\033[91mTom Inference NOT READY YET on message {message_id}"
+            )
     else:
         console.print("No AI message before this user message", style="red")
         return
