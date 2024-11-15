@@ -140,7 +140,9 @@ async def process_user_message(
             select(models.Metamessage)
             .where(models.Metamessage.message_id == ai_message.public_id)
             .where(models.Metamessage.metamessage_type == "tom_inference")
-            .order_by(models.Metamessage.id.asc())
+            .order_by(
+                models.Metamessage.id.asc()
+            )  # Get the earliest tom inference on this message
             .limit(1)
         )
         response = await db.execute(tom_inference_stmt)
@@ -203,7 +205,9 @@ async def process_user_message(
             console.print(user_representation_response, style="bright_magenta")
 
         else:
-            raise Exception("\033[91mTom Inference NOT READY YET")
+            raise Exception(
+                f"\033[91mTom Inference NOT READY YET on message {message_id}"
+            )
     else:
         console.print("No AI message before this user message", style="red")
         return
