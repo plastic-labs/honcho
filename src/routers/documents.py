@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 from typing import Optional
 
@@ -25,6 +26,7 @@ async def get_documents(
     reverse: Optional[bool] = False,
     db=db,
 ):
+    """Get all of the Documents in a Collection"""
     try:
         return await paginate(
             db,
@@ -56,6 +58,7 @@ async def get_document(
     document_id: str,
     db=db,
 ):
+    """Get a document by ID"""
     honcho_document = await crud.get_document(
         db,
         app_id=app_id,
@@ -70,30 +73,33 @@ async def get_document(
     return honcho_document
 
 
-@router.get("/query", response_model=Sequence[schemas.Document])
+@router.post("/query", response_model=Sequence[schemas.Document])
 async def query_documents(
     app_id: str,
     user_id: str,
     collection_id: str,
-    query: str,
+    options: schemas.DocumentQuery,
     top_k: int = 5,
-    filter: Optional[str] = None,
     db=db,
 ):
+    """Cosiner Similarity Search for Documents"""
     if top_k is not None and top_k > 50:
         top_k = 50  # TODO see if we need to paginate this
-    data = None
-    if filter is not None:
-        data = json.loads(filter)
-    return await crud.query_documents(
-        db=db,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection_id,
-        query=query,
-        filter=data,
-        top_k=top_k,
-    )
+    try:
+        filter = options.filter
+        if options.filter == {}:
+            filter = None
+        return await crud.query_documents(
+            db=db,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            query=options.query,
+            filter=filter,
+            top_k=top_k,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Error Query Documents") from e
 
 
 @router.post("", response_model=schemas.Document)
@@ -104,6 +110,7 @@ async def create_document(
     document: schemas.DocumentCreate,
     db=db,
 ):
+    """Embed text as a vector and create a Document"""
     try:
         return await crud.create_document(
             db,
@@ -130,6 +137,7 @@ async def update_document(
     document: schemas.DocumentUpdate,
     db=db,
 ):
+    """Update the content and/or the metadata of a Document"""
     if document.content is None and document.metadata is None:
         raise HTTPException(
             status_code=400, detail="content and metadata cannot both be None"
@@ -157,6 +165,7 @@ async def delete_document(
     document_id: str,
     db=db,
 ):
+    """Delete a Document by ID"""
     response = await crud.delete_document(
         db,
         app_id=app_id,

@@ -270,6 +270,11 @@ class DocumentGet(DocumentBase):
     filter: dict | None = None
 
 
+class DocumentQuery(DocumentBase):
+    query: str
+    filter: dict | None = None
+
+
 class DocumentUpdate(DocumentBase):
     metadata: dict | None = None
     content: str | None = None
