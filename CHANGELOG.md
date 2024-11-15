@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Dialectic API to use most recent user representation
 - Prepared Statements Transient Error with `psycopg`
+- Queue parallel worker scheduling
 
 ## [0.0.13] — 2024-11-07
 
