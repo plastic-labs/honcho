@@ -19,7 +19,7 @@ connect_args = {
 engine = create_async_engine(
     os.environ["CONNECTION_URI"],
     connect_args=connect_args,
-    echo=False,
+    echo=True,
     pool_pre_ping=True,
 )
 

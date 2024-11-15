@@ -6,10 +6,10 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
-    String,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
@@ -27,14 +27,20 @@ class App(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
-    name: Mapped[str] = mapped_column(String(512), index=True, unique=True)
+    name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     users = relationship("User", back_populates="app")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+
+    __table_args__ = (
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+    )
 
 
 class User(Base):
@@ -43,9 +49,9 @@ class User(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
-    name: Mapped[str] = mapped_column(String(512), index=True)
+    name: Mapped[str] = mapped_column(TEXT, index=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -55,7 +61,12 @@ class User(Base):
     sessions = relationship("Session", back_populates="user")
     collections = relationship("Collection", back_populates="user")
 
-    __table_args__ = (UniqueConstraint("name", "app_id", name="unique_name_app_user"),)
+    __table_args__ = (
+        UniqueConstraint("name", "app_id", name="unique_name_app_user"),
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+    )
 
     def __repr__(self) -> str:
         return f"User(id={self.id}, app_id={self.app_id}, created_at={self.created_at}, h_metadata={self.h_metadata})"
@@ -67,7 +78,7 @@ class Session(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
@@ -77,6 +88,11 @@ class Session(Base):
     messages = relationship("Message", back_populates="session")
     user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
     user = relationship("User", back_populates="sessions")
+
+    __table_args__ = (
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+    )
 
     def __repr__(self) -> str:
         return f"Session(id={self.id}, user_id={self.user_id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
@@ -88,13 +104,13 @@ class Message(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.public_id"), index=True
     )
     is_user: Mapped[bool]
-    content: Mapped[str] = mapped_column(String(65535))
+    content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -102,6 +118,12 @@ class Message(Base):
     )
     session = relationship("Session", back_populates="messages")
     metamessages = relationship("Metamessage", back_populates="message")
+
+    __table_args__ = (
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("length(content) <= 65535", name="content_length"),
+    )
 
     def __repr__(self) -> str:
         return f"Message(id={self.id}, session_id={self.session_id}, is_user={self.is_user}, content={self.content[10:]})"
@@ -113,10 +135,10 @@ class Metamessage(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
-    metamessage_type: Mapped[str] = mapped_column(String(512), index=True)
-    content: Mapped[str] = mapped_column(String(65535))
+    metamessage_type: Mapped[str] = mapped_column(TEXT, index=True)
+    content: Mapped[str] = mapped_column(TEXT)
     message_id: Mapped[str] = mapped_column(
         ForeignKey("messages.public_id"), index=True
     )
@@ -126,6 +148,15 @@ class Metamessage(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+
+    __table_args__ = (
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("length(content) <= 65535", name="content_length"),
+        CheckConstraint(
+            "length(metamessage_type) <= 512", name="metamessage_type_length"
+        ),
+    )
 
     def __repr__(self) -> str:
         return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
@@ -138,9 +169,9 @@ class Collection(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
-    name: Mapped[str] = mapped_column(String(512), index=True)
+    name: Mapped[str] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -150,11 +181,14 @@ class Collection(Base):
     )
     user = relationship("User", back_populates="collections")
     user_id: Mapped[str] = mapped_column(
-        String(21), ForeignKey("users.public_id"), index=True
+        TEXT, ForeignKey("users.public_id"), index=True
     )
 
     __table_args__ = (
         UniqueConstraint("name", "user_id", name="unique_name_collection_user"),
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("length(name) <= 512", name="name_length"),
     )
 
 
@@ -164,19 +198,25 @@ class Document(Base):
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
     public_id: Mapped[str] = mapped_column(
-        String(21), index=True, unique=True, default=generate_nanoid
+        TEXT, index=True, unique=True, default=generate_nanoid
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
-    content: Mapped[str] = mapped_column(String(65535))
+    content: Mapped[str] = mapped_column(TEXT)
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
 
     collection_id: Mapped[str] = mapped_column(
-        String(21), ForeignKey("collections.public_id"), index=True
+        TEXT, ForeignKey("collections.public_id"), index=True
     )
     collection = relationship("Collection", back_populates="documents")
+
+    __table_args__ = (
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("length(content) <= 65535", name="content_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+    )
 
 
 class QueueItem(Base):

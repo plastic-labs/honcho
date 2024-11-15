@@ -42,9 +42,15 @@ async def process_session_messages(session_id: int):
                 if not message:
                     break
 
-                await process_item(db, payload=message.payload)
-                message.processed = True
-                await db.commit()
+                try:
+                    await process_item(db, payload=message.payload)
+                except Exception as e:
+                    print(e)
+                    sentry_sdk.capture_exception(e)
+                finally:
+                    # Prevent malformed messages from stalling a queue indefinitely
+                    message.processed = True
+                    await db.commit()
 
                 # Update last_updated to show this session is still being processed
                 await db.execute(
