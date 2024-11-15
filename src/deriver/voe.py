@@ -1,10 +1,10 @@
 import os
 
-from anthropic import Anthropic
 import sentry_sdk
+from anthropic import Anthropic
 
 # Initialize the Anthropic client
-anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+anthropic = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), max_retries=5)
 
 
 @sentry_sdk.trace
