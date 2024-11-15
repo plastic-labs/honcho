@@ -23,17 +23,7 @@ async def get_collections(
     reverse: Optional[bool] = False,
     db=db,
 ):
-    """Get All Collections for a User
-
-    Args:
-        app_id (str): The ID of the app representing the client
-        application using honcho
-        user_id (str): The User ID representing the user, managed by the user
-
-    Returns:
-        list[schemas.Collection]: List of Collection objects
-
-    """
+    """Get All Collections for a User"""
     return await paginate(
         db,
         await crud.get_collections(
@@ -49,6 +39,7 @@ async def get_collection_by_name(
     name: str,
     db=db,
 ) -> schemas.Collection:
+    """Get a Collection by Name"""
     honcho_collection = await crud.get_collection_by_name(
         db, app_id=app_id, user_id=user_id, name=name
     )
@@ -66,6 +57,7 @@ async def get_collection_by_id(
     collection_id: str,
     db=db,
 ) -> schemas.Collection:
+    """Get a Collection by ID"""
     honcho_collection = await crud.get_collection_by_id(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
     )
@@ -83,6 +75,7 @@ async def create_collection(
     collection: schemas.CollectionCreate,
     db=db,
 ):
+    """Create a new Collection"""
     if collection.name == "honcho":
         raise HTTPException(
             status_code=406,
@@ -107,6 +100,7 @@ async def update_collection(
     collection: schemas.CollectionUpdate,
     db=db,
 ):
+    "Update a Collection's name or metadata"
     if collection.name is None and collection.metadata is None:
         raise HTTPException(
             status_code=406,
@@ -140,6 +134,7 @@ async def delete_collection(
     collection_id: str,
     db=db,
 ):
+    """Delete a Collection and its documents"""
     try:
         await crud.delete_collection(
             db, app_id=app_id, user_id=user_id, collection_id=collection_id

@@ -24,17 +24,7 @@ async def get_sessions(
     reverse: Optional[bool] = False,
     db=db,
 ):
-    """Get All Sessions for a User
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-
-    Returns:
-        list[schemas.Session]: List of Session objects
-
-    """
+    """Get All Sessions for a User"""
     return await paginate(
         db,
         await crud.get_sessions(
@@ -55,19 +45,7 @@ async def create_session(
     session: schemas.SessionCreate,
     db=db,
 ):
-    """Create a Session for a User
-
-    Args:
-        app_id (str): The ID of the app representing the client
-        application using honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session (schemas.SessionCreate): The Session object containing any
-        metadata
-
-    Returns:
-        schemas.Session: The Session object of the new Session
-
-    """
+    """Create a Session for a User"""
     try:
         value = await crud.create_session(
             db, app_id=app_id, user_id=user_id, session=session
@@ -88,19 +66,7 @@ async def update_session(
     session: schemas.SessionUpdate,
     db=db,
 ):
-    """Update the metadata of a Session
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session_id (str): The ID of the Session to update
-        session (schemas.SessionUpdate): The Session object containing any new metadata
-
-    Returns:
-        schemas.Session: The Session object of the updated Session
-
-    """
+    """Update the metadata of a Session"""
     if session.metadata is None:
         raise HTTPException(status_code=400, detail="Session metadata cannot be empty")
     try:
@@ -118,21 +84,7 @@ async def delete_session(
     session_id: str,
     db=db,
 ):
-    """Delete a session by marking it as inactive
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session_id (str): The ID of the Session to delete
-
-    Returns:
-        dict: A message indicating that the session was deleted
-
-    Raises:
-        HTTPException: If the session is not found
-
-    """
+    """Delete a session by marking it as inactive"""
     try:
         await crud.delete_session(
             db, app_id=app_id, user_id=user_id, session_id=session_id
@@ -149,20 +101,7 @@ async def get_session(
     session_id: str,
     db=db,
 ):
-    """Get a specific session for a user by ID
-
-    Args:
-        app_id (str): The ID of the app representing the client application using
-        honcho
-        user_id (str): The User ID representing the user, managed by the user
-        session_id (str): The ID of the Session to retrieve
-
-    Returns:
-        schemas.Session: The Session object of the requested Session
-
-    Raises:
-        HTTPException: If the session is not found
-    """
+    """Get a specific session for a user by ID"""
     honcho_session = await crud.get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
@@ -178,7 +117,7 @@ async def chat(
     session_id: str,
     query: schemas.AgentQuery,
 ):
-    print(query)
+    """Chat with the Dialectic API"""
     return await agent.chat(
         app_id=app_id, user_id=user_id, session_id=session_id, query=query
     )
@@ -201,6 +140,8 @@ async def get_chat_stream(
     session_id: str,
     query: schemas.AgentQuery,
 ):
+    """Stream Results from the Dialectic API"""
+
     async def parse_stream():
         stream = await agent.chat(
             app_id=app_id,
@@ -226,6 +167,7 @@ async def clone_session(
     message_id: Optional[str] = None,
     deep_copy: bool = False,
 ):
+    """Clone a session for a user, optionally will deep clone metamessages as well"""
     return await crud.clone_session(
         db,
         app_id=app_id,
