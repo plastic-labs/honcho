@@ -1,5 +1,6 @@
 from typing import Optional
 
+from anthropic import MessageStreamManager
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
@@ -150,8 +151,10 @@ async def get_chat_stream(
             query=query,
             stream=True,
         )
-        for chunk in stream:
-            yield chunk.content
+        if type(stream) is MessageStreamManager:
+            with stream as stream_manager:
+                for text in stream_manager.text_stream:
+                    yield text
 
     return StreamingResponse(
         content=parse_stream(), media_type="text/event-stream", status_code=200
