@@ -13,15 +13,15 @@ kill_timeout = '5s'
 
 [http_service]
   internal_port = 8000
-  auto_stop_machines = 'off'
+  auto_stop_machines = 'suspend'
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 3
   processes = ['api']
 
   [http_service.concurrency]
     type = 'requests'
-    hard_limit = 250
-    soft_limit = 200
+    hard_limit = 50
+    soft_limit = 20
 
 [[vm]]
   memory = '512mb'

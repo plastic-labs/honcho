@@ -50,7 +50,6 @@ async def create_app(app: schemas.AppCreate, db=db):
 @router.get("/get_or_create/{name}", response_model=schemas.App)
 async def get_or_create_app(name: str, db=db):
     """Get or Create an App"""
-    print("name", name)
     app = await crud.get_app_by_name(db=db, name=name)
     if app is None:
         app = await create_app(db=db, app=schemas.AppCreate(name=name))

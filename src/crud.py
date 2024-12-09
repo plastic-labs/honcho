@@ -1,4 +1,3 @@
-import datetime
 from collections.abc import Sequence
 from typing import Optional
 
@@ -7,6 +6,7 @@ from openai import OpenAI
 from sqlalchemy import Select, cast, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import func
 from sqlalchemy.types import BigInteger
 
 from . import models, schemas
@@ -128,9 +128,9 @@ async def get_users(
         stmt = stmt.where(models.User.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.User.created_at.desc())
+        stmt = stmt.order_by(models.User.id.desc())
     else:
-        stmt = stmt.order_by(models.User.created_at)
+        stmt = stmt.order_by(models.User.id)
 
     return stmt
 
@@ -205,9 +205,9 @@ async def get_sessions(
         stmt = stmt.where(models.Session.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.Session.created_at.desc())
+        stmt = stmt.order_by(models.Session.id.desc())
     else:
-        stmt = stmt.order_by(models.Session.created_at)
+        stmt = stmt.order_by(models.Session.id)
 
     return stmt
 
@@ -443,9 +443,9 @@ async def get_messages(
         stmt = stmt.where(models.Message.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.Message.created_at.desc())
+        stmt = stmt.order_by(models.Message.id.desc())
     else:
-        stmt = stmt.order_by(models.Message.created_at)
+        stmt = stmt.order_by(models.Message.id)
 
     return stmt
 
@@ -561,9 +561,9 @@ async def get_metamessages(
         stmt = stmt.where(models.Metamessage.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.Metamessage.created_at.desc())
+        stmt = stmt.order_by(models.Metamessage.id.desc())
     else:
-        stmt = stmt.order_by(models.Metamessage.created_at)
+        stmt = stmt.order_by(models.Metamessage.id)
 
     return stmt
 
@@ -647,9 +647,9 @@ async def get_collections(
         stmt = stmt.where(models.Collection.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.Collection.created_at.desc())
+        stmt = stmt.order_by(models.Collection.id.desc())
     else:
-        stmt = stmt.order_by(models.Collection.created_at)
+        stmt = stmt.order_by(models.Collection.id)
 
     return stmt
 
@@ -784,9 +784,9 @@ async def get_documents(
         stmt = stmt.where(models.Document.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.Document.created_at.desc())
+        stmt = stmt.order_by(models.Document.id.desc())
     else:
-        stmt = stmt.order_by(models.Document.created_at)
+        stmt = stmt.order_by(models.Document.id)
 
     return stmt
 
@@ -906,7 +906,7 @@ async def update_document(
         )
         embedding = response.data[0].embedding
         honcho_document.embedding = embedding
-        honcho_document.created_at = datetime.datetime.utcnow()
+        honcho_document.created_at = func.now()
 
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
