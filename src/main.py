@@ -5,6 +5,8 @@ import sentry_sdk
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src.routers import (
     apps,
@@ -27,6 +29,14 @@ if SENTRY_ENABLED:
         enable_tracing=True,
         traces_sample_rate=0.4,
         profiles_sample_rate=0.4,
+        integrations=[
+            StarletteIntegration(
+                transaction_style="endpoint",
+            ),
+            FastApiIntegration(
+                transaction_style="endpoint",
+            ),
+        ],
     )
 
 
