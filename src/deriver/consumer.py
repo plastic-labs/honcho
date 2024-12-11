@@ -60,7 +60,7 @@ async def process_ai_message(
     """
     Process an AI message. Make a prediction about what the user is going to say to it.
     """
-    console.print(f"Processing AI message: {content}", style="green")
+    console.print(f"Processing AI message: {content}", style="bright_magenta")
 
     subquery = (
         select(models.Message.id)
@@ -136,7 +136,7 @@ async def process_user_message(
     ai_message = response.scalar_one_or_none()
 
     if ai_message and ai_message.content:
-        console.print(f"AI Message: {ai_message.content}", style="orange1")
+        console.print(f"AI Message: {ai_message.content}", style="bright_magenta")
 
         # Fetch the tom_inference metamessage
         tom_inference_stmt = (
@@ -153,7 +153,7 @@ async def process_user_message(
 
         if tom_inference_metamessage and tom_inference_metamessage.content:
             console.print(
-                f"Tom Inference: {tom_inference_metamessage.content}", style="orange1"
+                f"Tom Inference: {tom_inference_metamessage.content}", style="blue"
             )
 
             # Fetch the latest user representation
@@ -204,8 +204,7 @@ async def process_user_message(
                 user_representation_response, "representation"
             )
 
-            console.print("User Representation:", style="bright_magenta")
-            console.print(user_representation_response, style="bright_magenta")
+            console.print(f"User Representation:\n{user_representation_response}", style="bright_green")
 
         else:
             raise Exception(

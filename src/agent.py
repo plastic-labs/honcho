@@ -45,14 +45,15 @@ class Dialectic:
             op="dialectic-inference", name="Dialectic API Response"
         ):
             prompt = f"""
-            You are tasked with responding to the query based on the context provided. 
             <query>{self.agent_input}</query>
             <context>{self.user_representation}</context>
             <conversation_history>{self.chat_history}</conversation_history>
-            Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
             """
 
             response = self.client.messages.create(
+                system="""
+                I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) their current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None". 
+                """,
                 messages=[
                     {
                         "role": "user",
@@ -60,31 +61,31 @@ class Dialectic:
                     }
                 ],
                 model="claude-3-5-sonnet-20240620",
-                max_tokens=300,
+                max_tokens=150,
             )
             return response.content
 
     @ai_track("Dialectic Call")
     def stream(self):
         with sentry_sdk.start_transaction(
-            op="dialectic-inference", name="Dialect API Response"
+            op="dialectic-inference", name="Dialectic API Response"
         ):
             prompt = f"""
-            You are tasked with responding to the query based on the context provided. 
+            Please respond to the query based on the context and conversation history provided. 
             <query>{self.agent_input}</query>
             <context>{self.user_representation}</context>
             <conversation_history>{self.chat_history}</conversation_history>
-            Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
+            Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't help address the query, write absolutely NOTHING but "None". 
             """
             return self.client.messages.stream(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-3-5-sonnet-20240620",
                 messages=[
                     {
                         "role": "user",
                         "content": prompt,
                     }
                 ],
-                max_tokens=300,
+                max_tokens=150,
             )
 
 
