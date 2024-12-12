@@ -54,7 +54,7 @@ class UserGet(UserBase):
 
 class UserUpdate(UserBase):
     name: str | None = None
-    metadata: dict | None = None
+    metadata: dict | None = None  # Allow user to explicitly set metadata to empty
 
 
 class User(UserBase):
@@ -172,7 +172,7 @@ class MetamessageCreate(MetamessageBase):
     metamessage_type: str
     content: str
     message_id: str
-    metadata: dict | None = {}
+    metadata: dict = {}
 
 
 class MetamessageGet(MetamessageBase):
@@ -222,7 +222,7 @@ class CollectionBase(BaseModel):
 
 class CollectionCreate(CollectionBase):
     name: str
-    metadata: dict | None = {}
+    metadata: dict = {}
 
 
 class CollectionGet(CollectionBase):
@@ -263,7 +263,7 @@ class DocumentBase(BaseModel):
 
 class DocumentCreate(DocumentBase):
     content: str
-    metadata: dict | None = {}
+    metadata: dict = {}
 
 
 class DocumentGet(DocumentBase):
