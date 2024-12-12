@@ -141,14 +141,14 @@ async def create_batch_messages_for_session(
     app_id: str,
     user_id: str,
     session_id: str,
-    messages: List[schemas.MessageCreate],
+    batch: schemas.MessageBatchCreate,
     background_tasks: BackgroundTasks,
     db=db,
 ):
-    """Bulk create messages for a session while maintaining order"""
+    """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
     try:
         created_messages = await crud.create_messages(
-            db, messages=messages, app_id=app_id, user_id=user_id, session_id=session_id
+            db, messages=batch.messages, app_id=app_id, user_id=user_id, session_id=session_id
         )
 
         # Create payloads for all messages
@@ -229,8 +229,6 @@ async def update_message(
     db=db,
 ):
     """Update the metadata of a Message"""
-    if message.metadata is None:
-        raise HTTPException(status_code=400, detail="Message metadata cannot be empty")
     try:
         return await crud.update_message(
             db,

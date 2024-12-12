@@ -1,4 +1,5 @@
 import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -8,7 +9,7 @@ class AppBase(BaseModel):
 
 
 class AppCreate(AppBase):
-    name: str
+    name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -44,7 +45,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    name: str
+    name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -85,7 +86,7 @@ class MessageBase(BaseModel):
 
 
 class MessageCreate(MessageBase):
-    content: str
+    content: Annotated[str, Field(min_length=0, max_length=50000)]
     is_user: bool
     metadata: dict = {}
 
@@ -95,7 +96,7 @@ class MessageGet(MessageBase):
 
 
 class MessageUpdate(MessageBase):
-    metadata: dict | None = None
+    metadata: dict
 
 
 class Message(MessageBase):
@@ -169,8 +170,8 @@ class MetamessageBase(BaseModel):
 
 
 class MetamessageCreate(MetamessageBase):
-    metamessage_type: str
-    content: str
+    metamessage_type: Annotated[str, Field(min_length=1, max_length=50)]
+    content: Annotated[str, Field(min_length=0, max_length=50000)]
     message_id: str
     metadata: dict = {}
 
@@ -221,7 +222,7 @@ class CollectionBase(BaseModel):
 
 
 class CollectionCreate(CollectionBase):
-    name: str
+    name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -262,7 +263,7 @@ class DocumentBase(BaseModel):
 
 
 class DocumentCreate(DocumentBase):
-    content: str
+    content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict = {}
 
 
@@ -271,14 +272,14 @@ class DocumentGet(DocumentBase):
 
 
 class DocumentQuery(DocumentBase):
-    query: str
+    query: Annotated[str, Field(min_length=1, max_length=1000)]
     filter: dict | None = None
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=100)
 
 
 class DocumentUpdate(DocumentBase):
-    metadata: dict | None = None
-    content: str | None = None
+    metadata: dict | None = Field(None, max_length=10000)
+    content: Annotated[str | None, Field(min_length=1, max_length=100000)] = None
 
 
 class Document(DocumentBase):
@@ -305,9 +306,23 @@ class Document(DocumentBase):
 
 
 class AgentQuery(BaseModel):
-    queries: str | list[str]
-    # collections: str | list[str] = "honcho"
+    queries: str | list[str] = Field(..., max_length=100)
+
+    # @field_validator('queries')
+    # def validate_queries(cls, v):
+    #     if isinstance(v, str):
+    #         if len(v) > 1000:
+    #             raise ValueError('Query too long')
+    #     elif isinstance(v, list):
+    #         if any(len(q) > 1000 for q in v):
+    #             raise ValueError('One or more queries too long')
+    #     return v
 
 
 class AgentChat(BaseModel):
     content: str
+
+
+class MessageBatchCreate(BaseModel):
+    """Schema for batch message creation with a max of 100 messages"""
+    messages: list[MessageCreate] = Field(..., max_length=100)
