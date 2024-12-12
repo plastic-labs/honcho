@@ -77,7 +77,7 @@ class Dialectic:
             Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
             """
             return self.client.messages.stream(
-                model="claude-3-5-sonnet-20240620",
+                model="claude-3-5-sonnet-20241022",
                 messages=[
                     {
                         "role": "user",

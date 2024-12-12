@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [0.0.15]
 
+### Added
+
+- Alembic for handling database migrations
+- Additional indexes for reading Messages and Metamessages
+
 ### Fixed
 
 - Dialectic Streaming Endpoint properly sends text in `StreamingResponse`
