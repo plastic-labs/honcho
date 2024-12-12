@@ -1,8 +1,9 @@
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy.sql import insert
 
 from src import crud, schemas
 from src.db import SessionLocal
@@ -17,35 +18,83 @@ router = APIRouter(
 )
 
 
-async def enqueue(payload: dict):
+async def enqueue(payload: dict | list[dict]):
     async with SessionLocal() as db:
-        # Get Session and Check metadata
-        session = await crud.get_session(
-            db,
-            app_id=payload["app_id"],
-            user_id=payload["user_id"],
-            session_id=payload["session_id"],
-        )
-        # Check if metadata has a "deriver" key
-        if session is not None:
-            deriver_disabled = session.h_metadata.get("deriver_disabled")
-            if deriver_disabled is not None and deriver_disabled is not False:
-                print("=====================")
-                print(f"Deriver is not enabled on session {payload['session_id']}")
-                print("=====================")
-                # If deriver is not enabled, do not enqueue
-                return
-        else:
-            # Session doesn't exist return
-            return
         try:
-            processed_payload = {
-                k: str(v) if isinstance(v, str) else v for k, v in payload.items()
-            }
-            item = QueueItem(payload=processed_payload, session_id=session.id)
-            db.add(item)
-            await db.commit()
-            return
+            if isinstance(payload, list):
+                if not payload:  # Empty list check
+                    return
+                print("Payload:\n", payload)
+
+                # Check session once since all messages are for same session
+                session = await crud.get_session(
+                    db,
+                    app_id=payload[0]["app_id"],
+                    user_id=payload[0]["user_id"],
+                    session_id=payload[0]["session_id"],
+                )
+                print("Session found:", session is not None)
+                if session:
+                    print("Session metadata:", session.h_metadata)
+
+                if session is None or (
+                    session.h_metadata.get("deriver_disabled") is not None
+                    and session.h_metadata.get("deriver_disabled") is not False
+                ):
+                    print("Skipping enqueue due to session check")
+                    return
+
+                # Process all payloads
+                queue_records = [
+                    {
+                        "payload": {
+                            k: str(v) if isinstance(v, str) else v for k, v in p.items()
+                        },
+                        "session_id": session.id,
+                    }
+                    for p in payload
+                ]
+
+                print("Number of queue records to insert:", len(queue_records))
+
+                # Use insert to maintain order
+                stmt = insert(QueueItem).returning(QueueItem)
+                result = await db.execute(stmt, queue_records)
+                await db.commit()
+                print("Queue items inserted successfully")
+                return
+            else:
+                # Original single insert logic
+                session = await crud.get_session(
+                    db,
+                    app_id=payload["app_id"],
+                    user_id=payload["user_id"],
+                    session_id=payload["session_id"],
+                )
+                if session is not None:
+                    deriver_disabled = session.h_metadata.get("deriver_disabled")
+                    if deriver_disabled is not None and deriver_disabled is not False:
+                        print("=====================")
+                        print(
+                            f"Deriver is not enabled on session {payload['session_id']}"
+                        )
+                        print("=====================")
+                        return
+                else:
+                    return
+
+                processed_payload = {
+                    k: str(v) if isinstance(v, str) else v for k, v in payload.items()
+                }
+                # Use insert for consistency
+                stmt = (
+                    insert(QueueItem)
+                    .values(payload=processed_payload, session_id=session.id)
+                    .returning(QueueItem)
+                )
+                await db.execute(stmt)
+                await db.commit()
+                return
         except Exception as e:
             print("=====================")
             print("FAILURE: in enqueue")
@@ -84,6 +133,43 @@ async def create_message_for_session(
         print("=====================")
         print("FAILURE: in create message")
         print("=====================")
+        raise HTTPException(status_code=404, detail="Session not found") from None
+
+
+@router.post("/batch", response_model=List[schemas.Message])
+async def create_batch_messages_for_session(
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    messages: List[schemas.MessageCreate],
+    background_tasks: BackgroundTasks,
+    db=db,
+):
+    """Bulk create messages for a session while maintaining order"""
+    try:
+        created_messages = await crud.create_messages(
+            db, messages=messages, app_id=app_id, user_id=user_id, session_id=session_id
+        )
+
+        # Create payloads for all messages
+        payloads = [
+            {
+                "app_id": app_id,
+                "user_id": user_id,
+                "session_id": session_id,
+                "message_id": message.public_id,
+                "is_user": message.is_user,
+                "content": message.content,
+                "metadata": message.h_metadata,
+            }
+            for message in created_messages
+        ]
+
+        # Enqueue all messages in one call
+        background_tasks.add_task(enqueue, payloads)  # type: ignore
+
+        return created_messages
+    except ValueError:
         raise HTTPException(status_code=404, detail="Session not found") from None
 
 
