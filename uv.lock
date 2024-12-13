@@ -6,6 +6,20 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "alembic"
+version = "1.14.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "mako" },
+    { name = "sqlalchemy" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/00/1e/8cb8900ba1b6360431e46fb7a89922916d3a1b017a8908a7c0499cc7e5f6/alembic-1.14.0.tar.gz", hash = "sha256:b00892b53b3642d0b8dbedba234dbf1924b69be83a9a769d5a624b01094e304b", size = 1916172 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cb/06/8b505aea3d77021b18dcbd8133aa1418f1a1e37e432a465b14c46b2c0eaa/alembic-1.14.0-py3-none-any.whl", hash = "sha256:99bd884ca390466db5e27ffccff1d179ec5c05c965cfefc0607e69f9e411cb25", size = 233482 },
+]
+
+[[package]]
 name = "annotated-types"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -425,9 +439,10 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "0.0.14"
+version = "0.0.15"
 source = { virtual = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "anthropic" },
     { name = "fastapi", extra = ["standard"] },
     { name = "fastapi-pagination" },
@@ -439,7 +454,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "python-dotenv" },
     { name = "rich" },
-    { name = "sentry-sdk", extra = ["fastapi", "sqlalchemy"] },
+    { name = "sentry-sdk", extra = ["anthropic", "fastapi", "sqlalchemy"] },
     { name = "sqlalchemy" },
 ]
 
@@ -455,6 +470,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.14.0" },
     { name = "anthropic", specifier = ">=0.36.0" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.111.0" },
     { name = "fastapi-pagination", specifier = ">=0.12.24" },
@@ -466,7 +482,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1.19" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.7.1" },
-    { name = "sentry-sdk", extras = ["fastapi", "sqlalchemy"], specifier = ">=2.3.1" },
+    { name = "sentry-sdk", extras = ["fastapi", "sqlalchemy", "anthropic"], specifier = ">=2.3.1" },
     { name = "sqlalchemy", specifier = ">=2.0.30" },
 ]
 
@@ -683,6 +699,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/8e/80/7d1c6b7166667ccea4efe4a274264e2f3891c33ded54e98c1f682724f385/jiter-0.6.1-cp39-cp39-musllinux_1_1_x86_64.whl", hash = "sha256:db459ed22d0208940d87f614e1f0ea5a946d29a3cfef71f7e1aab59b6c6b2afb", size = 496959 },
     { url = "https://files.pythonhosted.org/packages/c0/06/5e3317f8a62e09507efe384710cb0de8dff9b80200122d93b3e83a14a2a1/jiter-0.6.1-cp39-none-win32.whl", hash = "sha256:d71c962f0971347bd552940ab96aa42ceefcd51b88c4ced8a27398182efa8d80", size = 198317 },
     { url = "https://files.pythonhosted.org/packages/b4/ee/6d9873144f860391fd1130be0e1e5a1dbd7e9d128da1c7baf1ae71babb99/jiter-0.6.1-cp39-none-win_amd64.whl", hash = "sha256:d465db62d2d10b489b7e7a33027c4ae3a64374425d757e963f86df5b5f2e7fc5", size = 202278 },
+]
+
+[[package]]
+name = "mako"
+version = "1.3.8"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5f/d9/8518279534ed7dace1795d5a47e49d5299dd0994eed1053996402a8902f9/mako-1.3.8.tar.gz", hash = "sha256:577b97e414580d3e088d47c2dbbe9594aa7a5146ed2875d4dfa9075af2dd3cc8", size = 392069 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/bf/7a6a36ce2e4cafdfb202752be68850e22607fccd692847c45c1ae3c17ba6/Mako-1.3.8-py3-none-any.whl", hash = "sha256:42f48953c7eb91332040ff567eb7eea69b22e7a4affbc5ba8e845e8f730f6627", size = 78569 },
 ]
 
 [[package]]
@@ -1239,6 +1267,9 @@ wheels = [
 ]
 
 [package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
+]
 fastapi = [
     { name = "fastapi" },
 ]

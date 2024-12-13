@@ -2,8 +2,10 @@ import asyncio
 import os
 from collections.abc import Iterable
 
+import sentry_sdk
 from anthropic import Anthropic, MessageStreamManager
 from dotenv import load_dotenv
+from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,45 +39,53 @@ class Dialectic:
         self.chat_history = chat_history
         self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
+    @ai_track("Dialectic Call")
     def call(self):
-        prompt = f"""
-        You are tasked with responding to the query based on the context provided. 
-        <query>{self.agent_input}</query>
-        <context>{self.user_representation}</context>
-        <conversation_history>{self.chat_history}</conversation_history>
-        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
-        """
+        with sentry_sdk.start_transaction(
+            op="dialectic-inference", name="Dialectic API Response"
+        ):
+            prompt = f"""
+            You are tasked with responding to the query based on the context provided. 
+            <query>{self.agent_input}</query>
+            <context>{self.user_representation}</context>
+            <conversation_history>{self.chat_history}</conversation_history>
+            Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
+            """
 
-        response = self.client.messages.create(
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=300,
-        )
-        return response.content
+            response = self.client.messages.create(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                model="claude-3-5-sonnet-20240620",
+                max_tokens=300,
+            )
+            return response.content
 
+    @ai_track("Dialectic Call")
     def stream(self):
-        prompt = f"""
-        You are tasked with responding to the query based on the context provided. 
-        <query>{self.agent_input}</query>
-        <context>{self.user_representation}</context>
-        <conversation_history>{self.chat_history}</conversation_history>
-        Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
-        """
-        return self.client.messages.stream(
-            model="claude-3-5-sonnet-20240620",
-            messages=[
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            max_tokens=300,
-        )
+        with sentry_sdk.start_transaction(
+            op="dialectic-inference", name="Dialect API Response"
+        ):
+            prompt = f"""
+            You are tasked with responding to the query based on the context provided. 
+            <query>{self.agent_input}</query>
+            <context>{self.user_representation}</context>
+            <conversation_history>{self.chat_history}</conversation_history>
+            Provide a brief, matter-of-fact, and appropriate response to the query based on the context provided. If the context provided doesn't aid in addressing the query, return only the word "None". 
+            """
+            return self.client.messages.stream(
+                model="claude-3-5-sonnet-20241022",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                max_tokens=300,
+            )
 
 
 async def chat_history(app_id: str, user_id: str, session_id: str) -> str:
