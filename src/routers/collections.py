@@ -76,11 +76,11 @@ async def create_collection(
     db=db,
 ):
     """Create a new Collection"""
-    if collection.name == "honcho":
-        raise HTTPException(
-            status_code=406,
-            detail="error invalid collection configuration - honcho is a reserved name",
-        )
+    # if collection.name == "honcho":
+    #     raise HTTPException(
+    #         status_code=406,
+    #         detail="error invalid collection configuration - honcho is a reserved name",
+    #     )
     try:
         return await crud.create_collection(
             db, collection=collection, app_id=app_id, user_id=user_id
@@ -105,11 +105,6 @@ async def update_collection(
         raise HTTPException(
             status_code=406,
             detail="error invalid collection configuration - atleast 1 field must be provided",
-        )
-    if collection.name is not None and collection.name == "honcho":
-        raise HTTPException(
-            status_code=406,
-            detail="error invalid collection configuration - honcho is a reserved name",
         )
     try:
         honcho_collection = await crud.update_collection(

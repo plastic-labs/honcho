@@ -137,7 +137,7 @@ class SessionGet(SessionBase):
 
 
 class SessionUpdate(SessionBase):
-    metadata: dict | None = None
+    metadata: dict
 
 
 class Session(SessionBase):
@@ -225,6 +225,12 @@ class CollectionCreate(CollectionBase):
     name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
+    @field_validator("name")
+    def validate_name(cls, v):
+        if v.lower() == "honcho":
+            raise ValueError("Collection name cannot be 'honcho'")
+        return v
+
 
 class CollectionGet(CollectionBase):
     filter: dict | None = None
@@ -233,6 +239,12 @@ class CollectionGet(CollectionBase):
 class CollectionUpdate(CollectionBase):
     name: str | None = None
     metadata: dict | None = None
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        if v is not None and v.lower() == "honcho":
+            raise ValueError("Collection name cannot be 'honcho'")
+        return v
 
 
 class Collection(CollectionBase):
@@ -274,7 +286,7 @@ class DocumentGet(DocumentBase):
 class DocumentQuery(DocumentBase):
     query: Annotated[str, Field(min_length=1, max_length=1000)]
     filter: dict | None = None
-    top_k: int = Field(default=5, ge=1, le=100)
+    top_k: int = Field(default=5, ge=1, le=50)
 
 
 class DocumentUpdate(DocumentBase):
@@ -306,18 +318,21 @@ class Document(DocumentBase):
 
 
 class AgentQuery(BaseModel):
-    queries: str | list[str] = Field(..., max_length=100)
+    queries: str | list[str]
 
-    # @field_validator('queries')
-    # def validate_queries(cls, v):
-    #     if isinstance(v, str):
-    #         if len(v) > 1000:
-    #             raise ValueError('Query too long')
-    #     elif isinstance(v, list):
-    #         if any(len(q) > 1000 for q in v):
-    #             raise ValueError('One or more queries too long')
-    #     return v
-
+    @field_validator('queries')
+    def validate_queries(cls, v):
+        MAX_STRING_LENGTH = 10000
+        MAX_LIST_LENGTH = 25
+        if isinstance(v, str):
+            if len(v) > MAX_STRING_LENGTH:
+                raise ValueError('Query too long')
+        elif isinstance(v, list):
+            if len(v) > MAX_LIST_LENGTH:
+                raise ValueError('Too many queries')
+            if any(len(q) > MAX_STRING_LENGTH for q in v):
+                raise ValueError('One or more queries too long')
+        return v
 
 class AgentChat(BaseModel):
     content: str

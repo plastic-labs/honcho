@@ -67,7 +67,7 @@ async def test_empty_update_session(client, db_session, sample_data):
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}",
         json={},
     )
-    assert response.status_code == 400
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
