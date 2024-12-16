@@ -23,7 +23,6 @@ async def create_user(
     db=db,
 ):
     """Create a new User"""
-    print("running create_user")
     try:
         return await crud.create_user(db, app_id=app_id, user=user)
     except IntegrityError as e:

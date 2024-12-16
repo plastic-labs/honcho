@@ -85,8 +85,6 @@ async def query_documents(
 
     try:
         top_k = options.top_k
-        if top_k is not None and top_k > 50:
-            top_k = 50  # TODO see if we need to paginate this
         filter = options.filter
         if options.filter == {}:
             filter = None
