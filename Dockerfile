@@ -34,6 +34,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --chown=app:app src/ /app/src/
+COPY --chown=app:app migrations/ /app/migrations/
+COPY --chown=app:app alembic.ini /app/alembic.ini
 
 EXPOSE 8000
 

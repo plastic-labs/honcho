@@ -32,8 +32,6 @@ def upgrade() -> None:
         postgresql_include=[
             "public_id",
             "is_user",
-            "content",
-            "metadata",
             "created_at",
         ],
     )
@@ -44,10 +42,8 @@ def upgrade() -> None:
         ["metamessage_type", sa.text("id DESC")],
         postgresql_include=[
             "public_id",
-            "content",
             "message_id",
             "created_at",
-            "metadata",
         ],
     )
 
