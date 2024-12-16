@@ -6,12 +6,12 @@ Create Date: 2024-12-12 13:41:40.156095
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from os import getenv
+from typing import Union
 
 import sqlalchemy as sa
-from sqlalchemy import text
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "c3828084f472"
@@ -21,9 +21,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    schema = getenv("DATABASE_SCHEMA", "public")
     # Add new indexes
-    op.create_index("idx_users_app_lookup", "users", ["app_id", "public_id"])
-    op.create_index("idx_sessions_user_lookup", "sessions", ["user_id", "public_id"])
+    op.create_index(
+        "idx_users_app_lookup", "users", ["app_id", "public_id"], schema=schema
+    )
+    op.create_index(
+        "idx_sessions_user_lookup", "sessions", ["user_id", "public_id"], schema=schema
+    )
 
     op.create_index(
         "idx_messages_session_lookup",
@@ -34,6 +39,7 @@ def upgrade() -> None:
             "is_user",
             "created_at",
         ],
+        schema=schema,
     )
 
     op.create_index(
@@ -45,12 +51,15 @@ def upgrade() -> None:
             "message_id",
             "created_at",
         ],
+        schema=schema,
     )
 
 
 def downgrade() -> None:
+    schema = getenv("DATABASE_SCHEMA", "public")
+
     # Remove new indexes
-    op.drop_index("idx_users_app_lookup", table_name="users")
-    op.drop_index("idx_sessions_user_lookup", table_name="sessions")
-    op.drop_index("idx_messages_session_lookup", table_name="messages")
-    op.drop_index("idx_metamessages_lookup", table_name="metamessages")
+    op.drop_index("idx_users_app_lookup", table_name="users", schema=schema)
+    op.drop_index("idx_sessions_user_lookup", table_name="sessions", schema=schema)
+    op.drop_index("idx_messages_session_lookup", table_name="messages", schema=schema)
+    op.drop_index("idx_metamessages_lookup", table_name="metamessages", schema=schema)
