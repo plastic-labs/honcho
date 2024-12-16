@@ -17,6 +17,20 @@ def test_create_app(client):
     assert "id" in data
 
 
+def test_create_app_no_metadata(client):
+    name = str(generate_nanoid())
+    response = client.post("/v1/apps", json={"name": name})
+    print(response)
+    assert response.status_code == 200
+    data = response.json()
+    print("===================")
+    print(data)
+    print("===================")
+    assert data["name"] == name
+    assert data["metadata"] == {}
+    assert "id" in data
+
+
 def test_get_or_create_app(client):
     name = str(generate_nanoid())
     response = client.get(f"/v1/apps/name/{name}")

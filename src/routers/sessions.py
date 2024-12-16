@@ -68,8 +68,6 @@ async def update_session(
     db=db,
 ):
     """Update the metadata of a Session"""
-    if session.metadata is None:
-        raise HTTPException(status_code=400, detail="Session metadata cannot be empty")
     try:
         return await crud.update_session(
             db, app_id=app_id, user_id=user_id, session_id=session_id, session=session

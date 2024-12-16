@@ -69,7 +69,7 @@ class User(Base):
     )
 
     def __repr__(self) -> str:
-        return f"User(id={self.id}, app_id={self.app_id}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"User(id={self.id}, app_id={self.app_id}, public_id={self.public_id} created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Session(Base):

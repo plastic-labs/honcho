@@ -1,4 +1,5 @@
 import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -8,7 +9,7 @@ class AppBase(BaseModel):
 
 
 class AppCreate(AppBase):
-    name: str
+    name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -44,7 +45,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
-    name: str
+    name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -54,7 +55,7 @@ class UserGet(UserBase):
 
 class UserUpdate(UserBase):
     name: str | None = None
-    metadata: dict | None = None
+    metadata: dict | None = None  # Allow user to explicitly set metadata to empty
 
 
 class User(UserBase):
@@ -85,7 +86,7 @@ class MessageBase(BaseModel):
 
 
 class MessageCreate(MessageBase):
-    content: str
+    content: Annotated[str, Field(min_length=0, max_length=50000)]
     is_user: bool
     metadata: dict = {}
 
@@ -95,7 +96,7 @@ class MessageGet(MessageBase):
 
 
 class MessageUpdate(MessageBase):
-    metadata: dict | None = None
+    metadata: dict
 
 
 class Message(MessageBase):
@@ -136,7 +137,7 @@ class SessionGet(SessionBase):
 
 
 class SessionUpdate(SessionBase):
-    metadata: dict | None = None
+    metadata: dict
 
 
 class Session(SessionBase):
@@ -169,10 +170,10 @@ class MetamessageBase(BaseModel):
 
 
 class MetamessageCreate(MetamessageBase):
-    metamessage_type: str
-    content: str
+    metamessage_type: Annotated[str, Field(min_length=1, max_length=50)]
+    content: Annotated[str, Field(min_length=0, max_length=50000)]
     message_id: str
-    metadata: dict | None = {}
+    metadata: dict = {}
 
 
 class MetamessageGet(MetamessageBase):
@@ -221,8 +222,14 @@ class CollectionBase(BaseModel):
 
 
 class CollectionCreate(CollectionBase):
-    name: str
-    metadata: dict | None = {}
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    metadata: dict = {}
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        if v.lower() == "honcho":
+            raise ValueError("Collection name cannot be 'honcho'")
+        return v
 
 
 class CollectionGet(CollectionBase):
@@ -232,6 +239,12 @@ class CollectionGet(CollectionBase):
 class CollectionUpdate(CollectionBase):
     name: str | None = None
     metadata: dict | None = None
+
+    @field_validator("name")
+    def validate_name(cls, v):
+        if v is not None and v.lower() == "honcho":
+            raise ValueError("Collection name cannot be 'honcho'")
+        return v
 
 
 class Collection(CollectionBase):
@@ -262,8 +275,8 @@ class DocumentBase(BaseModel):
 
 
 class DocumentCreate(DocumentBase):
-    content: str
-    metadata: dict | None = {}
+    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    metadata: dict = {}
 
 
 class DocumentGet(DocumentBase):
@@ -271,14 +284,14 @@ class DocumentGet(DocumentBase):
 
 
 class DocumentQuery(DocumentBase):
-    query: str
+    query: Annotated[str, Field(min_length=1, max_length=1000)]
     filter: dict | None = None
-    top_k: int = 5
+    top_k: int = Field(default=5, ge=1, le=50)
 
 
 class DocumentUpdate(DocumentBase):
-    metadata: dict | None = None
-    content: str | None = None
+    metadata: dict | None = Field(None, max_length=10000)
+    content: Annotated[str | None, Field(min_length=1, max_length=100000)] = None
 
 
 class Document(DocumentBase):
@@ -306,8 +319,25 @@ class Document(DocumentBase):
 
 class AgentQuery(BaseModel):
     queries: str | list[str]
-    # collections: str | list[str] = "honcho"
 
+    @field_validator('queries')
+    def validate_queries(cls, v):
+        MAX_STRING_LENGTH = 10000
+        MAX_LIST_LENGTH = 25
+        if isinstance(v, str):
+            if len(v) > MAX_STRING_LENGTH:
+                raise ValueError('Query too long')
+        elif isinstance(v, list):
+            if len(v) > MAX_LIST_LENGTH:
+                raise ValueError('Too many queries')
+            if any(len(q) > MAX_STRING_LENGTH for q in v):
+                raise ValueError('One or more queries too long')
+        return v
 
 class AgentChat(BaseModel):
     content: str
+
+
+class MessageBatchCreate(BaseModel):
+    """Schema for batch message creation with a max of 100 messages"""
+    messages: list[MessageCreate] = Field(..., max_length=100)
