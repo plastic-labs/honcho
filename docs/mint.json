@@ -118,6 +118,7 @@
       "pages": [
         "api-reference/endpoint/messages/get-messages",
         "api-reference/endpoint/messages/create-message-for-session",
+        "api-reference/endpoint/messages/create-batch-messages-for-session",
         "api-reference/endpoint/messages/get-message",
         "api-reference/endpoint/messages/update-message"
       ]
@@ -160,7 +161,7 @@
     "github": "https://github.com/plastic-labs",
     "linkedin": "https://www.linkedin.com/company/plasticlabs"
   },
-  "openapi": ["/openapi.yml"],
+  "openapi": ["/openapi.json"],
   "analytics": {
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"

@@ -421,6 +421,40 @@ async def create_message(
     return honcho_message
 
 
+async def create_messages(
+    db: AsyncSession,
+    messages: list[schemas.MessageCreate],
+    app_id: str,
+    user_id: str,
+    session_id: str,
+) -> list[models.Message]:
+    """Bulk create messages for a session while maintaining order"""
+    # Verify session exists and belongs to user
+    honcho_session = await get_session(
+        db, app_id=app_id, session_id=session_id, user_id=user_id
+    )
+    if honcho_session is None:
+        raise ValueError("Session not found or does not belong to user")
+
+    # Create list of message records
+    message_records = [
+        {
+            "session_id": session_id,
+            "is_user": message.is_user,
+            "content": message.content,
+            "h_metadata": message.metadata,
+        }
+        for message in messages
+    ]
+
+    # Bulk insert messages and return them in order
+    stmt = insert(models.Message).returning(models.Message)
+    result = await db.execute(stmt, message_records)
+    await db.commit()
+
+    return list(result.scalars().all())
+
+
 async def get_messages(
     db: AsyncSession,
     app_id: str,
