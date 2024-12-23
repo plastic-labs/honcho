@@ -1,7 +1,9 @@
 import logging
+import os
 import re
 
 import sentry_sdk
+from langfuse.decorators import langfuse_context, observe
 from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +51,7 @@ async def process_item(db: AsyncSession, payload: dict):
 
 
 @sentry_sdk.trace
+@observe()
 async def process_ai_message(
     content: str,
     app_id: str,
@@ -84,6 +87,13 @@ async def process_ai_message(
     # append current message to chat history
     chat_history_str = f"{chat_history_str}\nai: {content}"
 
+    langfuse_context.update_current_trace(
+        session_id=session_id,
+        user_id=user_id,
+        release=os.getenv("SENTRY_RELEASE"),
+        metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
+    )
+
     tom_inference_response = await tom_inference(
         chat_history_str, session_id=session_id
     )
@@ -105,6 +115,7 @@ async def process_ai_message(
 
 
 @sentry_sdk.trace
+@observe()
 async def process_user_message(
     content: str,
     app_id: str,
@@ -183,6 +194,13 @@ async def process_user_message(
                 existing_representation.content if existing_representation else "None"
             )
 
+            langfuse_context.update_current_trace(
+                session_id=session_id,
+                user_id=user_id,
+                release=os.getenv("SENTRY_RELEASE"),
+                metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
+            )
+
             # Call user_representation
             user_representation_response = await user_representation(
                 chat_history=f"{ai_message.content}\nhuman: {content}",
@@ -204,7 +222,10 @@ async def process_user_message(
                 user_representation_response, "representation"
             )
 
-            console.print(f"User Representation:\n{user_representation_response}", style="bright_green")
+            console.print(
+                f"User Representation:\n{user_representation_response}",
+                style="bright_green",
+            )
 
         else:
             raise Exception(
