@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Alembic for handling database migrations
 - Additional indexes for reading Messages and Metamessages
+- Langfuse for prompt tracing
 
 ### Changed
 
