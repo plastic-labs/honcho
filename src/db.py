@@ -3,7 +3,7 @@ import os
 from alembic import command
 from alembic.config import Config
 from dotenv import load_dotenv
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, create_engine, inspect
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -45,5 +45,27 @@ def scaffold_db():
     """use a sync engine for scaffolding the database. ddl operations are unavailable
     with async engines
     """
+    # Create engine
+    engine = create_engine(
+        os.environ["CONNECTION_URI"],
+        pool_pre_ping=True,
+        echo=True,
+    )
+
+    # Create inspector to check if database exists
+    inspector = inspect(engine)
+
+    print(inspector.get_table_names(Base.metadata.schema))
+
+    # If no tables exist, create them with SQLAlchemy
+    if not inspector.get_table_names(Base.metadata.schema):
+        print("No tables found. Creating database schema...")
+        Base.metadata.create_all(bind=engine)
+
+    # Clean up
+    engine.dispose()
+
+    # Run Alembic migrations regardless
+    print("Running database migrations...")
     alembic_cfg = Config("alembic.ini")
     command.upgrade(alembic_cfg, "head")
