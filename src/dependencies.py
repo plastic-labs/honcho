@@ -9,6 +9,9 @@ async def get_db():
     db: AsyncSession = SessionLocal()
     try:
         yield db
+    except Exception:
+        await db.rollback()
+        raise
     finally:
         await db.close()
 

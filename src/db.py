@@ -23,8 +23,11 @@ engine = create_async_engine(
     connect_args=connect_args,
     echo=True,
     pool_pre_ping=True,
-    pool_size=20,
-    max_overflow=50,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+    pool_recycle=300,  # Recycle connections after 5 minutes
+    pool_use_lifo=True,  # Use last-in-first-out (LIFO) to prevent connection spread
 )
 
 SessionLocal = async_sessionmaker(
