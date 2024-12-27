@@ -71,7 +71,7 @@ async def tom_inference(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
-        message = anthropic.beta.prompt_caching.messages.create(
+        message = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
@@ -142,7 +142,7 @@ async def user_representation(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
-        message = anthropic.beta.prompt_caching.messages.create(
+        message = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
