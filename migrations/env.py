@@ -15,8 +15,6 @@ from src.db import Base
 logging.basicConfig()
 logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 logging.getLogger("alembic").setLevel(logging.DEBUG)
-# Add this line for transaction debugging
-
 
 # Add project root to Python path
 sys.path.append(str(Path(__file__).parents[1]))
@@ -72,7 +70,6 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table_schema=target_metadata.schema,  # This sets schema for version table
-        include_schema=True,
     )
 
     with context.begin_transaction():
@@ -118,7 +115,6 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema=target_metadata.schema,
-            include_schema=True,
         )
 
         with context.begin_transaction():

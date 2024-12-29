@@ -52,7 +52,7 @@ def scaffold_db():
     engine = create_engine(
         os.environ["CONNECTION_URI"],
         pool_pre_ping=True,
-        echo=False,
+        echo=True,
     )
 
     # Create inspector to check if database exists
