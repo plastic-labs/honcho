@@ -22,6 +22,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     schema = getenv("DATABASE_SCHEMA", "public")
+
+    conn = op.get_bind()
+
+    # Diagnostic queries
+    queries = [
+        # Check current user
+        "SELECT current_user",
+        # Check current schema search path
+        "SHOW search_path",
+        # Check permissions on the schema
+        f"SELECT has_schema_privilege(current_user, '{schema}', 'usage')",
+        f"SELECT has_schema_privilege(current_user, '{schema}', 'create')",
+        # Check if we can see the tables
+        f"""
+        SELECT table_name, table_schema 
+        FROM information_schema.tables 
+        WHERE table_schema = '{schema}'
+        """,
+    ]
+
+    for query in queries:
+        result = conn.execute(sa.text(query))
+        print(f"\nQuery: {query}\nResult: {result.fetchall()}")
     # Add new indexes
     op.create_index(
         "idx_users_app_lookup", "users", ["app_id", "public_id"], schema=schema
