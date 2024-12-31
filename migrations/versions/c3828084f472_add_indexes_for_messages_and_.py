@@ -22,6 +22,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     schema = getenv("DATABASE_SCHEMA", "public")
+
     # Add new indexes
     op.create_index(
         "idx_users_app_lookup", "users", ["app_id", "public_id"], schema=schema
