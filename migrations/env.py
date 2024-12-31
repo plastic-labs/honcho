@@ -8,13 +8,13 @@ from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool, text
 
+# Import your models
+from src.db import Base
+
 # Set up logging more verbosely
 logging.basicConfig()
 logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO)
 logging.getLogger("alembic").setLevel(logging.DEBUG)
-
-# Import your models
-from src.db import Base
 
 # Add project root to Python path
 sys.path.append(str(Path(__file__).parents[1]))
@@ -43,13 +43,6 @@ target_metadata = Base.metadata
 # ... etc.
 
 
-def include_name(name, type_, parent_names):
-    if type_ == "schema":
-        return name == target_metadata.schema
-    else:
-        return True
-
-
 def get_url() -> str:
     url = os.getenv("CONNECTION_URI")
     if url is None:
@@ -71,20 +64,15 @@ def run_migrations_offline() -> None:
     """
     url = get_url()
 
-    print(target_metadata.schema)
-
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         version_table_schema=target_metadata.schema,  # This sets schema for version table
-        include_schemas=True,
-        include_name=include_name,
     )
 
     with context.begin_transaction():
-        context.execute(f"create schema if not exists {target_metadata.schema};")
         context.execute(f"SET search_path TO {target_metadata.schema}")
         context.run_migrations()
 
@@ -96,14 +84,13 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+
     configuration = config.get_section(config.config_ini_section)
     if configuration is None:
         configuration = {}
 
     url = get_url()
     configuration["sqlalchemy.url"] = url
-
-    print(f"Debug - Target metadata schema: {target_metadata.schema}")
 
     connectable = engine_from_config(
         configuration,
@@ -113,26 +100,25 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        # Create schema and commit it outside the main migration transaction
+        connection.execute(
+            text(f"CREATE SCHEMA IF NOT EXISTS {target_metadata.schema};")
+        )
+        connection.execute(
+            text(f"GRANT ALL ON SCHEMA {target_metadata.schema} TO current_user")
+        )
         # Set and verify search_path
         connection.execute(text(f"SET search_path TO {target_metadata.schema}, public"))
-
-        # make use of non-supported SQLAlchemy attribute to ensure
-        # the dialect reflects tables in terms of the current tenant name
-        # connection.dialect.default_schema_name = target_metadata.schema
+        connection.commit()
 
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
             version_table_schema=target_metadata.schema,
-            include_schemas=True,
-            include_name=include_name,
-            transaction_per_migration=True,
-            transactional_ddl=True,
         )
 
         with context.begin_transaction():
             context.run_migrations()
-            connection.commit()
 
 
 if context.is_offline_mode():
