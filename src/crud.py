@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from typing import Optional
+from functools import wraps
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -10,10 +11,40 @@ from sqlalchemy.sql import func
 from sqlalchemy.types import BigInteger
 
 from . import models, schemas
+from .cache import SessionCache
 
 load_dotenv(override=True)
 
 openai_client = OpenAI()
+
+# Initialize cache
+cache = SessionCache()
+
+# Add cache decorator for session operations
+def cache_session(func):
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        # Extract common parameters
+        db = kwargs.get('db')
+        app_id = kwargs.get('app_id')
+        user_id = kwargs.get('user_id')
+        session_id = kwargs.get('session_id')
+
+        if not all([db, app_id, user_id, session_id]):
+            return await func(*args, **kwargs)
+
+        # Try to get from cache first
+        cached_data = await cache.get_session(app_id, user_id, session_id)
+        if cached_data:
+            return cached_data
+
+        # If not in cache, execute function and cache result
+        result = await func(*args, **kwargs)
+        if result:
+            await cache.set_session(app_id, user_id, session_id, result)
+        return result
+
+    return wrapper
 
 ########################################################
 # app methods
@@ -164,6 +195,7 @@ async def update_user(
 ########################################################
 
 
+@cache_session
 async def get_session(
     db: AsyncSession,
     app_id: str,
@@ -237,18 +269,18 @@ async def update_session(
     user_id: str,
     session_id: str,
 ) -> bool:
-    honcho_session = await get_session(
-        db, app_id=app_id, session_id=session_id, user_id=user_id
-    )
-    if honcho_session is None:
+    result = await get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    if result is None:
         raise ValueError("Session not found or does not belong to user")
-    if (
-        session.metadata is not None
-    ):  # Need to explicitly be there won't make it empty by default
-        honcho_session.h_metadata = session.metadata
+    
+    # Update session
+    if session.metadata is not None:
+        result.h_metadata = session.metadata
     await db.commit()
-    # await db.refresh(honcho_session)
-    return honcho_session
+    
+    # Invalidate cache
+    await cache.invalidate_session(app_id, user_id, session_id)
+    return result
 
 
 async def delete_session(
@@ -395,6 +427,7 @@ async def clone_session(
 ########################################################
 
 
+@cache_session
 async def create_message(
     db: AsyncSession,
     message: schemas.MessageCreate,
@@ -402,10 +435,8 @@ async def create_message(
     user_id: str,
     session_id: str,
 ) -> models.Message:
-    honcho_session = await get_session(
-        db, app_id=app_id, session_id=session_id, user_id=user_id
-    )
-    if honcho_session is None:
+    result = await get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    if result is None:
         raise ValueError("Session not found or does not belong to user")
 
     honcho_message = models.Message(
@@ -416,8 +447,9 @@ async def create_message(
     )
     db.add(honcho_message)
     await db.commit()
-    # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
-    # await db.refresh(honcho_message)
+
+    # Invalidate cache
+    await cache.invalidate_session(app_id, user_id, session_id)
     return honcho_message
 
 
@@ -455,6 +487,7 @@ async def create_messages(
     return list(result.scalars().all())
 
 
+@cache_session
 async def get_messages(
     db: AsyncSession,
     app_id: str,
@@ -463,6 +496,12 @@ async def get_messages(
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
+    # Try cache first if no filter is applied
+    if not filter:
+        cached_messages = await cache.get_messages(app_id, user_id, session_id)
+        if cached_messages:
+            return cached_messages
+
     stmt = (
         select(models.Message)
         .join(models.Session, models.Session.public_id == models.Message.session_id)
@@ -481,7 +520,14 @@ async def get_messages(
     else:
         stmt = stmt.order_by(models.Message.id)
 
-    return stmt
+    result = await db.execute(stmt)
+    messages = result.scalars().all()
+
+    # Cache messages if no filter was applied
+    if not filter:
+        await cache.set_messages(app_id, user_id, session_id, messages)
+
+    return messages
 
 
 async def get_message(
