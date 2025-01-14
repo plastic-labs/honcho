@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 
 - Dialectic Streaming Endpoint properly sends text in `StreamingResponse`
+- Deriver Queue handles graceful shutdown
 
 ## [0.0.14] — 2024-11-14
 
