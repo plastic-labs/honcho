@@ -40,10 +40,8 @@ class Dialectic:
         self.chat_history = chat_history
         self.client = Anthropic(
             api_key=os.getenv("ANTHROPIC_API_KEY"),
-            # base_url="https://gateway.usevelvet.com/api/anthropic/",
-            # default_headers={"velvet-auth": os.getenv("VELVET_API_KEY", "default")},
         )
-        self.system_prompt = """I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) their current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        self.system_prompt = """I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) a summary oftheir current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
         self.model = "claude-3-5-sonnet-20240620"
 
     @ai_track("Dialectic Call")
@@ -108,17 +106,35 @@ class Dialectic:
 
 
 async def chat_history(app_id: str, user_id: str, session_id: str) -> str:
+    client = Anthropic(
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+    )
     async with SessionLocal() as db:
         stmt = await crud.get_messages(db, app_id, user_id, session_id)
         results = await db.execute(stmt)
-        messages = results.scalars()
+        messages = results.scalars().all()  # Convert to list to check if empty
+        
+        if not messages:  # Check if messages list is empty
+            return "None"
+            
         history = ""
         for message in messages:
             if message.is_user:
                 history += f"user:{message.content}\n"
             else:
                 history += f"assistant:{message.content}\n"
-        return history
+
+        messages = [
+            {"role": "user", "content": f"<conversation>{history}</conversation>"},
+        ]
+
+        return client.messages.create(
+            max_tokens=200,
+            model="claude-3-5-sonnet-20240620",
+            system="You are a helpful assistant that generates a brief summary of the conversation. Be sure to conclude your summary with where the conversation is at.",
+            messages=messages,
+        ).content
+
 
 
 async def get_latest_user_representation(
