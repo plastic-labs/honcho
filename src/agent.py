@@ -41,7 +41,7 @@ class Dialectic:
         self.client = Anthropic(
             api_key=os.getenv("ANTHROPIC_API_KEY"),
         )
-        self.system_prompt = """I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) a summary oftheir current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        self.system_prompt = """I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) a summary of their current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
         self.model = "claude-3-5-sonnet-20240620"
 
     @ai_track("Dialectic Call")
@@ -50,11 +50,7 @@ class Dialectic:
         with sentry_sdk.start_transaction(
             op="dialectic-inference", name="Dialectic API Response"
         ):
-            prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history>
-            """
+            prompt = f"""<query>{self.agent_input}</query>\n<context>{self.user_representation}</context>\n<conversation_history>{self.chat_history}</conversation_history>"""
 
             messages = [
                 {
@@ -65,6 +61,9 @@ class Dialectic:
 
             langfuse_context.update_current_observation(
                 input=messages, model=self.model
+            )
+            langfuse_context.update_current_trace(
+                tags=["dialectic"]
             )
 
             response = self.client.messages.create(
@@ -73,7 +72,7 @@ class Dialectic:
                 model=self.model,
                 max_tokens=150,
             )
-            return response.content
+            return response.content[0].text
 
     @ai_track("Dialectic Call")
     @observe(as_type="generation")
@@ -81,11 +80,7 @@ class Dialectic:
         with sentry_sdk.start_transaction(
             op="dialectic-inference", name="Dialectic API Response"
         ):
-            prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history> 
-            """
+            prompt = f"""<query>{self.agent_input}</query>\n<context>{self.user_representation}</context>\n<conversation_history>{self.chat_history}</conversation_history>"""
             messages = [
                 {
                     "role": "user",
@@ -95,6 +90,9 @@ class Dialectic:
 
             langfuse_context.update_current_observation(
                 input=messages, model=self.model
+            )
+            langfuse_context.update_current_trace(
+                tags=["dialectic"]
             )
 
             return self.client.messages.stream(
@@ -105,10 +103,12 @@ class Dialectic:
             )
 
 
+@observe(as_type="generation")
 async def chat_history(app_id: str, user_id: str, session_id: str) -> str:
     client = Anthropic(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
     )
+    # TODO: ensure the conversation history is not too long
     async with SessionLocal() as db:
         stmt = await crud.get_messages(db, app_id, user_id, session_id)
         results = await db.execute(stmt)
@@ -128,13 +128,20 @@ async def chat_history(app_id: str, user_id: str, session_id: str) -> str:
             {"role": "user", "content": f"<conversation>{history}</conversation>"},
         ]
 
-        return client.messages.create(
+        langfuse_context.update_current_observation(
+            input=messages, model="claude-3-5-sonnet-20240620"
+        )
+        langfuse_context.update_current_trace(
+            tags=["summarize-history"]
+        )
+
+        response = client.messages.create(
             max_tokens=200,
             model="claude-3-5-sonnet-20240620",
             system="You are a helpful assistant that generates a brief summary of the conversation. Be sure to conclude your summary with where the conversation is at.",
             messages=messages,
-        ).content
-
+        )
+        return response.content[0].text
 
 
 async def get_latest_user_representation(
@@ -191,9 +198,10 @@ async def chat(
         user_id=user_id,
         release=os.getenv("SENTRY_RELEASE"),
         metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
+        tags=["dialectic-chat"]
     )
 
     if stream:
         return chain.stream()
     response = chain.call()
-    return schemas.AgentChat(content=response[0].text)
+    return schemas.AgentChat(content=response)

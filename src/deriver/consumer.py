@@ -28,12 +28,6 @@ async def add_metamessage(db, message_id, metamessage_type, content):
     db.add(metamessage)
 
 
-def parse_xml_content(text, tag):
-    pattern = f"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(1).strip() if match else ""
-
-
 async def process_item(db: AsyncSession, payload: dict):
     processing_args = [
         payload["content"],
@@ -94,11 +88,9 @@ async def process_ai_message(
         metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
     )
 
-    tom_inference_response = await tom_inference(
+    prediction = await tom_inference(
         chat_history_str, session_id=session_id
     )
-
-    prediction = parse_xml_content(tom_inference_response, "prediction")
 
     await add_metamessage(
         db,
@@ -215,11 +207,6 @@ async def process_user_message(
                 message_id,
                 "user_representation",
                 user_representation_response,
-            )
-
-            # parse the user_representation response
-            user_representation_response = parse_xml_content(
-                user_representation_response, "representation"
             )
 
             console.print(

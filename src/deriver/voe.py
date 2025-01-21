@@ -1,4 +1,4 @@
-import os
+import os, re
 
 import sentry_sdk
 from anthropic import Anthropic
@@ -12,6 +12,11 @@ anthropic = Anthropic(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
     max_retries=5,
 )
+
+def parse_xml_content(text, tag):
+    pattern = f"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    return match.group(1).strip() if match else ""
 
 
 @ai_track("Tom Inference")
@@ -71,13 +76,17 @@ async def tom_inference(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
+        langfuse_context.update_current_trace(
+            tags=["tom-inference"]
+        )
         message = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
             messages=messages,
         )
-        return message.content[0].text
+        response = parse_xml_content(message.content[0].text, "prediction")
+        return response
 
 
 @ai_track("User Representation")
@@ -142,10 +151,17 @@ async def user_representation(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
+        langfuse_context.update_current_trace(
+            tags=["user-representation"]
+        )
         message = anthropic.messages.create(
             model="claude-3-5-sonnet-20240620",
             max_tokens=1000,
             temperature=0,
             messages=messages,
         )
-        return message.content[0].text
+        # need to parse the message from within the representation XML tags
+
+
+        representation = parse_xml_content(message.content[0].text, "representation")
+        return representation
