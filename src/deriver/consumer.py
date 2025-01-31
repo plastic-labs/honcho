@@ -19,7 +19,6 @@ console = Console(markup=False)
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "single_prompt")
 
-
 # FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
     metamessage = models.Metamessage(
