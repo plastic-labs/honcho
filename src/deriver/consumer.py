@@ -9,13 +9,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
-from .voe import tom_inference, user_representation
+from .tom import get_tom_inference, get_user_representation
 
 # Turn off SQLAlchemy Echo logging
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=False)
 
+TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
+USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "single_prompt")
 
 # FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
@@ -94,8 +96,8 @@ async def process_ai_message(
         metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
     )
 
-    tom_inference_response = await tom_inference(
-        chat_history_str, session_id=session_id
+    tom_inference_response = await get_tom_inference(
+        chat_history_str, session_id, method=TOM_METHOD
     )
 
     prediction = parse_xml_content(tom_inference_response, "prediction")
@@ -202,11 +204,12 @@ async def process_user_message(
             )
 
             # Call user_representation
-            user_representation_response = await user_representation(
+            user_representation_response = await get_user_representation(
                 chat_history=f"{ai_message.content}\nhuman: {content}",
                 session_id=session_id,
                 user_representation=existing_representation_content,
                 tom_inference=tom_inference_metamessage.content,
+                method=USER_REPRESENTATION_METHOD,
             )
 
             # Store the user_representation response as a metamessage
