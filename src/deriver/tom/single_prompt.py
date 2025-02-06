@@ -119,11 +119,14 @@ CURRENT STATE:
 - Temporary Conditions: Immediate circumstances
 - Present Mood/Activity: What user is doing right now
 
-PERSISTENT INFORMATION:
+PERSISTENT INFORMATION: Follow the format below for each type of information, even if it's not present in the existing user representation.
 - Communication Style: Observed patterns in language use
-- Verified Facts: Explicitly stated information
+    - STYLE: [pattern] (SOURCE: [exact message])
+- Direct Statements: Explicitly stated information
+    - STATEMENT: [fact] (SOURCE: [exact message])
 - Consistent Patterns: Behaviors seen multiple times
-- Note: keep as much persistent information as possible from the existing user representation - only remove if new information contradicts it. Append new information as needed
+    - PATTERN: [pattern] (SOURCE: [exact message])
+- Note: Copy over Persistent Information as-is from the existing user representation. Add new information as needed. Only remove content from this section if new information contradicts it.
 
 TENTATIVE PATTERNS:
 - Possible Traits: Mark confidence (Low/Medium/High)
