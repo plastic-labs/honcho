@@ -212,6 +212,11 @@ async def process_user_message(
                 method=USER_REPRESENTATION_METHOD,
             )
 
+            # parse the user_representation response
+            user_representation_response = parse_xml_content(
+                user_representation_response, "representation"
+            )
+
             # Store the user_representation response as a metamessage
             await add_metamessage(
                 db,
@@ -220,10 +225,6 @@ async def process_user_message(
                 user_representation_response,
             )
 
-            # parse the user_representation response
-            user_representation_response = parse_xml_content(
-                user_representation_response, "representation"
-            )
 
             console.print(
                 f"User Representation:\n{user_representation_response}",
