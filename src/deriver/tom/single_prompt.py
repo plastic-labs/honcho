@@ -33,6 +33,7 @@ REQUIREMENTS:
 4. Do not make assumptions about demographics unless explicitly stated
 5. Focus on current mental state and immediate context
 6. Consider your own knowledge gaps and violations of expectations (what would surprise you)
+7. Always wrap your prediction in <prediction> tags.
 
 OUTPUT FORMAT:
 <prediction>
@@ -58,8 +59,6 @@ EXPECTATION VIOLATIONS:
 - Format: "POTENTIAL SURPRISE: [possible content] [reason] [confidence level]"
 - Include 3-5 possible surprises
 </prediction>
-
-Important: always wrap your prediction in <prediction> tags.
 """
 
         messages = [
@@ -87,7 +86,8 @@ Important: always wrap your prediction in <prediction> tags.
             system=system_prompt,
         )
         print(f'tom_inference in single_prompt.py: {message.content[0].text=}')
-        return message.content[0].text
+        message = message.content[0].text
+        return message
 
 
 @ai_track("User Representation")
@@ -115,7 +115,7 @@ REQUIREMENTS:
 4. Maintain areas of uncertainty explicitly
 5. Update representation incrementally
 
-OUTPUT FORMAT: # Contains comments to help you understand the format. Do not output them.
+OUTPUT FORMAT:
 <representation>
 CURRENT STATE:
 - ACTIVE CONTEXT: [detail on situation/activity/location] (SOURCE: [exact message]) # Current situation/activity/location
@@ -173,4 +173,5 @@ UPDATES:
             messages=messages,
             system=system_prompt,
         )
-        return message.content[0].text
+        message = message.content[0].text
+        return message
