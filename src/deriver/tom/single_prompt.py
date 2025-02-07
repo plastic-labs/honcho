@@ -125,7 +125,7 @@ REQUIREMENTS:
 4. Maintain areas of uncertainty explicitly
 5. Update representation incrementally
 
-OUTPUT FORMAT:
+OUTPUT FORMAT: # Contains comments to help you understand the format. Do not output them.
 <representation>
 CURRENT STATE:
 - ACTIVE CONTEXT: [detail on situation/activity/location] (SOURCE: [exact message]) # Current situation/activity/location
