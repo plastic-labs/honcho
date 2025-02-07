@@ -104,6 +104,9 @@ async def get_user_representation_single_prompt(
 
 Your job is to update the existing user representation (if provided) with the new information from the conversation history and theory of mind analysis.
 
+Copy over information as-is from the existing user representation. Add new information as needed. Only remove content from this section if new information contradicts it. This is especially important for Persistent Information.
+
+Always use the format below. If the existing user representation is in another format, convert it to the format below.
 
 REQUIREMENTS:
 1. Distinguish between temporary states and persistent patterns
@@ -112,26 +115,21 @@ REQUIREMENTS:
 4. Maintain areas of uncertainty explicitly
 5. Update representation incrementally
 
-OUTPUT FORMAT:
+OUTPUT FORMAT: # Contains comments to help you understand the format. Do not output them.
 <representation>
 CURRENT STATE:
-- Active Context: Current situation/activity
-- Temporary Conditions: Immediate circumstances
-- Present Mood/Activity: What user is doing right now
+- ACTIVE CONTEXT: [detail on situation/activity/location] (SOURCE: [exact message]) # Current situation/activity/location
+- TEMPORARY CONDITIONS: [detail on immediate circumstances] (SOURCE: [exact message]) # Immediate circumstances
+- PRESENT MOOD/ACTIVITY: [what user is doing right now] (SOURCE: [exact message]) # What user is doing right now
 
-PERSISTENT INFORMATION: Follow the format below for each type of information, even if it's not present in the existing user representation.
-- Communication Style: Observed patterns in language use
-    - STYLE: [pattern] (SOURCE: [exact message])
-- Direct Statements: Explicitly stated information
-    - STATEMENT: [fact] (SOURCE: [exact message])
-- Consistent Patterns: Behaviors seen multiple times
-    - PATTERN: [pattern] (SOURCE: [exact message])
-- Note: Copy over Persistent Information as-is from the existing user representation. Add new information as needed. Only remove content from this section if new information contradicts it.
+PERSISTENT INFORMATION:
+- STYLE: [pattern] (SOURCE: [exact message]) # Communication style: observed patterns in language use
+- STATEMENT: [fact] (SOURCE: [exact message]) # Explicitly stated information
 
 TENTATIVE PATTERNS:
-- Possible Traits: Mark confidence (Low/Medium/High)
-- Potential Interests: Need more evidence
-- Speculative Elements: Clearly marked as unconfirmed
+- LIKELY PATTERN: [pattern] (SOURCE: [exact message]) # Patterns that are almost certain to be true
+- POTENTIAL PATTERN: [pattern] (SOURCE: [exact message]) # Patterns that are possible but less likely
+- SPECULATIVE PATTERN: [pattern] (SOURCE: [exact message]) # Patterns that are highly uncertain but remotely possible
 
 KNOWLEDGE GAPS:
 - List key missing information
