@@ -13,7 +13,7 @@ anthropic = Anthropic(
     max_retries=5,
 )
 
-ANTHROPIC_MODEL = "claude-3-5-sonnet-20240620"
+ANTHROPIC_MODEL = "claude-3-5-haiku"
 
 
 @ai_track("Tom Inference")
@@ -104,9 +104,15 @@ async def get_user_representation_single_prompt(
 
 Your job is to update the existing user representation (if provided) with the new information from the conversation history and theory of mind analysis.
 
-Copy over information as-is from the existing user representation. Add new information as needed. Only remove content from this section if new information contradicts it. This is especially important for Persistent Information.
+Copy over information as-is from the existing user representation. Add new information as needed. Only remove content from this section if new information contradicts it. This is especially important for Persistent Information and Tentative Patterns.
+
+If the existing user representation contains sources, copy them over to the new user representation.
+
+Sometimes, especially at the beginning of a conversation, the user representation might contain information from previous conversations. In this case, preserve all previous information unless new information contradicts it, especially in regards to traits, interests, style, and other information about the user that is likely to be useful across conversations.
 
 Always use the format below. If the existing user representation is in another format, convert it to the format below.
+
+Always wrap your output in <representation> tags.
 
 REQUIREMENTS:
 1. Distinguish between temporary states and persistent patterns
@@ -151,6 +157,8 @@ UPDATES:
         messages = [
         ]
 
+        print(f"in single_prompt.py: chat_history: {chat_history}")
+        print(f"in single_prompt.py: user_representation: {user_representation}")
         # Build the context message
         context_str = f"CONVERSATION:\n{chat_history}\n\n"
         if tom_inference != "None":
