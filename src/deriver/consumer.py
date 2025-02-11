@@ -36,6 +36,29 @@ def parse_xml_content(text, tag):
     return match.group(1).strip() if match else ""
 
 
+async def get_chat_history(db, session_id, message_id) -> str:
+    subquery = (
+        select(models.Message.id)
+        .where(models.Message.public_id == message_id)
+        .scalar_subquery()
+    )
+    messages_stmt = (
+        select(models.Message)
+        .where(models.Message.session_id == session_id)
+        .order_by(models.Message.id.desc())
+        .where(models.Message.id < subquery)
+        .limit(10)
+    )
+
+    result = await db.execute(messages_stmt)
+    messages = result.scalars().all()[::-1]
+
+    chat_history_str = "\n".join(
+        [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
+    )
+    return chat_history_str
+
+
 async def process_item(db: AsyncSession, payload: dict):
     processing_args = [
         payload["content"],
@@ -67,53 +90,6 @@ async def process_ai_message(
     """
     console.print(f"Processing AI message: {content}", style="bright_magenta")
 
-    subquery = (
-        select(models.Message.id)
-        .where(models.Message.public_id == message_id)
-        .scalar_subquery()
-    )
-    messages_stmt = (
-        select(models.Message)
-        .where(models.Message.session_id == session_id)
-        .order_by(models.Message.id.desc())
-        .where(models.Message.id < subquery)
-        .limit(10)
-    )
-
-    result = await db.execute(messages_stmt)
-    messages = result.scalars().all()[::-1]
-
-    chat_history_str = "\n".join(
-        [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
-    )
-    # append current message to chat history
-    chat_history_str = f"{chat_history_str}\nai: {content}"
-
-    langfuse_context.update_current_trace(
-        session_id=session_id,
-        user_id=user_id,
-        release=os.getenv("SENTRY_RELEASE"),
-        metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
-    )
-
-    tom_inference_response = await get_tom_inference(
-        chat_history_str, session_id, method=TOM_METHOD
-    )
-
-    prediction = parse_xml_content(tom_inference_response, "prediction")
-
-    await add_metamessage(
-        db,
-        message_id,
-        "tom_inference",
-        prediction,
-    )
-
-    await db.commit()
-
-    console.print("Tom Inference:", style="blue")
-    content_lines = str(prediction)
-    console.print(content_lines, style="blue")
 
 
 @sentry_sdk.trace
@@ -127,114 +103,90 @@ async def process_user_message(
     db: AsyncSession,
 ):
     """
-    Process a user message. If there are revised user predictions to run VoE against, run it. Otherwise pass.
+    Proces a user message by:
+    - Getting TOM inference
+    - Getting user representation
     """
     console.print(f"Processing User Message: {content}", style="orange1")
-    subquery = (
-        select(models.Message.id)
-        .where(models.Message.public_id == message_id)
-        .scalar_subquery()
-    )
 
-    messages_stmt = (
-        select(models.Message)
-        .where(models.Message.session_id == session_id)
-        .where(models.Message.is_user == False)
-        .order_by(models.Message.id.desc())
-        .where(models.Message.id < subquery)
+    # Get chat history and append current message
+    chat_history_str = await get_chat_history(db, session_id, message_id)
+    chat_history_str = f"{chat_history_str}\nhuman: {content}"
+
+    # Get TOM inference, parse and save it
+    tom_inference_response = await get_tom_inference(
+        chat_history_str, session_id, method=TOM_METHOD
+    )
+    tom_inference = parse_xml_content(tom_inference_response, "prediction")
+    await add_metamessage(
+        db,
+        message_id,
+        "tom_inference",
+        tom_inference,
+    )
+    await db.commit()
+
+
+    # Fetch the latest user representation
+    user_representation_stmt = (
+        select(models.Metamessage)
+        .join(
+            models.Message,
+            models.Message.public_id == models.Metamessage.message_id,
+        )
+        .join(
+            models.Session,
+            models.Message.session_id == models.Session.public_id,
+        )
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
+        .where(models.Metamessage.metamessage_type == "user_representation")
+        .order_by(models.Metamessage.id.desc())  # get the most recent
         .limit(1)
     )
 
-    response = await db.execute(messages_stmt)
-    ai_message = response.scalar_one_or_none()
 
-    if ai_message and ai_message.content:
-        console.print(f"AI Message: {ai_message.content}", style="bright_magenta")
+    response = await db.execute(user_representation_stmt)
+    existing_representation = response.scalar_one_or_none()
 
-        # Fetch the tom_inference metamessage
-        tom_inference_stmt = (
-            select(models.Metamessage)
-            .where(models.Metamessage.message_id == ai_message.public_id)
-            .where(models.Metamessage.metamessage_type == "tom_inference")
-            .order_by(
-                models.Metamessage.id.asc()
-            )  # Get the earliest tom inference on this message
-            .limit(1)
-        )
-        response = await db.execute(tom_inference_stmt)
-        tom_inference_metamessage = response.scalar_one_or_none()
+    existing_representation_content = (
+        existing_representation.content if existing_representation else "None"
+    )
+    print(f"Existing Representation: {existing_representation_content}")
 
-        if tom_inference_metamessage and tom_inference_metamessage.content:
-            console.print(
-                f"Tom Inference: {tom_inference_metamessage.content}", style="blue"
-            )
+    langfuse_context.update_current_trace(
+        session_id=session_id,
+        user_id=user_id,
+        release=os.getenv("SENTRY_RELEASE"),
+        metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
+    )
 
-            # Fetch the latest user representation
-            user_representation_stmt = (
-                select(models.Metamessage)
-                .join(
-                    models.Message,
-                    models.Message.public_id == models.Metamessage.message_id,
-                )
-                .join(
-                    models.Session,
-                    models.Message.session_id == models.Session.public_id,
-                )
-                .join(models.User, models.User.public_id == models.Session.user_id)
-                .join(models.App, models.App.public_id == models.User.app_id)
-                .where(models.App.public_id == app_id)
-                .where(models.User.public_id == user_id)
-                .where(models.Metamessage.metamessage_type == "user_representation")
-                .order_by(models.Metamessage.id.desc())  # get the most recent
-                .limit(1)
-            )
+    # Call user_representation
+    user_representation_response = await get_user_representation(
+        chat_history=chat_history_str,
+        session_id=session_id,
+        user_representation=existing_representation_content,
+        tom_inference=tom_inference,
+        method=USER_REPRESENTATION_METHOD,
+    )
 
-            response = await db.execute(user_representation_stmt)
-            existing_representation = response.scalar_one_or_none()
+    # parse the user_representation response
+    user_representation_response = parse_xml_content(
+        user_representation_response, "representation"
+    )
 
-            existing_representation_content = (
-                existing_representation.content if existing_representation else "None"
-            )
+    # Store the user_representation response as a metamessage
+    await add_metamessage(
+        db,
+        message_id,
+        "user_representation",
+        user_representation_response,
+    )
+    await db.commit()
 
-            langfuse_context.update_current_trace(
-                session_id=session_id,
-                user_id=user_id,
-                release=os.getenv("SENTRY_RELEASE"),
-                metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
-            )
-
-            # Call user_representation
-            user_representation_response = await get_user_representation(
-                chat_history=f"{ai_message.content}\nhuman: {content}",
-                session_id=session_id,
-                user_representation=existing_representation_content,
-                tom_inference=tom_inference_metamessage.content,
-                method=USER_REPRESENTATION_METHOD,
-            )
-
-            # parse the user_representation response
-            user_representation_response = parse_xml_content(
-                user_representation_response, "representation"
-            )
-
-            # Store the user_representation response as a metamessage
-            await add_metamessage(
-                db,
-                message_id,
-                "user_representation",
-                user_representation_response,
-            )
-
-
-            console.print(
-                f"User Representation:\n{user_representation_response}",
-                style="bright_green",
-            )
-
-        else:
-            raise Exception(
-                f"\033[91mTom Inference NOT READY YET on message {message_id}"
-            )
-    else:
-        console.print("No AI message before this user message", style="red")
-        return
+    console.print(
+        f"User Representation:\n{user_representation_response}",
+        style="bright_green",
+    )
