@@ -157,12 +157,6 @@ UPDATES:
 
         messages = []
 
-<<<<<<< HEAD
-=======
-        messages = [
-        ]
-
->>>>>>> 726a9fe (Use Claude 3.5 Haiku and refine prompt)
         print(f"in single_prompt.py: chat_history: {chat_history}")
         print(f"in single_prompt.py: user_representation: {user_representation}")
         # Build the context message
