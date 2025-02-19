@@ -92,8 +92,3 @@ app.include_router(metamessages.router, prefix="/v1")
 app.include_router(metamessages.router_user_level, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
-
-# healthcheck respond with 200 OK
-@app.get("/health")
-async def healthcheck():
-    return "OK"

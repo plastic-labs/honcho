@@ -19,6 +19,7 @@ console = Console(markup=False)
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "single_prompt")
 
+
 # FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
     metamessage = models.Metamessage(
@@ -91,7 +92,6 @@ async def process_ai_message(
     console.print(f"Processing AI message: {content}", style="bright_magenta")
 
 
-
 @sentry_sdk.trace
 @observe()
 async def process_user_message(
@@ -103,7 +103,7 @@ async def process_user_message(
     db: AsyncSession,
 ):
     """
-    Proces a user message by:
+    Process a user message by:
     - Getting TOM inference
     - Getting user representation
     """
@@ -126,7 +126,6 @@ async def process_user_message(
     )
     await db.commit()
 
-
     # Fetch the latest user representation
     user_representation_stmt = (
         select(models.Metamessage)
@@ -146,7 +145,6 @@ async def process_user_message(
         .order_by(models.Metamessage.id.desc())  # get the most recent
         .limit(1)
     )
-
 
     response = await db.execute(user_representation_stmt)
     existing_representation = response.scalar_one_or_none()
