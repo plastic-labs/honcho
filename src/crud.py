@@ -890,6 +890,7 @@ async def create_document(
     app_id: str,
     user_id: str,
     collection_id: str,
+    duplicate_threshold: Optional[float] = None
 ) -> models.Document:
     """Embed a message as a vector and create a document"""
     collection = await get_collection_by_id(
@@ -903,6 +904,21 @@ async def create_document(
     )
 
     embedding = response.data[0].embedding
+
+    if duplicate_threshold is not None:
+        # Check if there is a duplicate within the threshold
+        stmt = (
+            select(models.Document)
+            .join(models.User, models.User.public_id == models.Document.user_id)
+            .where(models.User.app_id == app_id)
+            .where(models.User.public_id == user_id)
+            .where(models.Document.collection_id == collection_id)
+            .where(models.Document.embedding.cosine_distance(embedding) < duplicate_threshold)
+        )
+        result = await db.execute(stmt)
+        duplicate = result.scalar_one_or_none()
+        if duplicate is not None:
+            return duplicate
 
     honcho_document = models.Document(
         collection_id=collection_id,

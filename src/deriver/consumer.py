@@ -10,14 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
 from .tom import get_tom_inference, get_user_representation
+from .tom.long_term import extract_facts_long_term
+from .tom.embeddings import CollectionEmbeddingStore
 
-# Turn off SQLAlchemy Echo logging
+
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=False)
 
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
-USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "single_prompt")
+USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
 
 # FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
@@ -126,6 +128,13 @@ async def process_user_message(
     )
     await db.commit()
 
+    # Extract facts from chat history
+    facts = await extract_facts_long_term(chat_history_str)
+    print(f"Extracted Facts: {facts}")
+    
+    # Save the facts to the collection
+    embedding_store = CollectionEmbeddingStore(db, app_id, user_id, "honcho")
+    await embedding_store.save_facts(facts)
 
     # Fetch the latest user representation
     user_representation_stmt = (
@@ -164,12 +173,15 @@ async def process_user_message(
     )
 
     # Call user_representation
+    embedding_store = CollectionEmbeddingStore(db, app_id, user_id, "honcho")
     user_representation_response = await get_user_representation(
         chat_history=chat_history_str,
         session_id=session_id,
         user_representation=existing_representation_content,
         tom_inference=tom_inference,
         method=USER_REPRESENTATION_METHOD,
+        this_turn_facts=facts,
+        embedding_store=embedding_store,
     )
 
     # parse the user_representation response
