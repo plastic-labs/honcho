@@ -8,7 +8,7 @@ from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import models
+from .. import models, crud
 from .tom import get_tom_inference, get_user_representation
 from .tom.long_term import extract_facts_long_term
 from .tom.embeddings import CollectionEmbeddingStore
@@ -133,7 +133,11 @@ async def process_user_message(
     print(f"Extracted Facts: {facts}")
     
     # Save the facts to the collection
-    embedding_store = CollectionEmbeddingStore(db, app_id, user_id, "honcho")
+    collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
+    embedding_store = CollectionEmbeddingStore(db=db,
+                                               app_id=app_id,
+                                               user_id=user_id,
+                                               collection_id=collection.public_id) # type: ignore
     await embedding_store.save_facts(facts)
 
     # Fetch the latest user representation

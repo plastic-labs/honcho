@@ -152,34 +152,48 @@ class CollectionEmbeddingStore:
         self.app_id = app_id
         self.user_id = user_id
         self.collection_id = collection_id
-        print(f"Initialized CollectionEmbeddingStore with collection_id: {collection_id}")
 
     async def save_facts(self, facts: List[str], replace_duplicates: bool = True, similarity_threshold: float = 0.85) -> None:
-        print(f"Attempting to save {len(facts)} facts")
+        """Save facts to the collection.
+        
+        Args:
+            facts: List of facts to save
+            replace_duplicates: If True, replace old duplicates with new facts. If False, discard new duplicates
+            similarity_threshold: Facts with similarity above this threshold are considered duplicates
+        """
         for fact in facts:
-            print(f"Saving fact: {fact[:50]}...")
+            # Create document with duplicate checking
             try:
                 document = await crud.create_document(
                     self.db,
                     document=schemas.DocumentCreate(content=fact, metadata={}),
                     app_id=self.app_id,
                     user_id=self.user_id,
-                    collection_id=str(self.collection_id),
-                    duplicate_threshold=1-similarity_threshold
+                    collection_id=self.collection_id,
+                    duplicate_threshold=1-similarity_threshold  # Convert similarity to distance
                 )
-                print(f"Successfully saved document with id: {document.public_id}")
             except Exception as e:
-                print(f"Error saving document: {e}")
+                print(f"Error creating document: {e}")
+                continue
 
     async def get_relevant_facts(self, query: str, top_k: int = 5, similarity_threshold: float = 0.3) -> List[str]:
-        print(f"Querying for facts with query: {query[:50]}...")
+        """Retrieve the most relevant facts for a given query.
+        
+        Args:
+            query: The query text to find relevant facts for
+            top_k: Maximum number of facts to return
+            similarity_threshold: Minimum similarity score for a fact to be considered relevant
+            
+        Returns:
+            List of facts sorted by relevance
+        """
         documents = await crud.query_documents(
             self.db,
             app_id=self.app_id,
             user_id=self.user_id,
-            collection_id=str(self.collection_id),
+            collection_id=self.collection_id,
             query=query,
             top_k=top_k
         )
-        print(f"Found {len(documents)} documents")
+        
         return [doc.content for doc in documents] 

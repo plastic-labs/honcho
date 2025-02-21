@@ -906,18 +906,18 @@ async def create_document(
     embedding = response.data[0].embedding
 
     if duplicate_threshold is not None:
-        # Check if there is a duplicate within the threshold
+        # Check if there are duplicates within the threshold
         stmt = (
             select(models.Document)
-            .join(models.User, models.User.public_id == models.Document.user_id)
-            .where(models.User.app_id == app_id)
-            .where(models.User.public_id == user_id)
             .where(models.Document.collection_id == collection_id)
             .where(models.Document.embedding.cosine_distance(embedding) < duplicate_threshold)
+            .order_by(models.Document.embedding.cosine_distance(embedding))
+            .limit(1)
         )
         result = await db.execute(stmt)
-        duplicate = result.scalar_one_or_none()
+        duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
         if duplicate is not None:
+            print(f"Duplicate found: {duplicate.content}. Ignoring new document.")
             return duplicate
 
     honcho_document = models.Document(
