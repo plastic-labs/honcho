@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import signal
 from datetime import datetime, timedelta
@@ -14,6 +15,8 @@ from sqlalchemy.sql import func
 from .. import models
 from ..db import SessionLocal
 from .consumer import process_item
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -68,24 +71,30 @@ class QueueManager:
 
     async def shutdown(self, sig: signal.Signals):
         """Handle graceful shutdown"""
-        print(f"Received exit signal {sig.name}...")
+        logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
 
         if self.active_tasks:
-            print(f"Waiting for {len(self.active_tasks)} active tasks to complete...")
+            logger.info(f"Waiting for {len(self.active_tasks)} active tasks to complete...")
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
 
     async def cleanup(self):
         """Clean up owned sessions"""
         if self.owned_sessions:
-            print(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
-            async with SessionLocal() as db:
-                await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.session_id.in_(self.owned_sessions)
+            logger.info(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
+            try:
+                async with SessionLocal() as db:
+                    await db.execute(
+                        delete(models.ActiveQueueSession).where(
+                            models.ActiveQueueSession.session_id.in_(self.owned_sessions)
+                        )
                     )
-                )
-                await db.commit()
+                    await db.commit()
+                    logger.info("Cleanup completed successfully")
+            except Exception as e:
+                logger.error(f"Error during cleanup: {str(e)}")
+                if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                    sentry_sdk.capture_exception(e)
 
     ##########################
     # Polling and Scheduling #
@@ -161,12 +170,13 @@ class QueueManager:
                             self.queue_empty_flag.set()
                             await asyncio.sleep(1)
                     except Exception as e:
-                        print(f"Error in polling loop: {e}")
-                        sentry_sdk.capture_exception(e)
+                        logger.error(f"Error in polling loop: {str(e)}", exc_info=True)
+                        if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                            sentry_sdk.capture_exception(e)
                         await db.rollback()
                         await asyncio.sleep(1)
         finally:
-            print("Polling loop stopped")
+            logger.info("Polling loop stopped")
 
     ######################
     # Queue Worker Logic #
@@ -183,14 +193,18 @@ class QueueManager:
                         if not message:
                             break
                         try:
+                            logger.info(f"Processing message {message.id} from session {session_id}")
                             await process_item(db, payload=message.payload)
+                            logger.info(f"Successfully processed message {message.id}")
                         except Exception as e:
-                            print(e)
-                            sentry_sdk.capture_exception(e)
+                            logger.error(f"Error processing message {message.id}: {str(e)}", exc_info=True)
+                            if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                                sentry_sdk.capture_exception(e)
                         finally:
                             # Prevent malformed messages from stalling queue indefinitely
                             message.processed = True
                             await db.commit()
+                            logger.info(f"Marked message {message.id} as processed")
 
                         if self.shutdown_event.is_set():
                             break

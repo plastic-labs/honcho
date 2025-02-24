@@ -1,12 +1,16 @@
+import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
+from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages",
@@ -31,15 +35,18 @@ async def create_metamessage(
 ):
     """Adds a message to a session"""
     try:
-        return await crud.create_metamessage(
+        metamessage_obj = await crud.create_metamessage(
             db,
             metamessage=metamessage,
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
         )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        logger.info(f"Metamessage created successfully for session {session_id}")
+        return metamessage_obj
+    except ValueError as e:
+        logger.warning(f"Failed to create metamessage for session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.post("/list", response_model=Page[schemas.Metamessage])
@@ -53,21 +60,21 @@ async def get_metamessages(
 ):
     """Get all messages for a session"""
     try:
-        return await paginate(
+        metamessages_query = await crud.get_metamessages(
             db,
-            await crud.get_metamessages(
-                db,
-                app_id=app_id,
-                user_id=user_id,
-                session_id=session_id,
-                message_id=options.message_id,
-                metamessage_type=options.metamessage_type,
-                filter=options.filter,
-                reverse=reverse,
-            ),
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            message_id=options.message_id,
+            metamessage_type=options.metamessage_type,
+            filter=options.filter,
+            reverse=reverse,
         )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        
+        return await paginate(db, metamessages_query)
+    except ValueError as e:
+        logger.warning(f"Failed to get metamessages for session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router_user_level.post("/list", response_model=Page[schemas.Metamessage])
@@ -80,19 +87,19 @@ async def get_metamessages_by_user(
 ):
     """Paginate through the user metamessages for a user"""
     try:
-        return await paginate(
+        metamessages_query = await crud.get_metamessages(
             db,
-            await crud.get_metamessages(
-                db,
-                app_id=app_id,
-                user_id=user_id,
-                metamessage_type=options.metamessage_type,
-                reverse=reverse,
-                filter=options.filter,
-            ),
+            app_id=app_id,
+            user_id=user_id,
+            metamessage_type=options.metamessage_type,
+            reverse=reverse,
+            filter=options.filter,
         )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="User not found") from None
+        
+        return await paginate(db, metamessages_query)
+    except ValueError as e:
+        logger.warning(f"Failed to get metamessages for user {user_id}: {str(e)}")
+        raise ResourceNotFoundException("User not found") from e
 
 
 @router.get(
@@ -117,7 +124,8 @@ async def get_metamessage(
         metamessage_id=metamessage_id,
     )
     if honcho_metamessage is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        logger.warning(f"Metamessage {metamessage_id} not found for message {message_id}")
+        raise ResourceNotFoundException(f"Metamessage with ID {metamessage_id} not found")
     return honcho_metamessage
 
 
@@ -135,11 +143,11 @@ async def update_metamessage(
 ):
     """Update's the metadata of a metamessage"""
     if metamessage.metadata is None:
-        raise HTTPException(
-            status_code=400, detail="Metamessage metadata cannot be empty"
-        )
+        logger.warning(f"Update attempted with empty metadata for metamessage {metamessage_id}")
+        raise ValidationException("Metamessage metadata cannot be empty")
+        
     try:
-        return await crud.update_metamessage(
+        updated_metamessage = await crud.update_metamessage(
             db,
             metamessage=metamessage,
             app_id=app_id,
@@ -147,5 +155,8 @@ async def update_metamessage(
             session_id=session_id,
             metamessage_id=metamessage_id,
         )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        logger.info(f"Metamessage {metamessage_id} updated successfully")
+        return updated_metamessage
+    except ValueError as e:
+        logger.warning(f"Failed to update metamessage {metamessage_id}: {str(e)}")
+        raise ResourceNotFoundException("Session or metamessage not found") from e

@@ -1,13 +1,16 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
 import sentry_sdk
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src.exceptions import HonchoException
 from src.routers import (
     apps,
     collections,
@@ -19,6 +22,13 @@ from src.routers import (
 )
 
 from .db import engine, scaffold_db
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Sentry Setup
 
@@ -92,3 +102,24 @@ app.include_router(metamessages.router, prefix="/v1")
 app.include_router(metamessages.router_user_level, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
+
+# Global exception handlers
+@app.exception_handler(HonchoException)
+async def honcho_exception_handler(request: Request, exc: HonchoException):
+    """Handle all Honcho-specific exceptions."""
+    logger.error(f"{exc.__class__.__name__}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+    )
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions."""
+    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    if SENTRY_ENABLED:
+        sentry_sdk.capture_exception(exc)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An unexpected error occurred"},
+    )
