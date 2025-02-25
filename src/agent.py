@@ -103,7 +103,7 @@ class Dialectic:
                 model=self.model,
                 system=self.system_prompt,
                 messages=messages,
-                max_tokens=150,
+                max_tokens=300,
             )
 
 
