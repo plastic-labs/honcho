@@ -16,7 +16,7 @@ anthropic = Anthropic(
 
 @ai_track("Tom Inference")
 @observe(as_type="generation")
-async def tom_inference(
+async def get_tom_inference_conversational(
     chat_history: str, session_id: str, user_representation: str = "None"
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
@@ -82,7 +82,7 @@ async def tom_inference(
 
 @ai_track("User Representation")
 @observe(as_type="generation")
-async def user_representation(
+async def get_user_representation_conversational(
     chat_history: str,
     session_id: str,
     user_representation: str = "None",

@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [0.0.16]
+
+## Changed
+
+- Deriver to use a new cognitive architecture that only updates on user messages
+  and updates user representation to apply more confidence scores to its known
+  facts
+- Dialectic API token cutoff from 150 tokens to 300
+
+## Fixed
+
+- Self-hosting documentation and README to mention `uv` instead of `poetry`
+
 ## [0.0.15]
 
 ### Added

@@ -73,7 +73,7 @@ class Dialectic:
                 system=self.system_prompt,
                 messages=messages,
                 model=self.model,
-                max_tokens=150,
+                max_tokens=300,
             )
             return response.content
 
