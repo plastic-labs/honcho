@@ -67,7 +67,7 @@ app = FastAPI(
     summary="An API for adding personalization to AI Apps",
     description="""This API is used to store data and get insights about users for AI
     applications""",
-    version="0.0.15",
+    version="0.0.16",
     contact={
         "name": "Plastic Labs",
         "url": "https://plasticlabs.ai",
@@ -103,6 +103,7 @@ app.include_router(metamessages.router_user_level, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
 
+
 # Global exception handlers
 @app.exception_handler(HonchoException)
 async def honcho_exception_handler(request: Request, exc: HonchoException):
@@ -112,6 +113,7 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
         status_code=exc.status_code,
         content={"detail": exc.detail},
     )
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
