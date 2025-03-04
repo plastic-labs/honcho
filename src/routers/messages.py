@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional, List
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from fastapi_pagination import Page
@@ -10,7 +10,7 @@ from sqlalchemy.sql import insert
 from src import crud, schemas
 from src.db import SessionLocal
 from src.dependencies import db
-from src.exceptions import ResourceNotFoundException, ValidationException
+from src.exceptions import ResourceNotFoundException
 from src.models import QueueItem
 from src.security import auth
 
@@ -26,7 +26,7 @@ router = APIRouter(
 async def enqueue(payload: dict | list[dict]):
     """
     Add message(s) to the deriver queue for processing.
-    
+
     Args:
         payload: Single message payload or list of message payloads
     """
@@ -36,7 +36,7 @@ async def enqueue(payload: dict | list[dict]):
                 if not payload:  # Empty list check
                     logger.debug("Empty payload list, skipping enqueue")
                     return
-                
+
                 logger.debug(f"Enqueueing batch of {len(payload)} messages")
 
                 # Check session once since all messages are for same session
@@ -52,12 +52,17 @@ async def enqueue(payload: dict | list[dict]):
                         f"Session {payload[0]['session_id']} not found, skipping enqueue"
                     )
                     return
-                    
+
                 logger.debug(f"Session {session.public_id} found for batch enqueue")
 
                 # Check if deriver is disabled for this session
-                if session.h_metadata.get("deriver_disabled") is not None and session.h_metadata.get("deriver_disabled") is not False:
-                    logger.info(f"Deriver is disabled for session {session.public_id}, skipping enqueue")
+                if (
+                    session.h_metadata.get("deriver_disabled") is not None
+                    and session.h_metadata.get("deriver_disabled") is not False
+                ):
+                    logger.info(
+                        f"Deriver is disabled for session {session.public_id}, skipping enqueue"
+                    )
                     return
 
                 # Process all payloads
@@ -75,14 +80,16 @@ async def enqueue(payload: dict | list[dict]):
 
                 # Use insert to maintain order
                 stmt = insert(QueueItem).returning(QueueItem)
-                result = await db.execute(stmt, queue_records)
+                await db.execute(stmt, queue_records)
                 await db.commit()
                 logger.info(f"Successfully enqueued batch of {len(payload)} messages")
                 return
             else:
                 # Single message enqueue
-                logger.debug(f"Enqueueing single message for session {payload['session_id']}")
-                
+                logger.debug(
+                    f"Enqueueing single message for session {payload['session_id']}"
+                )
+
                 try:
                     session = await crud.get_session(
                         db,
@@ -95,7 +102,7 @@ async def enqueue(payload: dict | list[dict]):
                         f"Session {payload['session_id']} not found, skipping enqueue"
                     )
                     return
-                
+
                 # Check if deriver is disabled for this session
                 deriver_disabled = session.h_metadata.get("deriver_disabled")
                 if deriver_disabled is not None and deriver_disabled is not False:
@@ -115,12 +122,15 @@ async def enqueue(payload: dict | list[dict]):
                 )
                 await db.execute(stmt)
                 await db.commit()
-                logger.info(f"Successfully enqueued message for session {payload['session_id']}")
+                logger.info(
+                    f"Successfully enqueued message for session {payload['session_id']}"
+                )
                 return
         except Exception as e:
             logger.error(f"Failed to enqueue message: {str(e)}", exc_info=True)
             if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
                 import sentry_sdk
+
                 sentry_sdk.capture_exception(e)
             await db.rollback()
 
@@ -139,7 +149,7 @@ async def create_message_for_session(
         honcho_message = await crud.create_message(
             db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
         )
-        
+
         # Prepare message payload for background processing
         payload = {
             "app_id": app_id,
@@ -150,11 +160,13 @@ async def create_message_for_session(
             "content": honcho_message.content,
             "metadata": honcho_message.h_metadata,
         }
-        
+
         # Queue message for background processing
         background_tasks.add_task(enqueue, payload)  # type: ignore
-        logger.info(f"Message {honcho_message.public_id} created and queued for processing")
-        
+        logger.info(
+            f"Message {honcho_message.public_id} created and queued for processing"
+        )
+
         return honcho_message
     except ValueError as e:
         logger.error(f"Failed to create message for session {session_id}: {str(e)}")
@@ -173,7 +185,11 @@ async def create_batch_messages_for_session(
     """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
     try:
         created_messages = await crud.create_messages(
-            db, messages=batch.messages, app_id=app_id, user_id=user_id, session_id=session_id
+            db,
+            messages=batch.messages,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
         )
 
         # Create payloads for all messages
@@ -192,11 +208,15 @@ async def create_batch_messages_for_session(
 
         # Enqueue all messages in one call
         background_tasks.add_task(enqueue, payloads)  # type: ignore
-        logger.info(f"Batch of {len(created_messages)} messages created and queued for processing")
+        logger.info(
+            f"Batch of {len(created_messages)} messages created and queued for processing"
+        )
 
         return created_messages
     except ValueError as e:
-        logger.error(f"Failed to create batch messages for session {session_id}: {str(e)}")
+        logger.error(
+            f"Failed to create batch messages for session {session_id}: {str(e)}"
+        )
         raise ResourceNotFoundException("Session not found") from e
 
 
@@ -214,7 +234,7 @@ async def get_messages(
         filter = options.filter
         if options.filter == {}:
             filter = None
-            
+
         messages_query = await crud.get_messages(
             db,
             app_id=app_id,
@@ -223,7 +243,7 @@ async def get_messages(
             filter=filter,
             reverse=reverse,
         )
-        
+
         return await paginate(db, messages_query)
     except ValueError as e:
         logger.warning(f"Failed to get messages for session {session_id}: {str(e)}")

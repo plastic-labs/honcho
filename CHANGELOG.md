@@ -7,12 +7,20 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [0.0.16]
 
+## Added
+
+- Detailed custom exceptions for better error handling
+- CLAUDE.md for claude code
+
 ## Changed
 
 - Deriver to use a new cognitive architecture that only updates on user messages
   and updates user representation to apply more confidence scores to its known
   facts
 - Dialectic API token cutoff from 150 tokens to 300
+- Dialectic API uses Claude 3.7 Sonnet
+- SQLAlchemy echo changed to false by default, can be enabled with SQL_DEBUG
+  environment flag
 
 ## Fixed
 

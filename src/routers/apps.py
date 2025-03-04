@@ -1,11 +1,10 @@
 import logging
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.exc import IntegrityError
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import ConflictException, ResourceNotFoundException
+from src.exceptions import ResourceNotFoundException
 from src.security import auth
 
 logger = logging.getLogger(__name__)

@@ -40,11 +40,9 @@ class Dialectic:
         self.chat_history = chat_history
         self.client = Anthropic(
             api_key=os.getenv("ANTHROPIC_API_KEY"),
-            # base_url="https://gateway.usevelvet.com/api/anthropic/",
-            # default_headers={"velvet-auth": os.getenv("VELVET_API_KEY", "default")},
         )
         self.system_prompt = """I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) their current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
-        self.model = "claude-3-5-sonnet-20240620"
+        self.model = "claude-3-7-sonnet-20250219"
 
     @ai_track("Dialectic Call")
     @observe(as_type="generation")

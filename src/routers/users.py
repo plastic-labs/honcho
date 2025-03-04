@@ -1,14 +1,14 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy.exc import IntegrityError
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import ResourceNotFoundException, ValidationException, ConflictException
+from src.exceptions import (
+    ResourceNotFoundException,
+)
 from src.security import auth
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,3 @@
-import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -7,10 +6,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import ResourceNotFoundException, ValidationException, ConflictException
 from src.security import auth
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections",
@@ -72,6 +68,8 @@ async def create_collection(
     db=db,
 ):
     """Create a new Collection"""
+    # ValidationException will be caught by global handler if collection is invalid
+    # ConflictException will be caught by global handler if collection name already exists
     return await crud.create_collection(
         db, collection=collection, app_id=app_id, user_id=user_id
     )
@@ -86,6 +84,8 @@ async def update_collection(
     db=db,
 ):
     "Update a Collection's name or metadata"
+    # ResourceNotFoundException will be caught by global handler if collection not found
+    # ValidationException will be caught by global handler if update data is invalid
     honcho_collection = await crud.update_collection(
         db,
         collection=collection,
@@ -104,6 +104,7 @@ async def delete_collection(
     db=db,
 ):
     """Delete a Collection and its documents"""
+    # ResourceNotFoundException will be caught by global handler if collection not found
     await crud.delete_collection(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
     )
