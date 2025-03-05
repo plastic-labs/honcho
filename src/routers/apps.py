@@ -1,11 +1,13 @@
-import traceback
+import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Depends
 
 from src import crud, schemas
 from src.dependencies import db
+from src.exceptions import ResourceNotFoundException
 from src.security import auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps",
@@ -17,43 +19,36 @@ router = APIRouter(
 @router.get("/{app_id}", response_model=schemas.App)
 async def get_app(app_id: str, db=db):
     """Get an App by ID"""
+    # ResourceNotFoundException will be caught by global handler if app not found
     app = await crud.get_app(db, app_id=app_id)
-    if app is None:
-        raise HTTPException(status_code=404, detail="App not found")
     return app
 
 
 @router.get("/name/{name}", response_model=schemas.App)
 async def get_app_by_name(name: str, db=db):
     """Get an App by Name"""
+    # ResourceNotFoundException will be caught by global handler if app not found
     app = await crud.get_app_by_name(db, name=name)
-    if app is None:
-        raise HTTPException(status_code=404, detail="App not found")
     return app
 
 
 @router.post("", response_model=schemas.App)
 async def create_app(app: schemas.AppCreate, db=db):
     """Create a new App"""
-    try:
-        honcho_app = await crud.create_app(db, app=app)
-        return honcho_app
-    except IntegrityError as e:
-        raise HTTPException(
-            status_code=406, detail="App with name may already exist"
-        ) from e
-    except Exception as e:
-        print(traceback.format_exc())
-        raise HTTPException(status_code=400, detail="Unknown Error") from e
+    honcho_app = await crud.create_app(db, app=app)
+    return honcho_app
 
 
 @router.get("/get_or_create/{name}", response_model=schemas.App)
 async def get_or_create_app(name: str, db=db):
     """Get or Create an App"""
-    app = await crud.get_app_by_name(db=db, name=name)
-    if app is None:
+    try:
+        app = await crud.get_app_by_name(db=db, name=name)
+        return app
+    except ResourceNotFoundException:
+        # App doesn't exist, create it
         app = await create_app(db=db, app=schemas.AppCreate(name=name))
-    return app
+        return app
 
 
 @router.put("/{app_id}", response_model=schemas.App)
@@ -63,7 +58,6 @@ async def update_app(
     db=db,
 ):
     """Update an App"""
+    # ResourceNotFoundException will be caught by global handler if app not found
     honcho_app = await crud.update_app(db, app_id=app_id, app=app)
-    if honcho_app is None:
-        raise HTTPException(status_code=404, detail="App not found")
     return honcho_app

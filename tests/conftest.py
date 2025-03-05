@@ -5,6 +5,8 @@ from nanoid import generate as generate_nanoid
 
 import pytest
 import pytest_asyncio
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
@@ -15,6 +17,7 @@ from sqlalchemy_utils import create_database, database_exists, drop_database
 from src import models
 from src.db import Base
 from src.dependencies import get_db
+from src.exceptions import HonchoException
 from src.main import app
 
 logging.basicConfig(
@@ -113,6 +116,14 @@ async def db_session(db_engine):
 @pytest.fixture(scope="function")
 def client(db_session):
     """Create a FastAPI TestClient for the scope of a single test function"""
+
+    # Register exception handlers for tests
+    @app.exception_handler(HonchoException)
+    async def test_exception_handler(request: Request, exc: HonchoException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
 
     async def override_get_db():
         yield db_session

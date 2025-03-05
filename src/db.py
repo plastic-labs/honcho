@@ -21,7 +21,7 @@ connect_args = {
 engine = create_async_engine(
     os.environ["CONNECTION_URI"],
     connect_args=connect_args,
-    echo=True,
+    echo=os.getenv("SQL_DEBUG", "false").lower() == "true",  # Only enable in debug mode
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
@@ -52,7 +52,7 @@ def scaffold_db():
     engine = create_engine(
         os.environ["CONNECTION_URI"],
         pool_pre_ping=True,
-        echo=True,
+        echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
     )
 
     # Create inspector to check if database exists
