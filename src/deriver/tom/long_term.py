@@ -21,24 +21,46 @@ async def get_user_representation_long_term(
     if embedding_store is None:
         raise ValueError("embedding_store is required for long_term method")
 
-    # Generate query from chat history to find relevant facts
-    query_prompt = """Given this conversation, generate a search query that would help retrieve relevant facts about the user. 
-    The query should capture the key topics, interests, preferences, personal writing styles, personality traits and behaviors discussed in the conversation.
+    # Generate multiple queries from chat history to find relevant facts
+    query_prompt = """Given this conversation, generate 3-5 focused search queries that would help retrieve relevant facts about the user.
+    Each query should focus on a specific aspect such as a single topic, interest, preference, personality trait, or behavior discussed in the conversation.
+    Keep queries specific and concise to improve semantic search effectiveness.
     
     CONVERSATION:
     {chat_history}
     
-    Output just the search query, nothing else."""
+    Format your response as a JSON array of strings, with each string being a search query. 
+    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
+    Example:
+    ["query about interests", "query about personality", "query about experiences"]
+    """
 
-    query = get_response(
+    queries_response = get_response(
         [{"role": "user", "content": query_prompt.format(chat_history=chat_history)}],
         DEF_PROVIDER,
         DEF_ANTHROPIC_MODEL
     )
-    print(f"Query: {query}")
+    
+    # Parse the JSON response to get a list of queries
+    try:
+        queries = json.loads(queries_response)
+        if not isinstance(queries, list):
+            # Fallback if response is not a valid list
+            queries = [queries_response]
+    except json.JSONDecodeError:
+        # Fallback if response is not valid JSON
+        queries = [queries_response]
+    
+    print(f"Generated queries: {queries}")
 
-    # Retrieve relevant facts using embeddings
-    retrieved_facts = await embedding_store.get_relevant_facts(query)
+    # Retrieve relevant facts for each query and combine results using a set for automatic deduplication
+    retrieved_facts = set()
+    for query in queries:
+        query_facts = await embedding_store.get_relevant_facts(query)
+        print(f"Retrieved facts: {query_facts}")
+        retrieved_facts.update(query_facts)
+    
+    # No need to filter this_turn_facts for duplicates as it's already been done
     retrieved_facts_str = "\n".join([f"- {fact} (from memory)" for fact in retrieved_facts])
     this_turn_facts_str = "\n".join([f"- {fact} (from current turn)" for fact in this_turn_facts])
     facts_str = retrieved_facts_str + ("\n" + this_turn_facts_str if this_turn_facts else "")
@@ -119,9 +141,9 @@ Here is the conversation you need to analyze:
 
 Instructions:
 
-1. Carefully read through the conversation.
+1. Carefully read through the conversation. Extract only new facts, from only the last message sent by the user - treat the rest of the conversation only as context. Ignore facts in the last message that are already stated in the conversation.
 
-2. Identify key pieces of information about the user that would be valuable for future interactions. Look for:
+2. Identify key new pieces of information from the last message sent by the user that would be valuable for future interactions. Look for:
    - Personal details (name, age, occupation, location, etc.)
    - Preferences (likes, dislikes, interests, hobbies)
    - Experiences (travel, education, work history)
@@ -131,10 +153,12 @@ Instructions:
    - Challenges or problems they're facing
    - Opinions or beliefs
 
+3. 
+
 3. For each piece of information you identify:
    a. Verify that it is factual and explicitly stated in the conversation, not inferred.
    b. Formulate it as a concise statement that would aid in semantic retrieval.
-   c. Ensure it is not a duplicate of previously identified information.
+   c. Ensure it is not similar to information previously stated in the conversation.
 
 4. Before providing your final output, wrap your analysis in <information_extraction> tags. In this analysis:
    - List each piece of information you've identified.

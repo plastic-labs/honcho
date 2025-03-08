@@ -85,7 +85,6 @@ EXPECTATION VIOLATIONS:
             messages=messages,
             system=system_prompt,
         )
-        print(f"tom_inference in single_prompt.py: {message.content[0].text=}")
         message = message.content[0].text
         return message
 

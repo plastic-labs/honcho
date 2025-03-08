@@ -138,7 +138,11 @@ async def process_user_message(
                                                app_id=app_id,
                                                user_id=user_id,
                                                collection_id=collection.public_id) # type: ignore
-    await embedding_store.save_facts(facts)
+    
+    # Filter out facts that are duplicates of existing facts in the vector store
+    unique_facts = await embedding_store.remove_duplicates(facts)
+    # Only save the unique facts
+    await embedding_store.save_facts(unique_facts)
 
     # Fetch the latest user representation
     user_representation_stmt = (
@@ -184,7 +188,7 @@ async def process_user_message(
         user_representation=existing_representation_content,
         tom_inference=tom_inference,
         method=USER_REPRESENTATION_METHOD,
-        this_turn_facts=facts,
+        this_turn_facts=unique_facts,
         embedding_store=embedding_store,
     )
 
