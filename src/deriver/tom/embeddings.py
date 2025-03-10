@@ -7,11 +7,8 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
 from ... import crud, schemas
-from ... import models
-from ...crud import openai_client
 
 
 class LocalEmbeddingStore:
@@ -179,44 +176,7 @@ class CollectionEmbeddingStore:
                 print(f"Error creating document: {e}")
                 continue
 
-    async def remove_duplicates(self, facts: List[str], similarity_threshold: float = 0.85) -> List[str]:
-        """Remove facts that are duplicates of existing facts in the vector store.
-        
-        Args:
-            facts: List of facts to check for duplicates
-            similarity_threshold: Facts with similarity above this threshold are considered duplicates
-            
-        Returns:
-            List of facts that are not duplicates of existing facts
-        """
-        unique_facts = []
-        for fact in facts:
-            # Get embedding for the fact
-            response = openai_client.embeddings.create(
-                input=fact, model="text-embedding-3-small"
-            )
-            embedding = response.data[0].embedding
-            
-            # Check if there are duplicates within the threshold
-            stmt = (
-                select(models.Document)
-                .where(models.Document.collection_id == self.collection_id)
-                .where(models.Document.embedding.cosine_distance(embedding) < (1-similarity_threshold))  # Convert similarity to distance
-                .order_by(models.Document.embedding.cosine_distance(embedding))
-                .limit(1)
-            )
-            result = await self.db.execute(stmt)
-            duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
-            
-            if duplicate is None:
-                # No duplicate found, add to unique facts
-                unique_facts.append(fact)
-            else:
-                print(f"Duplicate found: {duplicate.content}. Ignoring new fact: {fact}")
-                
-        return unique_facts
-
-    async def get_relevant_facts(self, query: str, top_k: int = 5, similarity_threshold: float = 0.3) -> List[str]:
+    async def get_relevant_facts(self, query: str, top_k: int = 5, max_distance: float = 0.3) -> List[str]:
         """Retrieve the most relevant facts for a given query.
         
         Args:
@@ -233,7 +193,45 @@ class CollectionEmbeddingStore:
             user_id=self.user_id,
             collection_id=self.collection_id,
             query=query,
+            max_distance=max_distance,
             top_k=top_k
         )
         
-        return [doc.content for doc in documents] 
+        return [doc.content for doc in documents]
+
+    async def remove_duplicates(self, facts: List[str], similarity_threshold: float = 0.85) -> List[str]:
+        """Remove facts that are duplicates of existing facts in the vector store.
+        
+        Args:
+            facts: List of facts to check for duplicates
+            similarity_threshold: Facts with similarity above this threshold are considered duplicates
+            
+        Returns:
+            List of facts that are not duplicates of existing facts
+        """
+        unique_facts = []
+        
+        for fact in facts:
+            try:
+                # Check for duplicates using the crud function
+                duplicates = await crud.get_duplicate_documents(
+                    self.db,
+                    app_id=self.app_id,
+                    user_id=self.user_id,
+                    collection_id=self.collection_id,
+                    content=fact,
+                    similarity_threshold=similarity_threshold
+                )
+                
+                if not duplicates:
+                    # No duplicates found, add to unique facts
+                    unique_facts.append(fact)
+                else:
+                    # Log duplicate found
+                    print(f"Duplicate found: {duplicates[0].content}. Ignoring fact: {fact}")
+            except Exception as e:
+                print(f"Error checking for duplicates: {e}")
+                # If there's an error, still include the fact to avoid losing information
+                unique_facts.append(fact)
+                
+        return unique_facts 

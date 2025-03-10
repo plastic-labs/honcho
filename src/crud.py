@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Optional
+from typing import Optional, List
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -857,6 +857,7 @@ async def query_documents(
     collection_id: str,
     query: str,
     filter: Optional[dict] = None,
+    max_distance: Optional[float] = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     response = openai_client.embeddings.create(
@@ -875,6 +876,8 @@ async def query_documents(
         .where(models.Document.collection_id == collection_id)
         # .limit(top_k)
     )
+    if max_distance is not None:
+        stmt = stmt.where(models.Document.embedding.cosine_distance(embedding_query) < max_distance)
     if filter is not None:
         stmt = stmt.where(models.Document.h_metadata.contains(filter))
     stmt = stmt.limit(top_k).order_by(
@@ -991,3 +994,42 @@ async def delete_document(
     await db.delete(document)
     await db.commit()
     return True
+
+
+async def get_duplicate_documents(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    content: str,
+    similarity_threshold: float = 0.85
+) -> List[models.Document]:
+    """Check if a document with similar content already exists in the collection.
+    
+    Args:
+        db: Database session
+        app_id: Application ID
+        user_id: User ID
+        collection_id: Collection ID
+        content: Document content to check for duplicates
+        similarity_threshold: Similarity threshold (0-1) for considering documents as duplicates
+        
+    Returns:
+        List of documents that are similar to the provided content
+    """
+    # Get embedding for the content
+    response = openai_client.embeddings.create(
+        input=content, model="text-embedding-3-small"
+    )
+    embedding = response.data[0].embedding
+    
+    # Find documents with similar embeddings
+    stmt = (
+        select(models.Document)
+        .where(models.Document.collection_id == collection_id)
+        .where(models.Document.embedding.cosine_distance(embedding) < (1-similarity_threshold))  # Convert similarity to distance
+        .order_by(models.Document.embedding.cosine_distance(embedding))
+    )
+    
+    result = await db.execute(stmt)
+    return result.scalars().all()

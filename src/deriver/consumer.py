@@ -139,6 +139,7 @@ async def process_user_message(
                                                user_id=user_id,
                                                collection_id=collection.public_id) # type: ignore
     
+
     # Filter out facts that are duplicates of existing facts in the vector store
     unique_facts = await embedding_store.remove_duplicates(facts)
     # Only save the unique facts
@@ -181,7 +182,6 @@ async def process_user_message(
     )
 
     # Call user_representation
-    embedding_store = CollectionEmbeddingStore(db, app_id, user_id, "honcho")
     user_representation_response = await get_user_representation(
         chat_history=chat_history_str,
         session_id=session_id,

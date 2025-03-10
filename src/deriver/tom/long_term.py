@@ -7,6 +7,7 @@ from sentry_sdk.ai.monitoring import ai_track
 from .llm import get_response, DEF_ANTHROPIC_MODEL, DEF_PROVIDER
 from .embeddings import CollectionEmbeddingStore
 
+MAX_FACT_DISTANCE = 0.85
 
 @ai_track("Tom Inference")
 @observe(as_type="generation")
@@ -25,6 +26,7 @@ async def get_user_representation_long_term(
     query_prompt = """Given this conversation, generate 3-5 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect such as a single topic, interest, preference, personality trait, or behavior discussed in the conversation.
     Keep queries specific and concise to improve semantic search effectiveness.
+    For additional context, facts are stored roughly in the format "user is 28 years old" or "user likes sushi".
     
     CONVERSATION:
     {chat_history}
@@ -55,11 +57,13 @@ async def get_user_representation_long_term(
 
     # Retrieve relevant facts for each query and combine results using a set for automatic deduplication
     retrieved_facts = set()
+    print(embedding_store.collection_id)
     for query in queries:
-        query_facts = await embedding_store.get_relevant_facts(query)
+        query_facts = await embedding_store.get_relevant_facts(query, top_k=20, max_distance=MAX_FACT_DISTANCE)
         print(f"Retrieved facts: {query_facts}")
         retrieved_facts.update(query_facts)
     
+    print(f"Retrieved facts: {retrieved_facts}")
     # No need to filter this_turn_facts for duplicates as it's already been done
     retrieved_facts_str = "\n".join([f"- {fact} (from memory)" for fact in retrieved_facts])
     this_turn_facts_str = "\n".join([f"- {fact} (from current turn)" for fact in this_turn_facts])
