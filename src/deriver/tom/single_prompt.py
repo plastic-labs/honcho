@@ -13,7 +13,7 @@ anthropic = Anthropic(
     max_retries=5,
 )
 
-ANTHROPIC_MODEL = "claude-3-5-haiku-20241022"
+ANTHROPIC_MODEL = "claude-3-7-sonnet-20250219"
 
 
 @ai_track("Tom Inference")

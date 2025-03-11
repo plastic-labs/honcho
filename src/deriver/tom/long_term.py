@@ -4,8 +4,13 @@ from typing import List, Optional
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
+from src.utils.model_client import ModelProvider
 from .llm import get_response, DEF_ANTHROPIC_MODEL, DEF_PROVIDER
 from .embeddings import CollectionEmbeddingStore
+
+# Constants for fact extraction
+FACT_EXTRACTION_PROVIDER = ModelProvider.OPENROUTER
+FACT_EXTRACTION_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
 
 MAX_FACT_DISTANCE = 0.85
 
@@ -196,6 +201,10 @@ Respond in valid JSON and nothing else.
             "content": message
         }
     ]
-    response = get_response(messages, provider=DEF_PROVIDER, model=DEF_ANTHROPIC_MODEL)
+    response = get_response(
+        messages, 
+        provider=FACT_EXTRACTION_PROVIDER,
+        model=FACT_EXTRACTION_MODEL
+    )
     response = json.loads(response)
     return response["facts"]

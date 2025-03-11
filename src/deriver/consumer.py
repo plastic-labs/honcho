@@ -21,6 +21,23 @@ console = Console(markup=False)
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
 
+
+def parse_xml_content(text: str, tag: str) -> str:
+    """
+    Extract content from XML-like tags in a string.
+    
+    Args:
+        text: The text containing XML-like tags
+        tag: The tag name to extract content from
+        
+    Returns:
+        The content between the opening and closing tags, or an empty string if not found
+    """
+    pattern = f"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, text, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
 # FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
     metamessage = models.Metamessage(
@@ -30,12 +47,6 @@ async def add_metamessage(db, message_id, metamessage_type, content):
         h_metadata={},
     )
     db.add(metamessage)
-
-
-def parse_xml_content(text, tag):
-    pattern = f"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(1).strip() if match else ""
 
 
 async def get_chat_history(db, session_id, message_id) -> str:
@@ -105,9 +116,8 @@ async def process_user_message(
     db: AsyncSession,
 ):
     """
-    Proces a user message by:
-    - Getting TOM inference
-    - Getting user representation
+    Process a user message by extracting facts and saving them to the vector store.
+    This runs as a background process after a user message is logged.
     """
     console.print(f"Processing User Message: {content}", style="orange1")
 
@@ -115,98 +125,21 @@ async def process_user_message(
     chat_history_str = await get_chat_history(db, session_id, message_id)
     chat_history_str = f"{chat_history_str}\nhuman: {content}"
 
-    # Get TOM inference, parse and save it
-    tom_inference_response = await get_tom_inference(
-        chat_history_str, session_id, method=TOM_METHOD
-    )
-    tom_inference = parse_xml_content(tom_inference_response, "prediction")
-    await add_metamessage(
-        db,
-        message_id,
-        "tom_inference",
-        tom_inference,
-    )
-    await db.commit()
-
     # Extract facts from chat history
     facts = await extract_facts_long_term(chat_history_str)
-    print(f"Extracted Facts: {facts}")
+    console.print(f"Extracted Facts: {facts}", style="bright_blue")
     
     # Save the facts to the collection
     collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
-    embedding_store = CollectionEmbeddingStore(db=db,
-                                               app_id=app_id,
-                                               user_id=user_id,
-                                               collection_id=collection.public_id) # type: ignore
+    embedding_store = CollectionEmbeddingStore(
+        db=db,
+        app_id=app_id,
+        user_id=user_id,
+        collection_id=collection.public_id # type: ignore
+    )
     
-
     # Filter out facts that are duplicates of existing facts in the vector store
     unique_facts = await embedding_store.remove_duplicates(facts)
     # Only save the unique facts
     await embedding_store.save_facts(unique_facts)
-
-    # Fetch the latest user representation
-    user_representation_stmt = (
-        select(models.Metamessage)
-        .join(
-            models.Message,
-            models.Message.public_id == models.Metamessage.message_id,
-        )
-        .join(
-            models.Session,
-            models.Message.session_id == models.Session.public_id,
-        )
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .join(models.App, models.App.public_id == models.User.app_id)
-        .where(models.App.public_id == app_id)
-        .where(models.User.public_id == user_id)
-        .where(models.Metamessage.metamessage_type == "user_representation")
-        .order_by(models.Metamessage.id.desc())  # get the most recent
-        .limit(1)
-    )
-
-
-    response = await db.execute(user_representation_stmt)
-    existing_representation = response.scalar_one_or_none()
-
-    existing_representation_content = (
-        existing_representation.content if existing_representation else "None"
-    )
-    print(f"Existing Representation: {existing_representation_content}")
-
-    langfuse_context.update_current_trace(
-        session_id=session_id,
-        user_id=user_id,
-        release=os.getenv("SENTRY_RELEASE"),
-        metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
-    )
-
-    # Call user_representation
-    user_representation_response = await get_user_representation(
-        chat_history=chat_history_str,
-        session_id=session_id,
-        user_representation=existing_representation_content,
-        tom_inference=tom_inference,
-        method=USER_REPRESENTATION_METHOD,
-        this_turn_facts=unique_facts,
-        embedding_store=embedding_store,
-    )
-
-    # parse the user_representation response
-    user_representation_response = parse_xml_content(
-        user_representation_response, "representation"
-    )
-
-    # Store the user_representation response as a metamessage
-    await add_metamessage(
-        db,
-        message_id,
-        "user_representation",
-        user_representation_response,
-    )
-    await db.commit()
-
-    console.print(
-        f"User Representation:\n{user_representation_response}",
-        style="bright_green",
-    )
+    console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
