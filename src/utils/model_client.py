@@ -144,18 +144,29 @@ class ModelClient:
         max_tokens: int = 1000,
         temperature: float = 0.0
     ) -> str:
-        """Generate text using Anthropic API."""
+        """Generate a response using the Anthropic API."""
+        if not self.client:
+            raise ValueError("Anthropic client not initialized.")
+            
+        # Convert messages to the format expected by Anthropic
+        anthropic_messages = []
+        for message in messages:
+            anthropic_messages.append({
+                "role": message["role"],
+                "content": message["content"]
+            })
+            
         params = {
             "model": self.model,
-            "messages": messages,
+            "messages": anthropic_messages,
             "max_tokens": max_tokens,
-            "temperature": temperature
+            "temperature": temperature,
         }
         
         if system:
             params["system"] = system
-        
-        # Use run_in_executor to run the synchronous Anthropic call in a thread
+            
+        # Use running loop for async execution
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None, 
@@ -165,7 +176,8 @@ class ModelClient:
         # Extract the text from the response
         if response.content and len(response.content) > 0:
             content_block = response.content[0]
-            if isinstance(content_block, ContentBlock) and content_block.type == "text":
+            # Check content_block by checking for attribute 'type' instead of using isinstance
+            if hasattr(content_block, 'type') and content_block.type == "text":
                 return content_block.text
             return str(content_block)
         return ""
@@ -245,9 +257,20 @@ class ModelClient:
         temperature: float = 0.0
     ) -> Any:
         """Stream text using Anthropic API."""
+        if not self.client:
+            raise ValueError("Anthropic client not initialized.")
+            
+        # Convert messages to the format expected by Anthropic
+        anthropic_messages = []
+        for message in messages:
+            anthropic_messages.append({
+                "role": message["role"],
+                "content": message["content"]
+            })
+            
         params = {
             "model": self.model,
-            "messages": messages,
+            "messages": anthropic_messages,
             "max_tokens": max_tokens,
             "temperature": temperature
         }

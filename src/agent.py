@@ -9,7 +9,7 @@ from anthropic import MessageStreamManager
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -54,22 +54,32 @@ class Dialectic:
         with sentry_sdk.start_transaction(
             op="dialectic-inference", name="Dialectic API Response"
         ):
+            print(f"[DIALECTIC] Starting call() method with query length: {len(self.agent_input)}")
+            call_start = asyncio.get_event_loop().time()
+            
             prompt = f"""
             <query>{self.agent_input}</query>
             <context>{self.user_representation}</context>
             <conversation_history>{self.chat_history}</conversation_history>
             """
+            print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
 
             # Create a properly formatted message using the client
             message = self.client.create_message("user", prompt)
             
             # Generate the response
+            print(f"[DIALECTIC] Calling model for generation")
+            model_start = asyncio.get_event_loop().time()
             response = await self.client.generate(
                 messages=[message],
                 system=self.system_prompt,
                 max_tokens=300
             )
+            model_time = asyncio.get_event_loop().time() - model_start
+            print(f"[DIALECTIC] Model response received in {model_time:.2f}s: {len(response)} chars")
             
+            total_time = asyncio.get_event_loop().time() - call_start
+            print(f"[DIALECTIC] call() completed in {total_time:.2f}s")
             return [{"text": response}]
 
     @ai_track("Dialectic Call")
@@ -78,24 +88,36 @@ class Dialectic:
         with sentry_sdk.start_transaction(
             op="dialectic-inference", name="Dialectic API Response"
         ):
+            print(f"[DIALECTIC] Starting stream() method with query length: {len(self.agent_input)}")
+            stream_start = asyncio.get_event_loop().time()
+            
             prompt = f"""
             <query>{self.agent_input}</query>
             <context>{self.user_representation}</context>
             <conversation_history>{self.chat_history}</conversation_history> 
             """
+            print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
             
             # Create a properly formatted message using the client
             message = self.client.create_message("user", prompt)
             
             # Stream the response
-            return await self.client.stream(
+            print(f"[DIALECTIC] Calling model for streaming")
+            model_start = asyncio.get_event_loop().time()
+            stream = await self.client.stream(
                 messages=[message],
                 system=self.system_prompt,
                 max_tokens=150
             )
+            stream_setup_time = asyncio.get_event_loop().time() - model_start
+            print(f"[DIALECTIC] Stream started in {stream_setup_time:.2f}s")
+            
+            total_time = asyncio.get_event_loop().time() - stream_start
+            print(f"[DIALECTIC] stream() setup completed in {total_time:.2f}s")
+            return stream
 
 
-async def chat_history(app_id: str, user_id: str, session_id: str) -> str:
+async def get_chat_history(app_id: str, user_id: str, session_id: str) -> str:
     async with SessionLocal() as db:
         stmt = await crud.get_messages(db, app_id, user_id, session_id)
         results = await db.execute(stmt)
@@ -132,6 +154,11 @@ async def chat(
     # Format the query string
     questions = [query.queries] if isinstance(query.queries, str) else query.queries
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
+    
+    print(f"[AGENT] Received query: {final_query} for session {session_id}")
+    print(f"[AGENT] Starting on-demand user representation generation")
+    
+    start_time = asyncio.get_event_loop().time()
 
     async with SessionLocal() as db:
         # Setup phase - create resources we'll need for all operations
@@ -144,6 +171,7 @@ async def chat(
             user_id=user_id,
             collection_id=collection.public_id # type: ignore
         )
+        print(f"[AGENT] Created embedding store with collection_id: {collection.public_id if collection else None}")
         
         # 2. Get the latest user message to attach the user representation to
         # and also retrieve recent chat history in one operation
@@ -157,11 +185,13 @@ async def chat(
         result = await db.execute(latest_message_stmt)
         latest_message = result.scalar_one_or_none()
         latest_message_id = latest_message.public_id if latest_message else None
+        print(f"[AGENT] Latest user message ID: {latest_message_id}")
         
         # Get chat history for the session
-        history = await chat_history(app_id, user_id, session_id)
+        history = await get_chat_history(app_id, user_id, session_id)
 
         # Run both long-term and short-term context retrieval concurrently
+        print(f"[AGENT] Starting parallel tasks for context retrieval")
         long_term_task = get_long_term_facts(final_query, embedding_store)
         short_term_task = run_tom_inference(history, session_id)
         
@@ -170,8 +200,11 @@ async def chat(
             long_term_task, 
             short_term_task
         )
+        print(f"[AGENT] Retrieved {len(facts)} facts from long-term memory")
+        print(f"[AGENT] TOM inference completed with {len(tom_inference)} characters")
         
         # Generate a fresh user representation
+        print(f"[AGENT] Generating user representation")
         user_representation = await generate_user_representation(
             app_id=app_id,
             user_id=user_id,
@@ -183,6 +216,7 @@ async def chat(
             db=db,
             message_id=latest_message_id
         )
+        print(f"[AGENT] User representation generated: {len(user_representation)} characters")
 
     # Create a Dialectic chain with the fresh user representation
     chain = Dialectic(
@@ -190,6 +224,9 @@ async def chat(
         user_representation=user_representation,
         chat_history=history,
     )
+    
+    generation_time = asyncio.get_event_loop().time() - start_time
+    print(f"[AGENT] User representation generation completed in {generation_time:.2f}s")
 
     langfuse_context.update_current_trace(
         session_id=session_id,
@@ -199,10 +236,18 @@ async def chat(
     )
 
     # Use streaming or non-streaming response based on the request
+    print(f"[AGENT] Calling Dialectic with streaming={stream}")
+    query_start_time = asyncio.get_event_loop().time()
     if stream:
-        return await chain.stream()
+        response_stream = await chain.stream()
+        print(f"[AGENT] Dialectic stream started after {asyncio.get_event_loop().time() - query_start_time:.2f}s")
+        return response_stream
+    
     response = await chain.call()
-    return schemas.AgentChat(content=response[0].text)
+    query_time = asyncio.get_event_loop().time() - query_start_time
+    total_time = asyncio.get_event_loop().time() - start_time
+    print(f"[AGENT] Dialectic response received in {query_time:.2f}s (total: {total_time:.2f}s)")
+    return schemas.AgentChat(content=response[0]["text"])
 
 
 async def get_long_term_facts(
@@ -219,19 +264,30 @@ async def get_long_term_facts(
     Returns:
         List of retrieved facts
     """
+    print(f"[FACTS] Starting fact retrieval for query: {query}")
+    fact_start_time = asyncio.get_event_loop().time()
+    
     # Generate multiple queries for the semantic search
+    print(f"[FACTS] Generating semantic queries")
     search_queries = await generate_semantic_queries(query)
+    print(f"[FACTS] Generated {len(search_queries)} semantic queries: {search_queries}")
     
     # Retrieve relevant facts using multiple queries
     retrieved_facts = set()
-    for search_query in search_queries:
+    for i, search_query in enumerate(search_queries):
+        print(f"[FACTS] Searching for query {i+1}/{len(search_queries)}: {search_query}")
+        query_start = asyncio.get_event_loop().time()
         facts = await embedding_store.get_relevant_facts(
             search_query, 
             top_k=20, 
             max_distance=0.85
         )
+        query_time = asyncio.get_event_loop().time() - query_start
+        print(f"[FACTS] Query {i+1} retrieved {len(facts)} facts in {query_time:.2f}s")
         retrieved_facts.update(facts)
     
+    total_time = asyncio.get_event_loop().time() - fact_start_time
+    print(f"[FACTS] Total fact retrieval completed in {total_time:.2f}s with {len(retrieved_facts)} unique facts")
     return list(retrieved_facts)
 
 
@@ -250,14 +306,48 @@ async def run_tom_inference(
         The ToM inference
     """
     # Run ToM inference
-    tom_inference_response = await get_tom_inference(
-        chat_history, 
-        session_id, 
-        method="single_prompt"
-    )
+    print(f"[TOM] Running ToM inference for session {session_id}")
+    tom_start_time = asyncio.get_event_loop().time()
+    
+    # Get chat history length to determine if this is a new conversation
+    async with SessionLocal() as db:
+        # Count messages in this session
+        messages_count_stmt = (
+            select(func.count())
+            .select_from(models.Message)
+            .where(models.Message.session_id == session_id)
+        )
+        result = await db.execute(messages_count_stmt)
+        message_count = result.scalar_one()
+        
+        print(f"[TOM] Session has {message_count} messages in the database")
+        
+        if message_count <= 1:
+            print(f"[TOM] This is a new conversation, using empty user representation")
+            # For new conversations, use an empty string as user_representation
+            # to avoid inheriting from previous sessions
+            tom_inference_response = await get_tom_inference(
+                chat_history, 
+                session_id, 
+                method="single_prompt",
+                user_representation=""
+            )
+        else:
+            print(f"[TOM] This is an existing conversation, using normal inference flow")
+            tom_inference_response = await get_tom_inference(
+                chat_history, 
+                session_id, 
+                method="single_prompt"
+            )
     
     # Extract the prediction from the response
-    return parse_xml_content(tom_inference_response, "prediction")
+    prediction = parse_xml_content(tom_inference_response, "prediction")
+    tom_time = asyncio.get_event_loop().time() - tom_start_time
+    
+    print(f"[TOM] ToM inference completed in {tom_time:.2f}s")
+    print(f"[TOM] Prediction length: {len(prediction)} characters")
+    
+    return prediction
 
 
 async def generate_semantic_queries(query: str) -> List[str]:
@@ -271,6 +361,9 @@ async def generate_semantic_queries(query: str) -> List[str]:
     Returns:
         A list of semantically relevant queries
     """
+    print(f"[SEMANTIC] Generating semantic queries from: {query}")
+    query_start = asyncio.get_event_loop().time()
+    
     # Prompt the LLM to generate search queries based on the original query
     query_prompt = f"""Given this query about a user, generate 3-5 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
@@ -285,25 +378,36 @@ async def generate_semantic_queries(query: str) -> List[str]:
     ["query about interests", "query about personality", "query about experiences"]
     """
 
-    queries_response = get_response(
+    print(f"[SEMANTIC] Calling LLM for query generation")
+    llm_start = asyncio.get_event_loop().time()
+    # Note: get_response is async, so we need to await it
+    queries_response = await get_response(
         [{"role": "user", "content": query_prompt}],
         DEF_PROVIDER,
         DEF_ANTHROPIC_MODEL
     )
+    llm_time = asyncio.get_event_loop().time() - llm_start
+    print(f"[SEMANTIC] LLM response received in {llm_time:.2f}s: {queries_response[:100]}...")
     
     # Parse the JSON response to get a list of queries
     try:
         queries = json.loads(queries_response)
         if not isinstance(queries, list):
             # Fallback if response is not a valid list
+            print(f"[SEMANTIC] LLM response not a list, using as single query")
             queries = [queries_response]
     except json.JSONDecodeError:
         # Fallback if response is not valid JSON
+        print(f"[SEMANTIC] Failed to parse JSON response, using raw response as query")
         queries = [query]  # Fall back to the original query
     
     # Ensure we always include the original query
     if query not in queries:
+        print(f"[SEMANTIC] Adding original query to results")
         queries.append(query)
+    
+    total_time = asyncio.get_event_loop().time() - query_start
+    print(f"[SEMANTIC] Generated {len(queries)} queries in {total_time:.2f}s")
     
     return queries
 
@@ -327,7 +431,11 @@ async def generate_user_representation(
     Returns:
         The generated user representation.
     """
+    print(f"[REPRESENTATION] Starting user representation generation")
+    rep_start_time = asyncio.get_event_loop().time()
+    
     # Fetch the latest user representation from the same session
+    print(f"[REPRESENTATION] Fetching latest representation for session {session_id}")
     latest_representation_stmt = (
         select(models.Metamessage)
         .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
@@ -344,8 +452,12 @@ async def generate_user_representation(
         if latest_representation_obj 
         else "No user representation available."
     )
+    print(f"[REPRESENTATION] Found previous representation: {len(latest_representation)} characters")
+    print(f"[REPRESENTATION] Using {len(facts)} facts for representation")
     
     # Generate the new user representation
+    print(f"[REPRESENTATION] Calling get_user_representation")
+    gen_start_time = asyncio.get_event_loop().time()
     user_representation_response = await get_user_representation(
         chat_history=chat_history,
         session_id=session_id,
@@ -355,12 +467,17 @@ async def generate_user_representation(
         this_turn_facts=facts,
         embedding_store=embedding_store
     )
+    gen_time = asyncio.get_event_loop().time() - gen_start_time
+    print(f"[REPRESENTATION] get_user_representation completed in {gen_time:.2f}s")
     
     # Extract the representation from the response
     representation = parse_xml_content(user_representation_response, "representation")
+    print(f"[REPRESENTATION] Extracted representation: {len(representation)} characters")
     
     # If message_id is provided, save the representation as a metamessage
     if message_id and representation:
+        print(f"[REPRESENTATION] Saving representation to message_id: {message_id}")
+        save_start = asyncio.get_event_loop().time()
         async with SessionLocal() as save_db:
             metamessage = models.Metamessage(
                 message_id=message_id,
@@ -370,5 +487,9 @@ async def generate_user_representation(
             )
             save_db.add(metamessage)
             await save_db.commit()
+        save_time = asyncio.get_event_loop().time() - save_start
+        print(f"[REPRESENTATION] Representation saved in {save_time:.2f}s")
     
+    total_time = asyncio.get_event_loop().time() - rep_start_time
+    print(f"[REPRESENTATION] Total representation generation completed in {total_time:.2f}s")
     return representation

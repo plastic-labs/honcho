@@ -1,5 +1,6 @@
 import json
 from typing import List, Optional
+import time
 
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
@@ -42,7 +43,7 @@ async def get_user_representation_long_term(
     ["query about interests", "query about personality", "query about experiences"]
     """
 
-    queries_response = get_response(
+    queries_response = await get_response(
         [{"role": "user", "content": query_prompt.format(chat_history=chat_history)}],
         DEF_PROVIDER,
         DEF_ANTHROPIC_MODEL
@@ -129,7 +130,7 @@ UPDATES:
         "content": f"Please analyze this information and provide an updated user representation. DO NOT generate persistent information - it will be injected separately:\n{context_str}"
     }]
 
-    response = get_response(messages, DEF_PROVIDER, DEF_ANTHROPIC_MODEL, system_prompt)
+    response = await get_response(messages, DEF_PROVIDER, DEF_ANTHROPIC_MODEL, system_prompt)
 
     # Inject the facts into the response
     persistent_info = """PERSISTENT INFORMATION:
@@ -139,6 +140,18 @@ UPDATES:
 
 
 async def extract_facts_long_term(chat_history: str) -> List[str]:
+    print(f"[FACT-EXTRACT] Starting fact extraction from chat history")
+    extract_start = time.time()
+    
+    # Log the last message from user for context
+    last_user_message = ""
+    for line in reversed(chat_history.split("\n")):
+        if line.startswith("human:"):
+            last_user_message = line.replace("human:", "").strip()
+            break
+    if last_user_message:
+        print(f"[FACT-EXTRACT] Last user message: {last_user_message[:100]}{'...' if len(last_user_message) > 100 else ''}")
+    
     system_prompt = """
     You are an AI assistant specialized in extracting and formatting relevant information about users from conversations. Your task is to analyze a given conversation and create a list of concise, factual statements about the user. These statements will be stored in a vector embedding database to enhance future interactions.
 
@@ -201,10 +214,28 @@ Respond in valid JSON and nothing else.
             "content": message
         }
     ]
-    response = get_response(
+    
+    print(f"[FACT-EXTRACT] Calling LLM for fact extraction")
+    llm_start = time.time()
+    response = await get_response(
         messages, 
         provider=FACT_EXTRACTION_PROVIDER,
         model=FACT_EXTRACTION_MODEL
     )
-    response = json.loads(response)
-    return response["facts"]
+    llm_time = time.time() - llm_start
+    print(f"[FACT-EXTRACT] LLM response received in {llm_time:.2f}s")
+    
+    try:
+        print(f"[FACT-EXTRACT] Parsing JSON response")
+        response_data = json.loads(response)
+        facts = response_data["facts"]
+        print(f"[FACT-EXTRACT] Extracted {len(facts)} facts")
+        if facts:
+            print(f"[FACT-EXTRACT] Sample facts: {facts[:3] if len(facts) > 3 else facts}")
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"[FACT-EXTRACT] Error parsing response: {str(e)}")
+        facts = []
+    
+    total_time = time.time() - extract_start
+    print(f"[FACT-EXTRACT] Total extraction completed in {total_time:.2f}s")
+    return facts
