@@ -22,22 +22,6 @@ TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
 
 
-def parse_xml_content(text: str, tag: str) -> str:
-    """
-    Extract content from XML-like tags in a string.
-    
-    Args:
-        text: The text containing XML-like tags
-        tag: The tag name to extract content from
-        
-    Returns:
-        The content between the opening and closing tags, or an empty string if not found
-    """
-    pattern = f"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, text, re.DOTALL)
-    return match.group(1).strip() if match else ""
-
-
 # FIXME see if this is SAFE
 async def add_metamessage(db, message_id, metamessage_type, content):
     metamessage = models.Metamessage(

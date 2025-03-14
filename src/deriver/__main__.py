@@ -12,5 +12,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         print("[DERIVER] Shutdown initiated via KeyboardInterrupt")
+    except Exception as e:
+        print(f"[DERIVER] Error in main process: {str(e)}")
     finally:
         print("[DERIVER] Deriver process exiting")

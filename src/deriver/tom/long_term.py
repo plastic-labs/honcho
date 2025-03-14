@@ -6,6 +6,7 @@ from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
 from src.utils.model_client import ModelProvider
+from src.utils import parse_xml_content
 from .llm import get_response, DEF_ANTHROPIC_MODEL, DEF_PROVIDER
 from .embeddings import CollectionEmbeddingStore
 
@@ -20,60 +21,12 @@ MAX_FACT_DISTANCE = 0.85
 async def get_user_representation_long_term(
     chat_history: str, 
     session_id: str,
+    embedding_store: CollectionEmbeddingStore,
     user_representation: str = "None", 
     tom_inference: str = "None", 
-    embedding_store: Optional[CollectionEmbeddingStore] = None,
-    this_turn_facts: List[str] = []
+    facts: List[str] = [],
 ) -> str:
-    if embedding_store is None:
-        raise ValueError("embedding_store is required for long_term method")
-
-    # Generate multiple queries from chat history to find relevant facts
-    query_prompt = """Given this conversation, generate 3-5 focused search queries that would help retrieve relevant facts about the user.
-    Each query should focus on a specific aspect such as a single topic, interest, preference, personality trait, or behavior discussed in the conversation.
-    Keep queries specific and concise to improve semantic search effectiveness.
-    For additional context, facts are stored roughly in the format "user is 28 years old" or "user likes sushi".
-    
-    CONVERSATION:
-    {chat_history}
-    
-    Format your response as a JSON array of strings, with each string being a search query. 
-    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
-    Example:
-    ["query about interests", "query about personality", "query about experiences"]
-    """
-
-    queries_response = await get_response(
-        [{"role": "user", "content": query_prompt.format(chat_history=chat_history)}],
-        DEF_PROVIDER,
-        DEF_ANTHROPIC_MODEL
-    )
-    
-    # Parse the JSON response to get a list of queries
-    try:
-        queries = json.loads(queries_response)
-        if not isinstance(queries, list):
-            # Fallback if response is not a valid list
-            queries = [queries_response]
-    except json.JSONDecodeError:
-        # Fallback if response is not valid JSON
-        queries = [queries_response]
-    
-    print(f"Generated queries: {queries}")
-
-    # Retrieve relevant facts for each query and combine results using a set for automatic deduplication
-    retrieved_facts = set()
-    print(embedding_store.collection_id)
-    for query in queries:
-        query_facts = await embedding_store.get_relevant_facts(query, top_k=20, max_distance=MAX_FACT_DISTANCE)
-        print(f"Retrieved facts: {query_facts}")
-        retrieved_facts.update(query_facts)
-    
-    print(f"Retrieved facts: {retrieved_facts}")
-    # No need to filter this_turn_facts for duplicates as it's already been done
-    retrieved_facts_str = "\n".join([f"- {fact} (from memory)" for fact in retrieved_facts])
-    this_turn_facts_str = "\n".join([f"- {fact} (from current turn)" for fact in this_turn_facts])
-    facts_str = retrieved_facts_str + ("\n" + this_turn_facts_str if this_turn_facts else "")
+    facts_str = "\n".join([f"- {fact}" for fact in facts])
     print(f"Facts: {facts_str}")
 
     system_prompt = """You are a system for maintaining factual user representations based on conversation history and theory of mind analysis.
@@ -191,9 +144,13 @@ Instructions:
      * Show how you've formulated the fact for optimal semantic retrieval.
    - Discuss any challenges you encountered in extracting or formatting the information.
 
-5. After your analysis, provide your final output as a JSON array of strings. Each string should be a single fact about the user.
+5. After your analysis, provide your final output as a JSON array of strings. Each string should be a single fact about the user. Wrap the facts in <facts> tags.
 
 Example of the expected output format:
+<information_extraction>
+[Analysis goes here]
+</information_extraction>
+<facts>
 {{
 "facts": 
 [
@@ -202,10 +159,10 @@ Example of the expected output format:
   "Favorite food is sushi"
 ]
 }}
+</facts>
 
 Remember to focus on clear, concise statements that capture key information about the user. Each fact should be worded in a way that will aid its semantic retrieval from a vector embedding database. It's OK for this section to be quite long.
 
-Respond in valid JSON and nothing else.
     """
     message = system_prompt.format(chat_history=chat_history)
     messages = [
@@ -227,7 +184,8 @@ Respond in valid JSON and nothing else.
     
     try:
         print(f"[FACT-EXTRACT] Parsing JSON response")
-        response_data = json.loads(response)
+        facts_str = parse_xml_content(response, "facts")
+        response_data = json.loads(facts_str)
         facts = response_data["facts"]
         print(f"[FACT-EXTRACT] Extracted {len(facts)} facts")
         if facts:

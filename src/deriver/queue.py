@@ -53,20 +53,24 @@ class QueueManager:
         self.owned_sessions.discard(session_id)
 
     async def initialize(self):
-        """Initialize the queue manager"""
+        """Setup signal handlers and start the main polling loop"""
         print(f"[QUEUE] Initializing QueueManager with {self.workers} workers")
         
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            asyncio.get_event_loop().add_signal_handler(
-                sig, lambda: asyncio.create_task(self.shutdown(sig))
+        # Set up signal handlers
+        loop = asyncio.get_running_loop()
+        signals = (signal.SIGTERM, signal.SIGINT)
+        for sig in signals:
+            loop.add_signal_handler(
+                sig, lambda s=sig: asyncio.create_task(self.shutdown(s))
             )
-            
         print("[QUEUE] Signal handlers registered")
-        
-        # Start polling loop as a separate task
-        poll_task = asyncio.create_task(self.polling_loop())
-        self.add_task(poll_task)
-        print("[QUEUE] Polling loop started")
+
+        # Run the polling loop directly in this task
+        print("[QUEUE] Starting polling loop directly")
+        try:
+            await self.polling_loop()
+        finally:
+            await self.cleanup()
 
     async def shutdown(self, sig: signal.Signals):
         """Handle graceful shutdown"""
@@ -120,59 +124,60 @@ class QueueManager:
         return result.scalars().all()
 
     async def polling_loop(self):
-        """Continuously poll for new messages to process"""
+        """Main polling loop to find and process new sessions"""
         print("[QUEUE] Starting polling loop")
-        while not self.shutdown_event.is_set():
-            try:
+        try:
+            while not self.shutdown_event.is_set():
+                if self.queue_empty_flag.is_set():
+                    # print("[QUEUE] Queue empty flag set, waiting")
+                    await asyncio.sleep(1)
+                    self.queue_empty_flag.clear()
+                    continue
+
+                # Check if we have capacity before querying
+                if self.semaphore.locked():
+                    # print("[QUEUE] All workers busy, waiting")
+                    await asyncio.sleep(1)  # Wait before trying again
+                    continue
+
                 async with SessionLocal() as db:
-                    # Check for available sessions
-                    sessions = await self.get_available_sessions(db)
-                    print(f"[QUEUE] Found {len(sessions)} available sessions to process")
-                    
-                    if not sessions:
-                        # Nothing to process, set the flag
-                        self.queue_empty_flag.set()
-                        print("[QUEUE] No sessions to process, waiting...")
-                        # Wait for a bit before checking again
-                        await asyncio.sleep(5)
-                        continue
-                    else:
-                        # Clear the flag, we have work to do
-                        self.queue_empty_flag.clear()
-                        
-                    # Process sessions
-                    for session_id in sessions:
-                        if session_id not in self.owned_sessions:
-                            # Try to claim this session
-                            try:
-                                # Insert record into ActiveQueueSession to claim it
-                                await db.execute(
-                                    insert(models.ActiveQueueSession).values(
-                                        session_id=session_id,
-                                        last_updated=func.now()
+                    try:
+                        new_sessions = await self.get_available_sessions(db)
+
+                        if new_sessions and not self.shutdown_event.is_set():
+                            for session_id in new_sessions:
+                                try:
+                                    # Try to claim the session
+                                    await db.execute(
+                                        insert(models.ActiveQueueSession).values(
+                                            session_id=session_id,
+                                        )
                                     )
-                                )
-                                await db.commit()
-                                
-                                # Track locally
-                                self.track_session(session_id)
-                                print(f"[QUEUE] Claimed session {session_id} for processing")
-                                
-                                # Start processing task
-                                task = asyncio.create_task(self.process_session(session_id))
-                                self.add_task(task)
-                            except IntegrityError:
-                                # Someone else already claimed this session
-                                await db.rollback()
-                                print(f"[QUEUE] Failed to claim session {session_id}, already owned")
-            except Exception as e:
-                print(f"[QUEUE] Error in polling loop: {str(e)}")
-                sentry_sdk.capture_exception(e)
-            
-            # Wait before next poll
-            await asyncio.sleep(1)
-        
-        print("[QUEUE] Polling loop ending")
+                                    await db.commit()
+
+                                    # Track this session
+                                    self.track_session(session_id)
+                                    print(f"[QUEUE] Claimed session {session_id} for processing")
+
+                                    # Create a new task for processing this session
+                                    if not self.shutdown_event.is_set():
+                                        task = asyncio.create_task(
+                                            self.process_session(session_id)
+                                        )
+                                        self.add_task(task)
+                                except IntegrityError:
+                                    await db.rollback()
+                                    print(f"[QUEUE] Failed to claim session {session_id}, already owned")
+                        else:
+                            self.queue_empty_flag.set()
+                            await asyncio.sleep(1)
+                    except Exception as e:
+                        print(f"[QUEUE] Error in polling loop: {str(e)}")
+                        sentry_sdk.capture_exception(e)
+                        await db.rollback()
+                        await asyncio.sleep(1)
+        finally:
+            print("[QUEUE] Polling loop stopped")
 
     ######################
     # Queue Worker Logic #
@@ -245,19 +250,12 @@ class QueueManager:
 
 
 async def main():
+    print("[QUEUE] Starting queue manager")
     manager = QueueManager()
-    await manager.initialize()
-    
-    # Wait until shutdown is requested
-    print("[QUEUE] Main loop running, waiting for shutdown signal")
     try:
-        # Keep the process alive until a shutdown is requested
-        await manager.shutdown_event.wait()
+        await manager.initialize()
     except Exception as e:
-        print(f"[QUEUE] Error in main loop: {str(e)}")
+        print(f"[QUEUE] Error in main: {str(e)}")
         sentry_sdk.capture_exception(e)
     finally:
-        # Clean up resources before exiting
-        print("[QUEUE] Main loop ending, cleaning up resources")
-        await manager.cleanup()
-        print("[QUEUE] Cleanup complete")
+        print("[QUEUE] Main function exiting")

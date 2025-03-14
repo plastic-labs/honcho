@@ -15,8 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.db import SessionLocal
 from src.deriver.tom import get_tom_inference, get_user_representation
+from src.deriver.tom.long_term import get_user_representation_long_term
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
-from src.deriver.consumer import parse_xml_content
+from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 from src.deriver.tom.llm import get_response, DEF_ANTHROPIC_MODEL, DEF_PROVIDER
 
@@ -118,16 +119,30 @@ class Dialectic:
 
 
 async def get_chat_history(app_id: str, user_id: str, session_id: str) -> str:
+    print(f"[CHAT_HISTORY] Retrieving chat history for session {session_id}")
     async with SessionLocal() as db:
         stmt = await crud.get_messages(db, app_id, user_id, session_id)
         results = await db.execute(stmt)
-        messages = results.scalars()
+        messages = results.scalars().all()
+        
+        if not messages:
+            print(f"[CHAT_HISTORY] No messages found for session {session_id}")
+            return ""
+            
+        print(f"[CHAT_HISTORY] Found {len(messages)} messages for session {session_id}")
         history = ""
+        user_count = 0
+        assistant_count = 0
+        
         for message in messages:
             if message.is_user:
+                user_count += 1
                 history += f"user:{message.content}\n"
             else:
+                assistant_count += 1
                 history += f"assistant:{message.content}\n"
+                
+        print(f"[CHAT_HISTORY] Constructed history with {user_count} user messages and {assistant_count} assistant messages")
         return history
 
 
@@ -174,27 +189,61 @@ async def chat(
         print(f"[AGENT] Created embedding store with collection_id: {collection.public_id if collection else None}")
         
         # 2. Get the latest user message to attach the user representation to
-        # and also retrieve recent chat history in one operation
-        latest_message_stmt = (
+        # latest_message_stmt = (
+        #     select(models.Message)
+        #     .where(models.Message.session_id == session_id)
+        #     .where(models.Message.is_user == True)
+        #     .order_by(models.Message.id.desc())
+        #     .limit(1)
+        # )
+        # result = await db.execute(latest_message_stmt)
+        stmt = (
             select(models.Message)
+            .join(models.Session, models.Session.public_id == models.Message.session_id)
+            .join(models.User, models.User.public_id == models.Session.user_id)
+            .join(models.App, models.App.public_id == models.User.app_id)
+            .where(models.App.public_id == app_id)
+            .where(models.User.public_id == user_id)
             .where(models.Message.session_id == session_id)
             .where(models.Message.is_user == True)
             .order_by(models.Message.id.desc())
             .limit(1)
         )
-        result = await db.execute(latest_message_stmt)
-        latest_message = result.scalar_one_or_none()
+        latest_messages = await db.execute(stmt)
+        latest_message = latest_messages.scalar_one_or_none()
         latest_message_id = latest_message.public_id if latest_message else None
         print(f"[AGENT] Latest user message ID: {latest_message_id}")
         
+        # Check if we found a user message for this session
+        if latest_message is None:
+            print(f"[AGENT] WARNING: No user messages found for session {session_id}")
+            
+            # Count total messages in this session
+            count_stmt = (
+                select(func.count())
+                .select_from(models.Message)
+                .where(models.Message.session_id == session_id)
+            )
+            count_result = await db.execute(count_stmt)
+            message_count = count_result.scalar_one()
+            print(f"[AGENT] Total messages in session: {message_count}")
+            
+            # If there are messages but none are from the user, this is unusual
+            if message_count > 0:
+                print(f"[AGENT] ERROR: Session has {message_count} messages but none are from the user")
+        else:
+            print(f"[AGENT] Found latest user message: {latest_message.content[:50]}...")
+        
         # Get chat history for the session
         history = await get_chat_history(app_id, user_id, session_id)
+        message_count = len(history.split('\n'))
+        print(f"[AGENT] Retrieved chat history: {message_count} messages")
 
         # Run both long-term and short-term context retrieval concurrently
         print(f"[AGENT] Starting parallel tasks for context retrieval")
         long_term_task = get_long_term_facts(final_query, embedding_store)
         short_term_task = run_tom_inference(history, session_id)
-        
+
         # Wait for both tasks to complete
         facts, tom_inference = await asyncio.gather(
             long_term_task, 
@@ -458,14 +507,13 @@ async def generate_user_representation(
     # Generate the new user representation
     print(f"[REPRESENTATION] Calling get_user_representation")
     gen_start_time = asyncio.get_event_loop().time()
-    user_representation_response = await get_user_representation(
+    user_representation_response = await get_user_representation_long_term(
         chat_history=chat_history,
         session_id=session_id,
+        facts=facts,
+        embedding_store=embedding_store,
         user_representation=latest_representation,
         tom_inference=tom_inference,
-        method="long_term",
-        this_turn_facts=facts,
-        embedding_store=embedding_store
     )
     gen_time = asyncio.get_event_loop().time() - gen_start_time
     print(f"[REPRESENTATION] get_user_representation completed in {gen_time:.2f}s")
@@ -475,20 +523,42 @@ async def generate_user_representation(
     print(f"[REPRESENTATION] Extracted representation: {len(representation)} characters")
     
     # If message_id is provided, save the representation as a metamessage
-    if message_id and representation:
+    if message_id is None:
+        print(f"[REPRESENTATION] No message_id provided, skipping save")
+    elif not representation:
+        print(f"[REPRESENTATION] Empty representation, skipping save")
+    else:
         print(f"[REPRESENTATION] Saving representation to message_id: {message_id}")
         save_start = asyncio.get_event_loop().time()
-        async with SessionLocal() as save_db:
-            metamessage = models.Metamessage(
-                message_id=message_id,
-                metamessage_type="user_representation",
-                content=representation,
-                h_metadata={},
-            )
-            save_db.add(metamessage)
-            await save_db.commit()
-        save_time = asyncio.get_event_loop().time() - save_start
-        print(f"[REPRESENTATION] Representation saved in {save_time:.2f}s")
+        try:
+            async with SessionLocal() as save_db:
+                try:
+                    # First check if message exists
+                    message_check_stmt = (
+                        select(models.Message)
+                        .where(models.Message.public_id == message_id)
+                    )
+                    message_check = await save_db.execute(message_check_stmt)
+                    message_exists = message_check.scalar_one_or_none() is not None
+                    
+                    if not message_exists:
+                        print(f"[REPRESENTATION] ERROR: Message with ID {message_id} does not exist")
+                    else:
+                        metamessage = models.Metamessage(
+                            message_id=message_id,
+                            metamessage_type="user_representation",
+                            content=representation,
+                            h_metadata={},
+                        )
+                        save_db.add(metamessage)
+                        await save_db.commit()
+                        save_time = asyncio.get_event_loop().time() - save_start
+                        print(f"[REPRESENTATION] Representation saved in {save_time:.2f}s")
+                except Exception as inner_e:
+                    print(f"[REPRESENTATION] ERROR during save DB operation: {str(inner_e)}")
+                    await save_db.rollback()
+        except Exception as e:
+            print(f"[REPRESENTATION] ERROR creating DB session: {str(e)}")
     
     total_time = asyncio.get_event_loop().time() - rep_start_time
     print(f"[REPRESENTATION] Total representation generation completed in {total_time:.2f}s")
