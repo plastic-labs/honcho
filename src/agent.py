@@ -19,7 +19,10 @@ from src.deriver.tom.long_term import get_user_representation_long_term
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
-from src.deriver.tom.llm import get_response, DEF_ANTHROPIC_MODEL, DEF_PROVIDER
+from src.deriver.tom.llm import get_response
+
+DEF_QUERY_GENERATION_PROVIDER = ModelProvider.CEREBRAS
+DEF_QUERY_GENERATION_MODEL = "llama-3.3-70b"
 
 load_dotenv()
 
@@ -321,10 +324,9 @@ async def get_long_term_facts(
     search_queries = await generate_semantic_queries(query)
     print(f"[FACTS] Generated {len(search_queries)} semantic queries: {search_queries}")
     
-    # Retrieve relevant facts using multiple queries
-    retrieved_facts = set()
-    for i, search_query in enumerate(search_queries):
-        print(f"[FACTS] Searching for query {i+1}/{len(search_queries)}: {search_query}")
+    # Create a list of coroutines, one for each query
+    async def execute_query(i: int, search_query: str) -> List[str]:
+        print(f"[FACTS] Starting query {i+1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
         facts = await embedding_store.get_relevant_facts(
             search_query, 
@@ -333,6 +335,15 @@ async def get_long_term_facts(
         )
         query_time = asyncio.get_event_loop().time() - query_start
         print(f"[FACTS] Query {i+1} retrieved {len(facts)} facts in {query_time:.2f}s")
+        return facts
+    
+    # Execute all queries in parallel
+    query_tasks = [execute_query(i, search_query) for i, search_query in enumerate(search_queries)]
+    all_facts_lists = await asyncio.gather(*query_tasks)
+    
+    # Combine all facts into a single set to remove duplicates
+    retrieved_facts = set()
+    for facts in all_facts_lists:
         retrieved_facts.update(facts)
     
     total_time = asyncio.get_event_loop().time() - fact_start_time
@@ -359,35 +370,12 @@ async def run_tom_inference(
     tom_start_time = asyncio.get_event_loop().time()
     
     # Get chat history length to determine if this is a new conversation
-    async with SessionLocal() as db:
-        # Count messages in this session
-        messages_count_stmt = (
-            select(func.count())
-            .select_from(models.Message)
-            .where(models.Message.session_id == session_id)
-        )
-        result = await db.execute(messages_count_stmt)
-        message_count = result.scalar_one()
-        
-        print(f"[TOM] Session has {message_count} messages in the database")
-        
-        if message_count <= 1:
-            print(f"[TOM] This is a new conversation, using empty user representation")
-            # For new conversations, use an empty string as user_representation
-            # to avoid inheriting from previous sessions
-            tom_inference_response = await get_tom_inference(
-                chat_history, 
-                session_id, 
-                method="single_prompt",
-                user_representation=""
-            )
-        else:
-            print(f"[TOM] This is an existing conversation, using normal inference flow")
-            tom_inference_response = await get_tom_inference(
-                chat_history, 
-                session_id, 
-                method="single_prompt"
-            )
+    tom_inference_response = await get_tom_inference(
+        chat_history, 
+        session_id, 
+        method="single_prompt",
+        user_representation=""
+    )
     
     # Extract the prediction from the response
     prediction = parse_xml_content(tom_inference_response, "prediction")
@@ -432,8 +420,8 @@ async def generate_semantic_queries(query: str) -> List[str]:
     # Note: get_response is async, so we need to await it
     queries_response = await get_response(
         [{"role": "user", "content": query_prompt}],
-        DEF_PROVIDER,
-        DEF_ANTHROPIC_MODEL
+        provider=DEF_QUERY_GENERATION_PROVIDER,
+        model=DEF_QUERY_GENERATION_MODEL
     )
     llm_time = asyncio.get_event_loop().time() - llm_start
     print(f"[SEMANTIC] LLM response received in {llm_time:.2f}s: {queries_response[:100]}...")
@@ -460,6 +448,8 @@ async def generate_semantic_queries(query: str) -> List[str]:
     
     return queries
 
+    
+
 
 async def generate_user_representation(
     app_id: str,
@@ -470,7 +460,8 @@ async def generate_user_representation(
     facts: List[str],
     embedding_store: CollectionEmbeddingStore,
     db: AsyncSession,
-    message_id: Optional[str] = None
+    message_id: Optional[str] = None,
+    with_inference: bool = False
 ) -> str:
     """
     Generate a user representation by combining long-term facts and short-term context.
@@ -483,45 +474,54 @@ async def generate_user_representation(
     print(f"[REPRESENTATION] Starting user representation generation")
     rep_start_time = asyncio.get_event_loop().time()
     
-    # Fetch the latest user representation from the same session
-    print(f"[REPRESENTATION] Fetching latest representation for session {session_id}")
-    latest_representation_stmt = (
-        select(models.Metamessage)
-        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.public_id)
-        .where(models.Session.public_id == session_id)  # Only from the same session
-        .where(models.Metamessage.metamessage_type == "user_representation")
-        .order_by(models.Metamessage.id.desc())
-        .limit(1)
-    )
-    result = await db.execute(latest_representation_stmt)
-    latest_representation_obj = result.scalar_one_or_none()
-    latest_representation = (
-        latest_representation_obj.content 
-        if latest_representation_obj 
-        else "No user representation available."
-    )
-    print(f"[REPRESENTATION] Found previous representation: {len(latest_representation)} characters")
-    print(f"[REPRESENTATION] Using {len(facts)} facts for representation")
-    
-    # Generate the new user representation
-    print(f"[REPRESENTATION] Calling get_user_representation")
-    gen_start_time = asyncio.get_event_loop().time()
-    user_representation_response = await get_user_representation_long_term(
-        chat_history=chat_history,
-        session_id=session_id,
-        facts=facts,
-        embedding_store=embedding_store,
-        user_representation=latest_representation,
-        tom_inference=tom_inference,
-    )
-    gen_time = asyncio.get_event_loop().time() - gen_start_time
-    print(f"[REPRESENTATION] get_user_representation completed in {gen_time:.2f}s")
-    
-    # Extract the representation from the response
-    representation = parse_xml_content(user_representation_response, "representation")
-    print(f"[REPRESENTATION] Extracted representation: {len(representation)} characters")
-    
+    if with_inference:
+        # Fetch the latest user representation from the same session
+        print(f"[REPRESENTATION] Fetching latest representation for session {session_id}")
+        latest_representation_stmt = (
+            select(models.Metamessage)
+            .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
+            .join(models.Session, models.Message.session_id == models.Session.public_id)
+            .where(models.Session.public_id == session_id)  # Only from the same session
+            .where(models.Metamessage.metamessage_type == "user_representation")
+            .order_by(models.Metamessage.id.desc())
+            .limit(1)
+        )
+        result = await db.execute(latest_representation_stmt)
+        latest_representation_obj = result.scalar_one_or_none()
+        latest_representation = (
+            latest_representation_obj.content 
+            if latest_representation_obj 
+            else "No user representation available."
+        )
+        print(f"[REPRESENTATION] Found previous representation: {len(latest_representation)} characters")
+        print(f"[REPRESENTATION] Using {len(facts)} facts for representation")
+        
+        # Generate the new user representation
+        print(f"[REPRESENTATION] Calling get_user_representation")
+        gen_start_time = asyncio.get_event_loop().time()
+        user_representation_response = await get_user_representation_long_term(
+            chat_history=chat_history,
+            session_id=session_id,
+            facts=facts,
+            embedding_store=embedding_store,
+            user_representation=latest_representation,
+            tom_inference=tom_inference,
+        )
+        gen_time = asyncio.get_event_loop().time() - gen_start_time
+        print(f"[REPRESENTATION] get_user_representation completed in {gen_time:.2f}s")
+        
+        # Extract the representation from the response
+        representation = parse_xml_content(user_representation_response, "representation")
+        print(f"[REPRESENTATION] Extracted representation: {len(representation)} characters")
+    else:
+        representation = f"""
+        PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
+        {tom_inference}
+        
+        RELEVANT LONG-TERM FACTS ABOUT THE USER:
+        {facts}
+        """
+    print(f"[REPRESENTATION] Representation: {representation}") 
     # If message_id is provided, save the representation as a metamessage
     if message_id is None:
         print(f"[REPRESENTATION] No message_id provided, skipping save")

@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from typing import Optional, List
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,7 @@ from . import models, schemas
 
 load_dotenv(override=True)
 
-openai_client = OpenAI()
+openai_client = AsyncOpenAI()
 
 ########################################################
 # app methods
@@ -860,7 +860,8 @@ async def query_documents(
     max_distance: Optional[float] = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
-    response = openai_client.embeddings.create(
+    # Using async client with await
+    response = await openai_client.embeddings.create(
         model="text-embedding-3-small", input=query
     )
     embedding_query = response.data[0].embedding
@@ -902,7 +903,8 @@ async def create_document(
     if collection is None:
         raise ValueError("Session not found or does not belong to user")
 
-    response = openai_client.embeddings.create(
+    # Using async client with await
+    response = await openai_client.embeddings.create(
         input=document.content, model="text-embedding-3-small"
     )
 
@@ -954,7 +956,8 @@ async def update_document(
         raise ValueError("Session not found or does not belong to user")
     if document.content is not None:
         honcho_document.content = document.content
-        response = openai_client.embeddings.create(
+        # Using async client with await
+        response = await openai_client.embeddings.create(
             input=document.content, model="text-embedding-3-small"
         )
         embedding = response.data[0].embedding
@@ -1018,7 +1021,8 @@ async def get_duplicate_documents(
         List of documents that are similar to the provided content
     """
     # Get embedding for the content
-    response = openai_client.embeddings.create(
+    # Using async client with await
+    response = await openai_client.embeddings.create(
         input=content, model="text-embedding-3-small"
     )
     embedding = response.data[0].embedding
@@ -1032,4 +1036,4 @@ async def get_duplicate_documents(
     )
     
     result = await db.execute(stmt)
-    return result.scalars().all()
+    return list(result.scalars().all())  # Convert to list to match the return type

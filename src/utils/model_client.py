@@ -20,6 +20,7 @@ class ModelProvider(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     OPENROUTER = "openrouter"
+    CEREBRAS = "cerebras"
     # Add other providers as needed
 
 # Default models for each provider
@@ -64,7 +65,7 @@ class ModelClient:
             if not self.api_key:
                 raise ValueError("Anthropic API key is required")
             self.client = Anthropic(api_key=self.api_key)
-        elif provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER]:
+        elif provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
             # Import OpenAI inside the method to avoid issues if the package is not installed
             try:
                 from openai import AsyncOpenAI
@@ -83,6 +84,15 @@ class ModelClient:
                     raise ValueError("OpenRouter API key is required")
                 # Use the provided base_url or get from environment variables, or use the default
                 self.base_url = base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+                self.openai_client = AsyncOpenAI(
+                    api_key=self.api_key,
+                    base_url=self.base_url
+                )
+            elif provider == ModelProvider.CEREBRAS:
+                self.api_key = api_key or os.getenv("CEREBRAS_API_KEY")
+                if not self.api_key:
+                    raise ValueError("Cerebras API key is required")
+                self.base_url = base_url or os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
                 self.openai_client = AsyncOpenAI(
                     api_key=self.api_key,
                     base_url=self.base_url
@@ -132,7 +142,7 @@ class ModelClient:
             
             if self.provider == ModelProvider.ANTHROPIC:
                 return await self._generate_anthropic(messages, system, max_tokens, temperature)
-            elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER]:
+            elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
                 return await self._generate_openai(messages, system, max_tokens, temperature)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
