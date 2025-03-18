@@ -21,8 +21,8 @@ from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 from src.deriver.tom.llm import get_response
 
-DEF_QUERY_GENERATION_PROVIDER = ModelProvider.CEREBRAS
-DEF_QUERY_GENERATION_MODEL = "llama-3.3-70b"
+DEF_QUERY_GENERATION_PROVIDER = ModelProvider.OPENAI
+DEF_QUERY_GENERATION_MODEL = "gpt-4o-mini-2024-07-18"
 
 load_dotenv()
 
@@ -330,7 +330,7 @@ async def get_long_term_facts(
         query_start = asyncio.get_event_loop().time()
         facts = await embedding_store.get_relevant_facts(
             search_query, 
-            top_k=20, 
+            top_k=10, 
             max_distance=0.85
         )
         query_time = asyncio.get_event_loop().time() - query_start
@@ -402,7 +402,7 @@ async def generate_semantic_queries(query: str) -> List[str]:
     query_start = asyncio.get_event_loop().time()
     
     # Prompt the LLM to generate search queries based on the original query
-    query_prompt = f"""Given this query about a user, generate 3-5 focused search queries that would help retrieve relevant facts about the user.
+    query_prompt = f"""Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
     For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
     

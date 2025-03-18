@@ -177,7 +177,8 @@ Remember to focus on clear, concise statements that capture key information abou
     response = await get_response(
         messages, 
         provider=FACT_EXTRACTION_PROVIDER,
-        model=FACT_EXTRACTION_MODEL
+        model=FACT_EXTRACTION_MODEL,
+        temperature=0.0
     )
     llm_time = time.time() - llm_start
     print(f"[FACT-EXTRACT] LLM response received in {llm_time:.2f}s")
