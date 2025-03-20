@@ -21,6 +21,8 @@ from src.routers import (
     users,
 )
 
+from src.security import create_jwt
+
 from .db import engine, scaffold_db
 
 # Configure logging
@@ -30,8 +32,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Sentry Setup
+# JWT Setup
+jwt = create_jwt()
+print(f"\n    JWT with ADMIN_KEY: {jwt}\n")
 
+# Sentry Setup
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
 if SENTRY_ENABLED:
     sentry_sdk.init(
@@ -60,8 +65,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     servers=[
-        {"url": "http://127.0.0.1:8000", "description": "Local Development Server"},
-        {"url": "https:/demo.honcho.dev", "description": "Demo Server"},
+        {"url": "http://localhost:8000", "description": "Local Development Server"},
+        {"url": "https://demo.honcho.dev", "description": "Demo Server"},
     ],
     title="Honcho API",
     summary="An API for adding personalization to AI Apps",
