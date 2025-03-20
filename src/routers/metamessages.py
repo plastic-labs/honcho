@@ -8,20 +8,27 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
-from src.security import auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages",
     tags=["metamessages"],
-    dependencies=[Depends(auth)],
+    dependencies=[Depends(require_auth(
+        app_id="app_id",
+        user_id="user_id",
+        session_id="session_id"
+    ))],
 )
 
 router_user_level = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/metamessages",
     tags=["metamessages"],
-    dependencies=[Depends(auth)],
+    dependencies=[Depends(require_auth(
+        app_id="app_id",
+        user_id="user_id"
+    ))],
 )
 
 
@@ -70,7 +77,7 @@ async def get_metamessages(
             filter=options.filter,
             reverse=reverse,
         )
-        
+
         return await paginate(db, metamessages_query)
     except ValueError as e:
         logger.warning(f"Failed to get metamessages for session {session_id}: {str(e)}")
@@ -95,7 +102,7 @@ async def get_metamessages_by_user(
             reverse=reverse,
             filter=options.filter,
         )
-        
+
         return await paginate(db, metamessages_query)
     except ValueError as e:
         logger.warning(f"Failed to get metamessages for user {user_id}: {str(e)}")
@@ -145,7 +152,7 @@ async def update_metamessage(
     if metamessage.metadata is None:
         logger.warning(f"Update attempted with empty metadata for metamessage {metamessage_id}")
         raise ValidationException("Metamessage metadata cannot be empty")
-        
+
     try:
         updated_metamessage = await crud.update_metamessage(
             db,

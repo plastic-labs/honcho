@@ -12,14 +12,18 @@ from src.db import SessionLocal
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException
 from src.models import QueueItem
-from src.security import auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
     tags=["messages"],
-    dependencies=[Depends(auth)],
+    dependencies=[Depends(require_auth(
+        app_id="app_id",
+        user_id="user_id",
+        session_id="session_id"
+    ))],
 )
 
 
@@ -47,6 +51,11 @@ async def enqueue(payload: dict | list[dict]):
                         user_id=payload[0]["user_id"],
                         session_id=payload[0]["session_id"],
                     )
+                    if not session:
+                        logger.warning(
+                            f"Session {payload[0]['session_id']} not found, skipping enqueue"
+                        )
+                        return
                 except ResourceNotFoundException:
                     logger.warning(
                         f"Session {payload[0]['session_id']} not found, skipping enqueue"
@@ -97,6 +106,11 @@ async def enqueue(payload: dict | list[dict]):
                         user_id=payload["user_id"],
                         session_id=payload["session_id"],
                     )
+                    if not session:
+                        logger.warning(
+                            f"Session {payload['session_id']} not found, skipping enqueue"
+                        )
+                        return
                 except ResourceNotFoundException:
                     logger.warning(
                         f"Session {payload['session_id']} not found, skipping enqueue"

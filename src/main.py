@@ -15,13 +15,14 @@ from src.routers import (
     apps,
     collections,
     documents,
+    keys,
     messages,
     metamessages,
     sessions,
     users,
 )
 
-from src.security import create_jwt
+from src.security import create_admin_jwt
 
 from .db import engine, scaffold_db
 
@@ -33,8 +34,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # JWT Setup
-jwt = create_jwt()
-print(f"\n    JWT with ADMIN_KEY: {jwt}\n")
+print(f"\n    JWT with ADMIN_KEY: {create_admin_jwt()}\n")
 
 # Sentry Setup
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
@@ -107,7 +107,7 @@ app.include_router(metamessages.router, prefix="/v1")
 app.include_router(metamessages.router_user_level, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
-
+app.include_router(keys.router, prefix="/v1")
 
 # Global exception handlers
 @app.exception_handler(HonchoException)

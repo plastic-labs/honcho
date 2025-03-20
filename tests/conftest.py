@@ -125,6 +125,9 @@ def client(db_session):
             content={"detail": exc.detail},
         )
 
+    # NOTE: use USE_AUTH here to run some tests with auth, some tests without.
+    # try not to change existing tests, rather create new tests that test API keys.
+
     async def override_get_db():
         yield db_session
 

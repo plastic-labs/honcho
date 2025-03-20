@@ -91,7 +91,7 @@ that they are disabled you can verify the following environment variables are
 set to false.
 
 ```env
-USE_AUTH_SERVICE=false
+USE_AUTH=false
 SENTRY_ENABLED=false
 ```
 
