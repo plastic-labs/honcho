@@ -7,6 +7,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import (
+    AuthenticationException,
     ResourceNotFoundException,
 )
 from src.security import JWTParams, auth, require_auth
@@ -31,7 +32,7 @@ async def get_user_from_token(
     If no user_id is provided, return a 404.
     """
     if jwt_params.us is None:
-        raise ResourceNotFoundException("User not found")
+        raise AuthenticationException("User not found in JWT")
     return await crud.get_user(db, app_id=app_id, user_id=jwt_params.us)
 
 

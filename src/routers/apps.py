@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, auth, require_auth
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ async def get_app_from_token(jwt_params: JWTParams = Depends(auth), db=db):
     If no app_id is provided, return a 404.
     """
     if jwt_params.ap is None:
-        raise ResourceNotFoundException("App not found")
+        raise AuthenticationException("App not found in JWT")
     return await crud.get_app(db, app_id=jwt_params.ap)
 
 
