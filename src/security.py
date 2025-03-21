@@ -99,10 +99,8 @@ async def verify_jwt(token: str, db: AsyncSession) -> JWTParams:
             params.se = decoded["se"]
         if "co" in decoded:
             params.co = decoded["co"]
-        print(f"Verified JWT: {params}")
         return params
     except jwt.PyJWTError:
-        print("Invalid JWT")
         raise AuthenticationException("Invalid JWT") from None
 
 
