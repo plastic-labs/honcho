@@ -56,8 +56,7 @@ if not AUTH_JWT_SECRET:
 
 
 def create_admin_jwt() -> str:
-    params = JWTParams()
-    params.ad = True
+    params = JWTParams(ad=True)
     return create_jwt(params)
 
 
@@ -83,7 +82,6 @@ def verify_jwt(token: str) -> JWTParams:
             params.se = decoded["se"]
         if "co" in decoded:
             params.co = decoded["co"]
-        print(f"Decoded JWT: {params}")
         return params
     except jwt.PyJWTError:
         print("Invalid JWT")
@@ -126,9 +124,9 @@ async def auth(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     collection_id: Optional[str] = None,
-):
+) -> JWTParams:
     if not USE_AUTH:
-        return True
+        return JWTParams(ad=True)
     if not credentials or not credentials.credentials:
         logger.warning("No access token provided")
         raise AuthenticationException("No access token provided")
@@ -137,17 +135,32 @@ async def auth(
         logger.warning("Invalid access token attempt")
         raise AuthenticationException("Invalid access token")
 
+    print(f"JWT: {jwt_params}")
+
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:
-        return {"message": "OK"}
+        return jwt_params
     if admin:
         raise AuthenticationException("Resource requires admin privileges")
-    if app_id and jwt_params.ap == app_id:
-        return {"message": "OK"}
-    if user_id and jwt_params.us == user_id:
-        return {"message": "OK"}
-    if session_id and jwt_params.se == session_id:
-        return {"message": "OK"}
-    if collection_id and jwt_params.co == collection_id:
-        return {"message": "OK"}
-    raise AuthenticationException("JWT not permissioned for this resource")
+    if app_id:
+        if jwt_params.ap == app_id:
+            return jwt_params
+        else:
+            raise AuthenticationException("JWT not permissioned for this resource")
+    if user_id:
+        if jwt_params.us == user_id:
+            return jwt_params
+        else:
+            raise AuthenticationException("JWT not permissioned for this resource")
+    if session_id:
+        if jwt_params.se == session_id:
+            return jwt_params
+        else:
+            raise AuthenticationException("JWT not permissioned for this resource")
+    if collection_id:
+        if jwt_params.co == collection_id:
+            return jwt_params
+        else:
+            raise AuthenticationException("JWT not permissioned for this resource")
+    # Route did not specify any parameters, so it should parse parameters itself
+    return jwt_params

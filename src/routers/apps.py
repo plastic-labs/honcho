@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException
-from src.security import require_auth
+from src.security import JWTParams, auth, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -15,9 +15,24 @@ router = APIRouter(
 )
 
 
-@router.get("/{app_id}",
+@router.get(
+    "/",
     response_model=schemas.App,
-    dependencies=[Depends(require_auth(app_id="app_id"))]
+    include_in_schema=False,  # XX can remove this if desired
+)
+async def get_app_from_jwt(jwt_params: JWTParams = Depends(auth), db=db):
+    """Get an App by ID from the app_id provided in the JWT.
+    If no app_id is provided, return a 404.
+    """
+    if jwt_params.ap is None:
+        raise ResourceNotFoundException("App not found")
+    return await crud.get_app(db, app_id=jwt_params.ap)
+
+
+@router.get(
+    "/{app_id}",
+    response_model=schemas.App,
+    dependencies=[Depends(require_auth(app_id="app_id"))],
 )
 async def get_app(app_id: str, db=db):
     """Get an App by ID"""
@@ -25,9 +40,10 @@ async def get_app(app_id: str, db=db):
     return app
 
 
-@router.get("/name/{name}",
+@router.get(
+    "/name/{name}",
     response_model=schemas.App,
-    dependencies=[Depends(require_auth(admin=True))]
+    dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_app_by_name(name: str, db=db):
     """Get an App by Name"""
@@ -36,9 +52,8 @@ async def get_app_by_name(name: str, db=db):
     return app
 
 
-@router.post("",
-    response_model=schemas.App,
-    dependencies=[Depends(require_auth(admin=True))]
+@router.post(
+    "", response_model=schemas.App, dependencies=[Depends(require_auth(admin=True))]
 )
 async def create_app(app: schemas.AppCreate, db=db):
     """Create a new App"""
@@ -46,9 +61,10 @@ async def create_app(app: schemas.AppCreate, db=db):
     return honcho_app
 
 
-@router.get("/get_or_create/{name}",
+@router.get(
+    "/get_or_create/{name}",
     response_model=schemas.App,
-    dependencies=[Depends(require_auth(admin=True))]
+    dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_or_create_app(name: str, db=db):
     """Get or Create an App"""
@@ -61,9 +77,10 @@ async def get_or_create_app(name: str, db=db):
         return app
 
 
-@router.put("/{app_id}",
+@router.put(
+    "/{app_id}",
     response_model=schemas.App,
-    dependencies=[Depends(require_auth(app_id="app_id"))]
+    dependencies=[Depends(require_auth(app_id="app_id"))],
 )
 async def update_app(
     app_id: str,
