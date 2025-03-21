@@ -10,6 +10,8 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src import crud
+from src.dependencies import get_db
 from src.exceptions import HonchoException
 from src.routers import (
     apps,
@@ -32,8 +34,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # JWT Setup
-print(f"\n    JWT with ADMIN_KEY: {create_admin_jwt()}\n")
+async def setup_admin_jwt():
+    async for db in get_db():
+        token = create_admin_jwt()
+
+        # if admin key is not already in the database, save it
+        key = await crud.get_key(db, token)
+        if key:
+            logger.info("Admin key already exists in database")
+        else:
+            logger.info("Creating new admin key in database")
+            await crud.create_key(db, token)
+        print(f"\n    JWT with ADMIN_KEY: {token}\n")
+        break  # We only need one session
+
 
 # Sentry Setup
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
@@ -57,6 +73,7 @@ if SENTRY_ENABLED:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scaffold_db()  # Scaffold Database on Startup
+    await setup_admin_jwt()  # Add JWT setup
     yield
     await engine.dispose()
 

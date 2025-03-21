@@ -37,7 +37,7 @@ def test_get_or_create_app(client):
     response = client.get(f"/v1/apps/name/{name}")
     assert response.status_code == 404
     assert "detail" in response.json()
-    
+
     # This should create the app
     response = client.get(f"/v1/apps/get_or_create/{name}")
     assert response.status_code == 200
@@ -48,23 +48,23 @@ def test_get_or_create_app(client):
 
 def test_get_or_create_existing_app(client):
     name = str(generate_nanoid())
-    
+
     # App doesn't exist yet
     response = client.get(f"/v1/apps/name/{name}")
     assert response.status_code == 404
-    
+
     # Create the app
     response = client.post(
         "/v1/apps", json={"name": name, "metadata": {"key": "value"}}
     )
     assert response.status_code == 200
     app1 = response.json()
-    
+
     # Now get_or_create should find the existing app
     response = client.get(f"/v1/apps/get_or_create/{name}")
     assert response.status_code == 200
     app2 = response.json()
-    
+
     # Both should be the same app
     assert app1["name"] == app2["name"]
     assert app1["id"] == app2["id"]
@@ -107,10 +107,10 @@ def test_create_duplicate_app_name(client):
     name = str(generate_nanoid())
     response = client.post("/v1/apps", json={"name": name})
     assert response.status_code == 200
-    
+
     # Try to create another app with the same name
     response = client.post("/v1/apps", json={"name": name})
-    
+
     # Should get a ConflictException with 409 status
     assert response.status_code == 409
     data = response.json()

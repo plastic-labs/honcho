@@ -62,22 +62,33 @@ if not AUTH_JWT_SECRET:
 
 
 def create_admin_jwt() -> str:
-    params = JWTParams(ad=True)
-    return create_jwt(params)
+    """Create a JWT for admin operations"""
+    params = JWTParams(t="", ad=True)
+    key = create_jwt(params)
+    return key
 
 
 def create_jwt(params: JWTParams) -> str:
-    return jwt.encode(
-        params.__dict__, AUTH_JWT_SECRET.encode("utf-8"), algorithm="HS256"
-    )
+    payload = {k: v for k, v in params.__dict__.items() if v is not None}
+    return jwt.encode(payload, AUTH_JWT_SECRET.encode("utf-8"), algorithm="HS256")
 
 
-def verify_jwt(token: str) -> JWTParams:
+async def verify_jwt(token: str, db: AsyncSession) -> JWTParams:
+    """check if key is revoked
+    if a key is not found, it's valid -- we only
+    check the database for keys that are revoked
+    """
+    key = await crud.get_key(db, token)
+    if key and key.revoked:
+        raise AuthenticationException("Key is revoked")
+
     params = JWTParams()
     try:
         decoded = jwt.decode(
             token, AUTH_JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )
+        if "t" in decoded:
+            params.t = decoded["t"]
         if "ad" in decoded:
             params.ad = decoded["ad"]
         if "ap" in decoded:
@@ -88,6 +99,7 @@ def verify_jwt(token: str) -> JWTParams:
             params.se = decoded["se"]
         if "co" in decoded:
             params.co = decoded["co"]
+        print(f"Verified JWT: {params}")
         return params
     except jwt.PyJWTError:
         print("Invalid JWT")
@@ -136,37 +148,21 @@ async def auth(
     collection_id: Optional[str] = None,
 ) -> JWTParams:
     if not USE_AUTH:
-        return JWTParams(ad=True)
+        return JWTParams(t="", ad=True)
     if not credentials or not credentials.credentials:
         logger.warning("No access token provided")
         raise AuthenticationException("No access token provided")
-    jwt_params = verify_jwt(credentials.credentials)
+    jwt_params = await verify_jwt(credentials.credentials, db)
     if not jwt_params:
         logger.warning("Invalid access token attempt")
         raise AuthenticationException("Invalid access token")
-
-    print(f"JWT: {jwt_params}")
-
-    # check if key is revoked
-    key = await crud.get_key(db, credentials.credentials)
-    if key.revoked:
-        raise AuthenticationException("Key is revoked")
 
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:
         return jwt_params
     if admin:
         raise AuthenticationException("Resource requires admin privileges")
-    if app_id:
-        if jwt_params.ap == app_id:
-            return jwt_params
-        else:
-            raise AuthenticationException("JWT not permissioned for this resource")
-    if user_id:
-        if jwt_params.us == user_id:
-            return jwt_params
-        else:
-            raise AuthenticationException("JWT not permissioned for this resource")
+
     if session_id:
         if jwt_params.se == session_id:
             return jwt_params
@@ -177,5 +173,18 @@ async def auth(
             return jwt_params
         else:
             raise AuthenticationException("JWT not permissioned for this resource")
+
+    if user_id:
+        if jwt_params.us == user_id:
+            return jwt_params
+        else:
+            raise AuthenticationException("JWT not permissioned for this resource")
+
+    if app_id:
+        if jwt_params.ap == app_id:
+            return jwt_params
+        else:
+            raise AuthenticationException("JWT not permissioned for this resource")
+
     # Route did not specify any parameters, so it should parse parameters itself
     return jwt_params

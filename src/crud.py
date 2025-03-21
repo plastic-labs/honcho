@@ -1,5 +1,5 @@
-from collections.abc import Sequence
 import logging
+from collections.abc import Sequence
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -12,9 +12,9 @@ from sqlalchemy.types import BigInteger
 
 from . import models, schemas
 from .exceptions import (
+    ConflictException,
     ResourceNotFoundException,
     ValidationException,
-    ConflictException,
 )
 
 logger = logging.getLogger(__name__)
@@ -31,14 +31,14 @@ openai_client = OpenAI()
 async def get_app(db: AsyncSession, app_id: str) -> models.App:
     """
     Get an app by its ID.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
-        
+
     Returns:
         The app if found
-        
+
     Raises:
         ResourceNotFoundException: If the app does not exist
     """
@@ -54,14 +54,14 @@ async def get_app(db: AsyncSession, app_id: str) -> models.App:
 async def get_app_by_name(db: AsyncSession, name: str) -> models.App:
     """
     Get an app by its name.
-    
+
     Args:
         db: Database session
         name: Name of the app
-        
+
     Returns:
         The app if found
-        
+
     Raises:
         ResourceNotFoundException: If the app does not exist
     """
@@ -81,14 +81,14 @@ async def get_app_by_name(db: AsyncSession, name: str) -> models.App:
 async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
     """
     Create a new app.
-    
+
     Args:
         db: Database session
         app: App creation schema
-        
+
     Returns:
         The created app
-        
+
     Raises:
         ConflictException: If an app with the same name already exists
     """
@@ -109,21 +109,21 @@ async def update_app(
 ) -> models.App:
     """
     Update an app.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         app: App update schema
-        
+
     Returns:
         The updated app
-        
+
     Raises:
         ResourceNotFoundException: If the app does not exist
     """
     try:
         honcho_app = await get_app(db, app_id)
-        
+
         if app.name is not None:
             honcho_app.name = app.name
         if app.metadata is not None:
@@ -135,7 +135,9 @@ async def update_app(
     except IntegrityError as e:
         await db.rollback()
         logger.error(f"IntegrityError updating app {app_id}: {str(e)}")
-        raise ConflictException("App update failed - unique constraint violation") from e
+        raise ConflictException(
+            "App update failed - unique constraint violation"
+        ) from e
 
 
 # def delete_app(db: AsyncSession, app_id: str) -> bool:
@@ -157,15 +159,15 @@ async def create_user(
 ) -> models.User:
     """
     Create a new user.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         user: User creation schema
-        
+
     Returns:
         The created user
-        
+
     Raises:
         ConflictException: If a user with the same name already exists in this app
     """
@@ -185,20 +187,18 @@ async def create_user(
         raise ConflictException("User with this name already exists") from e
 
 
-async def get_user(
-    db: AsyncSession, app_id: str, user_id: str
-) -> models.User:
+async def get_user(db: AsyncSession, app_id: str, user_id: str) -> models.User:
     """
     Get a user by app ID and user ID.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         user_id: Public ID of the user
-        
+
     Returns:
         The user if found
-        
+
     Raises:
         ResourceNotFoundException: If the user does not exist
     """
@@ -215,20 +215,18 @@ async def get_user(
     return user
 
 
-async def get_user_by_name(
-    db: AsyncSession, app_id: str, name: str
-) -> models.User:
+async def get_user_by_name(db: AsyncSession, app_id: str, name: str) -> models.User:
     """
     Get a user by app ID and name.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         name: Name of the user
-        
+
     Returns:
         The user if found
-        
+
     Raises:
         ResourceNotFoundException: If the user does not exist
     """
@@ -269,16 +267,16 @@ async def update_user(
 ) -> models.User:
     """
     Update a user.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         user_id: Public ID of the user
         user: User update schema
-        
+
     Returns:
         The updated user
-        
+
     Raises:
         ResourceNotFoundException: If the user does not exist
         ValidationException: If the update data is invalid
@@ -287,7 +285,7 @@ async def update_user(
     try:
         # get_user will raise ResourceNotFoundException if not found
         honcho_user = await get_user(db, app_id, user_id)
-        
+
         if user.name is not None:
             honcho_user.name = user.name
         if user.metadata is not None:
@@ -299,7 +297,9 @@ async def update_user(
     except IntegrityError as e:
         await db.rollback()
         logger.warning(f"User update failed due to integrity error: {str(e)}")
-        raise ConflictException("User update failed - unique constraint violation") from e
+        raise ConflictException(
+            "User update failed - unique constraint violation"
+        ) from e
 
 
 # def delete_user(db: AsyncSession, app_id: str, user_id: str) -> bool:
@@ -371,23 +371,23 @@ async def create_session(
 ) -> models.Session:
     """
     Create a new session for a user.
-    
+
     Args:
         db: Database session
         session: Session creation schema
         app_id: ID of the app
         user_id: ID of the user
-        
+
     Returns:
         The created session
-        
+
     Raises:
         ResourceNotFoundException: If the user does not exist
     """
     try:
         # This will raise ResourceNotFoundException if user not found
         honcho_user = await get_user(db, app_id=app_id, user_id=user_id)
-        
+
         honcho_session = models.Session(
             user_id=user_id,
             h_metadata=session.metadata,
@@ -411,17 +411,17 @@ async def update_session(
 ) -> models.Session:
     """
     Update a session.
-    
+
     Args:
         db: Database session
         session: Session update schema
         app_id: ID of the app
         user_id: ID of the user
         session_id: ID of the session
-        
+
     Returns:
         The updated session
-        
+
     Raises:
         ResourceNotFoundException: If the session does not exist or doesn't belong to the user
     """
@@ -431,10 +431,12 @@ async def update_session(
     if honcho_session is None:
         logger.warning(f"Session {session_id} not found for user {user_id}")
         raise ResourceNotFoundException("Session not found or does not belong to user")
-        
-    if session.metadata is not None:  # Need to explicitly be there won't make it empty by default
+
+    if (
+        session.metadata is not None
+    ):  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
-        
+
     await db.commit()
     logger.info(f"Session {session_id} updated successfully")
     return honcho_session
@@ -445,16 +447,16 @@ async def delete_session(
 ) -> bool:
     """
     Mark a session as inactive (soft delete).
-    
+
     Args:
         db: Database session
         app_id: ID of the app
         user_id: ID of the user
         session_id: ID of the session
-        
+
     Returns:
         True if the session was deleted successfully
-        
+
     Raises:
         ResourceNotFoundException: If the session does not exist or doesn't belong to the user
     """
@@ -467,11 +469,11 @@ async def delete_session(
     )
     result = await db.execute(stmt)
     honcho_session = result.scalar_one_or_none()
-    
+
     if honcho_session is None:
         logger.warning(f"Session {session_id} not found for user {user_id}")
         raise ResourceNotFoundException("Session not found or does not belong to user")
-        
+
     honcho_session.is_active = False
     await db.commit()
     logger.info(f"Session {session_id} marked as inactive")
@@ -901,16 +903,16 @@ async def get_collection_by_id(
 ) -> models.Collection:
     """
     Get a collection by ID for a specific user and app.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         user_id: Public ID of the user
         collection_id: Public ID of the collection
-        
+
     Returns:
         The collection if found
-        
+
     Raises:
         ResourceNotFoundException: If the collection does not exist
     """
@@ -924,8 +926,12 @@ async def get_collection_by_id(
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
-        logger.warning(f"Collection with ID '{collection_id}' not found for user {user_id}")
-        raise ResourceNotFoundException(f"Collection not found or does not belong to user")
+        logger.warning(
+            f"Collection with ID '{collection_id}' not found for user {user_id}"
+        )
+        raise ResourceNotFoundException(
+            f"Collection not found or does not belong to user"
+        )
     return collection
 
 
@@ -934,16 +940,16 @@ async def get_collection_by_name(
 ) -> models.Collection:
     """
     Get a collection by name for a specific user and app.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         user_id: Public ID of the user
         name: Name of the collection
-        
+
     Returns:
         The collection if found
-        
+
     Raises:
         ResourceNotFoundException: If the collection does not exist
     """
@@ -970,16 +976,16 @@ async def create_collection(
 ) -> models.Collection:
     """
     Create a new collection for a user.
-    
+
     Args:
         db: Database session
         collection: Collection creation schema
         app_id: ID of the app
         user_id: ID of the user
-        
+
     Returns:
         The created collection
-        
+
     Raises:
         ConflictException: If a collection with the same name already exists for this user
         ValidationException: If the collection configuration is invalid
@@ -988,12 +994,16 @@ async def create_collection(
     try:
         # This will raise ResourceNotFoundException if user not found
         await get_user(db, app_id=app_id, user_id=user_id)
-        
+
         # Check for reserved names
         if collection.name == "honcho":
-            logger.warning(f"Attempted to create collection with reserved name 'honcho' for user {user_id}")
-            raise ValidationException("Invalid collection configuration - 'honcho' is a reserved name")
-        
+            logger.warning(
+                f"Attempted to create collection with reserved name 'honcho' for user {user_id}"
+            )
+            raise ValidationException(
+                "Invalid collection configuration - 'honcho' is a reserved name"
+            )
+
         honcho_collection = models.Collection(
             user_id=user_id,
             name=collection.name,
@@ -1001,12 +1011,16 @@ async def create_collection(
         )
         db.add(honcho_collection)
         await db.commit()
-        logger.info(f"Collection '{collection.name}' created successfully for user {user_id}")
+        logger.info(
+            f"Collection '{collection.name}' created successfully for user {user_id}"
+        )
         return honcho_collection
     except IntegrityError as e:
         await db.rollback()
         logger.warning(f"Failed to create collection - integrity error: {str(e)}")
-        raise ConflictException(f"Collection with name '{collection.name}' already exists") from e
+        raise ConflictException(
+            f"Collection with name '{collection.name}' already exists"
+        ) from e
 
 
 async def update_collection(
@@ -1018,17 +1032,17 @@ async def update_collection(
 ) -> models.Collection:
     """
     Update a collection.
-    
+
     Args:
         db: Database session
         collection: Collection update schema
         app_id: ID of the app
         user_id: ID of the user
         collection_id: ID of the collection
-        
+
     Returns:
         The updated collection
-        
+
     Raises:
         ResourceNotFoundException: If the collection does not exist
         ValidationException: If the update data is invalid
@@ -1037,25 +1051,33 @@ async def update_collection(
     try:
         # Validate input
         if collection.name is None and collection.metadata is None:
-            logger.warning(f"Collection update attempted with no fields provided for collection {collection_id}")
-            raise ValidationException("Invalid collection configuration - at least one field must be provided")
-            
+            logger.warning(
+                f"Collection update attempted with no fields provided for collection {collection_id}"
+            )
+            raise ValidationException(
+                "Invalid collection configuration - at least one field must be provided"
+            )
+
         # This will raise ResourceNotFoundException if not found
         honcho_collection = await get_collection_by_id(
             db, app_id=app_id, user_id=user_id, collection_id=collection_id
         )
-        
+
         # Check for reserved names if name is being updated
         if collection.name == "honcho":
-            logger.warning(f"Attempted to rename collection to reserved name 'honcho' for user {user_id}")
-            raise ValidationException("Invalid collection configuration - 'honcho' is a reserved name")
-        
+            logger.warning(
+                f"Attempted to rename collection to reserved name 'honcho' for user {user_id}"
+            )
+            raise ValidationException(
+                "Invalid collection configuration - 'honcho' is a reserved name"
+            )
+
         if collection.metadata is not None:
             honcho_collection.h_metadata = collection.metadata
-            
+
         if collection.name is not None:
             honcho_collection.name = collection.name
-            
+
         await db.commit()
         logger.info(f"Collection {collection_id} updated successfully")
         return honcho_collection
@@ -1071,16 +1093,16 @@ async def delete_collection(
     """
     Delete a Collection and all documents associated with it. Takes advantage of
     the orm cascade feature.
-    
+
     Args:
         db: Database session
         app_id: ID of the app
         user_id: ID of the user
         collection_id: ID of the collection
-        
+
     Returns:
         True if the collection was deleted successfully
-        
+
     Raises:
         ResourceNotFoundException: If the collection does not exist
     """
@@ -1089,7 +1111,7 @@ async def delete_collection(
         honcho_collection = await get_collection_by_id(
             db, app_id=app_id, user_id=user_id, collection_id=collection_id
         )
-            
+
         await db.delete(honcho_collection)
         await db.commit()
         logger.info(f"Collection {collection_id} deleted successfully")
@@ -1147,17 +1169,17 @@ async def get_document(
 ) -> models.Document:
     """
     Get a document by ID.
-    
+
     Args:
         db: Database session
         app_id: Public ID of the app
         user_id: Public ID of the user
         collection_id: Public ID of the collection
         document_id: Public ID of the document
-        
+
     Returns:
         The document if found
-        
+
     Raises:
         ResourceNotFoundException: If the document does not exist
     """
@@ -1177,7 +1199,9 @@ async def get_document(
     result = await db.execute(stmt)
     document = result.scalar_one_or_none()
     if document is None:
-        logger.warning(f"Document with ID '{document_id}' not found in collection {collection_id}")
+        logger.warning(
+            f"Document with ID '{document_id}' not found in collection {collection_id}"
+        )
         raise ResourceNotFoundException(f"Document with ID '{document_id}' not found")
     return document
 
@@ -1225,17 +1249,17 @@ async def create_document(
 ) -> models.Document:
     """
     Embed text as a vector and create a document.
-    
+
     Args:
         db: Database session
         document: Document creation schema
         app_id: ID of the app
         user_id: ID of the user
         collection_id: ID of the collection
-        
+
     Returns:
         The created document
-        
+
     Raises:
         ResourceNotFoundException: If the collection does not exist
         ValidationException: If the document data is invalid
@@ -1245,9 +1269,11 @@ async def create_document(
         await get_collection_by_id(
             db, app_id=app_id, collection_id=collection_id, user_id=user_id
         )
-        
+
         if not document.content:
-            logger.warning(f"Attempted to create document with empty content in collection {collection_id}")
+            logger.warning(
+                f"Attempted to create document with empty content in collection {collection_id}"
+            )
             raise ValidationException("Document content cannot be empty")
 
         response = openai_client.embeddings.create(
@@ -1267,9 +1293,13 @@ async def create_document(
         logger.info(f"Document created successfully in collection {collection_id}")
         return honcho_document
     except Exception as e:
-        if not isinstance(e, ResourceNotFoundException) and not isinstance(e, ValidationException):
+        if not isinstance(e, ResourceNotFoundException) and not isinstance(
+            e, ValidationException
+        ):
             await db.rollback()
-            logger.error(f"Error creating document in collection {collection_id}: {str(e)}")
+            logger.error(
+                f"Error creating document in collection {collection_id}: {str(e)}"
+            )
         raise
 
 
@@ -1338,6 +1368,7 @@ async def delete_document(
 # key methods
 ########################################################
 
+
 async def create_key(db: AsyncSession, key: str) -> models.Key:
     honcho_key = models.Key(
         key=key,
@@ -1347,13 +1378,10 @@ async def create_key(db: AsyncSession, key: str) -> models.Key:
     return honcho_key
 
 
-async def get_key(db: AsyncSession, key: str) -> models.Key:
+async def get_key(db: AsyncSession, key: str) -> models.Key | None:
     stmt = select(models.Key).where(models.Key.key == key)
     result = await db.execute(stmt)
     key = result.scalar_one_or_none()
-    if key is None:
-        logger.warning("Key not found")
-        raise ResourceNotFoundException("Key not found")
     return key
 
 

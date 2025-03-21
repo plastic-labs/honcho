@@ -1,12 +1,16 @@
 import logging
+import os
 
 from fastapi import APIRouter, Depends
 
 from src import crud
 from src.dependencies import db
+from src.exceptions import DisabledException
 from src.security import JWTParams, create_jwt, require_auth
 
 logger = logging.getLogger(__name__)
+
+USE_AUTH = os.getenv("USE_AUTH", "False").lower() == "true"
 
 router = APIRouter(
     prefix="/keys",
@@ -24,6 +28,9 @@ async def create_key(
     db=db,
 ):
     """Create a new Key"""
+    if not USE_AUTH:
+        raise DisabledException()
+
     key_str = create_jwt(
         JWTParams(
             ap=app_id,
@@ -45,5 +52,8 @@ async def revoke_key(
     db=db,
 ):
     """Revoke a Key"""
+    if not USE_AUTH:
+        raise DisabledException()
+
     await crud.revoke_key(db, key)
     return {"revoked": key}
