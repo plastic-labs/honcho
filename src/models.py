@@ -236,3 +236,12 @@ class ActiveQueueSession(Base):
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class Key(Base):
+    __tablename__ = "keys"
+    key: Mapped[str] = mapped_column(TEXT, primary_key=True, index=True, unique=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now()
+    )

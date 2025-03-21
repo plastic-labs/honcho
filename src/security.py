@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 from typing import Annotated, Optional
@@ -6,6 +7,10 @@ import jwt
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src import crud
+from src.dependencies import get_db
 
 from .exceptions import AuthenticationException
 
@@ -39,6 +44,7 @@ class JWTParams(BaseModel):
     Names shortened to minimize token size.
     """
 
+    t: str = datetime.datetime.now().isoformat()
     ad: Optional[bool] = None
     ap: Optional[str] = None
     us: Optional[str] = None
@@ -96,7 +102,9 @@ def require_auth(
     collection_id: Optional[str] = None,
 ):
     async def auth_dependency(
-        request: Request, credentials: HTTPAuthorizationCredentials = Depends(security)
+        request: Request,
+        credentials: HTTPAuthorizationCredentials = Depends(security),
+        db: AsyncSession = Depends(get_db),
     ):
         app_id_param = request.path_params.get(app_id) if app_id else None
         user_id_param = request.path_params.get(user_id) if user_id else None
@@ -107,6 +115,7 @@ def require_auth(
 
         return await auth(
             credentials=credentials,
+            db=db,
             admin=admin,
             app_id=app_id_param,
             user_id=user_id_param,
@@ -119,6 +128,7 @@ def require_auth(
 
 async def auth(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    db: AsyncSession = Depends(get_db),
     admin: Optional[bool] = None,
     app_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -136,6 +146,11 @@ async def auth(
         raise AuthenticationException("Invalid access token")
 
     print(f"JWT: {jwt_params}")
+
+    # check if key is revoked
+    key = await crud.get_key(db, credentials.credentials)
+    if key.revoked:
+        raise AuthenticationException("Key is revoked")
 
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:

@@ -1332,3 +1332,35 @@ async def delete_document(
     await db.delete(document)
     await db.commit()
     return True
+
+
+########################################################
+# key methods
+########################################################
+
+async def create_key(db: AsyncSession, key: str) -> models.Key:
+    honcho_key = models.Key(
+        key=key,
+    )
+    db.add(honcho_key)
+    await db.commit()
+    return honcho_key
+
+
+async def get_key(db: AsyncSession, key: str) -> models.Key:
+    stmt = select(models.Key).where(models.Key.key == key)
+    result = await db.execute(stmt)
+    key = result.scalar_one_or_none()
+    if key is None:
+        logger.warning("Key not found")
+        raise ResourceNotFoundException("Key not found")
+    return key
+
+
+async def revoke_key(db: AsyncSession, key: str) -> models.Key:
+    honcho_key = await db.get(models.Key, key)
+    if honcho_key is None:
+        raise ResourceNotFoundException(f"Key {key} not found")
+    honcho_key.revoked = True
+    await db.commit()
+    return honcho_key
