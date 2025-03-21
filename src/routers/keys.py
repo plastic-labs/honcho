@@ -1,7 +1,8 @@
 import logging
 
 from fastapi import APIRouter, Depends
-from src.security import require_auth, JWTParams, create_jwt
+
+from src.security import JWTParams, create_jwt, require_auth
 
 logger = logging.getLogger(__name__)
 

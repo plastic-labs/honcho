@@ -21,7 +21,6 @@ from src.routers import (
     sessions,
     users,
 )
-
 from src.security import create_admin_jwt
 
 from .db import engine, scaffold_db
@@ -108,6 +107,7 @@ app.include_router(metamessages.router_user_level, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
 app.include_router(keys.router, prefix="/v1")
+
 
 # Global exception handlers
 @app.exception_handler(HonchoException)

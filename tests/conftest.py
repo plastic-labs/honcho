@@ -1,6 +1,7 @@
 import logging  # noqa: I001
 import os
 import sys
+import jwt
 from nanoid import generate as generate_nanoid
 
 import pytest
@@ -9,7 +10,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy_utils import create_database, database_exists, drop_database
@@ -18,6 +19,7 @@ from src import models
 from src.db import Base
 from src.dependencies import get_db
 from src.exceptions import HonchoException
+from src.security import create_admin_jwt, create_jwt, JWTParams
 from src.main import app
 
 logging.basicConfig(
@@ -30,9 +32,13 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 # Test database URL
 # TODO use environment variable
-CONNECTION_URI = make_url(os.getenv("CONNECTION_URI"))
+CONNECTION_URI = make_url(os.getenv("CONNECTION_URI", ""))
 TEST_DB_URL = CONNECTION_URI.set(database="test_db")
 DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
+
+# Test API authorization
+USE_AUTH = os.getenv("USE_AUTH", "False").lower() == "true"
+AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "test-secret")
 
 
 def create_test_database(db_url):
@@ -125,15 +131,44 @@ def client(db_session):
             content={"detail": exc.detail},
         )
 
-    # NOTE: use USE_AUTH here to run some tests with auth, some tests without.
-    # try not to change existing tests, rather create new tests that test API keys.
-
     async def override_get_db():
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
+        if USE_AUTH:
+            # give the test client the admin JWT
+            c.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
         yield c
+
+
+def create_invalid_jwt() -> str:
+    return jwt.encode({"ad": "invalid"}, "this is not the secret", algorithm="HS256")
+
+
+@pytest.fixture(
+    params=[
+        ("none", None),  # No auth
+        ("invalid", create_invalid_jwt),  # Invalid JWT
+        ("empty", lambda: create_jwt(JWTParams())),  # Empty JWT
+        ("admin", create_admin_jwt),  # Admin JWT
+    ]
+)
+def auth_client(client, request):
+    """
+    Fixture that provides a client with different authentication states.
+    """
+    # Clear any existing Authorization header
+    client.headers.pop("Authorization", None)
+
+    auth_type, token_func = request.param
+    client.auth_type = auth_type
+
+    if token_func is not None:
+        token = token_func()
+        client.headers["Authorization"] = f"Bearer {token}"
+
+    return client
 
 
 @pytest_asyncio.fixture(scope="function")
