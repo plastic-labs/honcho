@@ -18,9 +18,9 @@ router = APIRouter(
 @router.get(
     "/",
     response_model=schemas.App,
-    include_in_schema=False,  # XX can remove this if desired
+    # include_in_schema=False,  XX can use this if desired to skip docs
 )
-async def get_app_from_jwt(jwt_params: JWTParams = Depends(auth), db=db):
+async def get_app_from_token(jwt_params: JWTParams = Depends(auth), db=db):
     """Get an App by ID from the app_id provided in the JWT.
     If no app_id is provided, return a 404.
     """

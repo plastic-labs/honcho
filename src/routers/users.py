@@ -9,7 +9,7 @@ from src.dependencies import db
 from src.exceptions import (
     ResourceNotFoundException,
 )
-from src.security import require_auth
+from src.security import JWTParams, auth, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +19,26 @@ router = APIRouter(
 )
 
 
-@router.post("",
+@router.get(
+    "",
     response_model=schemas.User,
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-        user_id="user_id"
-    ))]
+    # include_in_schema=False,  XX can use this if desired to skip docs
+)
+async def get_user_from_token(
+    app_id: str, jwt_params: JWTParams = Depends(auth), db=db
+):
+    """Get a User by ID from the user_id provided in the JWT.
+    If no user_id is provided, return a 404.
+    """
+    if jwt_params.us is None:
+        raise ResourceNotFoundException("User not found")
+    return await crud.get_user(db, app_id=app_id, user_id=jwt_params.us)
+
+
+@router.post(
+    "",
+    response_model=schemas.User,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def create_user(
     app_id: str,
@@ -36,12 +50,10 @@ async def create_user(
     return user_obj
 
 
-@router.post("/list",
+@router.post(
+    "/list",
     response_model=Page[schemas.User],
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-        user_id="user_id"
-    ))]
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def get_users(
     app_id: str,
@@ -56,11 +68,16 @@ async def get_users(
     )
 
 
-@router.get("/name/{name}",
+@router.get(
+    "/name/{name}",
     response_model=schemas.User,
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-    ))]
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id",
+            )
+        )
+    ],
 )
 async def get_user_by_name(
     app_id: str,
@@ -72,12 +89,10 @@ async def get_user_by_name(
     return user
 
 
-@router.get("/{user_id}",
+@router.get(
+    "/{user_id}",
     response_model=schemas.User,
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-        user_id="user_id"
-    ))]
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def get_user(
     app_id: str,
@@ -89,11 +104,16 @@ async def get_user(
     return user
 
 
-@router.get("/get_or_create/{name}",
+@router.get(
+    "/get_or_create/{name}",
     response_model=schemas.User,
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-    ))]
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id",
+            )
+        )
+    ],
 )
 async def get_or_create_user(app_id: str, name: str, db=db):
     """Get a User or create a new one by the input name"""
@@ -108,12 +128,10 @@ async def get_or_create_user(app_id: str, name: str, db=db):
         return user
 
 
-@router.put("/{user_id}",
+@router.put(
+    "/{user_id}",
     response_model=schemas.User,
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-        user_id="user_id"
-    ))]
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def update_user(
     app_id: str,
