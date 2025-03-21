@@ -5,8 +5,8 @@ icon: 'building'
 ---
 
 Honcho is a user context management system for AI powered applications. It is
-inspired by but not a 1:1 mapping of the OpenAI Assistants API. While we are
-building many similar primitives, we are going about it differently. 
+model-agnostic, allowing developers to build agents with any LLM while using
+Honcho's primitives, and highly composable with other agent frameworks.
 
 Honcho is open source. We believe trust and transparency are vital for
 developing AI technology. We're also focused on using and supporting existing
@@ -21,7 +21,7 @@ of what's possible in terms of building user models. You can read more about
 Honcho's origin, inspiration and philosophy on our
 [blog](https://blog.plasticlabs.ai).
 
-## Core Primitives 
+## Core Primitives
 
 Using Honcho has the following flow:
 1. Initialize your `Honcho` instance and `App`
@@ -38,16 +38,16 @@ Using Honcho has the following flow:
 ### Users
 
 The `User` object is the main interface for managing a User's context. With it
-you can interface with the `User`'s `Session`s and `Collections`s directly. 
+you can interface with the `User`'s `Session`s and `Collections`s directly.
 
-### Sessions 
+### Sessions
 
 The `Session` object is useful for organizing your interactions with `User`s.
 Different `User`s can have different sessions enabling you to neatly segment user
 context. It also accepts a `location_id` parameter which can specifically
-denote *where* users' sessions are taking place. 
+denote *where* users' sessions are taking place.
 
-### Messages 
+### Messages
 
 Sessions are made up of `Message` objects. You can append them to sessions.
 This is pretty straightforward.
@@ -67,9 +67,9 @@ while `Metamessages` are local to a session and the message they are linked to.
 ### Documents
 
 `Documents` are the individual facts that are stored in the `Collection`. They
-are stored as vector embeddings to allow for a RAG like interface. Using honcho
-a developer can query a collection of documents using methods like cosine
-similarity search
+are stored as vector embeddings to allow for a RAG like interface. As a result,
+Honcho allows developers to query document collections using cosine similarity
+search, semantic search, and more.
 
 ## Conclusion
 

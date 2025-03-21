@@ -95,11 +95,13 @@ Let's add a user message and an AI message to that session:
 <CodeGroup>
 
 ```python Python
-honcho.apps.users.sessions.messages.create(session.id, app.id, user.id, content="Test", is_user=True)
+honcho.apps.users.sessions.messages.create(session.id, app.id, user.id, content="User message", is_user=True)
+honcho.apps.users.sessions.messages.create(session.id, app.id, user.id, content="AI message", is_user=False)
 ```
 
 ```javascript NodeJS
-honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "Test", is_user: true })
+honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "User message", is_user: true })
+honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, { content: "AI message", is_user: false })
 ```
 
 </CodeGroup>
