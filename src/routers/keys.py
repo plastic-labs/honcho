@@ -19,6 +19,14 @@ router = APIRouter(
 )
 
 
+@router.get("/")
+async def get_keys(
+    db=db,
+):
+    """Get all Keys"""
+    return await crud.get_keys(db)
+
+
 @router.post("")
 async def create_key(
     app_id: str | None = None,

@@ -1,4 +1,4 @@
-from src.security import JWTParams, create_jwt, create_admin_jwt
+from src.security import JWTParams, create_admin_jwt, create_jwt
 
 
 def test_create_key_with_auth(auth_client):

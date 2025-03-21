@@ -1378,6 +1378,12 @@ async def create_key(db: AsyncSession, key: str) -> models.Key:
     return honcho_key
 
 
+async def get_keys(db: AsyncSession) -> list[models.Key]:
+    stmt = select(models.Key)
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def get_key(db: AsyncSession, key: str) -> models.Key | None:
     stmt = select(models.Key).where(models.Key.key == key)
     result = await db.execute(stmt)
@@ -1388,7 +1394,10 @@ async def get_key(db: AsyncSession, key: str) -> models.Key | None:
 async def revoke_key(db: AsyncSession, key: str) -> models.Key:
     honcho_key = await db.get(models.Key, key)
     if honcho_key is None:
-        raise ResourceNotFoundException(f"Key {key} not found")
+        # if for some reason the key has been deleted or lost,
+        # we still want to revoke it: keys are valid even if
+        # not saved.
+        honcho_key = await create_key(db, key)
     honcho_key.revoked = True
     await db.commit()
     return honcho_key
