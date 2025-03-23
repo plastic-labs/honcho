@@ -117,10 +117,11 @@ class ModelClient:
     @observe(as_type="generation")
     async def generate(
         self, 
-        messages: List[Dict[str, str]], 
+        messages: List[Dict[str, Any]], 
         system: Optional[str] = None, 
         max_tokens: int = 1000,
-        temperature: float = 0.0
+        temperature: float = 0.0,
+        extra_headers: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Generate a response using the configured model.
@@ -130,6 +131,7 @@ class ModelClient:
             system: Optional system prompt
             max_tokens: Maximum number of tokens to generate
             temperature: Temperature for generation
+            extra_headers: Optional headers to add to the request
             
         Returns:
             The generated text
@@ -141,7 +143,7 @@ class ModelClient:
             )
             
             if self.provider == ModelProvider.ANTHROPIC:
-                return await self._generate_anthropic(messages, system, max_tokens, temperature)
+                return await self._generate_anthropic(messages, system, max_tokens, temperature, extra_headers)
             elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
                 return await self._generate_openai(messages, system, max_tokens, temperature)
             else:
@@ -149,10 +151,11 @@ class ModelClient:
     
     async def _generate_anthropic(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         system: Optional[str] = None,
         max_tokens: int = 1000,
-        temperature: float = 0.0
+        temperature: float = 0.0,
+        extra_headers: Optional[Dict[str, str]] = None
     ) -> str:
         """Generate a response using the Anthropic API."""
         if not self.client:
@@ -161,10 +164,17 @@ class ModelClient:
         # Convert messages to the format expected by Anthropic
         anthropic_messages = []
         for message in messages:
-            anthropic_messages.append({
+            # Handle cache_control if present
+            msg_dict = {
                 "role": message["role"],
                 "content": message["content"]
-            })
+            }
+            
+            # Add cache_control if present in the message
+            if "cache_control" in message:
+                msg_dict["cache_control"] = message["cache_control"]
+                
+            anthropic_messages.append(msg_dict)
             
         params = {
             "model": self.model,
@@ -175,6 +185,10 @@ class ModelClient:
         
         if system:
             params["system"] = system
+            
+        # Add headers if provided
+        if extra_headers:
+            params["headers"] = extra_headers
             
         # Use running loop for async execution
         loop = asyncio.get_event_loop()
@@ -229,10 +243,11 @@ class ModelClient:
     @observe(as_type="generation")
     async def stream(
         self, 
-        messages: List[Dict[str, str]], 
+        messages: List[Dict[str, Any]], 
         system: Optional[str] = None, 
         max_tokens: int = 1000,
-        temperature: float = 0.0
+        temperature: float = 0.0,
+        extra_headers: Optional[Dict[str, str]] = None
     ) -> Any:
         """
         Stream a response using the configured model.
@@ -242,6 +257,7 @@ class ModelClient:
             system: Optional system prompt
             max_tokens: Maximum number of tokens to generate
             temperature: Temperature for generation
+            extra_headers: Optional headers to add to the request
             
         Returns:
             A streaming response from the provider
@@ -253,7 +269,7 @@ class ModelClient:
             )
             
             if self.provider == ModelProvider.ANTHROPIC:
-                return await self._stream_anthropic(messages, system, max_tokens, temperature)
+                return await self._stream_anthropic(messages, system, max_tokens, temperature, extra_headers)
             elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER]:
                 return await self._stream_openai(messages, system, max_tokens, temperature)
             else:
@@ -261,10 +277,11 @@ class ModelClient:
     
     async def _stream_anthropic(
         self,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         system: Optional[str] = None,
         max_tokens: int = 1000,
-        temperature: float = 0.0
+        temperature: float = 0.0,
+        extra_headers: Optional[Dict[str, str]] = None
     ) -> Any:
         """Stream text using Anthropic API."""
         if not self.client:
@@ -273,10 +290,17 @@ class ModelClient:
         # Convert messages to the format expected by Anthropic
         anthropic_messages = []
         for message in messages:
-            anthropic_messages.append({
+            # Handle cache_control if present
+            msg_dict = {
                 "role": message["role"],
                 "content": message["content"]
-            })
+            }
+            
+            # Add cache_control if present in the message
+            if "cache_control" in message:
+                msg_dict["cache_control"] = message["cache_control"]
+                
+            anthropic_messages.append(msg_dict)
             
         params = {
             "model": self.model,
@@ -287,6 +311,10 @@ class ModelClient:
         
         if system:
             params["system"] = system
+        
+        # Add headers if provided
+        if extra_headers:
+            params["headers"] = extra_headers
         
         # Use run_in_executor to run the synchronous Anthropic call in a thread
         loop = asyncio.get_event_loop()

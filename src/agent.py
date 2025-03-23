@@ -70,6 +70,11 @@ class Dialectic:
 
             # Create a properly formatted message using the client
             message = self.client.create_message("user", prompt)
+            message = {
+                "role": "user",
+                "content": prompt,
+                "cache_control": {"type": "ephemeral"}  # Add cache_control for prompt caching
+            }
             
             # Generate the response
             print(f"[DIALECTIC] Calling model for generation")
@@ -77,7 +82,8 @@ class Dialectic:
             response = await self.client.generate(
                 messages=[message],
                 system=self.system_prompt,
-                max_tokens=300
+                max_tokens=300,
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}  # Enable prompt caching
             )
             model_time = asyncio.get_event_loop().time() - model_start
             print(f"[DIALECTIC] Model response received in {model_time:.2f}s: {len(response)} chars")
@@ -103,7 +109,11 @@ class Dialectic:
             print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
             
             # Create a properly formatted message using the client
-            message = self.client.create_message("user", prompt)
+            message = {
+                "role": "user",
+                "content": prompt,
+                "cache_control": {"type": "ephemeral"}  # Add cache_control for prompt caching
+            }
             
             # Stream the response
             print(f"[DIALECTIC] Calling model for streaming")
@@ -111,7 +121,8 @@ class Dialectic:
             stream = await self.client.stream(
                 messages=[message],
                 system=self.system_prompt,
-                max_tokens=150
+                max_tokens=150,
+                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}  # Enable prompt caching
             )
             stream_setup_time = asyncio.get_event_loop().time() - model_start
             print(f"[DIALECTIC] Stream started in {stream_setup_time:.2f}s")
@@ -401,27 +412,26 @@ async def generate_semantic_queries(query: str) -> List[str]:
     print(f"[SEMANTIC] Generating semantic queries from: {query}")
     query_start = asyncio.get_event_loop().time()
     
-    # Prompt the LLM to generate search queries based on the original query
-    query_prompt = f"""Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
-    Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
-    For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
-    
-    ORIGINAL QUERY:
-    {query}
-    
-    Format your response as a JSON array of strings, with each string being a search query. 
-    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
-    Example:
-    ["query about interests", "query about personality", "query about experiences"]
-    """
+    # Format the query using the template
+    from src.deriver.tom.llm import QUERY_GENERATION_TEMPLATE
+    query_prompt = QUERY_GENERATION_TEMPLATE.format(query=query)
 
     print(f"[SEMANTIC] Calling LLM for query generation")
     llm_start = asyncio.get_event_loop().time()
+    
+    # Prepare the message with cache_control for Anthropic caching
+    message = {
+        "role": "user", 
+        "content": query_prompt,
+        "cache_control": {"type": "ephemeral"}  # Enable caching for this message
+    }
+    
     # Note: get_response is async, so we need to await it
     queries_response = await get_response(
-        [{"role": "user", "content": query_prompt}],
+        [message],
         provider=DEF_QUERY_GENERATION_PROVIDER,
-        model=DEF_QUERY_GENERATION_MODEL
+        model=DEF_QUERY_GENERATION_MODEL,
+        use_caching=True  # Enable caching for faster responses
     )
     llm_time = asyncio.get_event_loop().time() - llm_start
     print(f"[SEMANTIC] LLM response received in {llm_time:.2f}s: {queries_response[:100]}...")
