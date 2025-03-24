@@ -11,7 +11,6 @@ def test_create_app_with_auth(auth_client):
 
     # Check expected behavior based on auth type
     if auth_client.auth_type != "admin":
-        print(f"Auth type: {auth_client.auth_type}")
         assert response.status_code == 401
         return
 
@@ -24,7 +23,6 @@ def test_get_or_create_app_with_auth(auth_client):
     response = auth_client.get(f"/v1/apps/name/{name}")
 
     if auth_client.auth_type != "admin":
-        print(f"Auth type: {auth_client.auth_type}")
         assert response.status_code == 401
         return
 
@@ -121,7 +119,94 @@ def test_create_user_with_auth(auth_client, sample_data):
         assert response.status_code == 401
 
 
-## XX more user-level tests
+def test_get_user_by_id_with_auth(auth_client, sample_data):
+    test_app, test_user = sample_data
+
+    if auth_client.auth_type == "empty":
+        # For non-admin, include the app_id in the JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+        )
+
+    response = auth_client.get(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}"
+    )
+
+    # Admin JWT or JWT with matching app_id should be allowed
+    if auth_client.auth_type in ["admin", "empty"]:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 401
+
+    # Test with user-scoped JWT
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+        )
+
+        response = auth_client.get(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}"
+        )
+
+        assert response.status_code == 200
+
+
+def test_get_user_by_name_with_auth(auth_client, sample_data):
+    test_app, test_user = sample_data
+
+    if auth_client.auth_type == "empty":
+        # For non-admin, include the app_id in the JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+        )
+
+    response = auth_client.get(
+        f"/v1/apps/{test_app.public_id}/users/name/{test_user.name}"
+    )
+
+    # Admin JWT or JWT with matching app_id should be allowed
+    if auth_client.auth_type in ["admin", "empty"]:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 401
+
+
+def test_update_user_with_auth(auth_client, sample_data):
+    test_app, test_user = sample_data
+
+    if auth_client.auth_type == "empty":
+        # For non-admin, include the app_id in the JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+        )
+
+    new_name = str(generate_nanoid())
+    response = auth_client.put(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}",
+        json={"name": new_name, "metadata": {"updated_key": "updated_value"}},
+    )
+
+    # Admin JWT or JWT with matching app_id should be allowed
+    if auth_client.auth_type in ["admin", "empty"]:
+        assert response.status_code == 200
+    else:
+        assert response.status_code == 401
+
+    # Test with user-scoped JWT
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+        )
+
+        response = auth_client.put(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}",
+            json={
+                "name": str(generate_nanoid()),
+                "metadata": {"user_key": "user_value"},
+            },
+        )
+
+        assert response.status_code == 200
 
 
 def test_create_session_with_auth(auth_client, sample_data):
@@ -158,7 +243,43 @@ def test_create_session_with_auth(auth_client, sample_data):
         assert response.status_code == 200
 
 
-## XX more session-level tests
+def test_get_session_by_id_with_auth(auth_client, sample_data):
+    test_app, test_user = sample_data
+
+    # First create a session
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+        )
+
+    create_response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={},
+    )
+
+    if auth_client.auth_type not in ["admin", "empty"]:
+        assert create_response.status_code == 401
+        return
+
+    assert create_response.status_code == 200
+    session_id = create_response.json()["id"]
+
+    # Test with app and user scoped JWT
+    response = auth_client.get(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}"
+    )
+    assert response.status_code == 200
+
+    # Test with session-scoped JWT
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(se=session_id))}"
+        )
+
+        response = auth_client.get(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}"
+        )
+        assert response.status_code == 200
 
 
 def test_create_collection(auth_client, sample_data) -> None:
@@ -188,11 +309,175 @@ def test_create_collection(auth_client, sample_data) -> None:
         )
 
         response = auth_client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-            json={},
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+            json={"name": "test_collection2", "metadata": {}},
+        )
+
+        assert response.status_code == 200
+
+    # Remove user_id from header and make sure app-scoped key works too
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+        )
+
+        response = auth_client.post(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+            json={"name": "test_collection3", "metadata": {}},
         )
 
         assert response.status_code == 200
 
 
-## XX more collection-level tests
+def test_get_collection_by_id_with_auth(auth_client, sample_data) -> None:
+    test_app, test_user = sample_data
+
+    # First create a collection
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+        )
+
+    create_response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": "test_collection_get", "metadata": {}},
+    )
+
+    if auth_client.auth_type not in ["admin", "empty"]:
+        assert create_response.status_code == 401
+        return
+
+    assert create_response.status_code == 200
+    collection_id = create_response.json()["id"]
+
+    # Test with app and user scoped JWT
+    response = auth_client.get(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}"
+    )
+    assert response.status_code == 200
+
+    # Test with collection-scoped JWT
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(co=collection_id))}"
+        )
+
+        response = auth_client.get(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}"
+        )
+        assert response.status_code == 200
+
+
+def test_get_collection_by_name_with_auth(auth_client, sample_data) -> None:
+    test_app, test_user = sample_data
+    collection_name = f"test_collection_{generate_nanoid()}"
+
+    # First create a collection
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+        )
+
+    create_response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": collection_name, "metadata": {}},
+    )
+
+    if auth_client.auth_type not in ["admin", "empty"]:
+        assert create_response.status_code == 401
+        return
+
+    assert create_response.status_code == 200
+
+    # Test with app and user scoped JWT
+    response = auth_client.get(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/name/{collection_name}"
+    )
+    assert response.status_code == 200
+
+
+def test_create_document_with_auth(auth_client, sample_data) -> None:
+    test_app, test_user = sample_data
+
+    # First create a collection
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+        )
+
+    create_collection_response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": "test_collection_docs", "metadata": {}},
+    )
+
+    if auth_client.auth_type not in ["admin", "empty"]:
+        assert create_collection_response.status_code == 401
+        return
+
+    assert create_collection_response.status_code == 200
+    collection_id = create_collection_response.json()["id"]
+
+    # Create document with app and user scoped JWT
+    response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
+        json={"content": "Test document content", "metadata": {"doc_key": "doc_value"}},
+    )
+    assert response.status_code == 200
+
+    # Test with collection-scoped JWT
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(co=collection_id))}"
+        )
+
+        response = auth_client.post(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
+            json={"content": "Test document with collection JWT", "metadata": {}},
+        )
+        assert response.status_code == 200
+
+
+def test_get_document_with_auth(auth_client, sample_data) -> None:
+    test_app, test_user = sample_data
+
+    # First create a collection and document
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+        )
+
+    create_collection_response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": "test_collection_get_doc", "metadata": {}},
+    )
+
+    if auth_client.auth_type not in ["admin", "empty"]:
+        assert create_collection_response.status_code == 401
+        return
+
+    assert create_collection_response.status_code == 200
+    collection_id = create_collection_response.json()["id"]
+
+    create_doc_response = auth_client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
+        json={"content": "Test document for retrieval", "metadata": {}},
+    )
+    assert create_doc_response.status_code == 200
+    document_id = create_doc_response.json()["id"]
+
+    # Get document with app and user scoped JWT
+    response = auth_client.get(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/{document_id}"
+    )
+    assert response.status_code == 200
+
+    # Test with collection-scoped JWT
+    if auth_client.auth_type == "empty":
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(co=collection_id))}"
+        )
+
+        response = auth_client.get(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/{document_id}"
+        )
+        assert response.status_code == 200

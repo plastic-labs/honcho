@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from src import crud
 from src.dependencies import db
 from src.exceptions import DisabledException
-from src.security import JWTParams, create_jwt, require_auth
+from src.security import JWTParams, create_jwt, require_auth, rotate_jwt_secret
 
 logger = logging.getLogger(__name__)
 
@@ -65,3 +65,22 @@ async def revoke_key(
 
     await crud.revoke_key(db, key)
     return {"revoked": key}
+
+
+@router.post("/rotate")
+async def rotate(
+    new_secret: str | None = None,
+    db=db,
+):
+    """Rotate the JWT secret and return admin JWT"""
+    if not USE_AUTH:
+        raise DisabledException()
+
+    new_jwt = rotate_jwt_secret(new_secret)
+
+    key = await crud.create_key(db, new_jwt)
+
+    return {
+        "key": new_jwt,
+        "created_at": key.created_at,
+    }

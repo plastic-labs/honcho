@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+import secrets
 from typing import Annotated, Optional
 
 import jwt
@@ -55,29 +56,39 @@ class JWTParams(BaseModel):
 # generate jwt token
 # if secret key is empty, generate a random one
 if not AUTH_JWT_SECRET:
-    import secrets
-
     AUTH_JWT_SECRET = secrets.token_hex(32)
-    print(f"Generated secret key: {AUTH_JWT_SECRET}")
+    print(f"\n    Generated secret key: {AUTH_JWT_SECRET}")
+
+
+def rotate_jwt_secret(new_secret: str | None = None) -> str:
+    """
+    Rotate the JWT secret and return the new admin JWT.
+    If no new secret is provided, generate a new one.
+    """
+    global AUTH_JWT_SECRET
+    AUTH_JWT_SECRET = new_secret if new_secret else secrets.token_hex(32)
+
+    return create_admin_jwt()
 
 
 def create_admin_jwt() -> str:
-    """Create a JWT for admin operations"""
+    """Create a JWT for admin operations."""
     params = JWTParams(t="", ad=True)
     key = create_jwt(params)
     return key
 
 
 def create_jwt(params: JWTParams) -> str:
+    """Create a JWT token from the given parameters."""
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
     return jwt.encode(payload, AUTH_JWT_SECRET.encode("utf-8"), algorithm="HS256")
 
 
 async def verify_jwt(token: str, db: AsyncSession) -> JWTParams:
-    """check if key is revoked
-    if a key is not found, it's valid -- we only
-    check the database for keys that are revoked
-    """
+    """Verify a JWT token and return the decoded parameters."""
+    # Check if key has been revoked
+    # if a key is not found, it's valid -- we only
+    # check the database for keys that are revoked
     key = await crud.get_key(db, token)
     if key and key.revoked:
         raise AuthenticationException("Key is revoked")
@@ -111,6 +122,10 @@ def require_auth(
     session_id: Optional[str] = None,
     collection_id: Optional[str] = None,
 ):
+    """
+    Generate a dependency that requires authentication for the given parameters.
+    """
+
     async def auth_dependency(
         request: Request,
         credentials: HTTPAuthorizationCredentials = Depends(security),
@@ -145,6 +160,7 @@ async def auth(
     session_id: Optional[str] = None,
     collection_id: Optional[str] = None,
 ) -> JWTParams:
+    """Authenticate the given JWT and return the decoded parameters."""
     if not USE_AUTH:
         return JWTParams(t="", ad=True)
     if not credentials or not credentials.credentials:
@@ -161,28 +177,23 @@ async def auth(
     if admin:
         raise AuthenticationException("Resource requires admin privileges")
 
-    if session_id:
-        if jwt_params.se == session_id:
-            return jwt_params
-        else:
-            raise AuthenticationException("JWT not permissioned for this resource")
-    if collection_id:
-        if jwt_params.co == collection_id:
-            return jwt_params
-        else:
-            raise AuthenticationException("JWT not permissioned for this resource")
+    # Check if the JWT has direct access to the requested resource
+    # For session or collection level access
+    if session_id and jwt_params.se == session_id:
+        return jwt_params
+    if collection_id and jwt_params.co == collection_id:
+        return jwt_params
 
-    if user_id:
-        if jwt_params.us == user_id:
-            return jwt_params
-        else:
-            raise AuthenticationException("JWT not permissioned for this resource")
+    # For user level access - can access all sessions/collections under this user
+    if user_id and jwt_params.us == user_id:
+        return jwt_params
 
-    if app_id:
-        if jwt_params.ap == app_id:
-            return jwt_params
-        else:
-            raise AuthenticationException("JWT not permissioned for this resource")
+    # For app level access - can access all users/sessions/collections under this app
+    if app_id and jwt_params.ap == app_id:
+        return jwt_params
+
+    if any([session_id, collection_id, user_id, app_id]):
+        raise AuthenticationException("JWT not permissioned for this resource")
 
     # Route did not specify any parameters, so it should parse parameters itself
     return jwt_params

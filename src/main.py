@@ -47,7 +47,7 @@ async def setup_admin_jwt():
         else:
             logger.info("Creating new admin key in database")
             await crud.create_key(db, token)
-        print(f"\n    JWT with ADMIN_KEY: {token}\n")
+        print(f"\n    ADMIN JWT: {token}\n")
         break  # We only need one session
 
 
