@@ -23,24 +23,28 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     schema = getenv("DATABASE_SCHEMA", "public")
 
-    op.create_table(
-        "keys",
-        sa.Column(
-            "key",
-            sa.TEXT(),
-            sa.CheckConstraint("length(key) <= 1024", name="key_length"),
-            primary_key=True,
-            index=True,
-        ),
-        sa.Column("revoked", sa.Boolean(), nullable=False, default=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            server_default=sa.text("now()"),
-        ),
-        schema=schema,
-    )
+    # Check if the table exists before creating it
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    if "keys" not in inspector.get_table_names(schema=schema):
+        op.create_table(
+            "keys",
+            sa.Column(
+                "key",
+                sa.TEXT(),
+                sa.CheckConstraint("length(key) <= 1024", name="key_length"),
+                primary_key=True,
+                index=True,
+            ),
+            sa.Column("revoked", sa.Boolean(), nullable=False, default=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.text("now()"),
+            ),
+            schema=schema,
+        )
 
 
 def downgrade() -> None:
