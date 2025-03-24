@@ -28,8 +28,9 @@ router = APIRouter(
 async def get_user_from_token(
     app_id: str, jwt_params: JWTParams = Depends(auth), db=db
 ):
-    """Get a User by ID from the user_id provided in the JWT.
-    If no user_id is provided, return a 404.
+    """
+    Get a User by ID from the user_id provided in the JWT.
+    If no user_id is provided, return a 401 Unauthorized error.
     """
     if jwt_params.us is None:
         raise AuthenticationException("User not found in JWT")

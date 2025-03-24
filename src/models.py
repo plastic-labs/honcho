@@ -245,3 +245,8 @@ class Key(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
+
+    __table_args__ = (CheckConstraint("length(key) <= 1024", name="key_length"),)
+
+    def __repr__(self) -> str:
+        return f"Key(key={self.key[:10]}..., revoked={self.revoked}, created_at={self.created_at})"

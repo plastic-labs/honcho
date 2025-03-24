@@ -34,7 +34,10 @@ async def get_session_from_token(
     jwt_params: JWTParams = Depends(auth),
     db=db,
 ):
-    """Get a specific session for a user by session_id provided in the JWT"""
+    """
+    Get a specific session for a user by session_id provided in the JWT.
+    If no session_id is provided, return a 401 Unauthorized error.
+    """
     if jwt_params.se is None:
         raise AuthenticationException("Session not found in JWT")
     return await crud.get_session(

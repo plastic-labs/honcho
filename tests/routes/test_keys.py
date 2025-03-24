@@ -1,15 +1,14 @@
 from src.security import JWTParams, create_admin_jwt, create_jwt
 
 
-def test_create_key_with_auth(auth_client):
-    """Test creating a key with different auth types"""
+def test_create_key_no_params(auth_client):
+    """Test creating a key with no parameters"""
     response = auth_client.post("/v1/keys")
 
     # Only admin JWT should be allowed
     if auth_client.auth_type == "admin":
-        assert response.status_code == 200
-        assert "key" in response.json()
-        assert "created_at" in response.json()
+        # key with no params should fail
+        assert response.status_code == 422
     else:
         assert response.status_code == 401
 

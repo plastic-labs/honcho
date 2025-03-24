@@ -25,7 +25,13 @@ def upgrade() -> None:
 
     op.create_table(
         "keys",
-        sa.Column("key", sa.TEXT(), primary_key=True, index=True),
+        sa.Column(
+            "key",
+            sa.TEXT(),
+            sa.CheckConstraint("length(key) <= 1024", name="key_length"),
+            primary_key=True,
+            index=True,
+        ),
         sa.Column("revoked", sa.Boolean(), nullable=False, default=False),
         sa.Column(
             "created_at",
@@ -36,11 +42,7 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    op.create_index("idx_keys_key", "keys", ["key"], unique=True, schema=schema)
-
 
 def downgrade() -> None:
     schema = getenv("DATABASE_SCHEMA", "public")
-
-    op.drop_index("idx_keys_key", table_name="keys", schema=schema)
     op.drop_table("keys", schema=schema)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 
 from src import crud
 from src.dependencies import db
-from src.exceptions import DisabledException
+from src.exceptions import DisabledException, ValidationException
 from src.security import (
     JWTParams,
     clear_api_key_cache,
@@ -45,6 +45,12 @@ async def create_key(
     if not USE_AUTH:
         raise DisabledException()
 
+    # Validate that at least one parameter is provided for proper scoping
+    if not any([app_id, user_id, session_id, collection_id]):
+        raise ValidationException(
+            "At least one of app_id, user_id, session_id, or collection_id must be provided"
+        )
+
     key_str = create_jwt(
         JWTParams(
             ap=app_id,
@@ -53,11 +59,15 @@ async def create_key(
             co=collection_id,
         )
     )
-    key = await crud.create_key(db, key_str)
-    return {
-        "key": key_str,
-        "created_at": key.created_at,
-    }
+    try:
+        key = await crud.create_key(db, key_str)
+        return {
+            "key": key_str,
+            "created_at": key.created_at,
+        }
+    except Exception as e:
+        logger.error(f"Failed to create key: {str(e)}")
+        raise
 
 
 @router.post("/revoke")
@@ -69,9 +79,13 @@ async def revoke_key(
     if not USE_AUTH:
         raise DisabledException()
 
-    await crud.revoke_key(db, key)
-    clear_api_key_cache()
-    return {"revoked": key}
+    try:
+        await crud.revoke_key(db, key)
+        clear_api_key_cache()
+        return {"revoked": key}
+    except Exception as e:
+        logger.error(f"Failed to revoke key: {str(e)}")
+        raise
 
 
 @router.post("/rotate")

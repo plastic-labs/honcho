@@ -386,7 +386,7 @@ async def create_session(
     """
     try:
         # This will raise ResourceNotFoundException if user not found
-        honcho_user = await get_user(db, app_id=app_id, user_id=user_id)
+        _honcho_user = await get_user(db, app_id=app_id, user_id=user_id)
 
         honcho_session = models.Session(
             user_id=user_id,
@@ -930,7 +930,7 @@ async def get_collection_by_id(
             f"Collection with ID '{collection_id}' not found for user {user_id}"
         )
         raise ResourceNotFoundException(
-            f"Collection not found or does not belong to user"
+            "Collection not found or does not belong to user"
         )
     return collection
 

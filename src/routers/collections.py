@@ -25,7 +25,10 @@ async def get_collection_from_token(
     jwt_params: JWTParams = Depends(auth),
     db=db,
 ):
-    """Get a specific collection for a user by collection_id provided in the JWT"""
+    """
+    Get a specific collection for a user by collection_id provided in the JWT.
+    If no collection_id is provided, return a 401 Unauthorized error.
+    """
     if jwt_params.co is None:
         raise AuthenticationException("Collection not found in JWT")
     return await crud.get_collection_by_id(

@@ -21,8 +21,9 @@ router = APIRouter(
     # include_in_schema=False,  XX can use this if desired to skip docs
 )
 async def get_app_from_token(jwt_params: JWTParams = Depends(auth), db=db):
-    """Get an App by ID from the app_id provided in the JWT.
-    If no app_id is provided, return a 404.
+    """
+    Get an App by ID from the app_id provided in the JWT.
+    If no app_id is provided, return a 401 Unauthorized error.
     """
     if jwt_params.ap is None:
         raise AuthenticationException("App not found in JWT")

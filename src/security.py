@@ -199,10 +199,8 @@ async def auth(
     if not credentials or not credentials.credentials:
         logger.warning("No access token provided")
         raise AuthenticationException("No access token provided")
+
     jwt_params = await verify_jwt(credentials.credentials, db)
-    if not jwt_params:
-        logger.warning("Invalid access token attempt")
-        raise AuthenticationException("Invalid access token")
 
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:
