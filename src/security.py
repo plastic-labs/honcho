@@ -2,6 +2,7 @@ import datetime
 import logging
 import os
 import secrets
+from collections import OrderedDict
 from typing import Annotated, Optional
 
 import jwt
@@ -23,6 +24,25 @@ AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "")
 security = HTTPBearer(
     auto_error=False,
 )
+
+# LRU cache for API keys
+# Structure: {token: is_revoked}
+API_KEY_CACHE = OrderedDict()
+CACHE_MAX_SIZE = 10
+
+
+def clear_api_key_cache():
+    """Clear the API key cache when keys are revoked."""
+    API_KEY_CACHE.clear()
+
+
+def cache_api_key(token: str, is_revoked: bool):
+    """Add an API key to the cache."""
+    API_KEY_CACHE[token] = is_revoked
+    API_KEY_CACHE.move_to_end(token)
+
+    if len(API_KEY_CACHE) > CACHE_MAX_SIZE:
+        API_KEY_CACHE.popitem(last=False)
 
 
 #
@@ -68,6 +88,9 @@ def rotate_jwt_secret(new_secret: str | None = None) -> str:
     global AUTH_JWT_SECRET
     AUTH_JWT_SECRET = new_secret if new_secret else secrets.token_hex(32)
 
+    # Clear the cache when rotating secrets
+    clear_api_key_cache()
+
     return create_admin_jwt()
 
 
@@ -86,12 +109,22 @@ def create_jwt(params: JWTParams) -> str:
 
 async def verify_jwt(token: str, db: AsyncSession) -> JWTParams:
     """Verify a JWT token and return the decoded parameters."""
-    # Check if key has been revoked
-    # if a key is not found, it's valid -- we only
-    # check the database for keys that are revoked
-    key = await crud.get_key(db, token)
-    if key and key.revoked:
-        raise AuthenticationException("Key is revoked")
+    # Check if key has been revoked using cache first
+    if token in API_KEY_CACHE:
+        is_revoked = API_KEY_CACHE[token]
+        if is_revoked:
+            raise AuthenticationException("Key is revoked")
+    else:
+        # If not in cache, check the database
+        key = await crud.get_key(db, token)
+        if key:
+            # Cache the result
+            cache_api_key(token, key.revoked)
+            if key.revoked:
+                raise AuthenticationException("Key is revoked")
+        else:
+            # Key not found in DB, cache as not revoked
+            cache_api_key(token, False)
 
     params = JWTParams()
     try:

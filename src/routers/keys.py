@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends
 from src import crud
 from src.dependencies import db
 from src.exceptions import DisabledException
-from src.security import JWTParams, create_jwt, require_auth, rotate_jwt_secret
+from src.security import (
+    JWTParams,
+    clear_api_key_cache,
+    create_jwt,
+    require_auth,
+    rotate_jwt_secret,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +70,7 @@ async def revoke_key(
         raise DisabledException()
 
     await crud.revoke_key(db, key)
+    clear_api_key_cache()
     return {"revoked": key}
 
 

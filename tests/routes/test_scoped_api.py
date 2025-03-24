@@ -5,8 +5,34 @@ from src.security import JWTParams, create_jwt
 
 def test_create_app_with_auth(auth_client):
     name = str(generate_nanoid())
+
     response = auth_client.post(
         "/v1/apps", json={"name": name, "metadata": {"key": "value"}}
+    )
+
+    # Check expected behavior based on auth type
+    if auth_client.auth_type != "admin":
+        assert response.status_code == 401
+        return
+
+    assert response.status_code == 200
+
+
+def test_auth_response_time(auth_client):
+    name = str(generate_nanoid())
+
+    import time
+
+    start_time = time.time()
+
+    response = auth_client.post(
+        "/v1/apps", json={"name": name, "metadata": {"key": "value"}}
+    )
+
+    end_time = time.time()
+    response_time = end_time - start_time
+    print(
+        f"Server response time for client {auth_client.auth_type}: {response_time:.6f} seconds"
     )
 
     # Check expected behavior based on auth type
