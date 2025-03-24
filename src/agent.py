@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from collections.abc import Iterable
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 
 import sentry_sdk
 from anthropic import MessageStreamManager
@@ -19,10 +19,10 @@ from src.deriver.tom.long_term import get_user_representation_long_term
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
-from src.deriver.tom.llm import get_response
+from src.deriver.tom.llm import get_response, QUERY_GENERATION_TEMPLATE
 
-DEF_QUERY_GENERATION_PROVIDER = ModelProvider.OPENAI
-DEF_QUERY_GENERATION_MODEL = "gpt-4o-mini-2024-07-18"
+DEF_QUERY_GENERATION_PROVIDER = ModelProvider.ANTHROPIC
+DEF_QUERY_GENERATION_MODEL = "claude-3-5-haiku-latest"
 
 load_dotenv()
 
@@ -68,12 +68,10 @@ class Dialectic:
             """
             print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
 
-            # Create a properly formatted message using the client
-            message = self.client.create_message("user", prompt)
-            message = {
+            # Create a properly formatted message
+            message: Dict[str, Any] = {
                 "role": "user",
-                "content": prompt,
-                "cache_control": {"type": "ephemeral"}  # Add cache_control for prompt caching
+                "content": prompt
             }
             
             # Generate the response
@@ -82,8 +80,7 @@ class Dialectic:
             response = await self.client.generate(
                 messages=[message],
                 system=self.system_prompt,
-                max_tokens=300,
-                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}  # Enable prompt caching
+                max_tokens=300
             )
             model_time = asyncio.get_event_loop().time() - model_start
             print(f"[DIALECTIC] Model response received in {model_time:.2f}s: {len(response)} chars")
@@ -108,11 +105,10 @@ class Dialectic:
             """
             print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
             
-            # Create a properly formatted message using the client
-            message = {
+            # Create a properly formatted message
+            message: Dict[str, Any] = {
                 "role": "user",
-                "content": prompt,
-                "cache_control": {"type": "ephemeral"}  # Add cache_control for prompt caching
+                "content": prompt
             }
             
             # Stream the response
@@ -121,8 +117,7 @@ class Dialectic:
             stream = await self.client.stream(
                 messages=[message],
                 system=self.system_prompt,
-                max_tokens=150,
-                extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"}  # Enable prompt caching
+                max_tokens=150
             )
             stream_setup_time = asyncio.get_event_loop().time() - model_start
             print(f"[DIALECTIC] Stream started in {stream_setup_time:.2f}s")
@@ -412,18 +407,16 @@ async def generate_semantic_queries(query: str) -> List[str]:
     print(f"[SEMANTIC] Generating semantic queries from: {query}")
     query_start = asyncio.get_event_loop().time()
     
-    # Format the query using the template
-    from src.deriver.tom.llm import QUERY_GENERATION_TEMPLATE
+    # Format the query using the template - import already added at the top
     query_prompt = QUERY_GENERATION_TEMPLATE.format(query=query)
 
     print(f"[SEMANTIC] Calling LLM for query generation")
     llm_start = asyncio.get_event_loop().time()
     
-    # Prepare the message with cache_control for Anthropic caching
-    message = {
+    # Prepare the message for Anthropic 
+    message: Dict[str, Any] = {
         "role": "user", 
-        "content": query_prompt,
-        "cache_control": {"type": "ephemeral"}  # Enable caching for this message
+        "content": query_prompt
     }
     
     # Note: get_response is async, so we need to await it
@@ -431,7 +424,7 @@ async def generate_semantic_queries(query: str) -> List[str]:
         [message],
         provider=DEF_QUERY_GENERATION_PROVIDER,
         model=DEF_QUERY_GENERATION_MODEL,
-        use_caching=True  # Enable caching for faster responses
+        use_caching=True  # Enable provider-side caching if available
     )
     llm_time = asyncio.get_event_loop().time() - llm_start
     print(f"[SEMANTIC] LLM response received in {llm_time:.2f}s: {queries_response[:100]}...")

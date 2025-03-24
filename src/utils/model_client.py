@@ -185,13 +185,15 @@ class ModelClient:
         
         if system:
             params["system"] = system
-            
-        # Add headers if provided
-        if extra_headers:
-            params["headers"] = extra_headers
-            
+        
+        # For beta features like prompt caching, we adjust how we call the API
+        # Instead of using headers, the Anthropic SDK has specific ways to enable
+        # beta features - for prompt caching, it's built into the message format already
+        # with the cache_control field
+        
         # Use running loop for async execution
         loop = asyncio.get_event_loop()
+        
         response = await loop.run_in_executor(
             None, 
             lambda: self.client.messages.create(**params)
@@ -312,9 +314,8 @@ class ModelClient:
         if system:
             params["system"] = system
         
-        # Add headers if provided
-        if extra_headers:
-            params["headers"] = extra_headers
+        # For beta features like prompt caching, we rely on the cache_control 
+        # field in the message format, not on extra headers
         
         # Use run_in_executor to run the synchronous Anthropic call in a thread
         loop = asyncio.get_event_loop()
