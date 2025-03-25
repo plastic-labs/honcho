@@ -198,7 +198,7 @@ async def chat(
         # Setup phase - create resources we'll need for all operations
         
         # 1. Create embedding store
-        collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
+        collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
 
 
         embedding_store = CollectionEmbeddingStore(

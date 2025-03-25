@@ -13,6 +13,8 @@ from . import models, schemas
 
 load_dotenv(override=True)
 
+PROTECTED_COLLECTION_NAME = "honcho"
+
 openai_client = AsyncOpenAI()
 
 ########################################################
@@ -736,6 +738,36 @@ async def create_collection(
         await db.rollback()
         raise ValueError("Collection already exists") from None
     # await db.refresh(honcho_collection)
+    return honcho_collection
+
+
+async def create_user_protected_collection(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+) -> models.Collection:
+    honcho_collection = models.Collection(
+        user_id=user_id,
+        name=PROTECTED_COLLECTION_NAME,
+    )
+    try:
+        db.add(honcho_collection)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise ValueError("Collection already exists") from None
+    # await db.refresh(honcho_collection)
+    return honcho_collection
+
+
+async def get_or_create_user_protected_collection(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+) -> models.Collection:
+    honcho_collection = await get_collection_by_name(db, app_id, user_id, PROTECTED_COLLECTION_NAME)
+    if honcho_collection is None:
+        honcho_collection = await create_user_protected_collection(db, app_id, user_id)
     return honcho_collection
 
 
