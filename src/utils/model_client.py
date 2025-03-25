@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union, Protocol
 
 import sentry_sdk
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 from anthropic.types import ContentBlock, MessageParam
 from langfuse.decorators import observe, langfuse_context
 from dotenv import load_dotenv
@@ -64,7 +64,7 @@ class ModelClient:
             self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
             if not self.api_key:
                 raise ValueError("Anthropic API key is required")
-            self.client = Anthropic(api_key=self.api_key)
+            self.client = AsyncAnthropic(api_key=self.api_key)
         elif provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
             # Import OpenAI inside the method to avoid issues if the package is not installed
             try:
@@ -121,7 +121,8 @@ class ModelClient:
         system: Optional[str] = None, 
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None
+        extra_headers: Optional[Dict[str, str]] = None,
+        use_caching: bool = False
     ) -> str:
         """
         Generate a response using the configured model.
@@ -132,6 +133,7 @@ class ModelClient:
             max_tokens: Maximum number of tokens to generate
             temperature: Temperature for generation
             extra_headers: Optional headers to add to the request
+            use_caching: Whether to use provider-side caching for the response
             
         Returns:
             The generated text
@@ -143,7 +145,7 @@ class ModelClient:
             )
             
             if self.provider == ModelProvider.ANTHROPIC:
-                return await self._generate_anthropic(messages, system, max_tokens, temperature, extra_headers)
+                return await self._generate_anthropic(messages, system, max_tokens, temperature, extra_headers, use_caching)
             elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
                 return await self._generate_openai(messages, system, max_tokens, temperature)
             else:
@@ -155,49 +157,34 @@ class ModelClient:
         system: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None
+        extra_headers: Optional[Dict[str, str]] = None,
+        use_caching: bool = False
     ) -> str:
         """Generate a response using the Anthropic API."""
         if not self.client:
             raise ValueError("Anthropic client not initialized.")
             
-        # Convert messages to the format expected by Anthropic
-        anthropic_messages = []
-        for message in messages:
-            # Handle cache_control if present
-            msg_dict = {
-                "role": message["role"],
-                "content": message["content"]
-            }
-            
-            # Add cache_control if present in the message
-            if "cache_control" in message:
-                msg_dict["cache_control"] = message["cache_control"]
-                
-            anthropic_messages.append(msg_dict)
-            
         params = {
             "model": self.model,
-            "messages": anthropic_messages,
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
         
+        # Handle system prompt with caching if enabled
         if system:
-            params["system"] = system
+            if use_caching:
+                params["system"] = [
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"}
+                    }
+                ]
+            else:
+                params["system"] = system
         
-        # For beta features like prompt caching, we adjust how we call the API
-        # Instead of using headers, the Anthropic SDK has specific ways to enable
-        # beta features - for prompt caching, it's built into the message format already
-        # with the cache_control field
-        
-        # Use running loop for async execution
-        loop = asyncio.get_event_loop()
-        
-        response = await loop.run_in_executor(
-            None, 
-            lambda: self.client.messages.create(**params)
-        )
+        response = await self.client.messages.create(**params)
         
         # Extract the text from the response
         if response.content and len(response.content) > 0:
@@ -249,7 +236,8 @@ class ModelClient:
         system: Optional[str] = None, 
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None
+        extra_headers: Optional[Dict[str, str]] = None,
+        use_caching: bool = False
     ) -> Any:
         """
         Stream a response using the configured model.
@@ -260,6 +248,7 @@ class ModelClient:
             max_tokens: Maximum number of tokens to generate
             temperature: Temperature for generation
             extra_headers: Optional headers to add to the request
+            use_caching: Whether to use provider-side caching for the response
             
         Returns:
             A streaming response from the provider
@@ -271,7 +260,7 @@ class ModelClient:
             )
             
             if self.provider == ModelProvider.ANTHROPIC:
-                return await self._stream_anthropic(messages, system, max_tokens, temperature, extra_headers)
+                return await self._stream_anthropic(messages, system, max_tokens, temperature, extra_headers, use_caching)
             elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER]:
                 return await self._stream_openai(messages, system, max_tokens, temperature)
             else:
@@ -283,46 +272,34 @@ class ModelClient:
         system: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None
+        extra_headers: Optional[Dict[str, str]] = None,
+        use_caching: bool = False
     ) -> Any:
         """Stream text using Anthropic API."""
         if not self.client:
             raise ValueError("Anthropic client not initialized.")
             
-        # Convert messages to the format expected by Anthropic
-        anthropic_messages = []
-        for message in messages:
-            # Handle cache_control if present
-            msg_dict = {
-                "role": message["role"],
-                "content": message["content"]
-            }
-            
-            # Add cache_control if present in the message
-            if "cache_control" in message:
-                msg_dict["cache_control"] = message["cache_control"]
-                
-            anthropic_messages.append(msg_dict)
-            
         params = {
             "model": self.model,
-            "messages": anthropic_messages,
+            "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature
         }
         
+        # Handle system prompt with caching if enabled
         if system:
-            params["system"] = system
+            if use_caching:
+                params["system"] = [
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral"}
+                    }
+                ]
+            else:
+                params["system"] = system
         
-        # For beta features like prompt caching, we rely on the cache_control 
-        # field in the message format, not on extra headers
-        
-        # Use run_in_executor to run the synchronous Anthropic call in a thread
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, 
-            lambda: self.client.messages.stream(**params)
-        )
+        return await self.client.messages.stream(**params)
     
     async def _stream_openai(
         self,

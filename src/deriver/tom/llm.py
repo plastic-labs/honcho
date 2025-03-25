@@ -63,8 +63,11 @@ async def get_response(
         input=messages, model=model
     )
     
-    # We don't need to modify the messages as the caching is handled 
-    # by the model provider based on request similarity, not explicit cache_control
+    # For Anthropic, add cache_control to messages if use_caching is True
+    if provider == ModelProvider.ANTHROPIC and use_caching:
+        # Add cache_control to all messages except the last one
+        for i, message in enumerate(messages[:-1]):
+            message["cache_control"] = {"type": "ephemeral"}
     
     # Use the client's asynchronous method to get a response
     with sentry_sdk.start_transaction(op="llm-api", name=f"{provider} API Call") as transaction:
@@ -73,6 +76,7 @@ async def get_response(
         
         # Use await directly instead of asyncio.run()
         try:
+            print(f"[LLM] {messages=}")
             result = await client.generate(
                 messages=messages,
                 system=system,

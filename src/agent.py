@@ -23,6 +23,14 @@ from src.deriver.tom.llm import get_response, QUERY_GENERATION_TEMPLATE
 
 DEF_QUERY_GENERATION_PROVIDER = ModelProvider.ANTHROPIC
 DEF_QUERY_GENERATION_MODEL = "claude-3-5-haiku-latest"
+QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
+    Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
+    For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
+    
+    Format your response as a JSON array of strings, with each string being a search query. 
+    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
+    Example:
+    ["query about interests", "query about personality", "query about experiences"]"""
 
 load_dotenv()
 
@@ -189,6 +197,8 @@ async def chat(
         
         # 1. Create embedding store
         collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
+
+
         embedding_store = CollectionEmbeddingStore(
             db=db,
             app_id=app_id,
@@ -407,49 +417,55 @@ async def generate_semantic_queries(query: str) -> List[str]:
     print(f"[SEMANTIC] Generating semantic queries from: {query}")
     query_start = asyncio.get_event_loop().time()
     
-    # Format the query using the template - import already added at the top
-    query_prompt = QUERY_GENERATION_TEMPLATE.format(query=query)
-
     print(f"[SEMANTIC] Calling LLM for query generation")
     llm_start = asyncio.get_event_loop().time()
     
-    # Prepare the message for Anthropic 
-    message: Dict[str, Any] = {
-        "role": "user", 
-        "content": query_prompt
-    }
+    # Create a new model client
+    client = ModelClient(provider=DEF_QUERY_GENERATION_PROVIDER, model=DEF_QUERY_GENERATION_MODEL)
     
-    # Note: get_response is async, so we need to await it
-    queries_response = await get_response(
-        [message],
-        provider=DEF_QUERY_GENERATION_PROVIDER,
-        model=DEF_QUERY_GENERATION_MODEL,
-        use_caching=True  # Enable provider-side caching if available
-    )
-    llm_time = asyncio.get_event_loop().time() - llm_start
-    print(f"[SEMANTIC] LLM response received in {llm_time:.2f}s: {queries_response[:100]}...")
+    # Prepare the messages for Anthropic
+    messages: List[Dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": query
+        }
+    ]
     
-    # Parse the JSON response to get a list of queries
+    # Generate the response
     try:
-        queries = json.loads(queries_response)
-        if not isinstance(queries, list):
-            # Fallback if response is not a valid list
-            print(f"[SEMANTIC] LLM response not a list, using as single query")
-            queries = [queries_response]
-    except json.JSONDecodeError:
-        # Fallback if response is not valid JSON
-        print(f"[SEMANTIC] Failed to parse JSON response, using raw response as query")
-        queries = [query]  # Fall back to the original query
-    
-    # Ensure we always include the original query
-    if query not in queries:
-        print(f"[SEMANTIC] Adding original query to results")
-        queries.append(query)
-    
-    total_time = asyncio.get_event_loop().time() - query_start
-    print(f"[SEMANTIC] Generated {len(queries)} queries in {total_time:.2f}s")
-    
-    return queries
+        result = await client.generate(
+            messages=messages,
+            system=QUERY_GENERATION_SYSTEM,
+            max_tokens=1000,
+            use_caching=True  # Enable caching for the system prompt
+        )
+        llm_time = asyncio.get_event_loop().time() - llm_start
+        print(f"[SEMANTIC] LLM response received in {llm_time:.2f}s: {result[:100]}...")
+        
+        # Parse the JSON response to get a list of queries
+        try:
+            queries = json.loads(result)
+            if not isinstance(queries, list):
+                # Fallback if response is not a valid list
+                print(f"[SEMANTIC] LLM response not a list, using as single query")
+                queries = [result]
+        except json.JSONDecodeError:
+            # Fallback if response is not valid JSON
+            print(f"[SEMANTIC] Failed to parse JSON response, using raw response as query")
+            queries = [query]  # Fall back to the original query
+        
+        # Ensure we always include the original query
+        if query not in queries:
+            print(f"[SEMANTIC] Adding original query to results")
+            queries.append(query)
+        
+        total_time = asyncio.get_event_loop().time() - query_start
+        print(f"[SEMANTIC] Generated {len(queries)} queries in {total_time:.2f}s")
+        
+        return queries
+    except Exception as e:
+        print(f"[SEMANTIC] Error during API call: {str(e)}")
+        raise
 
     
 
@@ -518,12 +534,12 @@ async def generate_user_representation(
         print(f"[REPRESENTATION] Extracted representation: {len(representation)} characters")
     else:
         representation = f"""
-        PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
-        {tom_inference}
-        
-        RELEVANT LONG-TERM FACTS ABOUT THE USER:
-        {facts}
-        """
+PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
+{tom_inference}
+
+RELEVANT LONG-TERM FACTS ABOUT THE USER:
+{facts}
+"""
     print(f"[REPRESENTATION] Representation: {representation}") 
     # If message_id is provided, save the representation as a metamessage
     if message_id is None:
