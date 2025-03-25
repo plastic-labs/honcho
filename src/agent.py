@@ -285,7 +285,8 @@ async def chat(
             facts=facts,
             embedding_store=embedding_store,
             db=db,
-            message_id=latest_message_id
+            message_id=latest_message_id,
+            with_inference=False
         )
         print(f"[AGENT] User representation generated: {len(user_representation)} characters")
 

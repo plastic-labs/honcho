@@ -13,6 +13,9 @@ from .embeddings import CollectionEmbeddingStore
 FACT_EXTRACTION_PROVIDER = ModelProvider.ANTHROPIC
 FACT_EXTRACTION_MODEL = "claude-3-5-haiku-20241022"
 
+USER_REPRESENTATION_PROVIDER = ModelProvider.CEREBRAS
+USER_REPRESENTATION_MODEL = "llama-3.3-70b"
+
 MAX_FACT_DISTANCE = 0.85
 
 @ai_track("Tom Inference")
@@ -83,7 +86,7 @@ UPDATES:
     }]
 
     # Create a new model client
-    client = ModelClient(provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219")
+    client = ModelClient(provider=USER_REPRESENTATION_PROVIDER, model=USER_REPRESENTATION_MODEL)
     
     # Generate the response with caching enabled
     response = await client.generate(
