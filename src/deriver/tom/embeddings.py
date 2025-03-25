@@ -164,7 +164,7 @@ class CollectionEmbeddingStore:
         for fact in facts:
             # Create document with duplicate checking
             try:
-                document = await crud.create_document(
+                await crud.create_document(
                     self.db,
                     document=schemas.DocumentCreate(content=fact, metadata={}),
                     app_id=self.app_id,

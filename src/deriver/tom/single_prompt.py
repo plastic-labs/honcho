@@ -1,4 +1,3 @@
-import os
 from typing import Dict, Any, List
 
 import sentry_sdk

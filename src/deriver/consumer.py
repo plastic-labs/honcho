@@ -1,15 +1,13 @@
 import logging
 import os
-import re
 
 import sentry_sdk
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import observe
 from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models, crud
-from .tom import get_tom_inference, get_user_representation
 from .tom.long_term import extract_facts_long_term
 from .tom.embeddings import CollectionEmbeddingStore
 
@@ -117,7 +115,7 @@ async def process_user_message(
     chat_history_str = f"{chat_history_str}\nhuman: {content}"
 
     # Extract facts from chat history
-    print(f"[CONSUMER] Extracting facts from chat history")
+    print("[CONSUMER] Extracting facts from chat history")
     extract_start = os.times()[4]
     facts = await extract_facts_long_term(chat_history_str)
     extract_time = os.times()[4] - extract_start
@@ -135,7 +133,7 @@ async def process_user_message(
     )
     
     # Filter out facts that are duplicates of existing facts in the vector store
-    print(f"[CONSUMER] Removing duplicate facts")
+    print("[CONSUMER] Removing duplicate facts")
     dedup_start = os.times()[4]
     unique_facts = await embedding_store.remove_duplicates(facts)
     dedup_time = os.times()[4] - dedup_start
@@ -149,7 +147,7 @@ async def process_user_message(
         save_time = os.times()[4] - save_start
         print(f"[CONSUMER] Facts saved in {save_time:.2f}s")
     else:
-        print(f"[CONSUMER] No unique facts to save")
+        print("[CONSUMER] No unique facts to save")
     
     console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
     

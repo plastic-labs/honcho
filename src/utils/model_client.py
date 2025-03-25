@@ -2,13 +2,11 @@
 Utility functions for interacting with various language model APIs.
 """
 import os
-import asyncio
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 import sentry_sdk
 from anthropic import AsyncAnthropic
-from anthropic.types import ContentBlock, MessageParam
 from langfuse.decorators import observe, langfuse_context
 from dotenv import load_dotenv
 
@@ -69,8 +67,8 @@ class ModelClient:
             # Import OpenAI inside the method to avoid issues if the package is not installed
             try:
                 from openai import AsyncOpenAI
-            except ImportError:
-                raise ImportError("OpenAI package is not installed. Install it with 'pip install openai'.")
+            except ImportError as e:
+                raise ImportError("OpenAI package is not installed. Install it with 'pip install openai'.") from e
             
             if provider == ModelProvider.OPENAI:
                 self.api_key = api_key or os.getenv("OPENAI_API_KEY")

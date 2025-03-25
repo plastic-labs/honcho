@@ -1,8 +1,8 @@
 import json
-from typing import List, Optional
+from typing import List
 import time
 
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import observe
 from sentry_sdk.ai.monitoring import ai_track
 
 from src.utils.model_client import ModelProvider, ModelClient
@@ -26,8 +26,10 @@ async def get_user_representation_long_term(
     embedding_store: CollectionEmbeddingStore,
     user_representation: str = "None", 
     tom_inference: str = "None", 
-    facts: List[str] = [],
+    facts: Optional[List[str]] = None,
 ) -> str:
+    if facts is None:
+        facts = []
     facts_str = "\n".join([f"- {fact}" for fact in facts])
     print(f"Facts: {facts_str}")
 
@@ -105,7 +107,7 @@ UPDATES:
 
 
 async def extract_facts_long_term(chat_history: str) -> List[str]:
-    print(f"[FACT-EXTRACT] Starting fact extraction from chat history")
+    print("[FACT-EXTRACT] Starting fact extraction from chat history")
     extract_start = time.time()
     
     
@@ -173,7 +175,7 @@ Remember to focus on clear, concise statements that capture key information abou
         }
     ]
     
-    print(f"[FACT-EXTRACT] Calling LLM for fact extraction")
+    print("[FACT-EXTRACT] Calling LLM for fact extraction")
     llm_start = time.time()
     
     # Create a new model client
@@ -191,7 +193,7 @@ Remember to focus on clear, concise statements that capture key information abou
     print(f"[FACT-EXTRACT] LLM response received in {llm_time:.2f}s")
     
     try:
-        print(f"[FACT-EXTRACT] Parsing JSON response")
+        print("[FACT-EXTRACT] Parsing JSON response")
         facts_str = parse_xml_content(response, "facts")
         response_data = json.loads(facts_str)
         facts = response_data["facts"]
