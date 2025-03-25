@@ -19,10 +19,12 @@ from src.deriver.tom.long_term import get_user_representation_long_term
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
-from src.deriver.tom.llm import get_response, QUERY_GENERATION_TEMPLATE
 
-DEF_QUERY_GENERATION_PROVIDER = ModelProvider.ANTHROPIC
-DEF_QUERY_GENERATION_MODEL = "claude-3-5-haiku-latest"
+DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
+DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
+
+DEF_QUERY_GENERATION_PROVIDER = ModelProvider.CEREBRAS
+DEF_QUERY_GENERATION_MODEL = "llama-3.3-70b"
 QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
     For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
@@ -58,7 +60,7 @@ class Dialectic:
         self.user_representation = user_representation
         self.chat_history = chat_history
         self.client = ModelClient(provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219")
-        self.system_prompt = """I'm operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, I'll receive: 1) previously collected psychological context about the user that I've maintained, and 2) their current conversation/interaction from the requesting application. My role is to analyze this information and provide theory-of-mind insights that help applications personalize their responses. Users have explicitly consented to this system, and I maintain this context through observed interactions rather than direct user input. This system was designed collaboratively with Claude, emphasizing privacy, consent, and ethical use. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
 
     @ai_track("Dialectic Call")
     @observe(as_type="generation")
@@ -255,6 +257,7 @@ async def chat(
         
         # Get chat history for the session
         history = await get_chat_history(app_id, user_id, session_id)
+        print(f"[AGENT] IDs: {app_id}, {user_id}, {session_id}")
         message_count = len(history.split('\n'))
         print(f"[AGENT] Retrieved chat history: {message_count} messages")
 
@@ -394,10 +397,10 @@ async def run_tom_inference(
     )
     
     # Extract the prediction from the response
-    prediction = parse_xml_content(tom_inference_response, "prediction")
     tom_time = asyncio.get_event_loop().time() - tom_start_time
     
     print(f"[TOM] ToM inference completed in {tom_time:.2f}s")
+    prediction = parse_xml_content(tom_inference_response, "prediction")
     print(f"[TOM] Prediction length: {len(prediction)} characters")
     
     return prediction

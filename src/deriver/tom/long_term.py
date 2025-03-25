@@ -5,14 +5,13 @@ import time
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
-from src.utils.model_client import ModelProvider
+from src.utils.model_client import ModelProvider, ModelClient
 from src.utils import parse_xml_content
-from .llm import get_response, DEF_ANTHROPIC_MODEL, DEF_PROVIDER
 from .embeddings import CollectionEmbeddingStore
 
 # Constants for fact extraction
-FACT_EXTRACTION_PROVIDER = ModelProvider.OPENROUTER
-FACT_EXTRACTION_MODEL = "meta-llama/Llama-3.3-70B-Instruct"
+FACT_EXTRACTION_PROVIDER = ModelProvider.ANTHROPIC
+FACT_EXTRACTION_MODEL = "claude-3-5-haiku-20241022"
 
 MAX_FACT_DISTANCE = 0.85
 
@@ -83,7 +82,17 @@ UPDATES:
         "content": f"Please analyze this information and provide an updated user representation. DO NOT generate persistent information - it will be injected separately:\n{context_str}"
     }]
 
-    response = await get_response(messages, DEF_PROVIDER, DEF_ANTHROPIC_MODEL, system_prompt)
+    # Create a new model client
+    client = ModelClient(provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219")
+    
+    # Generate the response with caching enabled
+    response = await client.generate(
+        messages=messages,
+        system=system_prompt,
+        max_tokens=1000,
+        temperature=0,
+        use_caching=True  # Enable caching for the system prompt
+    )
 
     # Inject the facts into the response
     persistent_info = """PERSISTENT INFORMATION:
@@ -96,14 +105,6 @@ async def extract_facts_long_term(chat_history: str) -> List[str]:
     print(f"[FACT-EXTRACT] Starting fact extraction from chat history")
     extract_start = time.time()
     
-    # Log the last message from user for context
-    last_user_message = ""
-    for line in reversed(chat_history.split("\n")):
-        if line.startswith("human:"):
-            last_user_message = line.replace("human:", "").strip()
-            break
-    if last_user_message:
-        print(f"[FACT-EXTRACT] Last user message: {last_user_message[:100]}{'...' if len(last_user_message) > 100 else ''}")
     
     system_prompt = """
     You are an AI assistant specialized in extracting and formatting relevant information about users from conversations. Your task is to analyze a given conversation and create a list of concise, factual statements about the user. These statements will be stored in a vector embedding database to enhance future interactions.
@@ -127,8 +128,6 @@ Instructions:
    - Goals or aspirations
    - Challenges or problems they're facing
    - Opinions or beliefs
-
-3. 
 
 3. For each piece of information you identify:
    a. Verify that it is factual and explicitly stated in the conversation, not inferred.
@@ -162,7 +161,6 @@ Example of the expected output format:
 </facts>
 
 Remember to focus on clear, concise statements that capture key information about the user. Each fact should be worded in a way that will aid its semantic retrieval from a vector embedding database. It's OK for this section to be quite long.
-
     """
     message = system_prompt.format(chat_history=chat_history)
     messages = [
@@ -174,12 +172,18 @@ Remember to focus on clear, concise statements that capture key information abou
     
     print(f"[FACT-EXTRACT] Calling LLM for fact extraction")
     llm_start = time.time()
-    response = await get_response(
-        messages, 
-        provider=FACT_EXTRACTION_PROVIDER,
-        model=FACT_EXTRACTION_MODEL,
-        temperature=0.0
+    
+    # Create a new model client
+    client = ModelClient(provider=FACT_EXTRACTION_PROVIDER, model=FACT_EXTRACTION_MODEL)
+    
+    # Generate the response with caching enabled
+    response = await client.generate(
+        messages=messages,
+        max_tokens=1000,
+        temperature=0.0,
+        use_caching=True  # Enable caching for the system prompt
     )
+    
     llm_time = time.time() - llm_start
     print(f"[FACT-EXTRACT] LLM response received in {llm_time:.2f}s")
     

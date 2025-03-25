@@ -7,8 +7,8 @@ from sentry_sdk.ai.monitoring import ai_track
 
 from src.utils.model_client import ModelClient, ModelProvider
 
-DEF_PROVIDER = ModelProvider.ANTHROPIC
-DEF_MODEL = "claude-3-7-sonnet-20250219"
+DEF_PROVIDER = ModelProvider.CEREBRAS
+DEF_MODEL = "llama-3.3-70b"
 
 TOM_SYSTEM_PROMPT = """You are a system for analyzing conversations to make evidence-based inferences about user mental states.
 
