@@ -90,7 +90,7 @@ class Dialectic:
             response = await self.client.generate(
                 messages=[message],
                 system=self.system_prompt,
-                max_tokens=300
+                max_tokens=1000
             )
             model_time = asyncio.get_event_loop().time() - model_start
             print(f"[DIALECTIC] Model response received in {model_time:.2f}s: {len(response)} chars")
