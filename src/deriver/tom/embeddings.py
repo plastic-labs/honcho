@@ -1,7 +1,6 @@
-from typing import List, Dict, Set, Tuple
 import json
-import os
 from pathlib import Path
+from typing import Optional
 
 # from sentence_transformers import SentenceTransformer
 import numpy as np
@@ -12,9 +11,11 @@ from ... import crud, schemas
 
 
 class LocalEmbeddingStore:
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", storage_path: str | None = None):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", storage_path: Optional[Path] = None):
+        if storage_path is None:
+            storage_path = Path.cwd() / "storage" / "embeddings"
         self.model = SentenceTransformer(model_name)
-        self.facts: List[str] = []
+        self.facts: list[str] = []
         self.embeddings: NDArray[np.float32] = np.array([])  # Store as numpy array for faster operations
         self.use_storage = storage_path is not None
         if self.use_storage:
@@ -26,7 +27,7 @@ class LocalEmbeddingStore:
     
     def load_storage(self) -> None:
         if self.facts_file.exists():
-            with open(self.facts_file, "r") as f:
+            with open(self.facts_file) as f:
                 self.facts = json.load(f)
         if self.embeddings_file.exists():
             self.embeddings = np.load(self.embeddings_file)
@@ -36,7 +37,7 @@ class LocalEmbeddingStore:
             json.dump(self.facts, f)
         np.save(self.embeddings_file, self.embeddings)
     
-    def compute_embeddings(self, texts: List[str]) -> NDArray[np.float32]:
+    def compute_embeddings(self, texts: list[str]) -> NDArray[np.float32]:
         return self.model.encode(texts, convert_to_numpy=True, batch_size=32, show_progress_bar=False)
     
     def compute_similarities(self, new_embeddings: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -50,7 +51,7 @@ class LocalEmbeddingStore:
         # Compute similarities in a vectorized way
         return dot_product / (norms1[:, np.newaxis] * norms2)
     
-    async def save_facts(self, facts: List[str], replace_duplicates: bool = True, similarity_threshold: float = 0.85) -> None:
+    async def save_facts(self, facts: list[str], replace_duplicates: bool = True, similarity_threshold: float = 0.85) -> None:
         """Save facts and handle duplicates.
         
         Args:
@@ -112,7 +113,7 @@ class LocalEmbeddingStore:
         if self.use_storage:
             self.save_storage()
 
-    async def get_relevant_facts(self, query: str, top_k: int = 5, similarity_threshold: float = 0.3) -> List[str]:
+    async def get_relevant_facts(self, query: str, top_k: int = 5, similarity_threshold: float = 0.3) -> list[str]:
         """Retrieve the most relevant facts for a given query.
         
         Args:
@@ -137,7 +138,7 @@ class LocalEmbeddingStore:
         sorted_indices = np.argsort(similarities)[::-1]
         
         # Filter by similarity threshold and get top_k results
-        relevant_facts: List[str] = []
+        relevant_facts: list[str] = []
         for idx in sorted_indices:
             similarity = similarities[idx]
             if similarity < similarity_threshold or len(relevant_facts) >= top_k:
@@ -153,7 +154,7 @@ class CollectionEmbeddingStore:
         self.user_id = user_id
         self.collection_id = collection_id
 
-    async def save_facts(self, facts: List[str], replace_duplicates: bool = True, similarity_threshold: float = 0.85) -> None:
+    async def save_facts(self, facts: list[str], replace_duplicates: bool = True, similarity_threshold: float = 0.85) -> None:
         """Save facts to the collection.
         
         Args:
@@ -176,7 +177,7 @@ class CollectionEmbeddingStore:
                 print(f"Error creating document: {e}")
                 continue
 
-    async def get_relevant_facts(self, query: str, top_k: int = 5, max_distance: float = 0.3) -> List[str]:
+    async def get_relevant_facts(self, query: str, top_k: int = 5, max_distance: float = 0.3) -> list[str]:
         """Retrieve the most relevant facts for a given query.
         
         Args:
@@ -199,7 +200,7 @@ class CollectionEmbeddingStore:
         
         return [doc.content for doc in documents]
 
-    async def remove_duplicates(self, facts: List[str], similarity_threshold: float = 0.85) -> List[str]:
+    async def remove_duplicates(self, facts: list[str], similarity_threshold: float = 0.85) -> list[str]:
         """Remove facts that are duplicates of existing facts in the vector store.
         
         Args:

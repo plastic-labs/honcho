@@ -7,10 +7,9 @@ from rich.console import Console
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import models, crud
-from .tom.long_term import extract_facts_long_term
+from .. import crud, models
 from .tom.embeddings import CollectionEmbeddingStore
-
+from .tom.long_term import extract_facts_long_term
 
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 

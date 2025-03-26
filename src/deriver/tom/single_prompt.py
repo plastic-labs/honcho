@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+from typing import Any
 
 import sentry_sdk
 from langfuse.decorators import langfuse_context, observe
@@ -108,7 +108,7 @@ async def get_tom_inference_single_prompt(
         client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
         
         # Prepare the messages
-        messages: List[Dict[str, Any]] = [
+        messages: list[dict[str, Any]] = [
             {
                 "role": "user",
                 "content": f"Please analyze this conversation and provide a prediction following the format above:\n{chat_history}",
@@ -163,7 +163,7 @@ async def get_user_representation_single_prompt(
             context_str += f"EXISTING USER REPRESENTATION - INCOMPLETE, TO BE UPDATED:\n{user_representation}"
 
         # Prepare the messages
-        messages: List[Dict[str, Any]] = [
+        messages: list[dict[str, Any]] = [
             {
                 "role": "user",
                 "content": f"Please analyze this information and provide an updated user representation:\n{context_str}",

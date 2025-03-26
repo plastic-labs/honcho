@@ -1,6 +1,5 @@
 from collections.abc import Sequence
 from typing import Optional, List
-
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, insert, select
@@ -12,8 +11,6 @@ from sqlalchemy.types import BigInteger
 from . import models, schemas
 
 load_dotenv(override=True)
-
-PROTECTED_COLLECTION_NAME = "honcho"
 
 openai_client = AsyncOpenAI()
 
@@ -748,7 +745,7 @@ async def create_user_protected_collection(
 ) -> models.Collection:
     honcho_collection = models.Collection(
         user_id=user_id,
-        name=PROTECTED_COLLECTION_NAME,
+        name="honcho",
     )
     try:
         db.add(honcho_collection)
@@ -765,9 +762,7 @@ async def get_or_create_user_protected_collection(
     app_id: str,
     user_id: str,
 ) -> models.Collection:
-    honcho_collection = await get_collection_by_name(db, app_id, user_id, PROTECTED_COLLECTION_NAME)
-    if honcho_collection is None:
-        honcho_collection = await create_user_protected_collection(db, app_id, user_id)
+    honcho_collection = await get_collection_by_name(db, app_id, user_id, "honcho")
     return honcho_collection
 
 

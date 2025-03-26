@@ -2,20 +2,21 @@ import asyncio
 import json
 import os
 from collections.abc import Iterable
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 import sentry_sdk
 from anthropic import MessageStreamManager
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.db import SessionLocal
-from src.deriver.tom.long_term import get_user_representation_long_term
+from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
+from src.deriver.tom.long_term import get_user_representation_long_term
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 
@@ -78,7 +79,7 @@ class Dialectic:
             print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
 
             # Create a properly formatted message
-            message: Dict[str, Any] = {
+            message: dict[str, Any] = {
                 "role": "user",
                 "content": prompt
             }
@@ -115,7 +116,7 @@ class Dialectic:
             print(f"[DIALECTIC] Prompt constructed with context length: {len(self.user_representation)} chars")
             
             # Create a properly formatted message
-            message: Dict[str, Any] = {
+            message: dict[str, Any] = {
                 "role": "user",
                 "content": prompt
             }
@@ -324,7 +325,7 @@ async def chat(
 async def get_long_term_facts(
     query: str,
     embedding_store: CollectionEmbeddingStore
-) -> List[str]:
+) -> list[str]:
     """
     Generate queries based on the dialectic query and retrieve relevant facts.
     
@@ -344,7 +345,7 @@ async def get_long_term_facts(
     print(f"[FACTS] Generated {len(search_queries)} semantic queries: {search_queries}")
     
     # Create a list of coroutines, one for each query
-    async def execute_query(i: int, search_query: str) -> List[str]:
+    async def execute_query(i: int, search_query: str) -> list[str]:
         print(f"[FACTS] Starting query {i+1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
         facts = await embedding_store.get_relevant_facts(
@@ -406,7 +407,7 @@ async def run_tom_inference(
     return prediction
 
 
-async def generate_semantic_queries(query: str) -> List[str]:
+async def generate_semantic_queries(query: str) -> list[str]:
     """
     Generate multiple semantically relevant queries based on the original query using LLM.
     This helps retrieve more diverse and relevant facts from the vector store.
@@ -427,7 +428,7 @@ async def generate_semantic_queries(query: str) -> List[str]:
     client = ModelClient(provider=DEF_QUERY_GENERATION_PROVIDER, model=DEF_QUERY_GENERATION_MODEL)
     
     # Prepare the messages for Anthropic
-    messages: List[Dict[str, Any]] = [
+    messages: list[dict[str, Any]] = [
         {
             "role": "user",
             "content": query
@@ -479,7 +480,7 @@ async def generate_user_representation(
     session_id: str,
     chat_history: str,
     tom_inference: str,
-    facts: List[str],
+    facts: list[str],
     embedding_store: CollectionEmbeddingStore,
     db: AsyncSession,
     message_id: Optional[str] = None,

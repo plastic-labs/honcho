@@ -3,12 +3,12 @@ Utility functions for interacting with various language model APIs.
 """
 import os
 from enum import Enum
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Optional, Protocol
 
 import sentry_sdk
 from anthropic import AsyncAnthropic
-from langfuse.decorators import observe, langfuse_context
 from dotenv import load_dotenv
+from langfuse.decorators import langfuse_context, observe
 
 # Load environment variables
 load_dotenv()
@@ -98,7 +98,7 @@ class ModelClient:
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     
-    def create_message(self, role: str, content: str) -> Dict[str, str]:
+    def create_message(self, role: str, content: str) -> dict[str, str]:
         """
         Create a message that works with the current provider.
         
@@ -115,11 +115,11 @@ class ModelClient:
     @observe(as_type="generation")
     async def generate(
         self, 
-        messages: List[Dict[str, Any]], 
+        messages: list[dict[str, Any]], 
         system: Optional[str] = None, 
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None,
+        extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> str:
         """
@@ -151,11 +151,11 @@ class ModelClient:
     
     async def _generate_anthropic(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None,
+        extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> str:
         """Generate a response using the Anthropic API."""
@@ -195,7 +195,7 @@ class ModelClient:
     
     async def _generate_openai(
         self,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         system: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.0
@@ -230,11 +230,11 @@ class ModelClient:
     @observe(as_type="generation")
     async def stream(
         self, 
-        messages: List[Dict[str, Any]], 
+        messages: list[dict[str, Any]], 
         system: Optional[str] = None, 
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None,
+        extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> Any:
         """
@@ -266,11 +266,11 @@ class ModelClient:
     
     async def _stream_anthropic(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.0,
-        extra_headers: Optional[Dict[str, str]] = None,
+        extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> Any:
         """Stream text using Anthropic API."""
@@ -297,11 +297,11 @@ class ModelClient:
             else:
                 params["system"] = system
         
-        return await self.client.messages.stream(**params)
+        return await self.client.messages.stream(**params) # type: ignore
     
     async def _stream_openai(
         self,
-        messages: List[Dict[str, str]],
+        messages: list[dict[str, str]],
         system: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.0

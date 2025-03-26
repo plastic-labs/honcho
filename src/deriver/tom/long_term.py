@@ -1,12 +1,13 @@
 import json
-from typing import List
 import time
+from typing import Optional
 
 from langfuse.decorators import observe
 from sentry_sdk.ai.monitoring import ai_track
 
-from src.utils.model_client import ModelProvider, ModelClient
 from src.utils import parse_xml_content
+from src.utils.model_client import ModelClient, ModelProvider
+
 from .embeddings import CollectionEmbeddingStore
 
 # Constants for fact extraction
@@ -26,7 +27,7 @@ async def get_user_representation_long_term(
     embedding_store: CollectionEmbeddingStore,
     user_representation: str = "None", 
     tom_inference: str = "None", 
-    facts: Optional[List[str]] = None,
+    facts: Optional[list[str]] = None,
 ) -> str:
     if facts is None:
         facts = []
@@ -100,13 +101,13 @@ UPDATES:
     )
 
     # Inject the facts into the response
-    persistent_info = """PERSISTENT INFORMATION:
-{}""".format(facts_str)
+    persistent_info = f"""PERSISTENT INFORMATION:
+{facts_str}"""
 
     return response.replace("<KNOWN_FACTS>", persistent_info)
 
 
-async def extract_facts_long_term(chat_history: str) -> List[str]:
+async def extract_facts_long_term(chat_history: str) -> list[str]:
     print("[FACT-EXTRACT] Starting fact extraction from chat history")
     extract_start = time.time()
     
