@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 import sentry_sdk
 from langfuse.decorators import langfuse_context, observe
@@ -101,7 +101,7 @@ UPDATES:
 @ai_track("Tom Inference")
 @observe(as_type="generation")
 async def get_tom_inference_single_prompt(
-    chat_history: str, session_id: str, user_representation: str = "None", **kwargs
+    chat_history: str, session_id: str, user_representation: Optional[str] = None, **kwargs
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
         # Create a new model client
@@ -116,7 +116,7 @@ async def get_tom_inference_single_prompt(
         ]
 
         # Add existing user representation if available
-        if user_representation != "None":
+        if user_representation:
             messages.append(
                 {
                     "role": "user",
@@ -145,8 +145,8 @@ async def get_tom_inference_single_prompt(
 async def get_user_representation_single_prompt(
     chat_history: str,
     session_id: str,
-    user_representation: str = "None",
-    tom_inference: str = "None",
+    user_representation: Optional[str] = None,
+    tom_inference: Optional[str] = None,
     **kwargs,
 ) -> str:
     with sentry_sdk.start_transaction(
@@ -157,9 +157,9 @@ async def get_user_representation_single_prompt(
         
         # Build the context message
         context_str = f"CONVERSATION:\n{chat_history}\n\n"
-        if tom_inference != "None":
+        if tom_inference:
             context_str += f"PREDICTION OF USER MENTAL STATE - MIGHT BE INCORRECT:\n{tom_inference}\n\n"
-        if user_representation != "None":
+        if user_representation:
             context_str += f"EXISTING USER REPRESENTATION - INCOMPLETE, TO BE UPDATED:\n{user_representation}"
 
         # Prepare the messages
