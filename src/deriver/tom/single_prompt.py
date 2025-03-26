@@ -138,7 +138,7 @@ async def get_tom_inference_single_prompt(
                 system=TOM_SYSTEM_PROMPT,
                 max_tokens=1000,
                 temperature=0,
-                    use_caching=True  # Enable caching for the system prompt
+                use_caching=True  # Enable caching for the system prompt
                 )
         except Exception as e:
             sentry_sdk.capture_exception(e)
