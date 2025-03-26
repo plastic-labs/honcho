@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from typing import Optional
 
@@ -9,6 +10,9 @@ from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 
 from .embeddings import CollectionEmbeddingStore
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Constants for fact extraction
 FACT_EXTRACTION_PROVIDER = ModelProvider.ANTHROPIC
@@ -32,7 +36,7 @@ async def get_user_representation_long_term(
     if facts is None:
         facts = []
     facts_str = "\n".join([f"- {fact}" for fact in facts])
-    print(f"Facts: {facts_str}")
+    logger.debug(f"Facts: {facts_str}")
 
     system_prompt = """You are a system for maintaining factual user representations based on conversation history and theory of mind analysis.
 
@@ -51,6 +55,7 @@ OUTPUT FORMAT:
 CURRENT STATE:
 - Active Context: Current situation/activity
 - Temporary Conditions: Immediate circumstances
+<CURRENT_CURSOR_POSITION>
 - Present Mood/Activity: What user is doing right now
 
 <KNOWN_FACTS>
@@ -108,9 +113,8 @@ UPDATES:
 
 
 async def extract_facts_long_term(chat_history: str) -> list[str]:
-    print("[FACT-EXTRACT] Starting fact extraction from chat history")
+    logger.debug("Starting fact extraction from chat history")
     extract_start = time.time()
-    
     
     system_prompt = """
     You are an AI assistant specialized in extracting and formatting relevant information about users from conversations. Your task is to analyze a given conversation and create a list of concise, factual statements about the user. These statements will be stored in a vector embedding database to enhance future interactions.
@@ -176,7 +180,7 @@ Remember to focus on clear, concise statements that capture key information abou
         }
     ]
     
-    print("[FACT-EXTRACT] Calling LLM for fact extraction")
+    logger.debug("Calling LLM for fact extraction")
     llm_start = time.time()
     
     # Create a new model client
@@ -191,20 +195,20 @@ Remember to focus on clear, concise statements that capture key information abou
     )
     
     llm_time = time.time() - llm_start
-    print(f"[FACT-EXTRACT] LLM response received in {llm_time:.2f}s")
+    logger.debug(f"LLM response received in {llm_time:.2f}s")
     
     try:
-        print("[FACT-EXTRACT] Parsing JSON response")
+        logger.debug("Parsing JSON response")
         facts_str = parse_xml_content(response, "facts")
         response_data = json.loads(facts_str)
         facts = response_data["facts"]
-        print(f"[FACT-EXTRACT] Extracted {len(facts)} facts")
+        logger.debug(f"Extracted {len(facts)} facts")
         if facts:
-            print(f"[FACT-EXTRACT] Sample facts: {facts[:3] if len(facts) > 3 else facts}")
+            logger.debug(f"Sample facts: {facts[:3] if len(facts) > 3 else facts}")
     except (json.JSONDecodeError, KeyError) as e:
-        print(f"[FACT-EXTRACT] Error parsing response: {str(e)}")
+        logger.error(f"Error parsing response: {str(e)}")
         facts = []
     
     total_time = time.time() - extract_start
-    print(f"[FACT-EXTRACT] Total extraction completed in {total_time:.2f}s")
+    logger.debug(f"Total extraction completed in {total_time:.2f}s")
     return facts

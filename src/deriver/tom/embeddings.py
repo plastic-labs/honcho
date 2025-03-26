@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import crud, schemas
 
+logger = logging.getLogger(__name__)
 
 class LocalEmbeddingStore:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", storage_path: Optional[Path] = None):
@@ -174,7 +176,7 @@ class CollectionEmbeddingStore:
                     duplicate_threshold=1-similarity_threshold  # Convert similarity to distance
                 )
             except Exception as e:
-                print(f"Error creating document: {e}")
+                logger.error(f"Error creating document: {e}")
                 continue
 
     async def get_relevant_facts(self, query: str, top_k: int = 5, max_distance: float = 0.3) -> list[str]:
@@ -229,9 +231,9 @@ class CollectionEmbeddingStore:
                     unique_facts.append(fact)
                 else:
                     # Log duplicate found
-                    print(f"Duplicate found: {duplicates[0].content}. Ignoring fact: {fact}")
+                    logger.debug(f"Duplicate found: {duplicates[0].content}. Ignoring fact: {fact}")
             except Exception as e:
-                print(f"Error checking for duplicates: {e}")
+                logger.error(f"Error checking for duplicates: {e}")
                 # If there's an error, still include the fact to avoid losing information
                 unique_facts.append(fact)
                 

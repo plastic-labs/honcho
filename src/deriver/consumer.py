@@ -11,6 +11,7 @@ from .. import crud, models
 from .tom.embeddings import CollectionEmbeddingStore
 from .tom.long_term import extract_facts_long_term
 
+logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=False)
@@ -30,7 +31,7 @@ async def add_metamessage(db, message_id, metamessage_type, content):
     db.add(metamessage)
 
 
-async def get_chat_history(db, session_id, message_id) -> str:
+async def get_chat_history(db, session_id, message_id, limit: int = 10) -> str:
     subquery = (
         select(models.Message.id)
         .where(models.Message.public_id == message_id)
@@ -41,7 +42,7 @@ async def get_chat_history(db, session_id, message_id) -> str:
         .where(models.Message.session_id == session_id)
         .order_by(models.Message.id.desc())
         .where(models.Message.id < subquery)
-        .limit(10)
+        .limit(limit)
     )
 
     result = await db.execute(messages_stmt)
@@ -54,7 +55,7 @@ async def get_chat_history(db, session_id, message_id) -> str:
 
 
 async def process_item(db: AsyncSession, payload: dict):
-    print(f"[CONSUMER] process_item received payload: {payload['message_id']} is_user={payload['is_user']}")
+    logger.debug(f"process_item received payload: {payload['message_id']} is_user={payload['is_user']}")
     processing_args = [
         payload["content"],
         payload["app_id"],
@@ -64,12 +65,12 @@ async def process_item(db: AsyncSession, payload: dict):
         db,
     ]
     if payload["is_user"]:
-        print(f"[CONSUMER] Processing user message: {payload['message_id']}")
+        logger.debug(f"Processing user message: {payload['message_id']}")
         await process_user_message(*processing_args)
     else:
-        print(f"[CONSUMER] Processing AI message: {payload['message_id']}")
+        logger.debug(f"Processing AI message: {payload['message_id']}")
         await process_ai_message(*processing_args)
-    print(f"[CONSUMER] Finished processing message: {payload['message_id']}")
+    logger.debug(f"Finished processing message: {payload['message_id']}")
     return
 
 
@@ -89,7 +90,6 @@ async def process_ai_message(
     console.print(f"Processing AI message: {content}", style="bright_magenta")
 
 
-
 @sentry_sdk.trace
 @observe()
 async def process_user_message(
@@ -106,23 +106,23 @@ async def process_user_message(
     """
     console.print(f"Processing User Message: {content}", style="orange1")
     process_start = os.times()[4]  # Get current CPU time
-    print(f"[CONSUMER] Starting fact extraction for user message: {message_id}")
+    logger.debug(f"Starting fact extraction for user message: {message_id}")
 
     # Get chat history and append current message
-    print(f"[CONSUMER] Retrieving chat history for session: {session_id}")
+    logger.debug(f"Retrieving chat history for session: {session_id}")
     chat_history_str = await get_chat_history(db, session_id, message_id)
     chat_history_str = f"{chat_history_str}\nhuman: {content}"
 
     # Extract facts from chat history
-    print("[CONSUMER] Extracting facts from chat history")
+    logger.debug("Extracting facts from chat history")
     extract_start = os.times()[4]
     facts = await extract_facts_long_term(chat_history_str)
     extract_time = os.times()[4] - extract_start
     console.print(f"Extracted Facts: {facts}", style="bright_blue")
-    print(f"[CONSUMER] Extracted {len(facts)} facts in {extract_time:.2f}s")
+    logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
     
     # Save the facts to the collection
-    print(f"[CONSUMER] Setting up embedding store for app: {app_id}, user: {user_id}")
+    logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
     collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
     embedding_store = CollectionEmbeddingStore(
         db=db,
@@ -132,23 +132,23 @@ async def process_user_message(
     )
     
     # Filter out facts that are duplicates of existing facts in the vector store
-    print("[CONSUMER] Removing duplicate facts")
+    logger.debug("Removing duplicate facts")
     dedup_start = os.times()[4]
     unique_facts = await embedding_store.remove_duplicates(facts)
     dedup_time = os.times()[4] - dedup_start
-    print(f"[CONSUMER] Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s")
+    logger.debug(f"Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s")
     
     # Only save the unique facts
     if unique_facts:
-        print(f"[CONSUMER] Saving {len(unique_facts)} unique facts to vector store")
+        logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
         save_start = os.times()[4]
         await embedding_store.save_facts(unique_facts)
         save_time = os.times()[4] - save_start
-        print(f"[CONSUMER] Facts saved in {save_time:.2f}s")
+        logger.debug(f"Facts saved in {save_time:.2f}s")
     else:
-        print("[CONSUMER] No unique facts to save")
+        logger.debug("No unique facts to save")
     
     console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
     
     total_time = os.times()[4] - process_start
-    print(f"[CONSUMER] Total processing time: {total_time:.2f}s")
+    logger.debug(f"Total processing time: {total_time:.2f}s")
