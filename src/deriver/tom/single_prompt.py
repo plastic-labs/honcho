@@ -1,3 +1,4 @@
+import logging
 from typing import Any, Optional
 
 import sentry_sdk
@@ -5,6 +6,8 @@ from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
 from src.utils.model_client import ModelClient, ModelProvider
+
+logger = logging.getLogger(__name__)
 
 DEF_PROVIDER = ModelProvider.CEREBRAS
 DEF_MODEL = "llama-3.3-70b"
@@ -129,13 +132,18 @@ async def get_tom_inference_single_prompt(
         )
         
         # Generate the response with caching enabled
-        response = await client.generate(
-            messages=messages,
-            system=TOM_SYSTEM_PROMPT,
-            max_tokens=1000,
-            temperature=0,
-            use_caching=True  # Enable caching for the system prompt
-        )
+        try:
+            response = await client.generate(
+                messages=messages,
+                system=TOM_SYSTEM_PROMPT,
+                max_tokens=1000,
+                temperature=0,
+                    use_caching=True  # Enable caching for the system prompt
+                )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.error(f"Error generating Tom inference: {e}")
+            raise e
         
         return response
 
