@@ -48,6 +48,10 @@ async def get_chat_history(db, session_id, message_id, limit: int = 10) -> str:
     result = await db.execute(messages_stmt)
     messages = result.scalars().all()[::-1]
 
+    if not messages:
+        logger.debug(f"No messages found for session: {session_id}")
+        return ""
+
     chat_history_str = "\n".join(
         [f"human: {m.content}" if m.is_user else f"ai: {m.content}" for m in messages]
     )
