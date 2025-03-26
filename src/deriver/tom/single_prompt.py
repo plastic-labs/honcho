@@ -183,12 +183,17 @@ async def get_user_representation_single_prompt(
         )
         
         # Generate the response with caching enabled
-        response = await client.generate(
-            messages=messages,
-            system=USER_REPRESENTATION_SYSTEM_PROMPT,
-            max_tokens=1000,
-            temperature=0,
-            use_caching=True  # Enable caching for the system prompt
-        )
+        try:
+            response = await client.generate(
+                messages=messages,
+                system=USER_REPRESENTATION_SYSTEM_PROMPT,
+                max_tokens=1000,
+                temperature=0,
+                use_caching=True  # Enable caching for the system prompt
+            )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.error(f"Error generating user representation: {e}")
+            raise e
         
         return response
