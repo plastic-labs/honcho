@@ -26,6 +26,7 @@ DEFAULT_MODELS = {
     ModelProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
     ModelProvider.OPENAI: "gpt-4o",
     ModelProvider.OPENROUTER: "meta-llama/Llama-3.3-70B-Instruct",
+    ModelProvider.CEREBRAS: "llama-3.3-70b",
 }
 
 class Message(Protocol):
@@ -259,7 +260,7 @@ class ModelClient:
             
             if self.provider == ModelProvider.ANTHROPIC:
                 return await self._stream_anthropic(messages, system, max_tokens, temperature, extra_headers, use_caching)
-            elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER]:
+            elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
                 return await self._stream_openai(messages, system, max_tokens, temperature)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
