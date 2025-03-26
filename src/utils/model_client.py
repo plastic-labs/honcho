@@ -224,8 +224,9 @@ class ModelClient:
         )
         
         # Extract the generated text
-        if response.choices and len(response.choices) > 0:
-            return response.choices[0].message.content or ""
+        choice = response.choices[0]
+        if choice and choice.message and choice.message.content:
+            return choice.message.content
         return ""
     
     @observe(as_type="generation")
