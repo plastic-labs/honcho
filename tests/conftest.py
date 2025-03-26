@@ -161,10 +161,18 @@ def create_invalid_jwt() -> str:
         ("admin", create_admin_jwt),  # Admin JWT
     ]
 )
-def auth_client(client, request):
+def auth_client(client, request, monkeypatch):
     """
     Fixture that provides a client with different authentication states.
+    Always ensures USE_AUTH is set to True.
     """
+    # Ensure USE_AUTH is always True for this fixture
+    import src.routers.keys as keys_module
+    import src.security as security
+
+    monkeypatch.setattr(keys_module, "USE_AUTH", "true")
+    monkeypatch.setattr(security, "USE_AUTH", "true")
+
     # Clear any existing Authorization header
     client.headers.pop("Authorization", None)
 
