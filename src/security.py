@@ -1,7 +1,6 @@
 import datetime
 import logging
 import os
-import secrets
 from collections import OrderedDict
 from typing import Annotated, Optional
 
@@ -19,7 +18,13 @@ from .exceptions import AuthenticationException
 logger = logging.getLogger(__name__)
 
 USE_AUTH = os.getenv("USE_AUTH", "False").lower() == "true"
-AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "")
+AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "") if USE_AUTH else ""
+
+if USE_AUTH and AUTH_JWT_SECRET == "":
+    print(
+        "\n    ERROR: No JWT secret provided. Set the AUTH_JWT_SECRET environment variable.\n"
+    )
+    exit(1)
 
 security = HTTPBearer(
     auto_error=False,
@@ -62,7 +67,19 @@ class JWTParams(BaseModel):
     All routers require at least the most tightly scoped parameter.
     Routes will accept a JWT with a scope higher in the hierarchy.
 
-    Names shortened to minimize token size.
+    Names shortened to minimize token size. Timestamp is included
+    so that many unique tokens can be generated for the same resource.
+    Note that the timestamp itself is not used for security, and can
+    be omitted, such as when Honcho generates the initial admin JWT.
+
+    Fields (all optional other than `t`):
+
+    `t`: a string timestamp of when the JWT was created
+    `ad`: a boolean flag indicating if the JWT is an admin JWT
+    `ap`: (string) app id
+    `us`: (string) user id
+    `se`: (string) session id
+    `co`: (string) collection id
     """
 
     t: str = datetime.datetime.now().isoformat()
@@ -73,23 +90,19 @@ class JWTParams(BaseModel):
     co: Optional[str] = None
 
 
-# generate jwt token
-# if secret key is empty, generate a random one
-if not AUTH_JWT_SECRET:
-    AUTH_JWT_SECRET = secrets.token_hex(32)
-    print(f"\n    Generated secret key: {AUTH_JWT_SECRET}")
-
-
-def rotate_jwt_secret(new_secret: str | None = None) -> str:
+async def rotate_jwt_secret(new_secret: str, db: AsyncSession) -> str:
     """
     Rotate the JWT secret and return the new admin JWT.
-    If no new secret is provided, generate a new one.
+    This clears all existing keys from the database.
     """
     global AUTH_JWT_SECRET
-    AUTH_JWT_SECRET = new_secret if new_secret else secrets.token_hex(32)
+    AUTH_JWT_SECRET = new_secret
 
     # Clear the cache when rotating secrets
     clear_api_key_cache()
+
+    # Clear all keys
+    await crud.clear_all_keys(db)
 
     return create_admin_jwt()
 
@@ -122,15 +135,14 @@ async def verify_jwt(token: str, db: AsyncSession) -> JWTParams:
             cache_api_key(token, key.revoked)
             if key.revoked:
                 raise AuthenticationException("Key is revoked")
-        else:
-            # Key not found in DB, cache as not revoked
-            cache_api_key(token, False)
 
     params = JWTParams()
     try:
         decoded = jwt.decode(
             token, AUTH_JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )
+        # Cache key as not revoked
+        cache_api_key(token, False)
         if "t" in decoded:
             params.t = decoded["t"]
         if "ad" in decoded:

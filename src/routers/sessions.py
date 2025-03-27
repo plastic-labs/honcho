@@ -14,7 +14,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
-from src.security import JWTParams, auth, require_auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,8 @@ router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
     tags=["sessions"],
 )
+
+jwt_params = Depends(require_auth(session_id="session_id"))
 
 
 @router.get(
@@ -31,7 +33,7 @@ router = APIRouter(
 async def get_session_from_token(
     app_id: str,
     user_id: str,
-    jwt_params: JWTParams = Depends(auth),
+    jwt_params=jwt_params,
     db=db,
 ):
     """

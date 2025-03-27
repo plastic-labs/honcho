@@ -81,6 +81,24 @@ def test_get_app_by_id_with_auth(auth_client, sample_data):
         assert response.status_code == 401
 
 
+def test_get_app_from_token(auth_client, sample_data):
+    test_app, _ = sample_data
+
+    if auth_client.auth_type == "empty":
+        # For non-admin, include the app_id in the JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+        )
+
+    response = auth_client.get("/v1/apps")
+
+    if auth_client.auth_type == "empty":
+        assert response.status_code == 200
+        assert response.json()["id"] == test_app.public_id
+    else:
+        assert response.status_code == 401
+
+
 def test_get_app_by_name_with_auth(auth_client, sample_data):
     test_app, _ = sample_data
 
@@ -120,6 +138,31 @@ def test_update_app_with_auth(auth_client, sample_data):
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
+        assert response.status_code == 401
+
+
+def test_update_app_with_wrong_auth(auth_client, sample_data):
+    test_app, _ = sample_data
+
+    different_app = str(generate_nanoid())
+
+    if auth_client.auth_type == "empty":
+        # For non-admin, include the *wrong* app_id in the JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=different_app))}"
+        )
+
+    new_name = str(generate_nanoid())
+    response = auth_client.put(
+        f"/v1/apps/{test_app.public_id}",
+        json={"name": new_name, "metadata": {"new_key": "new_value"}},
+    )
+
+    # Only admin JWT or JWT with matching app_id should be allowed
+    if auth_client.auth_type == "admin":
+        assert response.status_code == 200
+    else:
+        # wrong app_id should be rejected
         assert response.status_code == 401
 
 

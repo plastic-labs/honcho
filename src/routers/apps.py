@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException, ResourceNotFoundException
-from src.security import JWTParams, auth, require_auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -14,13 +14,14 @@ router = APIRouter(
     tags=["apps"],
 )
 
+jwt_params = Depends(require_auth(app_id="app_id"))
+
 
 @router.get(
-    "/",
+    "",
     response_model=schemas.App,
-    # include_in_schema=False,  XX can use this if desired to skip docs
 )
-async def get_app_from_token(jwt_params: JWTParams = Depends(auth), db=db):
+async def get_app_from_token(jwt_params=jwt_params, db=db):
     """
     Get an App by ID from the app_id provided in the JWT.
     If no app_id is provided, return a 401 Unauthorized error.

@@ -10,7 +10,7 @@ from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
 )
-from src.security import JWTParams, auth, require_auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -19,15 +19,14 @@ router = APIRouter(
     tags=["users"],
 )
 
+jwt_params = Depends(require_auth(user_id="user_id"))
+
 
 @router.get(
     "",
     response_model=schemas.User,
-    # include_in_schema=False,  XX can use this if desired to skip docs
 )
-async def get_user_from_token(
-    app_id: str, jwt_params: JWTParams = Depends(auth), db=db
-):
+async def get_user_from_token(app_id: str, jwt_params=jwt_params, db=db):
     """
     Get a User by ID from the user_id provided in the JWT.
     If no user_id is provided, return a 401 Unauthorized error.

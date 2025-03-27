@@ -246,7 +246,18 @@ class Key(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
 
-    __table_args__ = (CheckConstraint("length(key) <= 1024", name="key_length"),)
+    __table_args__ = (
+        # JWTs *can* be arbitrarily long but we should seek to never exceed 1kb
+        # in order to reduce overhead on requests.
+        CheckConstraint("length(key) <= 1024", name="key_length"),
+        # JWT format: header.payload.signature
+        # Each part is base64url encoded, which uses A-Za-z0-9_- characters
+        CheckConstraint(
+            "key ~ '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$'",
+            name="key_format",
+        ),
+        # No need to check timestamp as far as I know -- not load bearing currently
+    )
 
     def __repr__(self) -> str:
         return f"Key(key={self.key[:10]}..., revoked={self.revoked}, created_at={self.created_at})"

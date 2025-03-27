@@ -4,7 +4,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from sqlalchemy import Select, cast, insert, select
+from sqlalchemy import Select, cast, delete, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -1401,3 +1401,9 @@ async def revoke_key(db: AsyncSession, key: str) -> models.Key:
     honcho_key.revoked = True
     await db.commit()
     return honcho_key
+
+
+async def clear_all_keys(db: AsyncSession):
+    stmt = delete(models.Key)
+    await db.execute(stmt)
+    await db.commit()

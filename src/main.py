@@ -11,7 +11,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src import crud
-from src.dependencies import get_db
+from src.db import SessionLocal, engine, scaffold_db
 from src.exceptions import HonchoException
 from src.routers import (
     apps,
@@ -25,8 +25,6 @@ from src.routers import (
 )
 from src.security import create_admin_jwt
 
-from .db import engine, scaffold_db
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -37,7 +35,8 @@ logger = logging.getLogger(__name__)
 
 # JWT Setup
 async def setup_admin_jwt():
-    async for db in get_db():
+    db = SessionLocal()
+    try:
         token = create_admin_jwt()
 
         # if admin key is not already in the database, save it
@@ -48,7 +47,8 @@ async def setup_admin_jwt():
             logger.info("Creating new admin key in database")
             await crud.create_key(db, token)
         print(f"\n    ADMIN JWT: {token}\n")
-        break  # We only need one session
+    finally:
+        await db.close()
 
 
 # Sentry Setup

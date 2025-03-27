@@ -90,14 +90,14 @@ async def revoke_key(
 
 @router.post("/rotate")
 async def rotate(
-    new_secret: str | None = None,
+    new_secret: str,
     db=db,
 ):
     """Rotate the JWT secret and return admin JWT"""
     if not USE_AUTH:
         raise DisabledException()
 
-    new_jwt = rotate_jwt_secret(new_secret)
+    new_jwt = await rotate_jwt_secret(new_secret, db)
 
     key = await crud.create_key(db, new_jwt)
 

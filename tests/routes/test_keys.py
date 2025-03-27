@@ -100,34 +100,7 @@ def test_revoke_nonexistent_key(auth_client):
         assert response.json() == {"revoked": key}
 
 
-def test_rotate_jwt_secret(auth_client):
-    """Test rotating the JWT secret"""
-    if auth_client.auth_type != "admin":
-        # Only admin can rotate JWT secret
-        response = auth_client.post("/v1/keys/rotate")
-        assert response.status_code == 401
-        return
-
-    # Test rotation with no new secret (auto-generated)
-    response = auth_client.post("/v1/keys/rotate")
-    assert response.status_code == 200
-    assert "key" in response.json()
-    assert "created_at" in response.json()
-
-    # Verify the new key works for authentication
-    new_key = response.json()["key"]
-    original_auth = auth_client.headers["Authorization"]
-    auth_client.headers["Authorization"] = f"Bearer {new_key}"
-
-    # Try to use the new key to access a protected endpoint
-    keys_response = auth_client.get("/v1/keys/")
-    assert keys_response.status_code == 200
-
-    # Restore original auth
-    auth_client.headers["Authorization"] = original_auth
-
-
-def test_rotate_jwt_with_custom_secret(auth_client):
+def test_rotate_jwt(auth_client):
     """Test rotating the JWT secret with a custom secret"""
     if auth_client.auth_type != "admin":
         return  # Skip test if not admin authentication
@@ -151,9 +124,6 @@ def test_rotate_jwt_with_custom_secret(auth_client):
     keys_response = auth_client.get("/v1/keys/")
     assert keys_response.status_code == 401
 
-    # Restore original auth
-    auth_client.headers["Authorization"] = original_auth
-
 
 def test_rotate_jwt_disabled_auth(client):
     """Test rotating JWT secret when auth is disabled"""
@@ -164,7 +134,8 @@ def test_rotate_jwt_disabled_auth(client):
     keys_module.USE_AUTH = False
 
     try:
-        response = client.post("/v1/keys/rotate")
+        new_secret = "test_custom_secret_for_rotation"
+        response = client.post(f"/v1/keys/rotate?new_secret={new_secret}")
         assert response.status_code == 405
         assert "detail" in response.json()
         assert "disabled" in response.json()["detail"].lower()

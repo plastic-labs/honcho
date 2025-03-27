@@ -7,12 +7,14 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException
-from src.security import JWTParams, auth, require_auth
+from src.security import require_auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections",
     tags=["collections"],
 )
+
+jwt_params = Depends(require_auth(collection_id="collection_id"))
 
 
 @router.get(
@@ -22,7 +24,7 @@ router = APIRouter(
 async def get_collection_from_token(
     app_id: str,
     user_id: str,
-    jwt_params: JWTParams = Depends(auth),
+    jwt_params=jwt_params,
     db=db,
 ):
     """
