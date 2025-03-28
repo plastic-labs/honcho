@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+from logging import getLogger
 from datetime import datetime, timedelta
 
 import sentry_sdk
@@ -14,6 +15,8 @@ from sqlalchemy.sql import func
 from .. import models
 from ..db import SessionLocal
 from .consumer import process_item
+
+logger = getLogger(__name__)
 
 load_dotenv()
 
@@ -54,7 +57,7 @@ class QueueManager:
 
     async def initialize(self):
         """Setup signal handlers and start the main polling loop"""
-        print(f"[QUEUE] Initializing QueueManager with {self.workers} workers")
+        logger.debug(f"Initializing QueueManager with {self.workers} workers")
         
         # Set up signal handlers
         loop = asyncio.get_running_loop()
@@ -63,10 +66,10 @@ class QueueManager:
             loop.add_signal_handler(
                 sig, lambda s=sig: asyncio.create_task(self.shutdown(s))
             )
-        print("[QUEUE] Signal handlers registered")
+        logger.debug("Signal handlers registered")
 
         # Run the polling loop directly in this task
-        print("[QUEUE] Starting polling loop directly")
+        logger.debug("Starting polling loop directly")
         try:
             await self.polling_loop()
         finally:
@@ -74,17 +77,17 @@ class QueueManager:
 
     async def shutdown(self, sig: signal.Signals):
         """Handle graceful shutdown"""
-        print(f"Received exit signal {sig.name}...")
+        logger.debug(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
 
         if self.active_tasks:
-            print(f"Waiting for {len(self.active_tasks)} active tasks to complete...")
+            logger.debug(f"Waiting for {len(self.active_tasks)} active tasks to complete...")
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
 
     async def cleanup(self):
         """Clean up owned sessions"""
         if self.owned_sessions:
-            print(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
+            logger.debug(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
             async with SessionLocal() as db:
                 await db.execute(
                     delete(models.ActiveQueueSession).where(
@@ -125,18 +128,18 @@ class QueueManager:
 
     async def polling_loop(self):
         """Main polling loop to find and process new sessions"""
-        print("[QUEUE] Starting polling loop")
+        logger.debug("Starting polling loop")
         try:
             while not self.shutdown_event.is_set():
                 if self.queue_empty_flag.is_set():
-                    # print("[QUEUE] Queue empty flag set, waiting")
+                    # logger.debug("Queue empty flag set, waiting")
                     await asyncio.sleep(1)
                     self.queue_empty_flag.clear()
                     continue
 
                 # Check if we have capacity before querying
                 if self.semaphore.locked():
-                    # print("[QUEUE] All workers busy, waiting")
+                    # logger.debug("All workers busy, waiting")
                     await asyncio.sleep(1)  # Wait before trying again
                     continue
 
@@ -157,7 +160,7 @@ class QueueManager:
 
                                     # Track this session
                                     self.track_session(session_id)
-                                    print(f"[QUEUE] Claimed session {session_id} for processing")
+                                    logger.debug(f"Claimed session {session_id} for processing")
 
                                     # Create a new task for processing this session
                                     if not self.shutdown_event.is_set():
@@ -167,17 +170,17 @@ class QueueManager:
                                         self.add_task(task)
                                 except IntegrityError:
                                     await db.rollback()
-                                    print(f"[QUEUE] Failed to claim session {session_id}, already owned")
+                                    logger.debug(f"Failed to claim session {session_id}, already owned")
                         else:
                             self.queue_empty_flag.set()
                             await asyncio.sleep(1)
                     except Exception as e:
-                        print(f"[QUEUE] Error in polling loop: {str(e)}")
+                        logger.error(f"Error in polling loop: {str(e)}")
                         sentry_sdk.capture_exception(e)
                         await db.rollback()
                         await asyncio.sleep(1)
         finally:
-            print("[QUEUE] Polling loop stopped")
+            logger.debug("Polling loop stopped")
 
     ######################
     # Queue Worker Logic #
@@ -186,7 +189,7 @@ class QueueManager:
     @sentry_sdk.trace
     async def process_session(self, session_id: int):
         """Process all messages for a session"""
-        print(f"[QUEUE] Starting to process session {session_id}")
+        logger.debug(f"Starting to process session {session_id}")
         async with self.semaphore:  # Hold the semaphore for the entire session duration
             async with SessionLocal() as db:
                 try:
@@ -194,25 +197,25 @@ class QueueManager:
                     while not self.shutdown_event.is_set():
                         message = await self.get_next_message(db, session_id)
                         if not message:
-                            print(f"[QUEUE] No more messages for session {session_id}")
+                            logger.debug(f"No more messages for session {session_id}")
                             break
                         
                         message_count += 1
-                        print(f"[QUEUE] Processing message {message.id} for session {session_id} (message {message_count})")
+                        logger.debug(f"Processing message {message.id} for session {session_id} (message {message_count})")
                         try:
                             await process_item(db, payload=message.payload)
-                            print(f"[QUEUE] Successfully processed message {message.id}")
+                            logger.debug(f"Successfully processed message {message.id}")
                         except Exception as e:
-                            print(f"[QUEUE] Error processing message {message.id}: {str(e)}")
+                            logger.error(f"Error processing message {message.id}: {str(e)}")
                             sentry_sdk.capture_exception(e)
                         finally:
                             # Prevent malformed messages from stalling queue indefinitely
                             message.processed = True
                             await db.commit()
-                            print(f"[QUEUE] Marked message {message.id} as processed")
+                            logger.debug(f"Marked message {message.id} as processed")
 
                         if self.shutdown_event.is_set():
-                            print(f"[QUEUE] Shutdown requested, stopping processing for session {session_id}")
+                            logger.debug(f"Shutdown requested, stopping processing for session {session_id}")
                             break
 
                         # Update last_updated timestamp to show this session is still being processed
@@ -223,10 +226,10 @@ class QueueManager:
                         )
                         await db.commit()
                     
-                    print(f"[QUEUE] Completed processing session {session_id}, processed {message_count} messages")
+                    logger.debug(f"Completed processing session {session_id}, processed {message_count} messages")
                 finally:
                     # Remove session from active_sessions when done
-                    print(f"[QUEUE] Removing session {session_id} from active sessions")
+                    logger.debug(f"Removing session {session_id} from active sessions")
                     await db.execute(
                         delete(models.ActiveQueueSession).where(
                             models.ActiveQueueSession.session_id == session_id
@@ -250,12 +253,12 @@ class QueueManager:
 
 
 async def main():
-    print("[QUEUE] Starting queue manager")
+    logger.debug("Starting queue manager")
     manager = QueueManager()
     try:
         await manager.initialize()
     except Exception as e:
-        print(f"[QUEUE] Error in main: {str(e)}")
+        logger.error(f"Error in main: {str(e)}")
         sentry_sdk.capture_exception(e)
     finally:
-        print("[QUEUE] Main function exiting")
+        logger.debug("Main function exiting")
