@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from logging import getLogger
 from typing import List, Optional
 
 from dotenv import load_dotenv
@@ -14,6 +15,8 @@ from . import models, schemas
 load_dotenv(override=True)
 
 openai_client = AsyncOpenAI()
+
+logger = getLogger(__name__)
 
 DEF_PROTECTED_COLLECTION_NAME = "honcho"
 
@@ -953,7 +956,7 @@ async def create_document(
         result = await db.execute(stmt)
         duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
         if duplicate is not None:
-            print(f"Duplicate found: {duplicate.content}. Ignoring new document.")
+            logger.info(f"Duplicate found: {duplicate.content}. Ignoring new document.")
             return duplicate
 
     honcho_document = models.Document(

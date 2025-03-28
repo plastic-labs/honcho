@@ -230,28 +230,12 @@ async def chat(
         latest_message_id = latest_message.public_id if latest_message else None
         logger.debug(f"Latest user message ID: {latest_message_id}")
         
-        # Check if we found a user message for this session
-        if latest_message is None:
-            logger.warning(f"No user messages found for session {session_id}")
-            
-            # Count total messages in this session
-            count_stmt = (
-                select(func.count())
-                .select_from(models.Message)
-                .where(models.Message.session_id == session_id)
-            )
-            count_result = await db.execute(count_stmt)
-            message_count = count_result.scalar_one()
-            logger.debug(f"Total messages in session: {message_count}")
-            
-            # If there are messages but none are from the user, this is unusual
-            if message_count > 0:
-                logger.error(f"Session has {message_count} messages but none are from the user")
-        else:
-            logger.debug(f"Found latest user message: {latest_message.content[:50]}...")
         
         # Get chat history for the session
         history = await get_chat_history(app_id, user_id, session_id)
+        if not history:
+            logger.warning(f"No chat history found for session {session_id}")
+            history = f"someone asked this about the user's message: {final_query}"
         logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
         message_count = len(history.split('\n'))
         logger.debug(f"Retrieved chat history: {message_count} messages")
@@ -283,6 +267,7 @@ async def chat(
             message_id=latest_message_id,
             with_inference=False
         )
+        print(user_representation)
         logger.debug(f"User representation generated: {len(user_representation)} characters")
 
     # Create a Dialectic chain with the fresh user representation
@@ -436,7 +421,7 @@ async def generate_semantic_queries(query: str) -> list[str]:
             messages=messages,
             system=QUERY_GENERATION_SYSTEM,
             max_tokens=1000,
-            use_caching=True  # Enable caching for the system prompt
+            use_caching=True  # Likely not caching because the system prompt is under 1000 tokens
         )
         llm_time = asyncio.get_event_loop().time() - llm_start
         logger.debug(f"LLM response received in {llm_time:.2f}s: {result[:100]}...")
