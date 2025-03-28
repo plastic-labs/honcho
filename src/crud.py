@@ -1,5 +1,6 @@
 from collections.abc import Sequence
-from typing import Optional, List
+from typing import List, Optional
+
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, insert, select
@@ -13,6 +14,8 @@ from . import models, schemas
 load_dotenv(override=True)
 
 openai_client = AsyncOpenAI()
+
+DEF_PROTECTED_COLLECTION_NAME = "honcho"
 
 ########################################################
 # app methods
@@ -745,7 +748,7 @@ async def create_user_protected_collection(
 ) -> models.Collection:
     honcho_collection = models.Collection(
         user_id=user_id,
-        name="honcho",
+        name=DEF_PROTECTED_COLLECTION_NAME,
     )
     try:
         db.add(honcho_collection)
@@ -753,7 +756,6 @@ async def create_user_protected_collection(
     except IntegrityError:
         await db.rollback()
         raise ValueError("Collection already exists") from None
-    # await db.refresh(honcho_collection)
     return honcho_collection
 
 
@@ -762,7 +764,9 @@ async def get_or_create_user_protected_collection(
     app_id: str,
     user_id: str,
 ) -> models.Collection:
-    honcho_collection = await get_collection_by_name(db, app_id, user_id, "honcho")
+    honcho_collection = await get_collection_by_name(db, app_id, user_id, DEF_PROTECTED_COLLECTION_NAME)
+    if honcho_collection is None:
+        honcho_collection = await create_user_protected_collection(db, app_id, user_id)
     return honcho_collection
 
 
