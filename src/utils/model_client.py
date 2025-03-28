@@ -9,6 +9,7 @@ import sentry_sdk
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
+from openai import AsyncOpenAI
 
 # Load environment variables
 load_dotenv()
@@ -28,6 +29,12 @@ DEFAULT_MODELS = {
     ModelProvider.OPENROUTER: "meta-llama/Llama-3.3-70B-Instruct",
     ModelProvider.CEREBRAS: "llama-3.3-70b",
 }
+
+OPENAI_COMPATIBLE_PROVIDERS = [
+    ModelProvider.OPENAI,
+    ModelProvider.OPENROUTER,
+    ModelProvider.CEREBRAS
+]
 
 class Message(Protocol):
     """Protocol for a message that works with any provider."""
@@ -64,38 +71,12 @@ class ModelClient:
             if not self.api_key:
                 raise ValueError("Anthropic API key is required")
             self.client = AsyncAnthropic(api_key=self.api_key)
-        elif provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
-            # Import OpenAI inside the method to avoid issues if the package is not installed
-            try:
-                from openai import AsyncOpenAI
-            except ImportError as e:
-                raise ImportError("OpenAI package is not installed. Install it with 'pip install openai'.") from e
-            
-            if provider == ModelProvider.OPENAI:
-                self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-                if not self.api_key:
-                    raise ValueError("OpenAI API key is required")
-                self.openai_client = AsyncOpenAI(api_key=self.api_key)
-                
-            elif provider == ModelProvider.OPENROUTER:
-                self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-                if not self.api_key:
-                    raise ValueError("OpenRouter API key is required")
-                # Use the provided base_url or get from environment variables, or use the default
-                self.base_url = base_url or os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-                self.openai_client = AsyncOpenAI(
-                    api_key=self.api_key,
-                    base_url=self.base_url
-                )
-            elif provider == ModelProvider.CEREBRAS:
-                self.api_key = api_key or os.getenv("CEREBRAS_API_KEY")
-                if not self.api_key:
-                    raise ValueError("Cerebras API key is required")
-                self.base_url = base_url or os.getenv("CEREBRAS_BASE_URL", "https://api.cerebras.ai/v1")
-                self.openai_client = AsyncOpenAI(
-                    api_key=self.api_key,
-                    base_url=self.base_url
-                )
+        elif provider in OPENAI_COMPATIBLE_PROVIDERS:
+            self.api_key = api_key or os.getenv("OPENAI_COMPATIBLE_API_KEY")
+            self.base_url = base_url or os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+            if not self.api_key:
+                raise ValueError("OpenAI-compatible API key is required")
+            self.openai_client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
     
