@@ -23,7 +23,7 @@ USER_REPRESENTATION_MODEL = "llama-3.3-70b"
 
 MAX_FACT_DISTANCE = 0.85
 
-@ai_track("Tom Inference")
+@ai_track("User Representation")
 @observe(as_type="generation")
 async def get_user_representation_long_term(
     chat_history: str, 
@@ -112,6 +112,8 @@ UPDATES:
     return response.replace("<KNOWN_FACTS>", persistent_info)
 
 
+@ai_track("Fact Extraction")
+@observe(as_type="generation")
 async def extract_facts_long_term(chat_history: str) -> list[str]:
     logger.debug("Starting fact extraction from chat history")
     extract_start = time.time()
