@@ -20,6 +20,7 @@ class ModelProvider(str, Enum):
     OPENAI = "openai"
     OPENROUTER = "openrouter"
     CEREBRAS = "cerebras"
+    GROQ = "groq"
     # Add other providers as needed
 
 # Default models for each provider
@@ -28,12 +29,13 @@ DEFAULT_MODELS = {
     ModelProvider.OPENAI: "gpt-4o",
     ModelProvider.OPENROUTER: "meta-llama/Llama-3.3-70B-Instruct",
     ModelProvider.CEREBRAS: "llama-3.3-70b",
+    ModelProvider.GROQ: "llama-3.3-70b-versatile",
 }
-
 OPENAI_COMPATIBLE_PROVIDERS = [
     ModelProvider.OPENAI,
     ModelProvider.OPENROUTER,
-    ModelProvider.CEREBRAS
+    ModelProvider.CEREBRAS,
+    ModelProvider.GROQ
 ]
 
 class Message(Protocol):
@@ -126,7 +128,7 @@ class ModelClient:
             
             if self.provider == ModelProvider.ANTHROPIC:
                 return await self._generate_anthropic(messages, system, max_tokens, temperature, extra_headers, use_caching)
-            elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
+            elif self.provider in OPENAI_COMPATIBLE_PROVIDERS:
                 return await self._generate_openai(messages, system, max_tokens, temperature)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")

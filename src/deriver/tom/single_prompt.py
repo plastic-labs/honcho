@@ -9,8 +9,8 @@ from src.utils.model_client import ModelClient, ModelProvider
 
 logger = logging.getLogger(__name__)
 
-DEF_PROVIDER = ModelProvider.CEREBRAS
-DEF_MODEL = "llama-3.3-70b"
+DEF_PROVIDER = ModelProvider.GROQ
+DEF_MODEL = "llama-3.3-70b-versatile"
 
 TOM_SYSTEM_PROMPT = """You are a system for analyzing conversations to make evidence-based inferences about user mental states.
 

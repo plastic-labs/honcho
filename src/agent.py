@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
 DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
 
-DEF_QUERY_GENERATION_PROVIDER = ModelProvider.CEREBRAS
-DEF_QUERY_GENERATION_MODEL = "llama3.1-8b"
+DEF_QUERY_GENERATION_PROVIDER = ModelProvider.GROQ
+DEF_QUERY_GENERATION_MODEL = "llama-3.3-70b-versatile"
 QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
     For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
@@ -267,7 +267,6 @@ async def chat(
             message_id=latest_message_id,
             with_inference=False
         )
-        print(user_representation)
         logger.debug(f"User representation generated: {len(user_representation)} characters")
 
     # Create a Dialectic chain with the fresh user representation

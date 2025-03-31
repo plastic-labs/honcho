@@ -15,11 +15,11 @@ from .embeddings import CollectionEmbeddingStore
 logger = logging.getLogger(__name__)
 
 # Constants for fact extraction
-FACT_EXTRACTION_PROVIDER = ModelProvider.ANTHROPIC
-FACT_EXTRACTION_MODEL = "claude-3-5-haiku-20241022"
+FACT_EXTRACTION_PROVIDER = ModelProvider.GROQ
+FACT_EXTRACTION_MODEL = "llama-3.3-70b-versatile"
 
-USER_REPRESENTATION_PROVIDER = ModelProvider.CEREBRAS
-USER_REPRESENTATION_MODEL = "llama-3.3-70b"
+USER_REPRESENTATION_PROVIDER = ModelProvider.GROQ
+USER_REPRESENTATION_MODEL = "llama-3.3-70b-versatile"
 
 MAX_FACT_DISTANCE = 0.85
 
