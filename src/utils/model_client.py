@@ -244,7 +244,7 @@ class ModelClient:
             
             if self.provider == ModelProvider.ANTHROPIC:
                 return await self._stream_anthropic(messages, system, max_tokens, temperature, extra_headers, use_caching)
-            elif self.provider in [ModelProvider.OPENAI, ModelProvider.OPENROUTER, ModelProvider.CEREBRAS]:
+            elif self.provider in OPENAI_COMPATIBLE_PROVIDERS:
                 return await self._stream_openai(messages, system, max_tokens, temperature)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
