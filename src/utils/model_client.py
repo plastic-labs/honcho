@@ -31,12 +31,16 @@ DEFAULT_MODELS = {
     ModelProvider.CEREBRAS: "llama-3.3-70b",
     ModelProvider.GROQ: "llama-3.3-70b-versatile",
 }
+
 OPENAI_COMPATIBLE_PROVIDERS = [
     ModelProvider.OPENAI,
     ModelProvider.OPENROUTER,
     ModelProvider.CEREBRAS,
     ModelProvider.GROQ
 ]
+
+DEFAULT_TEMPERATURE = 0.0
+DEFAULT_MAX_TOKENS = 1000
 
 class Message(Protocol):
     """Protocol for a message that works with any provider."""
@@ -101,8 +105,8 @@ class ModelClient:
         self, 
         messages: list[dict[str, Any]], 
         system: Optional[str] = None, 
-        max_tokens: int = 1000,
-        temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
         extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> str:
@@ -137,8 +141,8 @@ class ModelClient:
         self,
         messages: list[dict[str, Any]],
         system: Optional[str] = None,
-        max_tokens: int = 1000,
-        temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
         extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> str:
@@ -181,8 +185,8 @@ class ModelClient:
         self,
         messages: list[dict[str, str]],
         system: Optional[str] = None,
-        max_tokens: int = 1000,
-        temperature: float = 0.0
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE
     ) -> str:
         """Generate text using OpenAI or OpenRouter API."""
         if not self.openai_client:
@@ -217,8 +221,8 @@ class ModelClient:
         self, 
         messages: list[dict[str, Any]], 
         system: Optional[str] = None, 
-        max_tokens: int = 1000,
-        temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
         extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> Any:
@@ -253,8 +257,8 @@ class ModelClient:
         self,
         messages: list[dict[str, Any]],
         system: Optional[str] = None,
-        max_tokens: int = 1000,
-        temperature: float = 0.0,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE,
         extra_headers: Optional[dict[str, str]] = None,
         use_caching: bool = False
     ) -> Any:
@@ -282,14 +286,15 @@ class ModelClient:
             else:
                 params["system"] = system
         
-        return await self.client.messages.stream(**params) # type: ignore
+        # Return the stream directly without awaiting it
+        return self.client.messages.stream(**params)
     
     async def _stream_openai(
         self,
         messages: list[dict[str, str]],
         system: Optional[str] = None,
-        max_tokens: int = 1000,
-        temperature: float = 0.0
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float = DEFAULT_TEMPERATURE
     ) -> Any:
         """Stream text using OpenAI or OpenRouter API."""
         if not self.openai_client:
