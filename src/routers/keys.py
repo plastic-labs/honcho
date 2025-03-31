@@ -11,7 +11,6 @@ from src.security import (
     clear_api_key_cache,
     create_jwt,
     require_auth,
-    rotate_jwt_secret,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,22 +85,3 @@ async def revoke_key(
     except Exception as e:
         logger.error(f"Failed to revoke key: {str(e)}")
         raise
-
-
-@router.post("/rotate")
-async def rotate(
-    new_secret: str,
-    db=db,
-):
-    """Rotate the JWT secret and return admin JWT"""
-    if not USE_AUTH:
-        raise DisabledException()
-
-    new_jwt = await rotate_jwt_secret(new_secret, db)
-
-    key = await crud.create_key(db, new_jwt)
-
-    return {
-        "key": new_jwt,
-        "created_at": key.created_at,
-    }

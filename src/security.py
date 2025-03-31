@@ -90,23 +90,6 @@ class JWTParams(BaseModel):
     co: Optional[str] = None
 
 
-async def rotate_jwt_secret(new_secret: str, db: AsyncSession) -> str:
-    """
-    Rotate the JWT secret and return the new admin JWT.
-    This clears all existing keys from the database.
-    """
-    global AUTH_JWT_SECRET
-    AUTH_JWT_SECRET = new_secret
-
-    # Clear the cache when rotating secrets
-    clear_api_key_cache()
-
-    # Clear all keys
-    await crud.clear_all_keys(db)
-
-    return create_admin_jwt()
-
-
 def create_admin_jwt() -> str:
     """Create a JWT for admin operations."""
     params = JWTParams(t="", ad=True)
