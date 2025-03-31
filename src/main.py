@@ -10,8 +10,7 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from src import crud
-from src.db import SessionLocal, engine, scaffold_db
+from src.db import engine, scaffold_db
 from src.exceptions import HonchoException
 from src.routers import (
     apps,
@@ -35,20 +34,8 @@ logger = logging.getLogger(__name__)
 
 # JWT Setup
 async def setup_admin_jwt():
-    db = SessionLocal()
-    try:
-        token = create_admin_jwt()
-
-        # if admin key is not already in the database, save it
-        key = await crud.get_key(db, token)
-        if key:
-            logger.info("Admin key already exists in database")
-        else:
-            logger.info("Creating new admin key in database")
-            await crud.create_key(db, token)
-        print(f"\n    ADMIN JWT: {token}\n")
-    finally:
-        await db.close()
+    token = create_admin_jwt()
+    print(f"\n    ADMIN JWT: {token}\n")
 
 
 # Sentry Setup

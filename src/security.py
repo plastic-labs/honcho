@@ -1,7 +1,6 @@
 import datetime
 import logging
 import os
-from collections import OrderedDict
 from typing import Annotated, Optional
 
 import jwt
@@ -10,7 +9,6 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud
 from src.dependencies import get_db
 
 from .exceptions import AuthenticationException
@@ -29,25 +27,6 @@ if USE_AUTH and AUTH_JWT_SECRET == "":
 security = HTTPBearer(
     auto_error=False,
 )
-
-# LRU cache for API keys
-# Structure: {token: is_revoked}
-API_KEY_CACHE = OrderedDict()
-CACHE_MAX_SIZE = 10
-
-
-def clear_api_key_cache():
-    """Clear the API key cache when keys are revoked."""
-    API_KEY_CACHE.clear()
-
-
-def cache_api_key(token: str, is_revoked: bool):
-    """Add an API key to the cache."""
-    API_KEY_CACHE[token] = is_revoked
-    API_KEY_CACHE.move_to_end(token)
-
-    if len(API_KEY_CACHE) > CACHE_MAX_SIZE:
-        API_KEY_CACHE.popitem(last=False)
 
 
 #
@@ -103,29 +82,14 @@ def create_jwt(params: JWTParams) -> str:
     return jwt.encode(payload, AUTH_JWT_SECRET.encode("utf-8"), algorithm="HS256")
 
 
-async def verify_jwt(token: str, db: AsyncSession) -> JWTParams:
+async def verify_jwt(token: str) -> JWTParams:
     """Verify a JWT token and return the decoded parameters."""
-    # Check if key has been revoked using cache first
-    if token in API_KEY_CACHE:
-        is_revoked = API_KEY_CACHE[token]
-        if is_revoked:
-            raise AuthenticationException("Key is revoked")
-    else:
-        # If not in cache, check the database
-        key = await crud.get_key(db, token)
-        if key:
-            # Cache the result
-            cache_api_key(token, key.revoked)
-            if key.revoked:
-                raise AuthenticationException("Key is revoked")
 
     params = JWTParams()
     try:
         decoded = jwt.decode(
             token, AUTH_JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )
-        # Cache key as not revoked
-        cache_api_key(token, False)
         if "t" in decoded:
             params.t = decoded["t"]
         if "ad" in decoded:
@@ -168,7 +132,6 @@ def require_auth(
 
         return await auth(
             credentials=credentials,
-            db=db,
             admin=admin,
             app_id=app_id_param,
             user_id=user_id_param,
@@ -181,7 +144,6 @@ def require_auth(
 
 async def auth(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    db: AsyncSession = Depends(get_db),
     admin: Optional[bool] = None,
     app_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -195,7 +157,7 @@ async def auth(
         logger.warning("No access token provided")
         raise AuthenticationException("No access token provided")
 
-    jwt_params = await verify_jwt(credentials.credentials, db)
+    jwt_params = await verify_jwt(credentials.credentials)
 
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:

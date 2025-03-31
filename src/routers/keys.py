@@ -3,12 +3,9 @@ import os
 
 from fastapi import APIRouter, Depends
 
-from src import crud
-from src.dependencies import db
 from src.exceptions import DisabledException, ValidationException
 from src.security import (
     JWTParams,
-    clear_api_key_cache,
     create_jwt,
     require_auth,
 )
@@ -24,21 +21,12 @@ router = APIRouter(
 )
 
 
-@router.get("/")
-async def get_keys(
-    db=db,
-):
-    """Get all Keys"""
-    return await crud.get_keys(db)
-
-
 @router.post("")
 async def create_key(
     app_id: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
     collection_id: str | None = None,
-    db=db,
 ):
     """Create a new Key"""
     if not USE_AUTH:
@@ -58,30 +46,6 @@ async def create_key(
             co=collection_id,
         )
     )
-    try:
-        key = await crud.create_key(db, key_str)
-        return {
-            "key": key_str,
-            "created_at": key.created_at,
-        }
-    except Exception as e:
-        logger.error(f"Failed to create key: {str(e)}")
-        raise
-
-
-@router.post("/revoke")
-async def revoke_key(
-    key: str,
-    db=db,
-):
-    """Revoke a Key"""
-    if not USE_AUTH:
-        raise DisabledException()
-
-    try:
-        await crud.revoke_key(db, key)
-        clear_api_key_cache()
-        return {"revoked": key}
-    except Exception as e:
-        logger.error(f"Failed to revoke key: {str(e)}")
-        raise
+    return {
+        "key": key_str,
+    }

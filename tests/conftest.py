@@ -15,7 +15,7 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy_utils import create_database, database_exists, drop_database
 
-from src import models, crud
+from src import models
 from src.db import Base
 from src.dependencies import get_db
 from src.exceptions import HonchoException
@@ -102,13 +102,6 @@ async def db_engine():
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-    # Create a session and save the admin key
-    Session = async_sessionmaker(bind=engine, expire_on_commit=False)
-    async with Session() as session:
-        key = create_admin_jwt()
-        await crud.create_key(session, key)
-        await session.commit()
 
     yield engine
 

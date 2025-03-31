@@ -4,7 +4,7 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from sqlalchemy import Select, cast, delete, insert, select
+from sqlalchemy import Select, cast, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -1362,48 +1362,3 @@ async def delete_document(
     await db.delete(document)
     await db.commit()
     return True
-
-
-########################################################
-# key methods
-########################################################
-
-
-async def create_key(db: AsyncSession, key: str) -> models.Key:
-    honcho_key = models.Key(
-        key=key,
-    )
-    db.add(honcho_key)
-    await db.commit()
-    return honcho_key
-
-
-async def get_keys(db: AsyncSession) -> list[models.Key]:
-    stmt = select(models.Key)
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
-
-
-async def get_key(db: AsyncSession, key: str) -> models.Key | None:
-    stmt = select(models.Key).where(models.Key.key == key)
-    result = await db.execute(stmt)
-    key = result.scalar_one_or_none()
-    return key
-
-
-async def revoke_key(db: AsyncSession, key: str) -> models.Key:
-    honcho_key = await db.get(models.Key, key)
-    if honcho_key is None:
-        # if for some reason the key has been deleted or lost,
-        # we still want to revoke it: keys are valid even if
-        # not saved.
-        honcho_key = await create_key(db, key)
-    honcho_key.revoked = True
-    await db.commit()
-    return honcho_key
-
-
-async def clear_all_keys(db: AsyncSession):
-    stmt = delete(models.Key)
-    await db.execute(stmt)
-    await db.commit()

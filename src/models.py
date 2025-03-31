@@ -236,28 +236,3 @@ class ActiveQueueSession(Base):
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
-
-
-class Key(Base):
-    __tablename__ = "keys"
-    key: Mapped[str] = mapped_column(TEXT, primary_key=True, index=True, unique=True)
-    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
-    )
-
-    __table_args__ = (
-        # JWTs *can* be arbitrarily long but we should seek to never exceed 1kb
-        # in order to reduce overhead on requests.
-        CheckConstraint("length(key) <= 1024", name="key_length"),
-        # JWT format: header.payload.signature
-        # Each part is base64url encoded, which uses A-Za-z0-9_- characters
-        CheckConstraint(
-            "key ~ '^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$'",
-            name="key_format",
-        ),
-        # No need to check timestamp as far as I know -- not load bearing currently
-    )
-
-    def __repr__(self) -> str:
-        return f"Key(key={self.key[:10]}..., revoked={self.revoked}, created_at={self.created_at})"
