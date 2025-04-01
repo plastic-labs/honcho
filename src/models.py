@@ -10,7 +10,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -66,6 +68,7 @@ class User(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        Index("idx_users_app_lookup", "app_id", "public_id"),
     )
 
     def __repr__(self) -> str:
@@ -92,6 +95,7 @@ class Session(Base):
     __table_args__ = (
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        Index("idx_sessions_user_lookup", "user_id", "public_id"),
     )
 
     def __repr__(self) -> str:
@@ -123,6 +127,12 @@ class Message(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
+        Index(
+            "idx_messages_session_lookup",
+            "session_id",
+            "id",
+            postgresql_include=["public_id", "is_user", "created_at"],
+        ),
     )
 
     def __repr__(self) -> str:
@@ -155,6 +165,12 @@ class Metamessage(Base):
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint(
             "length(metamessage_type) <= 512", name="metamessage_type_length"
+        ),
+        Index(
+            "idx_metamessages_lookup",
+            "metamessage_type",
+            text("id DESC"),
+            postgresql_include=["public_id", "message_id", "created_at"],
         ),
     )
 

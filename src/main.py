@@ -23,9 +23,35 @@ from src.routers import (
 
 from .db import engine, scaffold_db
 
+
+def get_log_level(env_var="LOG_LEVEL", default="INFO"):
+    """
+    Convert log level string from environment variable to logging module constant.
+
+    Args:
+        env_var: Name of the environment variable to check
+        default: Default log level if environment variable is not set
+
+    Returns:
+        int: The logging level constant (e.g., logging.INFO)
+    """
+    log_level_str = os.getenv(env_var, default).upper()
+
+    log_levels = {
+        "CRITICAL": logging.CRITICAL,  # 50
+        "ERROR": logging.ERROR,  # 40
+        "WARNING": logging.WARNING,  # 30
+        "INFO": logging.INFO,  # 20
+        "DEBUG": logging.DEBUG,  # 10
+        "NOTSET": logging.NOTSET,  # 0
+    }
+
+    return log_levels.get(log_level_str, logging.INFO)
+
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=get_log_level(),
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
@@ -52,7 +78,6 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scaffold_db()  # Scaffold Database on Startup
     yield
     await engine.dispose()
 
