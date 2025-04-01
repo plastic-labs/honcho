@@ -124,7 +124,6 @@ app.include_router(users.router, prefix="/v1")
 app.include_router(sessions.router, prefix="/v1")
 app.include_router(messages.router, prefix="/v1")
 app.include_router(metamessages.router, prefix="/v1")
-app.include_router(metamessages.router_user_level, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
 

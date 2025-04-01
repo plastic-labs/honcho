@@ -266,24 +266,32 @@ async def test_deep_clone_session(client, db_session, sample_data):
     await db_session.commit()
 
     test_metamessage_1 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message.public_id,
         content="Test Metamessage 1",
         h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_2 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message.public_id,
         content="Test Metamessage 2",
         h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_3 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message2.public_id,
         content="Test Metamessage 3",
         h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_4 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message2.public_id,
         content="Test Metamessage 4",
         h_metadata={},
@@ -374,24 +382,32 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     await db_session.commit()
 
     test_metamessage_1 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message.public_id,
         content="Test Metamessage 1",
         h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_2 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message.public_id,
         content="Test Metamessage 2",
         h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_3 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message2.public_id,
         content="Test Metamessage 3",
         h_metadata={},
         metamessage_type="test_type",
     )
     test_metamessage_4 = models.Metamessage(
+        user_id=test_user.public_id,
+        session_id=test_session.public_id,
         message_id=test_message2.public_id,
         content="Test Metamessage 4",
         h_metadata={},

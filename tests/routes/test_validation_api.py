@@ -262,10 +262,11 @@ def test_metamessage_validations_api(client, sample_data):
 
     # Test metamessage_type too short
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
             "metamessage_type": "",
             "content": "test content",
+            "session_id": session_id,
             "message_id": message_id,
             "metadata": {}
         }
@@ -278,10 +279,11 @@ def test_metamessage_validations_api(client, sample_data):
 
     # Test metamessage_type too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
             "metamessage_type": "a" * 51,
             "content": "test content",
+            "session_id": session_id,
             "message_id": message_id,
             "metadata": {}
         }

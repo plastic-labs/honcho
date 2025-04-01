@@ -62,6 +62,7 @@ class User(Base):
     app = relationship("App", back_populates="users")
     sessions = relationship("Session", back_populates="user")
     collections = relationship("Collection", back_populates="user")
+    metamessages = relationship("Metamessage", back_populates="user")
 
     __table_args__ = (
         UniqueConstraint("name", "app_id", name="unique_name_app_user"),
@@ -89,6 +90,7 @@ class Session(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     messages = relationship("Message", back_populates="session")
+    metamessages = relationship("Metamessage", back_populates="session")
     user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
     user = relationship("User", back_populates="sessions")
 
@@ -149,11 +151,23 @@ class Metamessage(Base):
     )
     metamessage_type: Mapped[str] = mapped_column(TEXT, index=True)
     content: Mapped[str] = mapped_column(TEXT)
-    message_id: Mapped[str] = mapped_column(
-        ForeignKey("messages.public_id"), index=True
+    
+    # Foreign keys - message_id is now optional
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("users.public_id"), index=True
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        ForeignKey("sessions.public_id"), index=True, nullable=True
+    )
+    message_id: Mapped[str | None] = mapped_column(
+        ForeignKey("messages.public_id"), index=True, nullable=True
     )
 
+    # Relationships
+    user = relationship("User", back_populates="metamessages")
+    session = relationship("Session", back_populates="metamessages")
     message = relationship("Message", back_populates="metamessages")
+    
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -166,16 +180,41 @@ class Metamessage(Base):
         CheckConstraint(
             "length(metamessage_type) <= 512", name="metamessage_type_length"
         ),
+        # Added constraints to ensure consistency
+        CheckConstraint(
+            "(message_id IS NULL) OR (session_id IS NOT NULL)", 
+            name="message_requires_session"
+        ),
+        # Keep existing index
         Index(
             "idx_metamessages_lookup",
             "metamessage_type",
             text("id DESC"),
             postgresql_include=["public_id", "message_id", "created_at"],
         ),
+        # Add new indices for user, session, and message lookups
+        Index(
+            "idx_metamessages_user_lookup",
+            "user_id",
+            "metamessage_type",
+            text("id DESC"),
+        ),
+        Index(
+            "idx_metamessages_session_lookup",
+            "session_id",
+            "metamessage_type",
+            text("id DESC"),
+        ),
+        Index(
+            "idx_metamessages_message_lookup",
+            "message_id",
+            "metamessage_type",
+            text("id DESC"),
+        ),
     )
 
     def __repr__(self) -> str:
-        return f"Metamessages(id={self.id}, message_id={self.message_id}, metamessage_type={self.metamessage_type}, content={self.content[10:]})"
+        return f"Metamessages(id={self.id}, user_id={self.user_id}, session_id={self.session_id}, message_id={self.message_id}, metamessage_type={self.metamessage_type})"
 
 
 class Collection(Base):

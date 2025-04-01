@@ -581,6 +581,8 @@ async def clone_session(
             # Prepare bulk insert data for metamessages
             new_metamessages = [
                 {
+                    "user_id": user_id,
+                    "session_id": new_session.public_id,
                     "message_id": message_id_map[meta.message_id],
                     "metamessage_type": meta.metamessage_type,
                     "content": meta.content,
@@ -744,29 +746,49 @@ async def create_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageCreate,
     app_id: str,
-    user_id: str,
-    session_id: str,
 ):
-    message = await get_message(
-        db,
-        app_id=app_id,
-        session_id=session_id,
-        user_id=user_id,
-        message_id=metamessage.message_id,
-    )
-    if message is None:
-        raise ValueError("Session not found or does not belong to user")
-
-    honcho_metamessage = models.Metamessage(
-        message_id=metamessage.message_id,
-        metamessage_type=metamessage.metamessage_type,
-        content=metamessage.content,
-        h_metadata=metamessage.metadata,
-    )
-
+    # Validate user exists
+    user = await get_user(db, app_id=app_id, user_id=metamessage.user_id)
+    if user is None:
+        raise ResourceNotFoundException(f"User with ID '{metamessage.user_id}' not found")
+    
+    # Initialize metamessage data
+    metamessage_data = {
+        "user_id": metamessage.user_id,
+        "metamessage_type": metamessage.metamessage_type,
+        "content": metamessage.content,
+        "h_metadata": metamessage.metadata,
+    }
+    
+    # Validate session_id if provided
+    if metamessage.session_id is not None:
+        session = await get_session(
+            db, app_id=app_id, user_id=metamessage.user_id, session_id=metamessage.session_id
+        )
+        if session is None:
+            raise ResourceNotFoundException(f"Session not found or does not belong to user")
+        metamessage_data["session_id"] = metamessage.session_id
+        
+        # Validate message_id if provided
+        if metamessage.message_id is not None:
+            message = await get_message(
+                db,
+                app_id=app_id,
+                session_id=metamessage.session_id,
+                user_id=metamessage.user_id,
+                message_id=metamessage.message_id,
+            )
+            if message is None:
+                raise ResourceNotFoundException(f"Message not found or does not belong to session")
+            metamessage_data["message_id"] = metamessage.message_id
+    elif metamessage.message_id is not None:
+        # If message_id provided but no session_id, that's an error
+        raise ValidationException("Cannot specify message_id without session_id")
+            
+    # Create metamessage
+    honcho_metamessage = models.Metamessage(**metamessage_data)
     db.add(honcho_metamessage)
     await db.commit()
-    # await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
@@ -780,28 +802,32 @@ async def get_metamessages(
     filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
 ) -> Select:
+    # Base query starts with metamessage and user relationship
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.public_id)
-        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.User, models.User.public_id == models.Metamessage.user_id)
         .join(models.App, models.App.public_id == models.User.app_id)
         .where(models.App.public_id == app_id)
         .where(models.User.public_id == user_id)
     )
 
+    # If session_id is provided, filter by it
     if session_id is not None:
-        stmt = stmt.where(models.Session.public_id == session_id)
+        stmt = stmt.where(models.Metamessage.session_id == session_id)
 
+    # If message_id is provided, filter by it
     if message_id is not None:
         stmt = stmt.where(models.Metamessage.message_id == message_id)
 
+    # Filter by metamessage_type if provided
     if metamessage_type is not None:
         stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
 
+    # Apply metadata filter if provided
     if filter is not None:
         stmt = stmt.where(models.Metamessage.h_metadata.contains(filter))
 
+    # Apply sort order
     if reverse:
         stmt = stmt.order_by(models.Metamessage.id.desc())
     else:
@@ -814,22 +840,28 @@ async def get_metamessage(
     db: AsyncSession,
     app_id: str,
     user_id: str,
-    session_id: str,
-    message_id: str,
     metamessage_id: str,
+    session_id: Optional[str] = None,
+    message_id: Optional[str] = None,
 ) -> Optional[models.Metamessage]:
+    # Base query for metamessage by ID
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.public_id)
-        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.User, models.User.public_id == models.Metamessage.user_id)
         .join(models.App, models.App.public_id == models.User.app_id)
         .where(models.App.public_id == app_id)
         .where(models.User.public_id == user_id)
-        .where(models.Message.session_id == session_id)
-        .where(models.Metamessage.message_id == message_id)
         .where(models.Metamessage.public_id == metamessage_id)
     )
+    
+    # Add session filter if provided
+    if session_id is not None:
+        stmt = stmt.where(models.Metamessage.session_id == session_id)
+        
+    # Add message filter if provided
+    if message_id is not None:
+        stmt = stmt.where(models.Metamessage.message_id == message_id)
+    
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 
@@ -838,28 +870,55 @@ async def update_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageUpdate,
     app_id: str,
-    user_id: str,
-    session_id: str,
     metamessage_id: str,
 ) -> bool:
+    # First retrieve the metamessage
     honcho_metamessage = await get_metamessage(
         db,
         app_id=app_id,
-        session_id=session_id,
-        user_id=user_id,
-        message_id=metamessage.message_id,
+        user_id=metamessage.user_id,
         metamessage_id=metamessage_id,
+        session_id=metamessage.session_id,
+        message_id=metamessage.message_id,
     )
+    
     if honcho_metamessage is None:
-        raise ValueError("Metamessage not found or does not belong to user")
-    if (
-        metamessage.metadata is not None
-    ):  # Need to explicitly be there won't make it empty by default
+        raise ResourceNotFoundException("Metamessage not found or does not belong to user")
+    
+    # Validate the consistency of relationships if they're being changed
+    # If we're setting message_id, we must have a session_id
+    if metamessage.message_id is not None and metamessage.session_id is None:
+        # If updating message_id but not session_id, use the existing session_id
+        metamessage.session_id = honcho_metamessage.session_id
+        if metamessage.session_id is None:
+            raise ValidationException("Cannot specify message_id without session_id")
+            
+    # If we're updating session_id and message_id, validate they belong together
+    if metamessage.session_id is not None and metamessage.message_id is not None:
+        message = await get_message(
+            db,
+            app_id=app_id,
+            session_id=metamessage.session_id,
+            user_id=metamessage.user_id,
+            message_id=metamessage.message_id,
+        )
+        if message is None:
+            raise ResourceNotFoundException("Message not found or doesn't belong to session")
+    
+    # Update fields
+    if metamessage.session_id is not None:
+        honcho_metamessage.session_id = metamessage.session_id
+        
+    if metamessage.message_id is not None:
+        honcho_metamessage.message_id = metamessage.message_id
+        
+    if metamessage.metadata is not None:
         honcho_metamessage.h_metadata = metamessage.metadata
+        
     if metamessage.metamessage_type is not None:
         honcho_metamessage.metamessage_type = metamessage.metamessage_type
+        
     await db.commit()
-    # await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
