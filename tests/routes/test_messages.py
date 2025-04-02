@@ -111,6 +111,7 @@ async def test_update_message(client, db_session, sample_data):
     data = response.json()
     assert data["metadata"] == {"new_key": "new_value"}
 
+
 @pytest.mark.asyncio
 async def test_update_message_empty_metadata(client, db_session, sample_data):
     test_app, test_user = sample_data
@@ -148,8 +149,9 @@ async def test_create_batch_messages(client, db_session, sample_data):
             {
                 "content": f"Test message {i}",
                 "is_user": i % 2 == 0,  # Alternating user/non-user messages
-                "metadata": {"batch_index": i}
-            } for i in range(3)
+                "metadata": {"batch_index": i},
+            }
+            for i in range(3)
         ]
     }
 
@@ -157,13 +159,13 @@ async def test_create_batch_messages(client, db_session, sample_data):
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/batch",
         json=test_messages,
     )
-    
+
     assert response.status_code == 200
     data = response.json()
-    
+
     # Verify the response contains all messages
     assert len(data) == 3
-    
+
     # Verify messages are in the correct order and have correct content
     for i, message in enumerate(data):
         assert message["content"] == f"Test message {i}"
@@ -195,8 +197,9 @@ async def test_create_batch_messages_limit(client, db_session, sample_data):
             {
                 "content": f"Test message {i}",
                 "is_user": i % 2 == 0,
-                "metadata": {"batch_index": i}
-            } for i in range(101)  # 101 messages
+                "metadata": {"batch_index": i},
+            }
+            for i in range(101)  # 101 messages
         ]
     }
 
@@ -204,7 +207,7 @@ async def test_create_batch_messages_limit(client, db_session, sample_data):
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/batch",
         json=test_messages,
     )
-    
+
     assert response.status_code == 422  # Validation error
     data = response.json()
     assert "messages" in data["detail"][0]["loc"]  # Error should mention messages field

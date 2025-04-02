@@ -33,7 +33,7 @@ async def create_metamessage(
     try:
         # Set the user_id from the URL parameters
         metamessage.user_id = user_id
-        
+
         metamessage_obj = await crud.create_metamessage(
             db,
             metamessage=metamessage,
@@ -56,9 +56,9 @@ async def get_metamessages(
 ):
     """
     Get metamessages with flexible filtering.
-    
+
     - Filter by user only: No additional parameters needed
-    - Filter by session: Provide session_id 
+    - Filter by session: Provide session_id
     - Filter by message: Provide message_id (and session_id)
     - Filter by type: Provide metamessage_type
     - Filter by metadata: Provide filter object
@@ -75,7 +75,7 @@ async def get_metamessages(
             filter=options.filter,
             reverse=reverse,
         )
-        
+
         return await paginate(db, metamessages_query)
     except (ResourceNotFoundException, ValidationException) as e:
         logger.warning(f"Failed to get metamessages: {str(e)}")
@@ -101,7 +101,9 @@ async def get_metamessage(
     )
     if honcho_metamessage is None:
         logger.warning(f"Metamessage {metamessage_id} not found")
-        raise ResourceNotFoundException(f"Metamessage with ID {metamessage_id} not found")
+        raise ResourceNotFoundException(
+            f"Metamessage with ID {metamessage_id} not found"
+        )
     return honcho_metamessage
 
 
@@ -119,7 +121,7 @@ async def update_metamessage(
     """Update a metamessage's metadata, type, or relationships"""
     # Ensure user_id from URL path is used
     metamessage.user_id = user_id
-    
+
     try:
         updated_metamessage = await crud.update_metamessage(
             db,

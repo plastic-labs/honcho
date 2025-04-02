@@ -1,4 +1,3 @@
-import json
 import logging
 from collections.abc import Sequence
 from typing import Optional
@@ -40,11 +39,15 @@ async def get_documents(
             filter=options.filter,
             reverse=reverse,
         )
-        
+
         return await paginate(db, documents_query)
     except ValueError as e:
-        logger.warning(f"Failed to get documents for collection {collection_id}: {str(e)}")
-        raise ResourceNotFoundException("Collection not found or does not belong to user") from e
+        logger.warning(
+            f"Failed to get documents for collection {collection_id}: {str(e)}"
+        )
+        raise ResourceNotFoundException(
+            "Collection not found or does not belong to user"
+        ) from e
 
 
 @router.get(
@@ -84,7 +87,7 @@ async def query_documents(
         filter = options.filter
         if options.filter == {}:
             filter = None
-            
+
         documents = await crud.query_documents(
             db=db,
             app_id=app_id,
@@ -94,11 +97,13 @@ async def query_documents(
             filter=filter,
             top_k=top_k,
         )
-        
+
         logger.info(f"Query documents successful for collection {collection_id}")
         return documents
     except ValueError as e:
-        logger.error(f"Error querying documents in collection {collection_id}: {str(e)}")
+        logger.error(
+            f"Error querying documents in collection {collection_id}: {str(e)}"
+        )
         raise ValidationException("Error querying documents") from e
 
 
@@ -122,8 +127,12 @@ async def create_document(
         logger.info(f"Document created successfully in collection {collection_id}")
         return document_obj
     except ValueError as e:
-        logger.warning(f"Failed to create document in collection {collection_id}: {str(e)}")
-        raise ResourceNotFoundException("Collection not found or does not belong to user") from e
+        logger.warning(
+            f"Failed to create document in collection {collection_id}: {str(e)}"
+        )
+        raise ResourceNotFoundException(
+            "Collection not found or does not belong to user"
+        ) from e
 
 
 @router.put(
@@ -140,9 +149,11 @@ async def update_document(
 ):
     """Update the content and/or the metadata of a Document"""
     if document.content is None and document.metadata is None:
-        logger.warning(f"Document update attempted with empty content and metadata for document {document_id}")
+        logger.warning(
+            f"Document update attempted with empty content and metadata for document {document_id}"
+        )
         raise ValidationException("Content and metadata cannot both be None")
-        
+
     try:
         updated_document = await crud.update_document(
             db,

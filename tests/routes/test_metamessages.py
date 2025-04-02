@@ -84,7 +84,7 @@ async def test_get_metamessages_by_session(client, db_session, sample_data):
     )
     db_session.add(test_message)
     await db_session.commit()
-    
+
     # Create metamessages for the same session
     test_metamessage_1 = models.Metamessage(
         user_id=test_user.public_id,
@@ -129,7 +129,7 @@ async def test_get_metamessages_by_session(client, db_session, sample_data):
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
         json={
             "session_id": str(test_session.public_id),
-            "metamessage_type": "test_type"
+            "metamessage_type": "test_type",
         },
     )
 
@@ -233,7 +233,7 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
 @pytest.mark.asyncio
 async def test_create_user_level_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
-    
+
     # Create a user-level metamessage (no session or message)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
@@ -281,7 +281,7 @@ async def test_update_metamessage(client, db_session, sample_data):
         json={
             "user_id": str(test_user.public_id),
             "metadata": {"new_key": "new_value"},
-            "metamessage_type": "updated_type"
+            "metamessage_type": "updated_type",
         },
     )
     assert response.status_code == 200

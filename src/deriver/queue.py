@@ -75,7 +75,9 @@ class QueueManager:
         self.shutdown_event.set()
 
         if self.active_tasks:
-            logger.info(f"Waiting for {len(self.active_tasks)} active tasks to complete...")
+            logger.info(
+                f"Waiting for {len(self.active_tasks)} active tasks to complete..."
+            )
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
 
     async def cleanup(self):
@@ -86,7 +88,9 @@ class QueueManager:
                 async with SessionLocal() as db:
                     await db.execute(
                         delete(models.ActiveQueueSession).where(
-                            models.ActiveQueueSession.session_id.in_(self.owned_sessions)
+                            models.ActiveQueueSession.session_id.in_(
+                                self.owned_sessions
+                            )
                         )
                     )
                     await db.commit()
@@ -193,11 +197,16 @@ class QueueManager:
                         if not message:
                             break
                         try:
-                            logger.info(f"Processing message {message.id} from session {session_id}")
+                            logger.info(
+                                f"Processing message {message.id} from session {session_id}"
+                            )
                             await process_item(db, payload=message.payload)
                             logger.info(f"Successfully processed message {message.id}")
                         except Exception as e:
-                            logger.error(f"Error processing message {message.id}: {str(e)}", exc_info=True)
+                            logger.error(
+                                f"Error processing message {message.id}: {str(e)}",
+                                exc_info=True,
+                            )
                             if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
                                 sentry_sdk.capture_exception(e)
                         finally:

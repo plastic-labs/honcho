@@ -21,7 +21,7 @@ from src.routers import (
     users,
 )
 
-from .db import engine, scaffold_db
+from .db import engine
 
 
 def get_log_level(env_var="LOG_LEVEL", default="INFO"):

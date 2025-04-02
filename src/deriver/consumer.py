@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import models
-from ..exceptions import ResourceNotFoundException, ValidationException
+from ..exceptions import ValidationException
 from .tom import get_tom_inference, get_user_representation
 
 # Configure logging
@@ -67,22 +67,29 @@ async def get_chat_history(db, session_id, message_id) -> str:
 async def process_item(db: AsyncSession, payload: dict):
     """
     Process a queue item based on whether it's a user or AI message.
-    
+
     Args:
         db: Database session
         payload: Message payload from the queue
-        
+
     Raises:
         ValidationException: If the payload is missing required fields
     """
     try:
         # Validate required fields
-        required_fields = ["content", "app_id", "user_id", "session_id", "message_id", "is_user"]
+        required_fields = [
+            "content",
+            "app_id",
+            "user_id",
+            "session_id",
+            "message_id",
+            "is_user",
+        ]
         for field in required_fields:
             if field not in payload:
                 logger.error(f"Missing required field in payload: {field}")
                 raise ValidationException(f"Missing required field in payload: {field}")
-        
+
         processing_args = [
             payload["content"],
             payload["app_id"],
@@ -91,16 +98,18 @@ async def process_item(db: AsyncSession, payload: dict):
             payload["message_id"],
             db,
         ]
-        
+
         if payload["is_user"]:
             logger.info(f"Processing user message: {payload['message_id']}")
             await process_user_message(*processing_args)
         else:
             logger.info(f"Processing AI message: {payload['message_id']}")
             await process_ai_message(*processing_args)
-            
+
     except Exception as e:
-        logger.error(f"Error processing message {payload.get('message_id', 'unknown')}: {str(e)}")
+        logger.error(
+            f"Error processing message {payload.get('message_id', 'unknown')}: {str(e)}"
+        )
         if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
             sentry_sdk.capture_exception(e)
         raise
@@ -183,7 +192,9 @@ async def process_user_message(
         existing_representation.content if existing_representation else "None"
     )
     logger.info(f"User {user_id}: Existing Representation retrieved")
-    logger.debug(f"User {user_id}: Existing Representation: {existing_representation_content}")
+    logger.debug(
+        f"User {user_id}: Existing Representation: {existing_representation_content}"
+    )
 
     langfuse_context.update_current_trace(
         session_id=session_id,

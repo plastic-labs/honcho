@@ -151,11 +151,9 @@ class Metamessage(Base):
     )
     metamessage_type: Mapped[str] = mapped_column(TEXT, index=True)
     content: Mapped[str] = mapped_column(TEXT)
-    
+
     # Foreign keys - message_id is now optional
-    user_id: Mapped[str] = mapped_column(
-        ForeignKey("users.public_id"), index=True
-    )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
     session_id: Mapped[str | None] = mapped_column(
         ForeignKey("sessions.public_id"), index=True, nullable=True
     )
@@ -167,7 +165,7 @@ class Metamessage(Base):
     user = relationship("User", back_populates="metamessages")
     session = relationship("Session", back_populates="metamessages")
     message = relationship("Message", back_populates="metamessages")
-    
+
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -182,8 +180,8 @@ class Metamessage(Base):
         ),
         # Added constraints to ensure consistency
         CheckConstraint(
-            "(message_id IS NULL) OR (session_id IS NOT NULL)", 
-            name="message_requires_session"
+            "(message_id IS NULL) OR (session_id IS NOT NULL)",
+            name="message_requires_session",
         ),
         # Keep existing index
         Index(
@@ -192,7 +190,7 @@ class Metamessage(Base):
             text("id DESC"),
             postgresql_include=["public_id", "message_id", "created_at"],
         ),
-        # Add new indices for user, session, and message lookups
+        # Indices for user, session, and message lookups
         Index(
             "idx_metamessages_user_lookup",
             "user_id",
