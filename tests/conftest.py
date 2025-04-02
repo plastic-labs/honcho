@@ -66,7 +66,7 @@ async def setup_test_database(db_url):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url))
+    engine = create_async_engine(str(db_url), echo=True)
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -94,7 +94,10 @@ async def db_engine():
     create_test_database(TEST_DB_URL)
     engine = await setup_test_database(TEST_DB_URL)
 
+    # Drop all tables first to ensure clean state
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        # Then create all tables with current models
         await conn.run_sync(Base.metadata.create_all)
 
     yield engine

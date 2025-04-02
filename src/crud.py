@@ -571,31 +571,46 @@ async def clone_session(
     )
 
     # Handle metamessages if deep copy is requested
-    if deep_copy and message_id_map:
-        # Fetch all metamessages in a single query
+    if deep_copy:
+        # Fetch all metamessages tied to the session in a single query
         stmt = select(models.Metamessage).where(
-            models.Metamessage.message_id.in_(message_id_map.keys())
+            models.Metamessage.session_id == original_session_id
         )
+        if cutoff_message_id is not None and cutoff_message is not None:
+            # Only get metamessages related to messages we're cloning
+            message_ids = [message.public_id for message in messages_to_clone]
+            stmt = stmt.where(
+                (models.Metamessage.message_id.is_(None)) | 
+                (models.Metamessage.message_id.in_(message_ids))
+            )
+            
         metamessages_result = await db.scalars(stmt)
         metamessages = metamessages_result.all()
 
         if metamessages:
             # Prepare bulk insert data for metamessages
-            new_metamessages = [
-                {
-                    "user_id": user_id,
+            new_metamessages = []
+            
+            for meta in metamessages:
+                # Base metamessage data
+                meta_data = {
+                    "user_id": meta.user_id,  # Preserve original user
                     "session_id": new_session.public_id,
-                    "message_id": message_id_map[meta.message_id],
                     "metamessage_type": meta.metamessage_type,
                     "content": meta.content,
                     "h_metadata": meta.h_metadata,
                 }
-                for meta in metamessages
-            ]
+                
+                # If the metamessage was tied to a message, tie it to the corresponding new message
+                if meta.message_id is not None and meta.message_id in message_id_map:
+                    meta_data["message_id"] = message_id_map[meta.message_id]
+                
+                new_metamessages.append(meta_data)
 
             # Bulk insert metamessages using modern insert syntax
-            stmt = insert(models.Metamessage)
-            await db.execute(stmt, new_metamessages)
+            if new_metamessages:
+                stmt = insert(models.Metamessage)
+                await db.execute(stmt, new_metamessages)
 
     await db.commit()
 

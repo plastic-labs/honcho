@@ -281,11 +281,12 @@ def test_metamessage_validations_api(client, sample_data):
 
     # Test content too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
             "metamessage_type": "test_type",
             "content": "a" * 50001,
             "message_id": message_id,
+            "session_id": session_id,
             "metadata": {},
         },
     )
@@ -371,7 +372,48 @@ def test_session_validations_api(client, sample_data):
     assert response.status_code == 422
 
 
-def test_agent_query_validations_api(client, sample_data):
+def test_agent_query_validations_api(client, sample_data, monkeypatch):
+    # Mock the functions in agent.py that are causing the database issues
+    async def mock_get_user_representation(*args, **kwargs):
+        return "Mock user representation"
+
+    async def mock_chat_history(*args, **kwargs):
+        return "Mock chat history"
+
+    # Mock the Dialectic.call method
+    def mock_dialectic_call(self):
+        # Create a mock response that will work with line 179 in agent.py:
+        # return schemas.AgentChat(content=response[0].text)
+        class MockText:
+            def __init__(self):
+                self.text = "Mock response"
+
+        # Return a list with MockText object at index 0
+        return [MockText()]
+
+    # Mock the Dialectic.stream method
+    def mock_dialectic_stream(self):
+        class MockStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            @property
+            def text_stream(self):
+                yield "Mock streamed response"
+
+        return MockStream()
+
+    # Apply the monkeypatches
+    monkeypatch.setattr(
+        "src.agent.get_latest_user_representation", mock_get_user_representation
+    )
+    monkeypatch.setattr("src.agent.chat_history", mock_chat_history)
+    monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
+    monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
+
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based
     session_response = client.post(

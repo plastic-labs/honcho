@@ -333,8 +333,8 @@ async def test_deep_clone_session(client, db_session, sample_data):
     assert data["items"][1]["metadata"] == {"key": "value2"}
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{cloned_session_id}/metamessages/list",
-        json={},
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
+        json={"session_id": cloned_session_id},
     )
 
     assert response.status_code == 200
@@ -445,8 +445,8 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     assert data["items"][0]["metadata"] == {"key": "value"}
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{cloned_session_id}/metamessages/list",
-        json={},
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
+        json={"session_id": cloned_session_id},
     )
 
     assert response.status_code == 200

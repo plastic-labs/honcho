@@ -124,12 +124,10 @@ async def get_latest_user_representation(
 ) -> str:
     stmt = (
         select(models.Metamessage)
-        .join(models.Message, models.Message.public_id == models.Metamessage.message_id)
-        .join(models.Session, models.Message.session_id == models.Session.public_id)
-        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.User, models.User.public_id == models.Metamessage.user_id)
         .join(models.App, models.App.public_id == models.User.app_id)
         .where(models.App.public_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Metamessage.user_id == user_id)
         .where(models.Metamessage.metamessage_type == "user_representation")
         .order_by(models.Metamessage.id.desc())  # get the most recent
         .limit(1)
