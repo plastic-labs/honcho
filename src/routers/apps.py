@@ -32,6 +32,16 @@ async def get_app_from_token(jwt_params=jwt_params, db=db):
 
 
 @router.get(
+    "/all",
+    response_model=list[schemas.App],
+    dependencies=[Depends(require_auth(admin=True))],
+)
+async def get_all_apps(db=db):
+    """Get all apps"""
+    return await crud.get_all_apps(db)
+
+
+@router.get(
     "/{app_id}",
     response_model=schemas.App,
     dependencies=[Depends(require_auth(app_id="app_id"))],

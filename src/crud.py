@@ -51,6 +51,15 @@ async def get_app(db: AsyncSession, app_id: str) -> models.App:
     return app
 
 
+async def get_all_apps(db: AsyncSession) -> Sequence[models.App]:
+    """
+    Get all apps.
+    """
+    stmt = select(models.App)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 async def get_app_by_name(db: AsyncSession, name: str) -> models.App:
     """
     Get an app by its name.

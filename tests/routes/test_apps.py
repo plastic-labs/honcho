@@ -80,6 +80,20 @@ def test_get_app_by_id(client, sample_data):
     assert data["id"] == str(test_app.public_id)
 
 
+def test_get_all_apps(client, sample_data):
+    response = client.get("/v1/apps/all")
+    assert response.status_code == 200
+
+    # Create an app
+    test_app, _ = sample_data
+    response = client.get("/v1/apps/all")
+    print(response)
+    assert response.status_code == 200
+    data = response.json()
+    assert test_app.name in [app["name"] for app in data]
+    assert test_app.public_id in [app["id"] for app in data]
+
+
 def test_get_app_by_name(client, sample_data):
     test_app, _ = sample_data
     response = client.get(f"/v1/apps/name/{test_app.name}")
