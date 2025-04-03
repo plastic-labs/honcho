@@ -1,9 +1,10 @@
 import logging
 from collections.abc import Sequence
-from typing import Optional
+from logging import getLogger
+from typing import List, Optional
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +22,11 @@ logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
 
-openai_client = OpenAI()
+openai_client = AsyncOpenAI()
+
+logger = getLogger(__name__)
+
+DEF_PROTECTED_COLLECTION_NAME = "honcho"
 
 ########################################################
 # app methods
@@ -580,17 +585,17 @@ async def clone_session(
             # Only get metamessages related to messages we're cloning
             message_ids = [message.public_id for message in messages_to_clone]
             stmt = stmt.where(
-                (models.Metamessage.message_id.is_(None)) | 
-                (models.Metamessage.message_id.in_(message_ids))
+                (models.Metamessage.message_id.is_(None))
+                | (models.Metamessage.message_id.in_(message_ids))
             )
-            
+
         metamessages_result = await db.scalars(stmt)
         metamessages = metamessages_result.all()
 
         if metamessages:
             # Prepare bulk insert data for metamessages
             new_metamessages = []
-            
+
             for meta in metamessages:
                 # Base metamessage data
                 meta_data = {
@@ -600,11 +605,11 @@ async def clone_session(
                     "content": meta.content,
                     "h_metadata": meta.h_metadata,
                 }
-                
+
                 # If the metamessage was tied to a message, tie it to the corresponding new message
                 if meta.message_id is not None and meta.message_id in message_id_map:
                     meta_data["message_id"] = message_id_map[meta.message_id]
-                
+
                 new_metamessages.append(meta_data)
 
             # Bulk insert metamessages using modern insert syntax
@@ -1110,6 +1115,39 @@ async def create_collection(
         ) from e
 
 
+async def create_user_protected_collection(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+) -> models.Collection:
+    honcho_collection = models.Collection(
+        user_id=user_id,
+        name=DEF_PROTECTED_COLLECTION_NAME,
+    )
+    try:
+        db.add(honcho_collection)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise ValueError("Collection already exists") from None
+    return honcho_collection
+
+
+async def get_or_create_user_protected_collection(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+) -> models.Collection:
+    try:
+        honcho_collection = await get_collection_by_name(
+            db, app_id, user_id, DEF_PROTECTED_COLLECTION_NAME
+        )
+        return honcho_collection
+    except ResourceNotFoundException:
+        honcho_collection = await create_user_protected_collection(db, app_id, user_id)
+        return honcho_collection
+
+
 async def update_collection(
     db: AsyncSession,
     collection: schemas.CollectionUpdate,
@@ -1300,9 +1338,11 @@ async def query_documents(
     collection_id: str,
     query: str,
     filter: Optional[dict] = None,
+    max_distance: Optional[float] = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
-    response = openai_client.embeddings.create(
+    # Using async client with await
+    response = await openai_client.embeddings.create(
         model="text-embedding-3-small", input=query
     )
     embedding_query = response.data[0].embedding
@@ -1318,6 +1358,10 @@ async def query_documents(
         .where(models.Document.collection_id == collection_id)
         # .limit(top_k)
     )
+    if max_distance is not None:
+        stmt = stmt.where(
+            models.Document.embedding.cosine_distance(embedding_query) < max_distance
+        )
     if filter is not None:
         stmt = stmt.where(models.Document.h_metadata.contains(filter))
     stmt = stmt.limit(top_k).order_by(
@@ -1333,6 +1377,7 @@ async def create_document(
     app_id: str,
     user_id: str,
     collection_id: str,
+    duplicate_threshold: Optional[float] = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.
@@ -1351,43 +1396,46 @@ async def create_document(
         ResourceNotFoundException: If the collection does not exist
         ValidationException: If the document data is invalid
     """
-    try:
-        # This will raise ResourceNotFoundException if collection not found
-        await get_collection_by_id(
-            db, app_id=app_id, collection_id=collection_id, user_id=user_id
-        )
 
-        if not document.content:
-            logger.warning(
-                f"Attempted to create document with empty content in collection {collection_id}"
+    # This will raise ResourceNotFoundException if collection not found
+    collection = await get_collection_by_id(
+        db, app_id=app_id, collection_id=collection_id, user_id=user_id
+    )
+
+    # Using async client with await
+    response = await openai_client.embeddings.create(
+        input=document.content, model="text-embedding-3-small"
+    )
+
+    embedding = response.data[0].embedding
+
+    if duplicate_threshold is not None:
+        # Check if there are duplicates within the threshold
+        stmt = (
+            select(models.Document)
+            .where(models.Document.collection_id == collection_id)
+            .where(
+                models.Document.embedding.cosine_distance(embedding)
+                < duplicate_threshold
             )
-            raise ValidationException("Document content cannot be empty")
-
-        response = openai_client.embeddings.create(
-            input=document.content, model="text-embedding-3-small"
+            .order_by(models.Document.embedding.cosine_distance(embedding))
+            .limit(1)
         )
+        result = await db.execute(stmt)
+        duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
+        if duplicate is not None:
+            logger.info(f"Duplicate found: {duplicate.content}. Ignoring new document.")
+            return duplicate
 
-        embedding = response.data[0].embedding
-
-        honcho_document = models.Document(
-            collection_id=collection_id,
-            content=document.content,
-            h_metadata=document.metadata,
-            embedding=embedding,
-        )
-        db.add(honcho_document)
-        await db.commit()
-        logger.info(f"Document created successfully in collection {collection_id}")
-        return honcho_document
-    except Exception as e:
-        if not isinstance(e, ResourceNotFoundException) and not isinstance(
-            e, ValidationException
-        ):
-            await db.rollback()
-            logger.error(
-                f"Error creating document in collection {collection_id}: {str(e)}"
-            )
-        raise
+    honcho_document = models.Document(
+        collection_id=collection_id,
+        content=document.content,
+        h_metadata=document.metadata,
+        embedding=embedding,
+    )
+    db.add(honcho_document)
+    await db.commit()
+    return honcho_document
 
 
 async def update_document(
@@ -1409,7 +1457,8 @@ async def update_document(
         raise ValueError("Session not found or does not belong to user")
     if document.content is not None:
         honcho_document.content = document.content
-        response = openai_client.embeddings.create(
+        # Using async client with await
+        response = await openai_client.embeddings.create(
             input=document.content, model="text-embedding-3-small"
         )
         embedding = response.data[0].embedding
@@ -1449,3 +1498,46 @@ async def delete_document(
     await db.delete(document)
     await db.commit()
     return True
+
+
+async def get_duplicate_documents(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    content: str,
+    similarity_threshold: float = 0.85,
+) -> List[models.Document]:
+    """Check if a document with similar content already exists in the collection.
+
+    Args:
+        db: Database session
+        app_id: Application ID
+        user_id: User ID
+        collection_id: Collection ID
+        content: Document content to check for duplicates
+        similarity_threshold: Similarity threshold (0-1) for considering documents as duplicates
+
+    Returns:
+        List of documents that are similar to the provided content
+    """
+    # Get embedding for the content
+    # Using async client with await
+    response = await openai_client.embeddings.create(
+        input=content, model="text-embedding-3-small"
+    )
+    embedding = response.data[0].embedding
+
+    # Find documents with similar embeddings
+    stmt = (
+        select(models.Document)
+        .where(models.Document.collection_id == collection_id)
+        .where(
+            models.Document.embedding.cosine_distance(embedding)
+            < (1 - similarity_threshold)
+        )  # Convert similarity to distance
+        .order_by(models.Document.embedding.cosine_distance(embedding))
+    )
+
+    result = await db.execute(stmt)
+    return list(result.scalars().all())  # Convert to list to match the return type

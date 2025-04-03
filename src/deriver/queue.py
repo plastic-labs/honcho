@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import signal
+from logging import getLogger
 from datetime import datetime, timedelta
 
 import sentry_sdk
@@ -16,7 +17,7 @@ from .. import models
 from ..db import SessionLocal
 from .consumer import process_item
 
-logger = logging.getLogger(__name__)
+logger = getLogger(__name__)
 
 load_dotenv()
 
@@ -57,13 +58,19 @@ class QueueManager:
 
     async def initialize(self):
         """Setup signal handlers and start the main polling loop"""
+        logger.debug(f"Initializing QueueManager with {self.workers} workers")
+        
+        # Set up signal handlers
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)
         for sig in signals:
             loop.add_signal_handler(
                 sig, lambda s=sig: asyncio.create_task(self.shutdown(s))
             )
+        logger.debug("Signal handlers registered")
 
+        # Run the polling loop directly in this task
+        logger.debug("Starting polling loop directly")
         try:
             await self.polling_loop()
         finally:
@@ -132,15 +139,18 @@ class QueueManager:
 
     async def polling_loop(self):
         """Main polling loop to find and process new sessions"""
+        logger.debug("Starting polling loop")
         try:
             while not self.shutdown_event.is_set():
                 if self.queue_empty_flag.is_set():
+                    # logger.debug("Queue empty flag set, waiting")
                     await asyncio.sleep(1)
                     self.queue_empty_flag.clear()
                     continue
 
-                # Chec if we have capacity before querying
+                # Check if we have capacity before querying
                 if self.semaphore.locked():
+                    # logger.debug("All workers busy, waiting")
                     await asyncio.sleep(1)  # Wait before trying again
                     continue
 
@@ -154,13 +164,14 @@ class QueueManager:
                                     # Try to claim the session
                                     await db.execute(
                                         insert(models.ActiveQueueSession).values(
-                                            session_id=session_id
+                                            session_id=session_id,
                                         )
                                     )
                                     await db.commit()
 
                                     # Track this session
                                     self.track_session(session_id)
+                                    logger.debug(f"Claimed session {session_id} for processing")
 
                                     # Create a new task for processing this session
                                     if not self.shutdown_event.is_set():
@@ -170,6 +181,7 @@ class QueueManager:
                                         self.add_task(task)
                                 except IntegrityError:
                                     await db.rollback()
+                                    logger.debug(f"Failed to claim session {session_id}, already owned")
                         else:
                             self.queue_empty_flag.set()
                             await asyncio.sleep(1)
@@ -189,19 +201,25 @@ class QueueManager:
     @sentry_sdk.trace
     async def process_session(self, session_id: int):
         """Process all messages for a session"""
+        logger.debug(f"Starting to process session {session_id}")
         async with self.semaphore:  # Hold the semaphore for the entire session duration
             async with SessionLocal() as db:
                 try:
+                    message_count = 0
                     while not self.shutdown_event.is_set():
                         message = await self.get_next_message(db, session_id)
                         if not message:
+                            logger.debug(f"No more messages for session {session_id}")
                             break
+                        
+                        message_count += 1
+                        logger.debug(f"Processing message {message.id} for session {session_id} (message {message_count})")
                         try:
                             logger.info(
                                 f"Processing message {message.id} from session {session_id}"
                             )
                             await process_item(db, payload=message.payload)
-                            logger.info(f"Successfully processed message {message.id}")
+                            logger.debug(f"Successfully processed message {message.id}")
                         except Exception as e:
                             logger.error(
                                 f"Error processing message {message.id}: {str(e)}",
@@ -213,20 +231,24 @@ class QueueManager:
                             # Prevent malformed messages from stalling queue indefinitely
                             message.processed = True
                             await db.commit()
-                            logger.info(f"Marked message {message.id} as processed")
+                            logger.debug(f"Marked message {message.id} as processed")
 
                         if self.shutdown_event.is_set():
+                            logger.debug(f"Shutdown requested, stopping processing for session {session_id}")
                             break
 
-                        # Update last_updated timestamp to showthis session is still being processed
+                        # Update last_updated timestamp to show this session is still being processed
                         await db.execute(
                             update(models.ActiveQueueSession)
                             .where(models.ActiveQueueSession.session_id == session_id)
                             .values(last_updated=func.now())
                         )
                         await db.commit()
+                    
+                    logger.debug(f"Completed processing session {session_id}, processed {message_count} messages")
                 finally:
                     # Remove session from active_sessions when done
+                    logger.debug(f"Removing session {session_id} from active sessions")
                     await db.execute(
                         delete(models.ActiveQueueSession).where(
                             models.ActiveQueueSession.session_id == session_id
@@ -250,5 +272,12 @@ class QueueManager:
 
 
 async def main():
+    logger.debug("Starting queue manager")
     manager = QueueManager()
-    await manager.initialize()
+    try:
+        await manager.initialize()
+    except Exception as e:
+        logger.error(f"Error in main: {str(e)}")
+        sentry_sdk.capture_exception(e)
+    finally:
+        logger.debug("Main function exiting")
