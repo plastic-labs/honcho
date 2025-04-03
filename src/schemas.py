@@ -13,6 +13,10 @@ class AppCreate(AppBase):
     metadata: dict = {}
 
 
+class AppGet(AppBase):
+    filter: dict | None = None
+
+
 class AppUpdate(AppBase):
     name: str | None = None
     metadata: dict | None = None
@@ -320,19 +324,20 @@ class Document(DocumentBase):
 class AgentQuery(BaseModel):
     queries: str | list[str]
 
-    @field_validator('queries')
+    @field_validator("queries")
     def validate_queries(cls, v):
         MAX_STRING_LENGTH = 10000
         MAX_LIST_LENGTH = 25
         if isinstance(v, str):
             if len(v) > MAX_STRING_LENGTH:
-                raise ValueError('Query too long')
+                raise ValueError("Query too long")
         elif isinstance(v, list):
             if len(v) > MAX_LIST_LENGTH:
-                raise ValueError('Too many queries')
+                raise ValueError("Too many queries")
             if any(len(q) > MAX_STRING_LENGTH for q in v):
-                raise ValueError('One or more queries too long')
+                raise ValueError("One or more queries too long")
         return v
+
 
 class AgentChat(BaseModel):
     content: str
@@ -340,4 +345,5 @@ class AgentChat(BaseModel):
 
 class MessageBatchCreate(BaseModel):
     """Schema for batch message creation with a max of 100 messages"""
+
     messages: list[MessageCreate] = Field(..., max_length=100)

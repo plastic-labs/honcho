@@ -1,3 +1,4 @@
+import pytest
 from nanoid import generate as generate_nanoid
 
 
@@ -80,18 +81,37 @@ def test_get_app_by_id(client, sample_data):
     assert data["id"] == str(test_app.public_id)
 
 
-def test_get_all_apps(client, sample_data):
-    response = client.get("/v1/apps/all")
-    assert response.status_code == 200
+@pytest.mark.asyncio
+async def test_get_all_apps(client, db_session, sample_data):
+    test_app, test_user = sample_data
 
-    # Create an app
-    test_app, _ = sample_data
-    response = client.get("/v1/apps/all")
-    print(response)
+    # create a test app with metadata
+    response = client.post(
+        "/v1/apps",
+        json={
+            "name": "test_app",
+            "metadata": {"test_key": "test_value"},
+        },
+    )
+
+    response = client.post(
+        "/v1/apps/list",
+        json={},
+    )
     assert response.status_code == 200
     data = response.json()
-    assert test_app.name in [app["name"] for app in data]
-    assert test_app.public_id in [app["id"] for app in data]
+    assert "items" in data
+    assert len(data["items"]) > 0
+
+    response = client.post(
+        "/v1/apps/list",
+        json={"filter": {"test_key": "test_value"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert len(data["items"]) > 0
+    assert data["items"][0]["metadata"] == {"test_key": "test_value"}
 
 
 def test_get_app_by_name(client, sample_data):

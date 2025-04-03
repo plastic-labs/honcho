@@ -1,6 +1,9 @@
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Depends
+from fastapi_pagination import Page
+from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
@@ -31,14 +34,25 @@ async def get_app_from_token(jwt_params=jwt_params, db=db):
     return await crud.get_app(db, app_id=jwt_params.ap)
 
 
-@router.get(
-    "/all",
-    response_model=list[schemas.App],
+@router.post(
+    "/list",
+    response_model=Page[schemas.App],
     dependencies=[Depends(require_auth(admin=True))],
 )
-async def get_all_apps(db=db):
-    """Get all apps"""
-    return await crud.get_all_apps(db)
+async def get_all_apps(
+    options: schemas.AppGet,
+    reverse: Optional[bool] = False,
+    db=db,
+):
+    """Get all Apps"""
+    return await paginate(
+        db,
+        await crud.get_all_apps(
+            db,
+            reverse=reverse,
+            filter=options.filter,
+        ),
+    )
 
 
 @router.get(

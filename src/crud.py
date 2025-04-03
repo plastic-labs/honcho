@@ -51,13 +51,27 @@ async def get_app(db: AsyncSession, app_id: str) -> models.App:
     return app
 
 
-async def get_all_apps(db: AsyncSession) -> Sequence[models.App]:
+async def get_all_apps(
+    db: AsyncSession,
+    reverse: Optional[bool] = False,
+    filter: Optional[dict] = None,
+) -> Select:
     """
     Get all apps.
+
+    Args:
+        db: Database session
+        reverse: Whether to reverse the order of the apps
+        filter: Filter the apps by a dictionary of metadata
     """
     stmt = select(models.App)
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    if reverse:
+        stmt = stmt.order_by(models.App.id.desc())
+    else:
+        stmt = stmt.order_by(models.App.id)
+    if filter is not None:
+        stmt = stmt.where(models.App.h_metadata.contains(filter))
+    return stmt
 
 
 async def get_app_by_name(db: AsyncSession, name: str) -> models.App:

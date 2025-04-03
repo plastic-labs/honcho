@@ -61,20 +61,6 @@ def scaffold_db():
     if table_schema:
         with engine.connect() as connection:
             connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
-            # Check if pgvector extension exists in the schema
-            result = connection.execute(
-                text(
-                    f"SELECT 1 FROM pg_extension e JOIN pg_namespace n ON e.extnamespace = n.oid "
-                    f"WHERE e.extname = 'vector' AND n.nspname = '{table_schema}'"
-                )
-            ).scalar()
-            if not result:
-                print(f"Installing pgvector extension in schema {table_schema}...")
-                connection.execute(
-                    text(
-                        f'CREATE EXTENSION IF NOT EXISTS vector SCHEMA "{table_schema}"'
-                    )
-                )
             connection.commit()
 
     print(inspector.get_table_names(Base.metadata.schema))
