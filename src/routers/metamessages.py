@@ -8,14 +8,17 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
-from src.security import auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/metamessages",
     tags=["metamessages"],
-    dependencies=[Depends(auth)],
+    dependencies=[Depends(require_auth(
+        app_id="app_id",
+        user_id="user_id"
+    ))],
 )
 
 
@@ -75,7 +78,6 @@ async def get_metamessages(
             filter=options.filter,
             reverse=reverse,
         )
-
         return await paginate(db, metamessages_query)
     except (ResourceNotFoundException, ValidationException) as e:
         logger.warning(f"Failed to get metamessages: {str(e)}")

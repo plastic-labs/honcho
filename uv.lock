@@ -430,6 +430,7 @@ dependencies = [
     { name = "openai" },
     { name = "pgvector" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "pyjwt" },
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "sentry-sdk", extra = ["anthropic", "fastapi", "sqlalchemy"] },
@@ -460,6 +461,7 @@ requires-dist = [
     { name = "openai", specifier = ">=1.43.0" },
     { name = "pgvector", specifier = ">=0.2.5" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1.19" },
+    { name = "pyjwt", specifier = ">=2.10.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.7.1" },
     { name = "sentry-sdk", extras = ["anthropic", "fastapi", "sqlalchemy"], specifier = ">=2.3.1" },
@@ -1117,6 +1119,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/8e/62/8336eff65bcbc8e4cb5d05b55faf041285951b6e80f33e2bff2024788f31/pygments-2.18.0.tar.gz", hash = "sha256:786ff802f32e91311bff3889f6e9a86e81505fe99f2735bb6d60ae0c5004f199", size = 4891905 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/3f/01c8b82017c199075f8f788d0d906b9ffbbc5a47dc9918a945e13d5a2bda/pygments-2.18.0-py3-none-any.whl", hash = "sha256:b8e6aca0523f3ab76fee51799c488e38782ac06eafcf95e7ba832985c8e7b13a", size = 1205513 },
+]
+
+[[package]]
+name = "pyjwt"
+version = "2.10.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e7/46/bd74733ff231675599650d3e47f361794b22ef3e3770998dda30d3b63726/pyjwt-2.10.1.tar.gz", hash = "sha256:3cc5772eb20009233caf06e9d8a0577824723b44e6648ee0a2aedb6cf9381953", size = 87785 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/ad/689f02752eeec26aed679477e80e632ef1b682313be70793d798c1d5fc8f/PyJWT-2.10.1-py3-none-any.whl", hash = "sha256:dcdd193e30abefd5debf142f9adfcdd2b58004e644f25406ffaebd50bd98dacb", size = 22997 },
 ]
 
 [[package]]

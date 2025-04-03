@@ -7,20 +7,40 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import (
+    AuthenticationException,
     ResourceNotFoundException,
 )
-from src.security import auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users",
     tags=["users"],
-    dependencies=[Depends(auth)],
 )
 
+jwt_params = Depends(require_auth(user_id="user_id"))
 
-@router.post("", response_model=schemas.User)
+
+@router.get(
+    "",
+    response_model=schemas.User,
+)
+async def get_user_from_token(app_id: str, jwt_params=jwt_params, db=db):
+    """
+    Get a User by ID from the user_id provided in the JWT.
+    If no user_id is provided, return a 401 Unauthorized error.
+    """
+    if jwt_params.us is None:
+        raise AuthenticationException("User not found in JWT")
+    return await crud.get_user(db, app_id=app_id, user_id=jwt_params.us)
+
+
+@router.post(
+    "",
+    response_model=schemas.User,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def create_user(
     app_id: str,
     user: schemas.UserCreate,
@@ -31,7 +51,11 @@ async def create_user(
     return user_obj
 
 
-@router.post("/list", response_model=Page[schemas.User])
+@router.post(
+    "/list",
+    response_model=Page[schemas.User],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_users(
     app_id: str,
     options: schemas.UserGet,
@@ -45,7 +69,17 @@ async def get_users(
     )
 
 
-@router.get("/name/{name}", response_model=schemas.User)
+@router.get(
+    "/name/{name}",
+    response_model=schemas.User,
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id",
+            )
+        )
+    ],
+)
 async def get_user_by_name(
     app_id: str,
     name: str,
@@ -56,7 +90,11 @@ async def get_user_by_name(
     return user
 
 
-@router.get("/{user_id}", response_model=schemas.User)
+@router.get(
+    "/{user_id}",
+    response_model=schemas.User,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_user(
     app_id: str,
     user_id: str,
@@ -67,7 +105,17 @@ async def get_user(
     return user
 
 
-@router.get("/get_or_create/{name}", response_model=schemas.User)
+@router.get(
+    "/get_or_create/{name}",
+    response_model=schemas.User,
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id",
+            )
+        )
+    ],
+)
 async def get_or_create_user(app_id: str, name: str, db=db):
     """Get a User or create a new one by the input name"""
     try:
@@ -81,7 +129,11 @@ async def get_or_create_user(app_id: str, name: str, db=db):
         return user
 
 
-@router.put("/{user_id}", response_model=schemas.User)
+@router.put(
+    "/{user_id}",
+    response_model=schemas.User,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def update_user(
     app_id: str,
     user_id: str,

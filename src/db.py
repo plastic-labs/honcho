@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import MetaData, create_engine, inspect
+from sqlalchemy import MetaData, create_engine, inspect, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -56,6 +56,11 @@ def scaffold_db():
 
     # Create inspector to check if database exists
     inspector = inspect(engine)
+
+    if table_schema:
+        with engine.connect() as connection:
+            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
+            connection.commit()
 
     print(inspector.get_table_names(Base.metadata.schema))
 

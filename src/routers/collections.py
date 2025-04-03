@@ -6,16 +6,43 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-from src.security import auth
+from src.exceptions import AuthenticationException
+from src.security import require_auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections",
     tags=["collections"],
-    dependencies=[Depends(auth)],
 )
 
+jwt_params = Depends(require_auth(collection_id="collection_id"))
 
-@router.post("/list", response_model=Page[schemas.Collection])
+
+@router.get(
+    "",
+    response_model=schemas.Collection,
+)
+async def get_collection_from_token(
+    app_id: str,
+    user_id: str,
+    jwt_params=jwt_params,
+    db=db,
+):
+    """
+    Get a specific collection for a user by collection_id provided in the JWT.
+    If no collection_id is provided, return a 401 Unauthorized error.
+    """
+    if jwt_params.co is None:
+        raise AuthenticationException("Collection not found in JWT")
+    return await crud.get_collection_by_id(
+        db, app_id=app_id, collection_id=jwt_params.co, user_id=user_id
+    )
+
+
+@router.post(
+    "/list",
+    response_model=Page[schemas.Collection],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_collections(
     app_id: str,
     user_id: str,
@@ -32,7 +59,11 @@ async def get_collections(
     )
 
 
-@router.get("/name/{name}", response_model=schemas.Collection)
+@router.get(
+    "/name/{name}",
+    response_model=schemas.Collection,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_collection_by_name(
     app_id: str,
     user_id: str,
@@ -46,7 +77,17 @@ async def get_collection_by_name(
     return honcho_collection
 
 
-@router.get("/{collection_id}", response_model=schemas.Collection)
+@router.get(
+    "/{collection_id}",
+    response_model=schemas.Collection,
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id", user_id="user_id", collection_id="collection_id"
+            )
+        )
+    ],
+)
 async def get_collection_by_id(
     app_id: str,
     user_id: str,
@@ -60,7 +101,11 @@ async def get_collection_by_id(
     return honcho_collection
 
 
-@router.post("", response_model=schemas.Collection)
+@router.post(
+    "",
+    response_model=schemas.Collection,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def create_collection(
     app_id: str,
     user_id: str,
@@ -75,7 +120,17 @@ async def create_collection(
     )
 
 
-@router.put("/{collection_id}", response_model=schemas.Collection)
+@router.put(
+    "/{collection_id}",
+    response_model=schemas.Collection,
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id", user_id="user_id", collection_id="collection_id"
+            )
+        )
+    ],
+)
 async def update_collection(
     app_id: str,
     user_id: str,
@@ -96,7 +151,16 @@ async def update_collection(
     return honcho_collection
 
 
-@router.delete("/{collection_id}")
+@router.delete(
+    "/{collection_id}",
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id", user_id="user_id", collection_id="collection_id"
+            )
+        )
+    ],
+)
 async def delete_collection(
     app_id: str,
     user_id: str,

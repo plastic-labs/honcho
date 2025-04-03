@@ -10,18 +10,20 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src.db import engine, scaffold_db
 from src.exceptions import HonchoException
 from src.routers import (
     apps,
     collections,
     documents,
+    keys,
     messages,
     metamessages,
     sessions,
     users,
 )
+from src.security import create_admin_jwt
 
-from .db import engine
 
 
 def get_log_level(env_var="LOG_LEVEL", default="INFO"):
@@ -56,8 +58,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Sentry Setup
 
+# JWT Setup
+async def setup_admin_jwt():
+    token = create_admin_jwt()
+    print(f"\n    ADMIN JWT: {token}\n")
+
+
+# Sentry Setup
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
 if SENTRY_ENABLED:
     sentry_sdk.init(
@@ -85,8 +93,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     lifespan=lifespan,
     servers=[
-        {"url": "http://127.0.0.1:8000", "description": "Local Development Server"},
-        {"url": "https:/demo.honcho.dev", "description": "Demo Server"},
+        {"url": "http://localhost:8000", "description": "Local Development Server"},
+        {"url": "https://demo.honcho.dev", "description": "Demo Server"},
     ],
     title="Honcho API",
     summary="An API for adding personalization to AI Apps",
@@ -126,6 +134,7 @@ app.include_router(messages.router, prefix="/v1")
 app.include_router(metamessages.router, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
+app.include_router(keys.router, prefix="/v1")
 
 
 # Global exception handlers

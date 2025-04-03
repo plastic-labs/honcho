@@ -13,6 +13,10 @@ class AppCreate(AppBase):
     metadata: dict = {}
 
 
+class AppGet(AppBase):
+    filter: dict | None = None
+
+
 class AppUpdate(AppBase):
     name: str | None = None
     metadata: dict | None = None

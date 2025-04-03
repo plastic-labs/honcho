@@ -9,19 +9,49 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import agent, crud, schemas
 from src.dependencies import db
-from src.exceptions import ResourceNotFoundException, ValidationException
-from src.security import auth
+from src.exceptions import (
+    AuthenticationException,
+    ResourceNotFoundException,
+    ValidationException,
+)
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
     tags=["sessions"],
-    dependencies=[Depends(auth)],
 )
 
+jwt_params = Depends(require_auth(session_id="session_id"))
 
-@router.post("/list", response_model=Page[schemas.Session])
+
+@router.get(
+    "",
+    response_model=schemas.Session,
+)
+async def get_session_from_token(
+    app_id: str,
+    user_id: str,
+    jwt_params=jwt_params,
+    db=db,
+):
+    """
+    Get a specific session for a user by session_id provided in the JWT.
+    If no session_id is provided, return a 401 Unauthorized error.
+    """
+    if jwt_params.se is None:
+        raise AuthenticationException("Session not found in JWT")
+    return await crud.get_session(
+        db, app_id=app_id, session_id=jwt_params.se, user_id=user_id
+    )
+
+
+@router.post(
+    "/list",
+    response_model=Page[schemas.Session],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_sessions(
     app_id: str,
     user_id: str,
@@ -43,7 +73,11 @@ async def get_sessions(
     )
 
 
-@router.post("", response_model=schemas.Session)
+@router.post(
+    "",
+    response_model=schemas.Session,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def create_session(
     app_id: str,
     user_id: str,
@@ -62,7 +96,15 @@ async def create_session(
         raise ValidationException(str(e)) from e
 
 
-@router.put("/{session_id}", response_model=schemas.Session)
+@router.put(
+    "/{session_id}",
+    response_model=schemas.Session,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
 async def update_session(
     app_id: str,
     user_id: str,
@@ -82,7 +124,14 @@ async def update_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.delete("/{session_id}")
+@router.delete(
+    "/{session_id}",
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
 async def delete_session(
     app_id: str,
     user_id: str,
@@ -101,7 +150,15 @@ async def delete_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.get("/{session_id}", response_model=schemas.Session)
+@router.get(
+    "/{session_id}",
+    response_model=schemas.Session,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
 async def get_session(
     app_id: str,
     user_id: str,
@@ -118,7 +175,15 @@ async def get_session(
     return honcho_session
 
 
-@router.post("/{session_id}/chat", response_model=schemas.AgentChat)
+@router.post(
+    "/{session_id}/chat",
+    response_model=schemas.AgentChat,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
 async def chat(
     app_id: str,
     user_id: str,
@@ -141,6 +206,11 @@ async def chat(
             },
         }
     },
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
 )
 async def get_chat_stream(
     app_id: str,
@@ -168,7 +238,15 @@ async def get_chat_stream(
     )
 
 
-@router.get("/{session_id}/clone", response_model=schemas.Session)
+@router.get(
+    "/{session_id}/clone",
+    response_model=schemas.Session,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
 async def clone_session(
     app_id: str,
     user_id: str,

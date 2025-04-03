@@ -23,6 +23,7 @@ dependencies = [
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
     "langfuse>=2.57.1",
+    "pyjwt>=2.10.0",
 ]
 [tool.uv]
 dev-dependencies = [

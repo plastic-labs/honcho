@@ -50,3 +50,10 @@ class AuthorizationException(HonchoException):
 
     status_code = 403
     detail = "Not authorized to access this resource"
+
+
+class DisabledException(HonchoException):
+    """Exception raised when a feature is disabled."""
+
+    status_code = 405
+    detail = "Feature is disabled"
