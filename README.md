@@ -75,10 +75,10 @@ Below is a mapping of the different primitives.
 Apps
 └── Users
     ├── Sessions
-    │   ├── Messages
-    │   └── Metamessages
-    └── Collections
-        └── Documents
+    │   └── Messages
+    ├── Collections
+    │   └── Documents
+    └── Metamessages
 ```
 
 Users familiar with APIs such as the OpenAI Assistants API will be familiar with
@@ -105,18 +105,6 @@ The `Session` object represents a set of interactions a `User` has with an
 The `Message` represents an atomic interaction of a `User` in a `Session`.
 `Message`s are labed as either a `User` or AI message.
 
-#### Metamessages
-
-A `Metamessage` is similar to a `Message` with different use case. They are
-meant to be used to store intermediate inference from AI assistants or other
-derived information that is separate from the main `User` `App` interaction
-loop. For complicated prompting architectures like [metacognitive prompting](https://arxiv.org/abs/2310.06983)
-metamessages can store thought and reflection steps along with having developer
-information such as logs.
-
-Each `Metamessage` is associated with a `Message`. The convention we recommend
-is to attach a `Metamessage` to the `Message` it was derived from or based on.
-
 #### Collections
 
 At a high level a `Collection` is a named group of `Documents`. Developers
@@ -131,6 +119,18 @@ PDF files, and more.
 #### Documents
 
 As stated before a `Document` is vector embedded data stored in a `Collection`.
+
+#### Metamessages
+
+A `Metamessage` is similar to a `Message` with different use case. They are
+meant to be used to store intermediate inference from AI assistants or other
+derived information that is separate from the main `User` `App` interaction
+loop. For complicated prompting architectures like [metacognitive prompting](https://arxiv.org/abs/2310.06983)
+metamessages can store thought and reflection steps along with having developer
+information such as logs.
+
+Each `Metamessage` is associated with a `User` with the ability to optionally
+tie to a `Session` and a `Message`.
 
 ### Insights
 

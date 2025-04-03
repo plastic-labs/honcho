@@ -11,11 +11,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - JWT based API authentication
 - Configurable logging
+- Consolidated LLM Inference via `ModelClient` class
+- Dynamic logging configurable via environment variables
 
 ### Changed
 
 - Deriver & Dialectic API to use Hybrid Memory Architecture
 - Metamessages are not strictly tied to a message
+- Database provisioning is a separate script instead of happening on startup
 
 ## [0.0.16]
 
