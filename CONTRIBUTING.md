@@ -91,8 +91,22 @@ that they are disabled you can verify the following environment variables are
 set to false.
 
 ```env
-USE_AUTH_SERVICE=false
+USE_AUTH=false
 SENTRY_ENABLED=false
+```
+
+If you set `USE_AUTH` to true you will need to generate a JWT secret. You can
+do this with the following command:
+
+```bash
+python scripts/generate_jwt_secret.py
+```
+
+This will generate a JWT secret and print it to the console. You can then set
+the `AUTH_JWT_SECRET` environment variable. This is required for `USE_AUTH`.
+
+```env
+AUTH_JWT_SECRET=<generated_secret>
 ```
 
 5. Launch the API

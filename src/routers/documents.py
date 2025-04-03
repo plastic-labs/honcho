@@ -9,14 +9,20 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
-from src.security import auth
+from src.security import require_auth
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents",
     tags=["documents"],
-    dependencies=[Depends(auth)],
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id", user_id="user_id", collection_id="collection_id"
+            )
+        )
+    ],
 )
 
 
@@ -50,10 +56,7 @@ async def get_documents(
         ) from e
 
 
-@router.get(
-    "/{document_id}",
-    response_model=schemas.Document,
-)
+@router.get("/{document_id}", response_model=schemas.Document)
 async def get_document(
     app_id: str,
     user_id: str,
