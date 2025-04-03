@@ -176,23 +176,24 @@ class MetamessageBase(BaseModel):
 class MetamessageCreate(MetamessageBase):
     metamessage_type: Annotated[str, Field(min_length=1, max_length=50)]
     content: Annotated[str, Field(min_length=0, max_length=50000)]
-    message_id: str
+    user_id: str | None = None  # Will be set from URL parameter in endpoint
+    session_id: str | None = None
+    message_id: str | None = None
     metadata: dict = {}
 
 
 class MetamessageGet(MetamessageBase):
     metamessage_type: str | None = None
+    user_id: str | None = None  # Can be provided in URL or body
+    session_id: str | None = None
     message_id: str | None = None
     filter: dict | None = None
 
 
-class MetamessageGetUserLevel(MessageBase):
-    filter: dict | None = None
-    metamessage_type: str | None = None
-
-
 class MetamessageUpdate(MetamessageBase):
-    message_id: str
+    user_id: str | None = None  # Will be set from URL parameter in endpoint
+    session_id: str | None = None
+    message_id: str | None = None
     metamessage_type: str | None = None
     metadata: dict | None = None
 
@@ -202,7 +203,9 @@ class Metamessage(MetamessageBase):
     id: str
     metamessage_type: str
     content: str
-    message_id: str
+    user_id: str
+    session_id: str | None
+    message_id: str | None
     h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime

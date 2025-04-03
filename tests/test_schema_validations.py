@@ -1,14 +1,15 @@
 import pytest
 from pydantic import ValidationError
+
 from src.schemas import (
     AppCreate,
-    UserCreate,
-    MessageCreate,
-    MetamessageCreate,
     CollectionCreate,
     DocumentCreate,
     DocumentQuery,
     MessageBatchCreate,
+    MessageCreate,
+    MetamessageCreate,
+    UserCreate,
 )
 
 
@@ -200,9 +201,7 @@ class TestDocumentQueryValidations:
 class TestMessageBatchValidations:
     def test_valid_message_batch(self):
         batch = MessageBatchCreate(
-            messages=[
-                MessageCreate(content="test", is_user=True, metadata={})
-            ]
+            messages=[MessageCreate(content="test", is_user=True, metadata={})]
         )
         assert len(batch.messages) == 1
 
@@ -215,4 +214,4 @@ class TestMessageBatchValidations:
                 ]
             )
         error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "too_long" 
+        assert error_dict["type"] == "too_long"

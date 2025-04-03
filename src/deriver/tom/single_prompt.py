@@ -1,28 +1,18 @@
-import os
+import logging
+from typing import Any, Optional
 
 import sentry_sdk
-from anthropic import Anthropic
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
-# Place the code below at the beginning of your application to initialize the tracer
+from src.utils.model_client import ModelClient, ModelProvider
 
-# Initialize the Anthropic client
-anthropic = Anthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
-    max_retries=5,
-)
+logger = logging.getLogger(__name__)
 
-ANTHROPIC_MODEL = "claude-3-5-haiku-20241022"
+DEF_PROVIDER = ModelProvider.GROQ
+DEF_MODEL = "llama-3.3-70b-versatile"
 
-
-@ai_track("Tom Inference")
-@observe(as_type="generation")
-async def get_tom_inference_single_prompt(
-    chat_history: str, session_id: str, user_representation: str = "None", **kwargs
-) -> str:
-    with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
-        system_prompt = """You are a system for analyzing conversations to make evidence-based inferences about user mental states.
+TOM_SYSTEM_PROMPT = """You are a system for analyzing conversations to make evidence-based inferences about user mental states.
 
 REQUIREMENTS:
 1. Only make inferences that are directly supported by conversation evidence
@@ -56,53 +46,9 @@ EXPECTATION VIOLATIONS:
 - Based on the above information, if the next message were to surprise you, what could it contain?
 - Format: "POTENTIAL SURPRISE: [possible content] [reason] [confidence level]"
 - Include 3-5 possible surprises
-</prediction>
-"""
+</prediction>"""
 
-        messages = [
-            {
-                "role": "user",
-                "content": f"Please analyze this conversation and provide a prediction following the format above:\n{chat_history}",
-            }
-        ]
-
-        # Add existing user representation if available
-        if user_representation != "None":
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"Consider this existing user representation for context, but focus on current state:\n{user_representation}",
-                }
-            )
-
-        langfuse_context.update_current_observation(
-            input=messages, model=ANTHROPIC_MODEL
-        )
-        message = anthropic.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1000,
-            temperature=0,
-            messages=messages,
-            system=system_prompt,
-        )
-        print(f"tom_inference in single_prompt.py: {message.content[0].text=}")
-        message = message.content[0].text
-        return message
-
-
-@ai_track("User Representation")
-@observe(as_type="generation")
-async def get_user_representation_single_prompt(
-    chat_history: str,
-    session_id: str,
-    user_representation: str = "None",
-    tom_inference: str = "None",
-    **kwargs,
-) -> str:
-    with sentry_sdk.start_transaction(
-        op="user-representation-inference", name="User Representation"
-    ):
-        system_prompt = """You are a system for maintaining factual user representations based on conversation history and theory of mind analysis.
+USER_REPRESENTATION_SYSTEM_PROMPT = """You are a system for maintaining factual user representations based on conversation history and theory of mind analysis.
 
 Your job is to update the existing user representation (if provided) with the new information from the conversation history and theory of mind analysis.
 
@@ -152,36 +98,102 @@ UPDATES:
 - New Information: Recent observations
 - Changes: Modified interpretations
 - Removals: Information no longer supported
-</representation>
-"""
+</representation>"""
 
-        messages = []
 
-        print(f"in single_prompt.py: chat_history: {chat_history}")
-        print(f"in single_prompt.py: user_representation: {user_representation}")
+@ai_track("Tom Inference")
+@observe(as_type="generation")
+async def get_tom_inference_single_prompt(
+    chat_history: str, session_id: str, user_representation: Optional[str] = None, **kwargs
+) -> str:
+    with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
+        # Create a new model client
+        client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
+        
+        # Prepare the messages
+        messages: list[dict[str, Any]] = [
+            {
+                "role": "user",
+                "content": f"Please analyze this conversation and provide a prediction following the format above:\n{chat_history}",
+            }
+        ]
+
+        # Add existing user representation if available
+        if user_representation:
+            messages.append(
+                {
+                    "role": "user",
+                    "content": f"Consider this existing user representation for context, but focus on current state:\n{user_representation}",
+                }
+            )
+
+        langfuse_context.update_current_observation(
+            input=messages, model=DEF_MODEL
+        )
+        
+        # Generate the response with caching enabled
+        try:
+            response = await client.generate(
+                messages=messages,
+                system=TOM_SYSTEM_PROMPT,
+                max_tokens=1000,
+                temperature=0,
+                use_caching=True  # Enable caching for the system prompt
+                )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.error(f"Error generating Tom inference: {e}")
+            raise e
+        
+        return response
+
+
+@ai_track("User Representation")
+@observe(as_type="generation")
+async def get_user_representation_single_prompt(
+    chat_history: str,
+    session_id: str,
+    user_representation: Optional[str] = None,
+    tom_inference: Optional[str] = None,
+    **kwargs,
+) -> str:
+    with sentry_sdk.start_transaction(
+        op="user-representation-inference", name="User Representation"
+    ):
+        # Create a new model client
+        client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
+        
         # Build the context message
         context_str = f"CONVERSATION:\n{chat_history}\n\n"
-        if tom_inference != "None":
+        if tom_inference:
             context_str += f"PREDICTION OF USER MENTAL STATE - MIGHT BE INCORRECT:\n{tom_inference}\n\n"
-        if user_representation != "None":
+        if user_representation:
             context_str += f"EXISTING USER REPRESENTATION - INCOMPLETE, TO BE UPDATED:\n{user_representation}"
 
-        messages.append(
+        # Prepare the messages
+        messages: list[dict[str, Any]] = [
             {
                 "role": "user",
                 "content": f"Please analyze this information and provide an updated user representation:\n{context_str}",
             }
-        )
+        ]
 
         langfuse_context.update_current_observation(
-            input=messages, model=ANTHROPIC_MODEL
+            input=messages, model=DEF_MODEL
         )
-        message = anthropic.messages.create(
-            model=ANTHROPIC_MODEL,
-            max_tokens=1000,
-            temperature=0,
-            messages=messages,
-            system=system_prompt,
-        )
-        message = message.content[0].text
-        return message
+        
+        # Generate the response with caching enabled
+        try:
+            response = await client.generate(
+                messages=messages,
+                system=USER_REPRESENTATION_SYSTEM_PROMPT,
+                max_tokens=1000,
+                temperature=0,
+                use_caching=True  # Enable caching for the system prompt
+            )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            logger.error(f"Error generating user representation: {e}")
+            raise e
+        
+        return response
