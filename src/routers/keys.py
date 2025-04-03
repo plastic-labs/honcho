@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 
@@ -23,6 +24,7 @@ router = APIRouter(
 
 @router.post("")
 async def create_key(
+    expires_at: datetime.datetime | None = None,
     app_id: str | None = None,
     user_id: str | None = None,
     session_id: str | None = None,
@@ -40,6 +42,7 @@ async def create_key(
 
     key_str = create_jwt(
         JWTParams(
+            exp=expires_at.isoformat() if expires_at else None,
             ap=app_id,
             us=user_id,
             se=session_id,
