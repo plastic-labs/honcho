@@ -585,17 +585,17 @@ async def clone_session(
             # Only get metamessages related to messages we're cloning
             message_ids = [message.public_id for message in messages_to_clone]
             stmt = stmt.where(
-                (models.Metamessage.message_id.is_(None)) | 
-                (models.Metamessage.message_id.in_(message_ids))
+                (models.Metamessage.message_id.is_(None))
+                | (models.Metamessage.message_id.in_(message_ids))
             )
-            
+
         metamessages_result = await db.scalars(stmt)
         metamessages = metamessages_result.all()
 
         if metamessages:
             # Prepare bulk insert data for metamessages
             new_metamessages = []
-            
+
             for meta in metamessages:
                 # Base metamessage data
                 meta_data = {
@@ -605,11 +605,11 @@ async def clone_session(
                     "content": meta.content,
                     "h_metadata": meta.h_metadata,
                 }
-                
+
                 # If the metamessage was tied to a message, tie it to the corresponding new message
                 if meta.message_id is not None and meta.message_id in message_id_map:
                     meta_data["message_id"] = message_id_map[meta.message_id]
-                
+
                 new_metamessages.append(meta_data)
 
             # Bulk insert metamessages using modern insert syntax
@@ -1138,10 +1138,14 @@ async def get_or_create_user_protected_collection(
     app_id: str,
     user_id: str,
 ) -> models.Collection:
-    honcho_collection = await get_collection_by_name(db, app_id, user_id, DEF_PROTECTED_COLLECTION_NAME)
-    if honcho_collection is None:
+    try:
+        honcho_collection = await get_collection_by_name(
+            db, app_id, user_id, DEF_PROTECTED_COLLECTION_NAME
+        )
+        return honcho_collection
+    except ResourceNotFoundException:
         honcho_collection = await create_user_protected_collection(db, app_id, user_id)
-    return honcho_collection
+        return honcho_collection
 
 
 async def update_collection(
@@ -1355,7 +1359,9 @@ async def query_documents(
         # .limit(top_k)
     )
     if max_distance is not None:
-        stmt = stmt.where(models.Document.embedding.cosine_distance(embedding_query) < max_distance)
+        stmt = stmt.where(
+            models.Document.embedding.cosine_distance(embedding_query) < max_distance
+        )
     if filter is not None:
         stmt = stmt.where(models.Document.h_metadata.contains(filter))
     stmt = stmt.limit(top_k).order_by(
@@ -1371,7 +1377,7 @@ async def create_document(
     app_id: str,
     user_id: str,
     collection_id: str,
-    duplicate_threshold: Optional[float] = None
+    duplicate_threshold: Optional[float] = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.
@@ -1408,7 +1414,10 @@ async def create_document(
         stmt = (
             select(models.Document)
             .where(models.Document.collection_id == collection_id)
-            .where(models.Document.embedding.cosine_distance(embedding) < duplicate_threshold)
+            .where(
+                models.Document.embedding.cosine_distance(embedding)
+                < duplicate_threshold
+            )
             .order_by(models.Document.embedding.cosine_distance(embedding))
             .limit(1)
         )
@@ -1427,7 +1436,6 @@ async def create_document(
     db.add(honcho_document)
     await db.commit()
     return honcho_document
-
 
 
 async def update_document(
@@ -1498,10 +1506,10 @@ async def get_duplicate_documents(
     user_id: str,
     collection_id: str,
     content: str,
-    similarity_threshold: float = 0.85
+    similarity_threshold: float = 0.85,
 ) -> List[models.Document]:
     """Check if a document with similar content already exists in the collection.
-    
+
     Args:
         db: Database session
         app_id: Application ID
@@ -1509,7 +1517,7 @@ async def get_duplicate_documents(
         collection_id: Collection ID
         content: Document content to check for duplicates
         similarity_threshold: Similarity threshold (0-1) for considering documents as duplicates
-        
+
     Returns:
         List of documents that are similar to the provided content
     """
@@ -1519,14 +1527,17 @@ async def get_duplicate_documents(
         input=content, model="text-embedding-3-small"
     )
     embedding = response.data[0].embedding
-    
+
     # Find documents with similar embeddings
     stmt = (
         select(models.Document)
         .where(models.Document.collection_id == collection_id)
-        .where(models.Document.embedding.cosine_distance(embedding) < (1-similarity_threshold))  # Convert similarity to distance
+        .where(
+            models.Document.embedding.cosine_distance(embedding)
+            < (1 - similarity_threshold)
+        )  # Convert similarity to distance
         .order_by(models.Document.embedding.cosine_distance(embedding))
     )
-    
+
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
