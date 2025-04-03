@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import signal
 from logging import getLogger
@@ -77,24 +78,34 @@ class QueueManager:
 
     async def shutdown(self, sig: signal.Signals):
         """Handle graceful shutdown"""
-        logger.debug(f"Received exit signal {sig.name}...")
+        logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
 
         if self.active_tasks:
-            logger.debug(f"Waiting for {len(self.active_tasks)} active tasks to complete...")
+            logger.info(
+                f"Waiting for {len(self.active_tasks)} active tasks to complete..."
+            )
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
 
     async def cleanup(self):
         """Clean up owned sessions"""
         if self.owned_sessions:
-            logger.debug(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
-            async with SessionLocal() as db:
-                await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.session_id.in_(self.owned_sessions)
+            logger.info(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
+            try:
+                async with SessionLocal() as db:
+                    await db.execute(
+                        delete(models.ActiveQueueSession).where(
+                            models.ActiveQueueSession.session_id.in_(
+                                self.owned_sessions
+                            )
+                        )
                     )
-                )
-                await db.commit()
+                    await db.commit()
+                    logger.info("Cleanup completed successfully")
+            except Exception as e:
+                logger.error(f"Error during cleanup: {str(e)}")
+                if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                    sentry_sdk.capture_exception(e)
 
     ##########################
     # Polling and Scheduling #
@@ -175,12 +186,13 @@ class QueueManager:
                             self.queue_empty_flag.set()
                             await asyncio.sleep(1)
                     except Exception as e:
-                        logger.error(f"Error in polling loop: {str(e)}")
-                        sentry_sdk.capture_exception(e)
+                        logger.error(f"Error in polling loop: {str(e)}", exc_info=True)
+                        if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                            sentry_sdk.capture_exception(e)
                         await db.rollback()
                         await asyncio.sleep(1)
         finally:
-            logger.debug("Polling loop stopped")
+            logger.info("Polling loop stopped")
 
     ######################
     # Queue Worker Logic #
@@ -203,11 +215,18 @@ class QueueManager:
                         message_count += 1
                         logger.debug(f"Processing message {message.id} for session {session_id} (message {message_count})")
                         try:
+                            logger.info(
+                                f"Processing message {message.id} from session {session_id}"
+                            )
                             await process_item(db, payload=message.payload)
                             logger.debug(f"Successfully processed message {message.id}")
                         except Exception as e:
-                            logger.error(f"Error processing message {message.id}: {str(e)}")
-                            sentry_sdk.capture_exception(e)
+                            logger.error(
+                                f"Error processing message {message.id}: {str(e)}",
+                                exc_info=True,
+                            )
+                            if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                                sentry_sdk.capture_exception(e)
                         finally:
                             # Prevent malformed messages from stalling queue indefinitely
                             message.processed = True

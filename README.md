@@ -1,6 +1,6 @@
 # 🫡 Honcho
 
-![Static Badge](https://img.shields.io/badge/Version-0.0.15-blue)
+![Static Badge](https://img.shields.io/badge/Version-0.0.17-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)

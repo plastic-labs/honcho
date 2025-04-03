@@ -1,6 +1,36 @@
 from nanoid import generate as generate_nanoid
 
 
+def test_update_document_validation_error(client, sample_data):
+    test_app, test_user = sample_data
+    # Create a collection
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": "test_collection", "metadata": {}},
+    )
+    assert response.status_code == 200
+    collection = response.json()
+
+    # Create a document
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection['id']}/documents",
+        json={"content": "test_text", "metadata": {}},
+    )
+    assert response.status_code == 200
+    document = response.json()
+
+    # Try to update the document with empty content and metadata
+    response = client.put(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection['id']}/documents/{document['id']}",
+        json={"content": None, "metadata": None},
+    )
+
+    # Should get a ValidationException with 422 status
+    assert response.status_code == 422
+    data = response.json()
+    assert "detail" in data
+
+
 def test_create_document(client, sample_data):
     test_app, test_user = sample_data
     # Create a collection

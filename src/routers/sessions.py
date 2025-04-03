@@ -1,14 +1,18 @@
+import logging
 from typing import Optional
 
 from anthropic import MessageStreamManager
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import agent, crud, schemas
 from src.dependencies import db
+from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions",
@@ -48,15 +52,14 @@ async def create_session(
 ):
     """Create a Session for a User"""
     try:
-        value = await crud.create_session(
+        session_obj = await crud.create_session(
             db, app_id=app_id, user_id=user_id, session=session
         )
-        return value
+        logger.info(f"Session created successfully for user {user_id}")
+        return session_obj
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    # except Exception as e:
-    #     print(e)
-    #     raise HTTPException(status_code=400, detail=str(e)) from e
+        logger.warning(f"Failed to create session: {str(e)}")
+        raise ValidationException(str(e)) from e
 
 
 @router.put("/{session_id}", response_model=schemas.Session)
@@ -69,11 +72,14 @@ async def update_session(
 ):
     """Update the metadata of a Session"""
     try:
-        return await crud.update_session(
+        updated_session = await crud.update_session(
             db, app_id=app_id, user_id=user_id, session_id=session_id, session=session
         )
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+        logger.info(f"Session {session_id} updated successfully")
+        return updated_session
+    except ValueError as e:
+        logger.warning(f"Failed to update session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.delete("/{session_id}")
@@ -88,9 +94,11 @@ async def delete_session(
         await crud.delete_session(
             db, app_id=app_id, user_id=user_id, session_id=session_id
         )
+        logger.info(f"Session {session_id} deleted successfully")
         return {"message": "Session deleted successfully"}
     except ValueError as e:
-        raise HTTPException(status_code=404, detail="Session not found") from e
+        logger.warning(f"Failed to delete session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.get("/{session_id}", response_model=schemas.Session)
@@ -105,7 +113,8 @@ async def get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
     if honcho_session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
+        logger.warning(f"Session {session_id} not found for user {user_id}")
+        raise ResourceNotFoundException(f"Session with ID {session_id} not found")
     return honcho_session
 
 

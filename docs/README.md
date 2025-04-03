@@ -1,21 +1,20 @@
-# honcho-docs
+# Honcho Docs
 
-## Setting Up `honcho-docs` Locally
+These docs are built using Next.js via mintlify.
+
+## Setting Up Honcho's Docs Locally
 
 1. Clone the repository:
 ```
-git clone git@github.com:plastic-labs/honcho-docs.git
+git clone git@github.com:plastic-labs/honcho.git
 ```
 
-2. Navigate into the `honcho-docs` folder:
+2. Navigate into the `docs` folder:
 ```
-cd honcho-docs/
+cd honcho/docs/
 ```
 The docs folder contains the markdown files that make up the documentation. The majority of the files are in the pages directory. Some notable files in this folder include:
 
-`index.mdx`: The main documentation file.  
-`_app.js`: This file is used to customize the default Next.js application shell.   
-`theme.config.jsx`: This file is for configuring the Nextra theme for the documentation.  
 
 3. Verify that you have Node.js and npm installed in your system. You can check by running:
 ```
@@ -30,7 +29,7 @@ npm --version
 npm install -g pnpm
 ```
 
-6. Install the project dependencies using yarn:
+6. Install the project dependencies using pnpm:
 ```
 pnpm i
 ```

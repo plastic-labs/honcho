@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -43,10 +43,6 @@ async def get_collection_by_name(
     honcho_collection = await crud.get_collection_by_name(
         db, app_id=app_id, user_id=user_id, name=name
     )
-    if honcho_collection is None:
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        )
     return honcho_collection
 
 
@@ -61,10 +57,6 @@ async def get_collection_by_id(
     honcho_collection = await crud.get_collection_by_id(
         db, app_id=app_id, user_id=user_id, collection_id=collection_id
     )
-    if honcho_collection is None:
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        )
     return honcho_collection
 
 
@@ -76,20 +68,11 @@ async def create_collection(
     db=db,
 ):
     """Create a new Collection"""
-    # if collection.name == "honcho":
-    #     raise HTTPException(
-    #         status_code=406,
-    #         detail="error invalid collection configuration - honcho is a reserved name",
-    #     )
-    try:
-        return await crud.create_collection(
-            db, collection=collection, app_id=app_id, user_id=user_id
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=406,
-            detail="Error invalid collection configuration - name may already exist",
-        ) from None
+    # ValidationException will be caught by global handler if collection is invalid
+    # ConflictException will be caught by global handler if collection name already exists
+    return await crud.create_collection(
+        db, collection=collection, app_id=app_id, user_id=user_id
+    )
 
 
 @router.put("/{collection_id}", response_model=schemas.Collection)
@@ -101,24 +84,15 @@ async def update_collection(
     db=db,
 ):
     "Update a Collection's name or metadata"
-    if collection.name is None and collection.metadata is None:
-        raise HTTPException(
-            status_code=406,
-            detail="error invalid collection configuration - atleast 1 field must be provided",
-        )
-    try:
-        honcho_collection = await crud.update_collection(
-            db,
-            collection=collection,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-        )
-    except ValueError:
-        raise HTTPException(
-            status_code=406,
-            detail="Error invalid collection configuration - name may already exist",
-        ) from None
+    # ResourceNotFoundException will be caught by global handler if collection not found
+    # ValidationException will be caught by global handler if update data is invalid
+    honcho_collection = await crud.update_collection(
+        db,
+        collection=collection,
+        app_id=app_id,
+        user_id=user_id,
+        collection_id=collection_id,
+    )
     return honcho_collection
 
 
@@ -130,12 +104,8 @@ async def delete_collection(
     db=db,
 ):
     """Delete a Collection and its documents"""
-    try:
-        await crud.delete_collection(
-            db, app_id=app_id, user_id=user_id, collection_id=collection_id
-        )
-        return {"message": "Collection deleted successfully"}
-    except ValueError:
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        ) from None
+    # ResourceNotFoundException will be caught by global handler if collection not found
+    await crud.delete_collection(
+        db, app_id=app_id, user_id=user_id, collection_id=collection_id
+    )
+    return {"message": "Collection deleted successfully"}

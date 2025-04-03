@@ -1,14 +1,17 @@
-import json
+import logging
 from collections.abc import Sequence
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
+from src.exceptions import ResourceNotFoundException, ValidationException
 from src.security import auth
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents",
@@ -28,23 +31,23 @@ async def get_documents(
 ):
     """Get all of the Documents in a Collection"""
     try:
-        return await paginate(
+        documents_query = await crud.get_documents(
             db,
-            await crud.get_documents(
-                db,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-                filter=options.filter,
-                reverse=reverse,
-            ),
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+            filter=options.filter,
+            reverse=reverse,
         )
-    except (
-        ValueError
-    ):  # TODO can probably remove this exception ok to return empty here
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        ) from None
+
+        return await paginate(db, documents_query)
+    except ValueError as e:
+        logger.warning(
+            f"Failed to get documents for collection {collection_id}: {str(e)}"
+        )
+        raise ResourceNotFoundException(
+            "Collection not found or does not belong to user"
+        ) from e
 
 
 @router.get(
@@ -66,10 +69,6 @@ async def get_document(
         collection_id=collection_id,
         document_id=document_id,
     )
-    if honcho_document is None:
-        raise HTTPException(
-            status_code=404, detail="document not found or does not belong to user"
-        )
     return honcho_document
 
 
@@ -88,7 +87,8 @@ async def query_documents(
         filter = options.filter
         if options.filter == {}:
             filter = None
-        return await crud.query_documents(
+
+        documents = await crud.query_documents(
             db=db,
             app_id=app_id,
             user_id=user_id,
@@ -97,8 +97,14 @@ async def query_documents(
             filter=filter,
             top_k=top_k,
         )
+
+        logger.info(f"Query documents successful for collection {collection_id}")
+        return documents
     except ValueError as e:
-        raise HTTPException(status_code=400, detail="Error Query Documents") from e
+        logger.error(
+            f"Error querying documents in collection {collection_id}: {str(e)}"
+        )
+        raise ValidationException("Error querying documents") from e
 
 
 @router.post("", response_model=schemas.Document)
@@ -111,17 +117,22 @@ async def create_document(
 ):
     """Embed text as a vector and create a Document"""
     try:
-        return await crud.create_document(
+        document_obj = await crud.create_document(
             db,
             document=document,
             app_id=app_id,
             user_id=user_id,
             collection_id=collection_id,
         )
-    except ValueError:
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        ) from None
+        logger.info(f"Document created successfully in collection {collection_id}")
+        return document_obj
+    except ValueError as e:
+        logger.warning(
+            f"Failed to create document in collection {collection_id}: {str(e)}"
+        )
+        raise ResourceNotFoundException(
+            "Collection not found or does not belong to user"
+        ) from e
 
 
 @router.put(
@@ -138,11 +149,13 @@ async def update_document(
 ):
     """Update the content and/or the metadata of a Document"""
     if document.content is None and document.metadata is None:
-        raise HTTPException(
-            status_code=400, detail="content and metadata cannot both be None"
+        logger.warning(
+            f"Document update attempted with empty content and metadata for document {document_id}"
         )
+        raise ValidationException("Content and metadata cannot both be None")
+
     try:
-        return await crud.update_document(
+        updated_document = await crud.update_document(
             db,
             document=document,
             app_id=app_id,
@@ -150,10 +163,11 @@ async def update_document(
             collection_id=collection_id,
             document_id=document_id,
         )
-    except ValueError:
-        raise HTTPException(
-            status_code=404, detail="collection not found or does not belong to user"
-        ) from None
+        logger.info(f"Document {document_id} updated successfully")
+        return updated_document
+    except ValueError as e:
+        logger.warning(f"Failed to update document {document_id}: {str(e)}")
+        raise ResourceNotFoundException("Collection or document not found") from e
 
 
 @router.delete("/{document_id}")
@@ -173,8 +187,8 @@ async def delete_document(
         document_id=document_id,
     )
     if response:
+        logger.info(f"Document {document_id} deleted successfully")
         return {"message": "Document deleted successfully"}
     else:
-        raise HTTPException(
-            status_code=404, detail="document not found or does not belong to user"
-        )
+        logger.warning(f"Document {document_id} not found or could not be deleted")
+        raise ResourceNotFoundException("Document not found or does not belong to user")

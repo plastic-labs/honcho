@@ -6,9 +6,11 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 import pytest_asyncio
+from fastapi import Request
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine, AsyncSession
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy_utils import create_database, database_exists, drop_database
@@ -16,6 +18,7 @@ from sqlalchemy_utils import create_database, database_exists, drop_database
 from src import models
 from src.db import Base
 from src.dependencies import get_db
+from src.exceptions import HonchoException
 from src.main import app
 
 # Create a custom handler that doesn't get closed prematurely
@@ -75,7 +78,7 @@ async def setup_test_database(db_url):
     Returns:
         engine: SQLAlchemy engine
     """
-    engine = create_async_engine(str(db_url))
+    engine = create_async_engine(str(db_url), echo=True)
     async with engine.connect() as conn:
         try:
             logger.info("Attempting to create pgvector extension...")
@@ -103,7 +106,10 @@ async def db_engine():
     create_test_database(TEST_DB_URL)
     engine = await setup_test_database(TEST_DB_URL)
 
+    # Drop all tables first to ensure clean state
     async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        # Then create all tables with current models
         await conn.run_sync(Base.metadata.create_all)
 
     yield engine
@@ -125,6 +131,14 @@ async def db_session(db_engine):
 @pytest.fixture(scope="function")
 def client(db_session):
     """Create a FastAPI TestClient for the scope of a single test function"""
+
+    # Register exception handlers for tests
+    @app.exception_handler(HonchoException)
+    async def test_exception_handler(request: Request, exc: HonchoException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
 
     async def override_get_db():
         yield db_session

@@ -4,7 +4,7 @@
     {
       "label": "start",
       "type": "shell",
-      "command": "poetry install --no-root && poetry run uvicorn src.main:app --reload",
+      "command": "uv sync && uv run fastapi dev src/main.py",
       "group": "none",
       "presentation": {
         "reveal": "always",

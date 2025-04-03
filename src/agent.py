@@ -131,7 +131,7 @@ class Dialectic:
             stream = await self.client.stream(
                 messages=[message],
                 system=self.system_prompt,
-                max_tokens=150
+                max_tokens=1000
             )
             stream_setup_time = asyncio.get_event_loop().time() - model_start
             logger.debug(f"Stream started in {stream_setup_time:.2f}s")
@@ -167,7 +167,6 @@ async def get_chat_history(app_id: str, user_id: str, session_id: str) -> str:
                 
         logger.debug(f"Constructed history with {user_count} user messages and {assistant_count} assistant messages")
         return history
-
 
 @observe()
 async def chat(
