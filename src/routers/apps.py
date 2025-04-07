@@ -1,14 +1,14 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException, ResourceNotFoundException
-from src.security import require_auth
+from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -17,21 +17,60 @@ router = APIRouter(
     tags=["apps"],
 )
 
-jwt_params = Depends(require_auth(app_id="app_id"))
+# jwt_params = Depends(require_auth(app_id="app_id"))
 
 
-@router.get(
-    "",
-    response_model=schemas.App,
-)
-async def get_app_from_token(jwt_params=jwt_params, db=db):
+@router.get("", response_model=schemas.App)
+async def get_app(
+    app_id: Optional[str] = Query(
+        None, description="App ID to retrieve. If not provided, uses JWT token"
+    ),
+    jwt_params: JWTParams = Depends(require_auth()),
+    db=db,
+):
     """
-    Get an App by ID from the app_id provided in the JWT.
-    If no app_id is provided, return a 401 Unauthorized error.
+    Get an App by ID.
+
+    If app_id is provided as a query parameter, it uses that (must match JWT app_id).
+    Otherwise, it uses the app_id from the JWT token.
     """
-    if jwt_params.ap is None:
-        raise AuthenticationException("App not found in JWT")
-    return await crud.get_app(db, app_id=jwt_params.ap)
+    # If app_id provided in query, check if it matches jwt or user is admin
+    if app_id:
+        if not jwt_params.ad and jwt_params.ap != app_id:
+            raise AuthenticationException("Unauthorized access to resource")
+        target_app_id = app_id
+    else:
+        # Use app_id from JWT
+        if not jwt_params.ap:
+            raise AuthenticationException("App ID not found in query parameter or JWT")
+        target_app_id = jwt_params.ap
+
+    return await crud.get_app(db, app_id=target_app_id)
+
+
+# @router.get(
+#     "",
+#     response_model=schemas.App,
+# )
+# async def get_app_from_token(jwt_params=jwt_params, db=db):
+#     """
+#     Get an App by ID from the app_id provided in the JWT.
+#     If no app_id is provided, return a 401 Unauthorized error.
+#     """
+#     if jwt_params.ap is None:
+#         raise AuthenticationException("App not found in JWT")
+#     return await crud.get_app(db, app_id=jwt_params.ap)
+#
+#
+# @router.get(
+#     "/{app_id}",
+#     response_model=schemas.App,
+#     dependencies=[Depends(require_auth(app_id="app_id"))],
+# )
+# async def get_app(app_id: str, db=db):
+#     """Get an App by ID"""
+#     app = await crud.get_app(db, app_id=app_id)
+#     return app
 
 
 @router.post(
@@ -53,17 +92,6 @@ async def get_all_apps(
             filter=options.filter,
         ),
     )
-
-
-@router.get(
-    "/{app_id}",
-    response_model=schemas.App,
-    dependencies=[Depends(require_auth(app_id="app_id"))],
-)
-async def get_app(app_id: str, db=db):
-    """Get an App by ID"""
-    app = await crud.get_app(db, app_id=app_id)
-    return app
 
 
 @router.get(

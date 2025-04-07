@@ -3,7 +3,7 @@ import os
 import sys
 import jwt
 from nanoid import generate as generate_nanoid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -236,3 +236,13 @@ def mock_langfuse():
             if isinstance(handler, TestHandler):
                 handler.close()
                 logging.getLogger().removeHandler(handler)
+
+
+@pytest.fixture(autouse=True)
+def mock_openai_embeddings():
+    """Mock OpenAI embeddings API calls for testing"""
+    with patch("src.crud.openai_client.embeddings.create") as mock_create:
+        mock_response = AsyncMock()
+        mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
+        mock_create.return_value = mock_response
+        yield mock_create

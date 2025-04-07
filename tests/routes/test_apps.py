@@ -74,7 +74,7 @@ def test_get_or_create_existing_app(client):
 
 def test_get_app_by_id(client, sample_data):
     test_app, _ = sample_data
-    response = client.get(f"/v1/apps/{test_app.public_id}")
+    response = client.get(f"/v1/apps?app_id={test_app.public_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_app.name

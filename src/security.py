@@ -123,11 +123,26 @@ def require_auth(
         credentials: HTTPAuthorizationCredentials = Depends(security),
         db: AsyncSession = Depends(get_db),
     ):
-        app_id_param = request.path_params.get(app_id) if app_id else None
-        user_id_param = request.path_params.get(user_id) if user_id else None
-        session_id_param = request.path_params.get(session_id) if session_id else None
+        app_id_param = (
+            request.path_params.get(app_id) or request.query_params.get(app_id)
+            if app_id
+            else None
+        )
+        user_id_param = (
+            request.path_params.get(user_id) or request.query_params.get(user_id)
+            if user_id
+            else None
+        )
+        session_id_param = (
+            request.path_params.get(session_id) or request.query_params.get(session_id)
+            if session_id
+            else None
+        )
         collection_id_param = (
-            request.path_params.get(collection_id) if collection_id else None
+            request.path_params.get(collection_id)
+            or request.query_params.get(collection_id)
+            if collection_id
+            else None
         )
 
         return await auth(
@@ -181,6 +196,8 @@ async def auth(
         return jwt_params
 
     if any([session_id, collection_id, user_id, app_id]):
+        print([session_id, collection_id, user_id, app_id])
+        print(jwt_params)
         raise AuthenticationException("JWT not permissioned for this resource")
 
     # Route did not specify any parameters, so it should parse parameters itself

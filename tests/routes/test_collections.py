@@ -25,7 +25,7 @@ def test_get_collection_by_id(client, sample_data) -> None:
     data = response.json()
     # Get the collection
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{data['id']}"
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={data['id']}"
     )
     assert response.status_code == 200
     data = response.json()
@@ -127,6 +127,6 @@ def test_delete_collection(client, sample_data) -> None:
     )
     assert response.status_code == 200
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{data['id']}"
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={data['id']}"
     )
     assert response.status_code == 404

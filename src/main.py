@@ -10,7 +10,7 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from src.db import engine, scaffold_db
+from src.db import engine
 from src.exceptions import HonchoException
 from src.routers import (
     apps,
@@ -23,7 +23,6 @@ from src.routers import (
     users,
 )
 from src.security import create_admin_jwt
-
 
 
 def get_log_level(env_var="LOG_LEVEL", default="INFO"):
@@ -70,7 +69,6 @@ SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
 if SENTRY_ENABLED:
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN"),
-        enable_tracing=True,
         traces_sample_rate=0.4,
         profiles_sample_rate=0.4,
         integrations=[

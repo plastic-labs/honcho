@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from anthropic import MessageStreamManager
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -14,7 +14,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
-from src.security import require_auth
+from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
 
@@ -23,27 +23,52 @@ router = APIRouter(
     tags=["sessions"],
 )
 
-jwt_params = Depends(require_auth(session_id="session_id"))
-
 
 @router.get(
     "",
     response_model=schemas.Session,
 )
-async def get_session_from_token(
+async def get_session(
     app_id: str,
     user_id: str,
-    jwt_params=jwt_params,
+    session_id: Optional[str] = Query(
+        None, description="Session ID to retrieve. If not provided, uses JWT token"
+    ),
+    jwt_params: JWTParams = Depends(require_auth()),
     db=db,
 ):
     """
-    Get a specific session for a user by session_id provided in the JWT.
-    If no session_id is provided, return a 401 Unauthorized error.
+    Get a specific session for a user.
+
+    If session_id is provided as a query parameter, it uses that (must match JWT session_id).
+    Otherwise, it uses the session_id from the JWT token.
     """
-    if jwt_params.se is None:
-        raise AuthenticationException("Session not found in JWT")
+    # Verify JWT has access to the requested resource
+    if not jwt_params.ad:
+        if jwt_params.ap is not None and jwt_params.ap != app_id:
+            raise AuthenticationException("Unauthorized access to resource")
+        if jwt_params.us is not None and jwt_params.us != user_id:
+            raise AuthenticationException("Unauthorized access to resource")
+    # If session_id provided in query, check if it matches jwt or user is admin
+    if session_id:
+        if (
+            not jwt_params.ad
+            and jwt_params.se is not None
+            and jwt_params.se != session_id
+        ):
+            raise AuthenticationException("Unauthorized access to resource")
+        target_session_id = session_id
+    else:
+        # Use session_id from JWT
+        if not jwt_params.se:
+            raise AuthenticationException(
+                "Session ID not found in query parameter or JWT"
+            )
+        target_session_id = jwt_params.se
+
+    # Let crud function handle the ResourceNotFoundException
     return await crud.get_session(
-        db, app_id=app_id, session_id=jwt_params.se, user_id=user_id
+        db, app_id=app_id, session_id=target_session_id, user_id=user_id
     )
 
 
@@ -148,31 +173,6 @@ async def delete_session(
     except ValueError as e:
         logger.warning(f"Failed to delete session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
-
-
-@router.get(
-    "/{session_id}",
-    response_model=schemas.Session,
-    dependencies=[
-        Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
-        )
-    ],
-)
-async def get_session(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    db=db,
-):
-    """Get a specific session for a user by ID"""
-    honcho_session = await crud.get_session(
-        db, app_id=app_id, session_id=session_id, user_id=user_id
-    )
-    if honcho_session is None:
-        logger.warning(f"Session {session_id} not found for user {user_id}")
-        raise ResourceNotFoundException(f"Session with ID {session_id} not found")
-    return honcho_session
 
 
 @router.post(
