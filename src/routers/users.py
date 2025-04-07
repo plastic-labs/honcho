@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Path, Body
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -27,8 +27,8 @@ router = APIRouter(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def create_user(
-    app_id: str,
-    user: schemas.UserCreate,
+    app_id: str = Path(..., description="ID of the app"),
+    user: schemas.UserCreate = Body(..., description="User creation parameters"),
     db=db,
 ):
     """Create a new User"""
@@ -42,9 +42,9 @@ async def create_user(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def get_users(
-    app_id: str,
-    options: schemas.UserGet,
-    reverse: bool = False,
+    app_id: str = Path(..., description="ID of the app"),
+    options: schemas.UserGet = Body(..., description="Filtering options for the users list"),
+    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get All Users for an App"""
@@ -59,7 +59,7 @@ async def get_users(
     response_model=schemas.User,
 )
 async def get_user(
-    app_id: str,
+    app_id: str = Path(..., description="ID of the app"),
     user_id: Optional[str] = Query(
         None, description="User ID to retrieve. If not provided, users JWT token"
     ),
@@ -89,36 +89,6 @@ async def get_user(
     return user
 
 
-# @router.get(
-#     "",
-#     response_model=schemas.User,
-# )
-# async def get_user_from_token(app_id: str, jwt_params=jwt_params, db=db):
-#     """
-#     Get a User by ID from the user_id provided in the JWT.
-#     If no user_id is provided, return a 401 Unauthorized error.
-#     """
-#     if jwt_params.us is None:
-#         raise AuthenticationException("User not found in JWT")
-#     return await crud.get_user(db, app_id=app_id, user_id=jwt_params.us)
-#
-#
-# @router.get(
-#     "/{user_id}",
-#     response_model=schemas.User,
-#     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
-# )
-# async def get_user(
-#     app_id: str,
-#     user_id: str,
-#     db=db,
-# ):
-#     """Get a User by ID"""
-#     user = await crud.get_user(db, app_id=app_id, user_id=user_id)
-#     return user
-#
-
-
 @router.get(
     "/name/{name}",
     response_model=schemas.User,
@@ -131,8 +101,8 @@ async def get_user(
     ],
 )
 async def get_user_by_name(
-    app_id: str,
-    name: str,
+    app_id: str = Path(..., description="ID of the app"),
+    name: str = Path(..., description="Name of the user to retrieve"),
     db=db,
 ):
     """Get a User by name"""
@@ -151,7 +121,11 @@ async def get_user_by_name(
         )
     ],
 )
-async def get_or_create_user(app_id: str, name: str, db=db):
+async def get_or_create_user(
+    app_id: str = Path(..., description="ID of the app"),
+    name: str = Path(..., description="Name of the user to get or create"),
+    db=db,
+):
     """Get a User or create a new one by the input name"""
     try:
         user = await crud.get_user_by_name(db, app_id=app_id, name=name)
@@ -170,9 +144,9 @@ async def get_or_create_user(app_id: str, name: str, db=db):
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def update_user(
-    app_id: str,
-    user_id: str,
-    user: schemas.UserUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user to update"),
+    user: schemas.UserUpdate = Body(..., description="Updated user parameters"),
     db=db,
 ):
     """Update a User's name and/or metadata"""

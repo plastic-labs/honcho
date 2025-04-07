@@ -1,6 +1,6 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Path, Body
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -20,8 +20,8 @@ router = APIRouter(
     response_model=schemas.Collection,
 )
 async def get_collection(
-    app_id: str,
-    user_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
     collection_id: Optional[str] = Query(
         None, description="Collection ID to retrieve. If not provided, uses JWT token"
     ),
@@ -69,10 +69,10 @@ async def get_collection(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def get_collections(
-    app_id: str,
-    user_id: str,
-    options: schemas.CollectionGet,
-    reverse: Optional[bool] = False,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    options: schemas.CollectionGet = Body(..., description="Filtering options for the collections list"),
+    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get All Collections for a User"""
@@ -90,9 +90,9 @@ async def get_collections(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def get_collection_by_name(
-    app_id: str,
-    user_id: str,
-    name: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    name: str = Path(..., description="Name of the collection to retrieve"),
     db=db,
 ) -> schemas.Collection:
     """Get a Collection by Name"""
@@ -108,9 +108,9 @@ async def get_collection_by_name(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def create_collection(
-    app_id: str,
-    user_id: str,
-    collection: schemas.CollectionCreate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection: schemas.CollectionCreate = Body(..., description="Collection creation parameters"),
     db=db,
 ):
     """Create a new Collection"""
@@ -133,10 +133,10 @@ async def create_collection(
     ],
 )
 async def update_collection(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    collection: schemas.CollectionUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection to update"),
+    collection: schemas.CollectionUpdate = Body(..., description="Updated collection parameters"),
     db=db,
 ):
     "Update a Collection's name or metadata"
@@ -163,9 +163,9 @@ async def update_collection(
     ],
 )
 async def delete_collection(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection to delete"),
     db=db,
 ):
     """Delete a Collection and its documents"""

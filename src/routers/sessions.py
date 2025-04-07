@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from anthropic import MessageStreamManager
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Path, Body
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -29,8 +29,8 @@ router = APIRouter(
     response_model=schemas.Session,
 )
 async def get_session(
-    app_id: str,
-    user_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
     session_id: Optional[str] = Query(
         None, description="Session ID to retrieve. If not provided, uses JWT token"
     ),
@@ -78,10 +78,10 @@ async def get_session(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def get_sessions(
-    app_id: str,
-    user_id: str,
-    options: schemas.SessionGet,
-    reverse: Optional[bool] = False,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    options: schemas.SessionGet = Body(..., description="Filtering and pagination options for the sessions list"),
+    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get All Sessions for a User"""
@@ -104,9 +104,9 @@ async def get_sessions(
     dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 async def create_session(
-    app_id: str,
-    user_id: str,
-    session: schemas.SessionCreate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session: schemas.SessionCreate = Body(..., description="Session creation parameters"),
     db=db,
 ):
     """Create a Session for a User"""
@@ -131,10 +131,10 @@ async def create_session(
     ],
 )
 async def update_session(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    session: schemas.SessionUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session to update"),
+    session: schemas.SessionUpdate = Body(..., description="Updated session parameters"),
     db=db,
 ):
     """Update the metadata of a Session"""
@@ -158,9 +158,9 @@ async def update_session(
     ],
 )
 async def delete_session(
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session to delete"),
     db=db,
 ):
     """Delete a session by marking it as inactive"""
@@ -185,10 +185,10 @@ async def delete_session(
     ],
 )
 async def chat(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    query: schemas.AgentQuery,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    query: schemas.AgentQuery = Body(..., description="Chat query parameters"),
 ):
     """Chat with the Dialectic API"""
     return await agent.chat(
@@ -213,10 +213,10 @@ async def chat(
     ],
 )
 async def get_chat_stream(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    query: schemas.AgentQuery,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    query: schemas.AgentQuery = Body(..., description="Chat query parameters"),
 ):
     """Stream Results from the Dialectic API"""
 
@@ -248,19 +248,25 @@ async def get_chat_stream(
     ],
 )
 async def clone_session(
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session to clone"),
     db=db,
-    message_id: Optional[str] = None,
-    deep_copy: bool = False,
+    message_id: Optional[str] = Query(None, description="Message ID to cut off the clone at"),
+    deep_copy: bool = Query(False, description="Whether to deep copy metamessages"),
 ):
-    """Clone a session for a user, optionally will deep clone metamessages as well"""
-    return await crud.clone_session(
-        db,
-        app_id=app_id,
-        user_id=user_id,
-        original_session_id=session_id,
-        cutoff_message_id=message_id,
-        deep_copy=deep_copy,
-    )
+    """Clone a session, optionally up to a specific message"""
+    try:
+        cloned_session = await crud.clone_session(
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            original_session_id=session_id,
+            cutoff_message_id=message_id,
+            deep_copy=deep_copy,
+        )
+        logger.info(f"Session {session_id} cloned successfully")
+        return cloned_session
+    except ValueError as e:
+        logger.warning(f"Failed to clone session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e

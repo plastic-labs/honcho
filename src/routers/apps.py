@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -48,39 +48,18 @@ async def get_app(
     return await crud.get_app(db, app_id=target_app_id)
 
 
-# @router.get(
-#     "",
-#     response_model=schemas.App,
-# )
-# async def get_app_from_token(jwt_params=jwt_params, db=db):
-#     """
-#     Get an App by ID from the app_id provided in the JWT.
-#     If no app_id is provided, return a 401 Unauthorized error.
-#     """
-#     if jwt_params.ap is None:
-#         raise AuthenticationException("App not found in JWT")
-#     return await crud.get_app(db, app_id=jwt_params.ap)
-#
-#
-# @router.get(
-#     "/{app_id}",
-#     response_model=schemas.App,
-#     dependencies=[Depends(require_auth(app_id="app_id"))],
-# )
-# async def get_app(app_id: str, db=db):
-#     """Get an App by ID"""
-#     app = await crud.get_app(db, app_id=app_id)
-#     return app
-
-
 @router.post(
     "/list",
     response_model=Page[schemas.App],
     dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_all_apps(
-    options: schemas.AppGet,
-    reverse: Optional[bool] = False,
+    options: schemas.AppGet = Body(
+        ..., description="Filtering and pagination options for the apps list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """Get all Apps"""
@@ -99,7 +78,10 @@ async def get_all_apps(
     response_model=schemas.App,
     dependencies=[Depends(require_auth(admin=True))],
 )
-async def get_app_by_name(name: str, db=db):
+async def get_app_by_name(
+    name: str = Path(..., description="Name of the app to retrieve"),
+    db=db,
+):
     """Get an App by Name"""
     # ResourceNotFoundException will be caught by global handler if app not found
     app = await crud.get_app_by_name(db, name=name)
@@ -109,7 +91,10 @@ async def get_app_by_name(name: str, db=db):
 @router.post(
     "", response_model=schemas.App, dependencies=[Depends(require_auth(admin=True))]
 )
-async def create_app(app: schemas.AppCreate, db=db):
+async def create_app(
+    app: schemas.AppCreate = Body(..., description="App creation parameters"),
+    db=db,
+):
     """Create a new App"""
     honcho_app = await crud.create_app(db, app=app)
     return honcho_app
@@ -120,7 +105,10 @@ async def create_app(app: schemas.AppCreate, db=db):
     response_model=schemas.App,
     dependencies=[Depends(require_auth(admin=True))],
 )
-async def get_or_create_app(name: str, db=db):
+async def get_or_create_app(
+    name: str = Path(..., description="Name of the app to get or create"),
+    db=db,
+):
     """Get or Create an App"""
     try:
         app = await crud.get_app_by_name(db=db, name=name)
@@ -137,8 +125,8 @@ async def get_or_create_app(name: str, db=db):
     dependencies=[Depends(require_auth(app_id="app_id"))],
 )
 async def update_app(
-    app_id: str,
-    app: schemas.AppUpdate,
+    app_id: str = Path(..., description="ID of the app to update"),
+    app: schemas.AppUpdate = Body(..., description="Updated app parameters"),
     db=db,
 ):
     """Update an App"""

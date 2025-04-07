@@ -2,7 +2,7 @@ import logging
 import os
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Path, Body
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy.sql import insert
@@ -151,11 +151,11 @@ async def enqueue(payload: dict | list[dict]):
 
 @router.post("", response_model=schemas.Message)
 async def create_message_for_session(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    message: schemas.MessageCreate,
     background_tasks: BackgroundTasks,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    message: schemas.MessageCreate = Body(..., description="Message creation parameters"),
     db=db,
 ):
     """Adds a message to a session"""
@@ -189,11 +189,11 @@ async def create_message_for_session(
 
 @router.post("/batch", response_model=List[schemas.Message])
 async def create_batch_messages_for_session(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    batch: schemas.MessageBatchCreate,
     background_tasks: BackgroundTasks,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    batch: schemas.MessageBatchCreate = Body(..., description="Batch of messages to create"),
     db=db,
 ):
     """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
@@ -236,11 +236,11 @@ async def create_batch_messages_for_session(
 
 @router.post("/list", response_model=Page[schemas.Message])
 async def get_messages(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    options: schemas.MessageGet,
-    reverse: Optional[bool] = False,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    options: schemas.MessageGet = Body(..., description="Filtering options for the messages list"),
+    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get all messages for a session"""
@@ -266,10 +266,10 @@ async def get_messages(
 
 @router.get("/{message_id}", response_model=schemas.Message)
 async def get_message(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    message_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    message_id: str = Path(..., description="ID of the message to retrieve"),
     db=db,
 ):
     """Get a Message by ID"""
@@ -284,11 +284,11 @@ async def get_message(
 
 @router.put("/{message_id}", response_model=schemas.Message)
 async def update_message(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    message_id: str,
-    message: schemas.MessageUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    message_id: str = Path(..., description="ID of the message to update"),
+    message: schemas.MessageUpdate = Body(..., description="Updated message parameters"),
     db=db,
 ):
     """Update the metadata of a Message"""
@@ -305,4 +305,4 @@ async def update_message(
         return updated_message
     except ValueError as e:
         logger.warning(f"Failed to update message {message_id}: {str(e)}")
-        raise ResourceNotFoundException("Message or session not found") from e
+        raise ResourceNotFoundException("Message not found") from e

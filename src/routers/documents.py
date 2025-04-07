@@ -2,7 +2,7 @@ import logging
 from collections.abc import Sequence
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Path, Body
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -28,11 +28,11 @@ router = APIRouter(
 
 @router.post("/list", response_model=Page[schemas.Document])
 async def get_documents(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    options: schemas.DocumentGet,
-    reverse: Optional[bool] = False,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection"),
+    options: schemas.DocumentGet = Body(..., description="Filtering options for the documents list"),
+    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get all of the Documents in a Collection"""
@@ -58,10 +58,10 @@ async def get_documents(
 
 @router.get("/{document_id}", response_model=schemas.Document)
 async def get_document(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection"),
+    document_id: str = Path(..., description="ID of the document to retrieve"),
     db=db,
 ):
     """Get a document by ID"""
@@ -77,10 +77,10 @@ async def get_document(
 
 @router.post("/query", response_model=Sequence[schemas.Document])
 async def query_documents(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    options: schemas.DocumentQuery,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection"),
+    options: schemas.DocumentQuery = Body(..., description="Query parameters for document search"),
     db=db,
 ):
     """Cosine Similarity Search for Documents"""
@@ -112,10 +112,10 @@ async def query_documents(
 
 @router.post("", response_model=schemas.Document)
 async def create_document(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document: schemas.DocumentCreate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection"),
+    document: schemas.DocumentCreate = Body(..., description="Document creation parameters"),
     db=db,
 ):
     """Embed text as a vector and create a Document"""
@@ -143,11 +143,11 @@ async def create_document(
     response_model=schemas.Document,
 )
 async def update_document(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document_id: str,
-    document: schemas.DocumentUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection"),
+    document_id: str = Path(..., description="ID of the document to update"),
+    document: schemas.DocumentUpdate = Body(..., description="Updated document parameters"),
     db=db,
 ):
     """Update the content and/or the metadata of a Document"""
@@ -175,10 +175,10 @@ async def update_document(
 
 @router.delete("/{document_id}")
 async def delete_document(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection"),
+    document_id: str = Path(..., description="ID of the document to delete"),
     db=db,
 ):
     """Delete a Document by ID"""

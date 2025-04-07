@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, Path, Body
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -24,9 +24,9 @@ router = APIRouter(
 
 @router.post("", response_model=schemas.Metamessage)
 async def create_metamessage(
-    app_id: str,
-    user_id: str,
-    metamessage: schemas.MetamessageCreate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    metamessage: schemas.MetamessageCreate = Body(..., description="Metamessage creation parameters"),
     db=db,
 ):
     """
@@ -51,10 +51,10 @@ async def create_metamessage(
 
 @router.post("/list", response_model=Page[schemas.Metamessage])
 async def get_metamessages(
-    app_id: str,
-    user_id: str,
-    options: schemas.MetamessageGet,
-    reverse: Optional[bool] = False,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    options: schemas.MetamessageGet = Body(..., description="Filtering options for the metamessages list"),
+    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """
@@ -89,9 +89,9 @@ async def get_metamessages(
     response_model=schemas.Metamessage,
 )
 async def get_metamessage(
-    app_id: str,
-    user_id: str,
-    metamessage_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    metamessage_id: str = Path(..., description="ID of the metamessage to retrieve"),
     db=db,
 ):
     """Get a specific Metamessage by ID"""
@@ -114,10 +114,10 @@ async def get_metamessage(
     response_model=schemas.Metamessage,
 )
 async def update_metamessage(
-    app_id: str,
-    user_id: str,
-    metamessage_id: str,
-    metamessage: schemas.MetamessageUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    metamessage_id: str = Path(..., description="ID of the metamessage to update"),
+    metamessage: schemas.MetamessageUpdate = Body(..., description="Updated metamessage parameters"),
     db=db,
 ):
     """Update a metamessage's metadata, type, or relationships"""
