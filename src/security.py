@@ -54,6 +54,7 @@ class JWTParams(BaseModel):
     Fields (all optional other than `t`):
 
     `t`: a string timestamp of when the JWT was created
+    `exp`: a string timestamp of when the JWT expires (optional)
     `ad`: a boolean flag indicating if the JWT is an admin JWT
     `ap`: (string) app id
     `us`: (string) user id
@@ -62,6 +63,7 @@ class JWTParams(BaseModel):
     """
 
     t: str = datetime.datetime.now().isoformat()
+    exp: Optional[str] = None
     ad: Optional[bool] = None
     ap: Optional[str] = None
     us: Optional[str] = None
@@ -92,6 +94,14 @@ async def verify_jwt(token: str) -> JWTParams:
         )
         if "t" in decoded:
             params.t = decoded["t"]
+        if "exp" in decoded:
+            params.exp = decoded["exp"]
+            if (
+                params.exp
+                and datetime.datetime.fromisoformat(params.exp)
+                < datetime.datetime.now()
+            ):
+                raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
         if "ap" in decoded:

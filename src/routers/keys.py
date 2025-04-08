@@ -1,3 +1,4 @@
+import datetime
 import logging
 import os
 
@@ -31,6 +32,7 @@ async def create_key(
     collection_id: str | None = Query(
         None, description="ID of the collection to scope the key to"
     ),
+    expires_at: datetime.datetime | None = None,
 ):
     """Create a new Key"""
     if not USE_AUTH:
@@ -44,6 +46,7 @@ async def create_key(
 
     key_str = create_jwt(
         JWTParams(
+            exp=expires_at.isoformat() if expires_at else None,
             ap=app_id,
             us=user_id,
             se=session_id,
