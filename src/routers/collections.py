@@ -1,12 +1,12 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import AuthenticationException, ResourceNotFoundException
+from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
 
 router = APIRouter(
@@ -71,8 +71,12 @@ async def get_collection(
 async def get_collections(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    options: schemas.CollectionGet = Body(..., description="Filtering options for the collections list"),
-    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
+    options: schemas.CollectionGet = Body(
+        ..., description="Filtering options for the collections list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """Get All Collections for a User"""
@@ -110,7 +114,9 @@ async def get_collection_by_name(
 async def create_collection(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    collection: schemas.CollectionCreate = Body(..., description="Collection creation parameters"),
+    collection: schemas.CollectionCreate = Body(
+        ..., description="Collection creation parameters"
+    ),
     db=db,
 ):
     """Create a new Collection"""
@@ -136,7 +142,9 @@ async def update_collection(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection to update"),
-    collection: schemas.CollectionUpdate = Body(..., description="Updated collection parameters"),
+    collection: schemas.CollectionUpdate = Body(
+        ..., description="Updated collection parameters"
+    ),
     db=db,
 ):
     "Update a Collection's name or metadata"

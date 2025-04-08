@@ -104,12 +104,15 @@ UPDATES:
 @ai_track("Tom Inference")
 @observe(as_type="generation")
 async def get_tom_inference_single_prompt(
-    chat_history: str, session_id: str, user_representation: Optional[str] = None, **kwargs
+    chat_history: str,
+    session_id: str,
+    user_representation: Optional[str] = None,
+    **kwargs,
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
         # Create a new model client
         client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
-        
+
         # Prepare the messages
         messages: list[dict[str, Any]] = [
             {
@@ -127,10 +130,8 @@ async def get_tom_inference_single_prompt(
                 }
             )
 
-        langfuse_context.update_current_observation(
-            input=messages, model=DEF_MODEL
-        )
-        
+        langfuse_context.update_current_observation(input=messages, model=DEF_MODEL)
+
         # Generate the response with caching enabled
         try:
             response = await client.generate(
@@ -138,13 +139,13 @@ async def get_tom_inference_single_prompt(
                 system=TOM_SYSTEM_PROMPT,
                 max_tokens=1000,
                 temperature=0,
-                use_caching=True  # Enable caching for the system prompt
-                )
+                use_caching=True,  # Enable caching for the system prompt
+            )
         except Exception as e:
             sentry_sdk.capture_exception(e)
             logger.error(f"Error generating Tom inference: {e}")
             raise e
-        
+
         return response
 
 
@@ -162,7 +163,7 @@ async def get_user_representation_single_prompt(
     ):
         # Create a new model client
         client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
-        
+
         # Build the context message
         context_str = f"CONVERSATION:\n{chat_history}\n\n"
         if tom_inference:
@@ -178,10 +179,8 @@ async def get_user_representation_single_prompt(
             }
         ]
 
-        langfuse_context.update_current_observation(
-            input=messages, model=DEF_MODEL
-        )
-        
+        langfuse_context.update_current_observation(input=messages, model=DEF_MODEL)
+
         # Generate the response with caching enabled
         try:
             response = await client.generate(
@@ -189,11 +188,11 @@ async def get_user_representation_single_prompt(
                 system=USER_REPRESENTATION_SYSTEM_PROMPT,
                 max_tokens=1000,
                 temperature=0,
-                use_caching=True  # Enable caching for the system prompt
+                use_caching=True,  # Enable caching for the system prompt
             )
         except Exception as e:
             sentry_sdk.capture_exception(e)
             logger.error(f"Error generating user representation: {e}")
             raise e
-        
+
         return response

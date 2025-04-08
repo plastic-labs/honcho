@@ -59,7 +59,9 @@ async def get_chat_history(db, session_id, message_id, limit: int = 10) -> str:
 
 
 async def process_item(db: AsyncSession, payload: dict):
-    logger.debug(f"process_item received payload: {payload['message_id']} is_user={payload['is_user']}")
+    logger.debug(
+        f"process_item received payload: {payload['message_id']} is_user={payload['is_user']}"
+    )
     processing_args = [
         payload["content"],
         payload["app_id"],
@@ -124,7 +126,7 @@ async def process_user_message(
     extract_time = os.times()[4] - extract_start
     console.print(f"Extracted Facts: {facts}", style="bright_blue")
     logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
-    
+
     # Save the facts to the collection
     logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
     collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
@@ -132,16 +134,18 @@ async def process_user_message(
         db=db,
         app_id=app_id,
         user_id=user_id,
-        collection_id=collection.public_id # type: ignore
+        collection_id=collection.public_id,  # type: ignore
     )
-    
+
     # Filter out facts that are duplicates of existing facts in the vector store
     logger.debug("Removing duplicate facts")
     dedup_start = os.times()[4]
     unique_facts = await embedding_store.remove_duplicates(facts)
     dedup_time = os.times()[4] - dedup_start
-    logger.debug(f"Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s")
-    
+    logger.debug(
+        f"Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s"
+    )
+
     # Only save the unique facts
     if unique_facts:
         logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
@@ -151,8 +155,8 @@ async def process_user_message(
         logger.debug(f"Facts saved in {save_time:.2f}s")
     else:
         logger.debug("No unique facts to save")
-    
+
     console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
-    
+
     total_time = os.times()[4] - process_start
     logger.debug(f"Total processing time: {total_time:.2f}s")

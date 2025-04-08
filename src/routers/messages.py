@@ -2,7 +2,7 @@ import logging
 import os
 from typing import List, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Path, Body
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy.sql import insert
@@ -19,11 +19,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
     tags=["messages"],
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-        user_id="user_id",
-        session_id="session_id"
-    ))],
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
 )
 
 
@@ -155,7 +155,9 @@ async def create_message_for_session(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
-    message: schemas.MessageCreate = Body(..., description="Message creation parameters"),
+    message: schemas.MessageCreate = Body(
+        ..., description="Message creation parameters"
+    ),
     db=db,
 ):
     """Adds a message to a session"""
@@ -193,7 +195,9 @@ async def create_batch_messages_for_session(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
-    batch: schemas.MessageBatchCreate = Body(..., description="Batch of messages to create"),
+    batch: schemas.MessageBatchCreate = Body(
+        ..., description="Batch of messages to create"
+    ),
     db=db,
 ):
     """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
@@ -239,8 +243,12 @@ async def get_messages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
-    options: schemas.MessageGet = Body(..., description="Filtering options for the messages list"),
-    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
+    options: schemas.MessageGet = Body(
+        ..., description="Filtering options for the messages list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """Get all messages for a session"""
@@ -288,7 +296,9 @@ async def update_message(
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to update"),
-    message: schemas.MessageUpdate = Body(..., description="Updated message parameters"),
+    message: schemas.MessageUpdate = Body(
+        ..., description="Updated message parameters"
+    ),
     db=db,
 ):
     """Update the metadata of a Message"""

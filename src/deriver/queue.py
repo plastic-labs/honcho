@@ -1,9 +1,8 @@
 import asyncio
-import logging
 import os
 import signal
-from logging import getLogger
 from datetime import datetime, timedelta
+from logging import getLogger
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -59,7 +58,7 @@ class QueueManager:
     async def initialize(self):
         """Setup signal handlers and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
-        
+
         # Set up signal handlers
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)
@@ -171,7 +170,9 @@ class QueueManager:
 
                                     # Track this session
                                     self.track_session(session_id)
-                                    logger.debug(f"Claimed session {session_id} for processing")
+                                    logger.debug(
+                                        f"Claimed session {session_id} for processing"
+                                    )
 
                                     # Create a new task for processing this session
                                     if not self.shutdown_event.is_set():
@@ -181,7 +182,9 @@ class QueueManager:
                                         self.add_task(task)
                                 except IntegrityError:
                                     await db.rollback()
-                                    logger.debug(f"Failed to claim session {session_id}, already owned")
+                                    logger.debug(
+                                        f"Failed to claim session {session_id}, already owned"
+                                    )
                         else:
                             self.queue_empty_flag.set()
                             await asyncio.sleep(1)
@@ -211,9 +214,11 @@ class QueueManager:
                         if not message:
                             logger.debug(f"No more messages for session {session_id}")
                             break
-                        
+
                         message_count += 1
-                        logger.debug(f"Processing message {message.id} for session {session_id} (message {message_count})")
+                        logger.debug(
+                            f"Processing message {message.id} for session {session_id} (message {message_count})"
+                        )
                         try:
                             logger.info(
                                 f"Processing message {message.id} from session {session_id}"
@@ -234,7 +239,9 @@ class QueueManager:
                             logger.debug(f"Marked message {message.id} as processed")
 
                         if self.shutdown_event.is_set():
-                            logger.debug(f"Shutdown requested, stopping processing for session {session_id}")
+                            logger.debug(
+                                f"Shutdown requested, stopping processing for session {session_id}"
+                            )
                             break
 
                         # Update last_updated timestamp to show this session is still being processed
@@ -244,8 +251,10 @@ class QueueManager:
                             .values(last_updated=func.now())
                         )
                         await db.commit()
-                    
-                    logger.debug(f"Completed processing session {session_id}, processed {message_count} messages")
+
+                    logger.debug(
+                        f"Completed processing session {session_id}, processed {message_count} messages"
+                    )
                 finally:
                     # Remove session from active_sessions when done
                     logger.debug(f"Removing session {session_id} from active sessions")

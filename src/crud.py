@@ -375,9 +375,7 @@ async def get_session(
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
     if session is None:
-        logger.warning(
-            f"Session with ID '{session_id}' not found for user {user_id}"
-        )
+        logger.warning(f"Session with ID '{session_id}' not found for user {user_id}")
         raise ResourceNotFoundException("Session not found or does not belong to user")
     return session
 

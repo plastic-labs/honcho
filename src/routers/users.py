@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -43,7 +43,9 @@ async def create_user(
 )
 async def get_users(
     app_id: str = Path(..., description="ID of the app"),
-    options: schemas.UserGet = Body(..., description="Filtering options for the users list"),
+    options: schemas.UserGet = Body(
+        ..., description="Filtering options for the users list"
+    ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):

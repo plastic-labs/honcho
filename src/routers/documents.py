@@ -2,7 +2,7 @@ import logging
 from collections.abc import Sequence
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -31,8 +31,12 @@ async def get_documents(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection"),
-    options: schemas.DocumentGet = Body(..., description="Filtering options for the documents list"),
-    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
+    options: schemas.DocumentGet = Body(
+        ..., description="Filtering options for the documents list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """Get all of the Documents in a Collection"""
@@ -80,7 +84,9 @@ async def query_documents(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection"),
-    options: schemas.DocumentQuery = Body(..., description="Query parameters for document search"),
+    options: schemas.DocumentQuery = Body(
+        ..., description="Query parameters for document search"
+    ),
     db=db,
 ):
     """Cosine Similarity Search for Documents"""
@@ -115,7 +121,9 @@ async def create_document(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection"),
-    document: schemas.DocumentCreate = Body(..., description="Document creation parameters"),
+    document: schemas.DocumentCreate = Body(
+        ..., description="Document creation parameters"
+    ),
     db=db,
 ):
     """Embed text as a vector and create a Document"""
@@ -147,7 +155,9 @@ async def update_document(
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection"),
     document_id: str = Path(..., description="ID of the document to update"),
-    document: schemas.DocumentUpdate = Body(..., description="Updated document parameters"),
+    document: schemas.DocumentUpdate = Body(
+        ..., description="Updated document parameters"
+    ),
     db=db,
 ):
     """Update the content and/or the metadata of a Document"""

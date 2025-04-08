@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from anthropic import MessageStreamManager
-from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -80,8 +80,12 @@ async def get_session(
 async def get_sessions(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    options: schemas.SessionGet = Body(..., description="Filtering and pagination options for the sessions list"),
-    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
+    options: schemas.SessionGet = Body(
+        ..., description="Filtering and pagination options for the sessions list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """Get All Sessions for a User"""
@@ -106,7 +110,9 @@ async def get_sessions(
 async def create_session(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    session: schemas.SessionCreate = Body(..., description="Session creation parameters"),
+    session: schemas.SessionCreate = Body(
+        ..., description="Session creation parameters"
+    ),
     db=db,
 ):
     """Create a Session for a User"""
@@ -134,7 +140,9 @@ async def update_session(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session to update"),
-    session: schemas.SessionUpdate = Body(..., description="Updated session parameters"),
+    session: schemas.SessionUpdate = Body(
+        ..., description="Updated session parameters"
+    ),
     db=db,
 ):
     """Update the metadata of a Session"""
@@ -252,7 +260,9 @@ async def clone_session(
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session to clone"),
     db=db,
-    message_id: Optional[str] = Query(None, description="Message ID to cut off the clone at"),
+    message_id: Optional[str] = Query(
+        None, description="Message ID to cut off the clone at"
+    ),
     deep_copy: bool = Query(False, description="Whether to deep copy metamessages"),
 ):
     """Clone a session, optionally up to a specific message"""

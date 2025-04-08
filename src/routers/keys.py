@@ -25,8 +25,12 @@ router = APIRouter(
 async def create_key(
     app_id: str | None = Query(None, description="ID of the app to scope the key to"),
     user_id: str | None = Query(None, description="ID of the user to scope the key to"),
-    session_id: str | None = Query(None, description="ID of the session to scope the key to"),
-    collection_id: str | None = Query(None, description="ID of the collection to scope the key to"),
+    session_id: str | None = Query(
+        None, description="ID of the session to scope the key to"
+    ),
+    collection_id: str | None = Query(
+        None, description="ID of the collection to scope the key to"
+    ),
 ):
     """Create a new Key"""
     if not USE_AUTH:

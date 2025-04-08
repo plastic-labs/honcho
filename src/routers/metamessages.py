@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Path, Body
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -15,10 +15,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/metamessages",
     tags=["metamessages"],
-    dependencies=[Depends(require_auth(
-        app_id="app_id",
-        user_id="user_id"
-    ))],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
 )
 
 
@@ -26,7 +23,9 @@ router = APIRouter(
 async def create_metamessage(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    metamessage: schemas.MetamessageCreate = Body(..., description="Metamessage creation parameters"),
+    metamessage: schemas.MetamessageCreate = Body(
+        ..., description="Metamessage creation parameters"
+    ),
     db=db,
 ):
     """
@@ -53,8 +52,12 @@ async def create_metamessage(
 async def get_metamessages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    options: schemas.MetamessageGet = Body(..., description="Filtering options for the metamessages list"),
-    reverse: Optional[bool] = Query(False, description="Whether to reverse the order of results"),
+    options: schemas.MetamessageGet = Body(
+        ..., description="Filtering options for the metamessages list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """
@@ -117,7 +120,9 @@ async def update_metamessage(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     metamessage_id: str = Path(..., description="ID of the metamessage to update"),
-    metamessage: schemas.MetamessageUpdate = Body(..., description="Updated metamessage parameters"),
+    metamessage: schemas.MetamessageUpdate = Body(
+        ..., description="Updated metamessage parameters"
+    ),
     db=db,
 ):
     """Update a metamessage's metadata, type, or relationships"""
