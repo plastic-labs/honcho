@@ -24,6 +24,8 @@ from src.utils.model_client import ModelClient, ModelProvider
 # Configure logging
 logger = logging.getLogger(__name__)
 
+USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
+
 DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
 DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
 
@@ -64,7 +66,7 @@ class Dialectic:
         self.user_representation = user_representation
         self.chat_history = chat_history
         self.client = ModelClient(
-            provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219"
+            provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
         self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
 
@@ -460,7 +462,7 @@ async def generate_user_representation(
             )
             .join(models.Session, models.Message.session_id == models.Session.public_id)
             .where(models.Session.public_id == session_id)  # Only from the same session
-            .where(models.Metamessage.metamessage_type == "user_representation")
+            .where(models.Metamessage.metamessage_type == USER_REPRESENTATION_METAMESSAGE_TYPE)
             .order_by(models.Metamessage.id.desc())
             .limit(1)
         )
@@ -505,9 +507,7 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
 """
     logger.debug(f"Representation: {representation}")
     # If message_id is provided, save the representation as a metamessage
-    if message_id is None:
-        logger.debug("No message_id provided, skipping save")
-    elif not representation:
+    if not representation:
         logger.debug("Empty representation, skipping save")
     else:
         logger.debug(f"Saving representation to message_id: {message_id}")
@@ -523,13 +523,13 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
                     message_exists = message_check.scalar_one_or_none() is not None
 
                     if not message_exists:
-                        logger.error(f"Message with ID {message_id} does not exist")
+                        message_id = None
                     else:
                         metamessage = models.Metamessage(
                             user_id=user_id,
                             session_id=session_id,
-                            message_id=message_id,
-                            metamessage_type="user_representation",
+                            message_id=message_id if message_id else None,
+                            metamessage_type=USER_REPRESENTATION_METAMESSAGE_TYPE,
                             content=representation,
                             h_metadata={},
                         )
