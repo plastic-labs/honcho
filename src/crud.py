@@ -168,15 +168,6 @@ async def update_app(
         ) from e
 
 
-# def delete_app(db: AsyncSession, app_id: str) -> bool:
-#     existing_app = get_app(db, app_id)
-#     if existing_app is None:
-#         return False
-#     db.delete(existing_app)
-#     db.commit()
-#     return True
-
-
 ########################################################
 # user methods
 ########################################################
@@ -329,14 +320,6 @@ async def update_user(
             "User update failed - unique constraint violation"
         ) from e
 
-
-# def delete_user(db: AsyncSession, app_id: str, user_id: str) -> bool:
-#     existing_user = get_user(db, app_id, user_id)
-#     if existing_user is None:
-#         return False
-#     db.delete(existing_user)
-#     db.commit()
-#     return True
 
 ########################################################
 # session methods
@@ -1268,6 +1251,14 @@ async def delete_collection(
             db, app_id=app_id, user_id=user_id, collection_id=collection_id
         )
 
+        if honcho_collection.name == "honcho":
+            logger.warning(
+                f"Attempted to delete collection with reserved name 'honcho' for user {user_id}"
+            )
+            raise ValidationException(
+                "Invalid collection configuration - 'honcho' is a reserved name"
+            )
+
         await db.delete(honcho_collection)
         await db.commit()
         logger.info(f"Collection {collection_id} deleted successfully")
@@ -1499,7 +1490,6 @@ async def update_document(
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
     await db.commit()
-    # await db.refresh(honcho_document)
     return honcho_document
 
 
@@ -1510,6 +1500,18 @@ async def delete_document(
     collection_id: str,
     document_id: str,
 ) -> bool:
+    honcho_collection = await get_collection_by_id(
+        db, app_id=app_id, collection_id=collection_id, user_id=user_id
+    )
+    if honcho_collection is None:
+        raise ResourceNotFoundException("Collection or Document not found")
+    if honcho_collection.name == "honcho":
+        logger.warning(
+            f"Attempted to delete collection with reserved name 'honcho' for user {user_id}"
+        )
+        raise ValidationException(
+            "Cannot delete collection with reserved name 'honcho'"
+        )
     stmt = (
         select(models.Document)
         .join(

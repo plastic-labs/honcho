@@ -1,3 +1,4 @@
+import pytest
 from nanoid import generate as generate_nanoid
 
 
@@ -130,3 +131,55 @@ def test_delete_collection(client, sample_data) -> None:
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={data['id']}"
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cannot_delete_honcho_collection(client, sample_data, db_session) -> None:
+    test_app, test_user = sample_data
+    # Make the protected "honcho" collection
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": "honcho", "metadata": {}},
+    )
+    assert response.status_code == 422  # Should get validation error when trying to create
+
+    # Try to create it directly through API to test delete protection
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
+        json={"name": "test_collection", "metadata": {}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    collection_id = data["id"]
+    
+    # Update the collection to have the reserved name
+    response = client.put(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}",
+        json={"name": "honcho", "metadata": {}},
+    )
+    assert response.status_code == 422  # Should get validation error
+    
+    # Create the protected collection using the internal method directly with db_session
+    from src.crud import create_user_protected_collection
+    
+    # Create the protected collection
+    honcho_collection = await create_user_protected_collection(
+        db_session, app_id=test_app.public_id, user_id=test_user.public_id
+    )
+    await db_session.flush()
+    
+    # Get the protected collection
+    response = client.get(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/name/honcho"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["name"] == "honcho"
+    protected_id = data["id"]
+    
+    # Try to delete the protected collection
+    response = client.delete(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{protected_id}"
+    )
+    assert response.status_code == 422  # Should get validation error
+    assert "reserved name" in response.json()["detail"].lower()
