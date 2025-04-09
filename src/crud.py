@@ -806,19 +806,18 @@ async def update_message(
 
 async def create_metamessage(
     db: AsyncSession,
+    user_id: str,
     metamessage: schemas.MetamessageCreate,
     app_id: str,
 ):
     # Validate user exists
-    user = await get_user(db, app_id=app_id, user_id=metamessage.user_id)
+    user = await get_user(db, app_id=app_id, user_id=user_id)
     if user is None:
-        raise ResourceNotFoundException(
-            f"User with ID '{metamessage.user_id}' not found"
-        )
+        raise ResourceNotFoundException(f"User with ID '{user_id}' not found")
 
     # Initialize metamessage data
     metamessage_data = {
-        "user_id": metamessage.user_id,
+        "user_id": user_id,
         "metamessage_type": metamessage.metamessage_type,
         "content": metamessage.content,
         "h_metadata": metamessage.metadata,
@@ -829,7 +828,7 @@ async def create_metamessage(
         session = await get_session(
             db,
             app_id=app_id,
-            user_id=metamessage.user_id,
+            user_id=user_id,
             session_id=metamessage.session_id,
         )
         if session is None:
@@ -844,7 +843,7 @@ async def create_metamessage(
                 db,
                 app_id=app_id,
                 session_id=metamessage.session_id,
-                user_id=metamessage.user_id,
+                user_id=user_id,
                 message_id=metamessage.message_id,
             )
             if message is None:
@@ -938,11 +937,12 @@ async def update_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageUpdate,
     app_id: str,
+    user_id: str,
     metamessage_id: str,
 ) -> bool:
     # First retrieve the metamessage
     metamessage_obj = await get_metamessage(
-        db, app_id=app_id, user_id=metamessage.user_id, metamessage_id=metamessage_id
+        db, app_id=app_id, user_id=user_id, metamessage_id=metamessage_id
     )
     if metamessage_obj is None:
         raise ResourceNotFoundException(

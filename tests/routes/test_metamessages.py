@@ -279,7 +279,6 @@ async def test_update_metamessage(client, db_session, sample_data):
     response = client.put(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/{test_metamessage.public_id}",
         json={
-            "user_id": str(test_user.public_id),
             "metadata": {"new_key": "new_value"},
             "metamessage_type": "updated_type",
         },

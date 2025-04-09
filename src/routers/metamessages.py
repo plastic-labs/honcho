@@ -33,11 +33,9 @@ async def create_metamessage(
     Optionally link to a session and message by providing those IDs in the request body.
     """
     try:
-        # Set the user_id from the URL parameters
-        metamessage.user_id = user_id
-
         metamessage_obj = await crud.create_metamessage(
             db,
+            user_id=user_id,
             metamessage=metamessage,
             app_id=app_id,
         )
@@ -70,7 +68,6 @@ async def get_metamessages(
     - Filter by metadata: Provide filter object
     """
     try:
-        # Use user_id from URL path
         metamessages_query = await crud.get_metamessages(
             db,
             app_id=app_id,
@@ -126,14 +123,12 @@ async def update_metamessage(
     db=db,
 ):
     """Update a metamessage's metadata, type, or relationships"""
-    # Ensure user_id from URL path is used
-    metamessage.user_id = user_id
-
     try:
         updated_metamessage = await crud.update_metamessage(
             db,
             metamessage=metamessage,
             app_id=app_id,
+            user_id=user_id,
             metamessage_id=metamessage_id,
         )
         logger.info(f"Metamessage {metamessage_id} updated successfully")
