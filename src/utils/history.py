@@ -27,7 +27,7 @@ __all__ = [
 
 
 # Configuration constants for summaries
-MESSAGES_PER_SHORT_SUMMARY = 30 # How often to create short summaries
+MESSAGES_PER_SHORT_SUMMARY = 20 # How often to create short summaries
 MESSAGES_PER_LONG_SUMMARY = 60  # How often to create long summaries
 
 # The types of metamessages to use for summaries
