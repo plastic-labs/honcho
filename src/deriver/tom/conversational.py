@@ -15,7 +15,7 @@ anthropic = Anthropic(
 
 
 @ai_track("Tom Inference")
-@observe(as_type="generation")
+@observe()
 async def get_tom_inference_conversational(
     chat_history: str, session_id: str, user_representation: str = "None"
 ) -> str:
@@ -81,7 +81,7 @@ async def get_tom_inference_conversational(
 
 
 @ai_track("User Representation")
-@observe(as_type="generation")
+@observe()
 async def get_user_representation_conversational(
     chat_history: str,
     session_id: str,

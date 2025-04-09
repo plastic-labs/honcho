@@ -102,7 +102,7 @@ UPDATES:
 
 
 @ai_track("Tom Inference")
-@observe(as_type="generation")
+@observe()
 async def get_tom_inference_single_prompt(
     chat_history: str,
     session_id: str,
@@ -150,7 +150,7 @@ async def get_tom_inference_single_prompt(
 
 
 @ai_track("User Representation")
-@observe(as_type="generation")
+@observe()
 async def get_user_representation_single_prompt(
     chat_history: str,
     session_id: str,
