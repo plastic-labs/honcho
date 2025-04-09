@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Deriver & Dialectic API to use Hybrid Memory Architecture
 - Metamessages are not strictly tied to a message
 - Database provisioning is a separate script instead of happening on startup
+- Consolidated `session/chat` and `session/chat/stream` endpoints
 
 ## [0.0.16]
 
