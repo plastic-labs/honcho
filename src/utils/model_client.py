@@ -10,7 +10,9 @@ import sentry_sdk
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
-from openai import AsyncOpenAI
+
+# from openai import AsyncOpenAI
+from langfuse.openai import AsyncOpenAI
 
 # Load environment variables
 load_dotenv()
@@ -108,7 +110,6 @@ class ModelClient:
         # For now, just return a dictionary that works with both Anthropic and OpenAI
         return {"role": role, "content": content}
 
-    @observe(as_type="generation")
     async def generate(
         self,
         messages: list[dict[str, Any]],
@@ -156,6 +157,7 @@ class ModelClient:
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
 
+    @observe(as_type="generation")
     async def _generate_anthropic(
         self,
         messages: list[dict[str, Any]],
@@ -200,6 +202,7 @@ class ModelClient:
             return str(content_block)
         return ""
 
+    @observe(as_type="generation")
     async def _generate_openai(
         self,
         messages: list[dict[str, str]],

@@ -81,7 +81,7 @@ async def process_item(db: AsyncSession, payload: dict):
 
 
 @sentry_sdk.trace
-@observe()
+# @observe()
 async def process_ai_message(
     content: str,
     app_id: str,
@@ -129,7 +129,9 @@ async def process_user_message(
 
     # Save the facts to the collection
     logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
-    collection = await crud.get_collection_by_name(db, app_id, user_id, "honcho")
+    collection = await crud.get_or_create_user_protected_collection(
+        db=db, app_id=app_id, user_id=user_id
+    )
     embedding_store = CollectionEmbeddingStore(
         db=db,
         app_id=app_id,

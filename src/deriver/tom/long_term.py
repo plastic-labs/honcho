@@ -25,7 +25,7 @@ MAX_FACT_DISTANCE = 0.85
 
 
 @ai_track("User Representation")
-@observe(as_type="generation")
+@observe()
 async def get_user_representation_long_term(
     chat_history: str,
     session_id: str,
@@ -118,7 +118,7 @@ UPDATES:
 
 
 @ai_track("Fact Extraction")
-@observe(as_type="generation")
+@observe()
 async def extract_facts_long_term(chat_history: str) -> list[str]:
     logger.debug("Starting fact extraction from chat history")
     extract_start = time.time()

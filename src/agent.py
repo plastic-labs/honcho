@@ -69,7 +69,7 @@ class Dialectic:
         self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
 
     @ai_track("Dialectic Call")
-    @observe(as_type="generation")
+    @observe()
     async def call(self):
         with sentry_sdk.start_transaction(
             op="dialectic-inference", name="Dialectic API Response"
@@ -107,7 +107,7 @@ class Dialectic:
             return [{"text": response}]
 
     @ai_track("Dialectic Call")
-    @observe(as_type="generation")
+    @observe()
     async def stream(self):
         with sentry_sdk.start_transaction(
             op="dialectic-inference", name="Dialectic API Response"
@@ -553,6 +553,8 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
                         logger.error(f"Message with ID {message_id} does not exist")
                     else:
                         metamessage = models.Metamessage(
+                            user_id=user_id,
+                            session_id=session_id,
                             message_id=message_id,
                             metamessage_type="user_representation",
                             content=representation,
