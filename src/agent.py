@@ -18,7 +18,7 @@ from src.db import SessionLocal
 from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
-from src.utils import parse_xml_content
+from src.utils import history, parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 
 # Configure logging
@@ -144,35 +144,6 @@ class Dialectic:
             return stream
 
 
-async def get_chat_history(app_id: str, user_id: str, session_id: str) -> str:
-    logger.debug(f"Retrieving chat history for session {session_id}")
-    async with SessionLocal() as db:
-        stmt = await crud.get_messages(db, app_id, user_id, session_id)
-        results = await db.execute(stmt)
-        messages = results.scalars().all()
-
-        if not messages:
-            logger.debug(f"No messages found for session {session_id}")
-            return ""
-
-        logger.debug(f"Found {len(messages)} messages for session {session_id}")
-        history = ""
-        user_count = 0
-        assistant_count = 0
-
-        for message in messages:
-            if message.is_user:
-                user_count += 1
-                history += f"user:{message.content}\n"
-            else:
-                assistant_count += 1
-                history += f"assistant:{message.content}\n"
-
-        logger.debug(
-            f"Constructed history with {user_count} user messages and {assistant_count} assistant messages"
-        )
-        return history
-
 
 @observe()
 async def chat(
@@ -240,18 +211,18 @@ async def chat(
         logger.debug(f"Latest user message ID: {latest_message_id}")
 
         # Get chat history for the session
-        history = await get_chat_history(app_id, user_id, session_id)
-        if not history:
+        chat_history, _, _ = await history.get_summarized_history(db, session_id, summary_type=history.SummaryType.SHORT)
+        if not chat_history:
             logger.warning(f"No chat history found for session {session_id}")
-            history = f"someone asked this about the user's message: {final_query}"
+            chat_history = f"someone asked this about the user's message: {final_query}"
         logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
-        message_count = len(history.split("\n"))
+        message_count = len(chat_history.split("\n"))
         logger.debug(f"Retrieved chat history: {message_count} messages")
 
         # Run both long-term and short-term context retrieval concurrently
         logger.debug("Starting parallel tasks for context retrieval")
         long_term_task = get_long_term_facts(final_query, embedding_store)
-        short_term_task = run_tom_inference(history, session_id)
+        short_term_task = run_tom_inference(chat_history, session_id)
 
         # Wait for both tasks to complete
         facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
@@ -264,7 +235,7 @@ async def chat(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
-            chat_history=history,
+            chat_history=chat_history,
             tom_inference=tom_inference,
             facts=facts,
             embedding_store=embedding_store,
@@ -280,7 +251,7 @@ async def chat(
     chain = Dialectic(
         agent_input=final_query,
         user_representation=user_representation,
-        chat_history=history,
+        chat_history=chat_history,
     )
 
     generation_time = asyncio.get_event_loop().time() - start_time
