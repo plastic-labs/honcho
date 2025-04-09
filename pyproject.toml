@@ -52,7 +52,7 @@ select = [
     # isort
     "I",
 ]
-ignore = ["E501"]
+ignore = ["E501", "B008"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]

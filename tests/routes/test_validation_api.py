@@ -374,25 +374,25 @@ def test_session_validations_api(client, sample_data):
 
 def test_agent_query_validations_api(client, sample_data, monkeypatch):
     # Mock the functions in agent.py that are causing the database issues
-    
+
     # Create a mock collection with a public_id
     class MockCollection:
         def __init__(self):
             self.public_id = "mock_collection_id"
-    
+
     # Mock collection retrieval/creation function
     async def mock_get_or_create_collection(*args, **kwargs):
         return MockCollection()
-        
+
     async def mock_chat_history(*args, **kwargs):
         return "Mock chat history"
-        
+
     async def mock_get_long_term_facts(*args, **kwargs):
         return ["Mock fact 1", "Mock fact 2"]
-        
+
     async def mock_run_tom_inference(*args, **kwargs):
         return "Mock TOM inference"
-        
+
     async def mock_generate_user_representation(*args, **kwargs):
         return "Mock user representation"
 
@@ -418,11 +418,16 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         return MockStream()
 
     # Apply the monkeypatches
-    monkeypatch.setattr("src.crud.get_or_create_user_protected_collection", mock_get_or_create_collection)
+    monkeypatch.setattr(
+        "src.crud.get_or_create_user_protected_collection",
+        mock_get_or_create_collection,
+    )
     monkeypatch.setattr("src.agent.get_chat_history", mock_chat_history)
     monkeypatch.setattr("src.agent.get_long_term_facts", mock_get_long_term_facts)
     monkeypatch.setattr("src.agent.run_tom_inference", mock_run_tom_inference)
-    monkeypatch.setattr("src.agent.generate_user_representation", mock_generate_user_representation)
+    monkeypatch.setattr(
+        "src.agent.generate_user_representation", mock_generate_user_representation
+    )
     monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
     monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
 

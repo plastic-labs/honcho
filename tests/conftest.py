@@ -1,9 +1,8 @@
 import logging  # noqa: I001
 import os
-import sys
 import jwt
 from nanoid import generate as generate_nanoid
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 import pytest_asyncio
@@ -23,28 +22,35 @@ from src.exceptions import HonchoException
 from src.security import create_admin_jwt, create_jwt, JWTParams
 from src.main import app
 
+
 # Create a custom handler that doesn't get closed prematurely
 class TestHandler(logging.Handler):
     def __init__(self):
         super().__init__()
         self.records = []
-    
+
     def emit(self, record):
         self.records.append(record)
+
 
 # Setup logging with our custom handler
 test_handler = TestHandler()
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[test_handler]
+    handlers=[test_handler],
 )
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 # Test database URL
 # TODO use environment variable
-CONNECTION_URI = make_url(os.getenv("CONNECTION_URI", "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"))
+CONNECTION_URI = make_url(
+    os.getenv(
+        "CONNECTION_URI",
+        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
+    )
+)
 TEST_DB_URL = CONNECTION_URI.set(database="test_db")
 DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
@@ -215,24 +221,36 @@ async def sample_data(db_session):
 @pytest.fixture(autouse=True)
 def mock_langfuse():
     """Mock Langfuse decorator and context during tests"""
-    with patch("langfuse.decorators.observe") as mock_observe, \
-         patch("langfuse.decorators.langfuse_context") as mock_context:
+    with (
+        patch("langfuse.decorators.observe") as mock_observe,
+        patch("langfuse.decorators.langfuse_context") as mock_context,
+    ):
         # Mock the decorator to just return the function
         mock_observe.return_value = lambda func: func
-        
+
         # Mock the context object
         mock_context_obj = MagicMock()
         mock_context_obj.update_current_observation = MagicMock()
         mock_context_obj.update_current_trace = MagicMock()
         mock_context.return_value = mock_context_obj
-        
+
         # Disable httpx logging during tests
         logging.getLogger("httpx").setLevel(logging.WARNING)
-        
+
         yield
-        
+
         # Clean up logging handlers
         for handler in logging.getLogger().handlers[:]:
             if isinstance(handler, TestHandler):
                 handler.close()
                 logging.getLogger().removeHandler(handler)
+
+
+@pytest.fixture(autouse=True)
+def mock_openai_embeddings():
+    """Mock OpenAI embeddings API calls for testing"""
+    with patch("src.crud.openai_client.embeddings.create") as mock_create:
+        mock_response = AsyncMock()
+        mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
+        mock_create.return_value = mock_response
+        yield mock_create

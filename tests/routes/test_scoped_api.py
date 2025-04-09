@@ -72,7 +72,7 @@ def test_get_app_by_id_with_auth(auth_client, sample_data):
             f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
         )
 
-    response = auth_client.get(f"/v1/apps/{test_app.public_id}")
+    response = auth_client.get(f"/v1/apps?app_id={test_app.public_id}")
 
     # Admin JWT or JWT with matching app_id should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
@@ -198,7 +198,7 @@ def test_get_user_by_id_with_auth(auth_client, sample_data):
         )
 
     response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}"
+        f"/v1/apps/{test_app.public_id}/users?user_id={test_user.public_id}"
     )
 
     # Admin JWT or JWT with matching app_id should be allowed
@@ -214,10 +214,18 @@ def test_get_user_by_id_with_auth(auth_client, sample_data):
         )
 
         response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}"
+            f"/v1/apps/{test_app.public_id}/users?user_id={test_user.public_id}"
         )
 
         assert response.status_code == 200
+
+        response2 = auth_client.get(f"/v1/apps/{test_app.public_id}/users")
+
+        assert response2.status_code == 200
+
+        print(response2.json())
+
+        assert response2.json()["id"] == test_user.public_id
 
 
 def test_get_user_by_name_with_auth(auth_client, sample_data):
@@ -335,20 +343,81 @@ def test_get_session_by_id_with_auth(auth_client, sample_data):
 
     # Test with app and user scoped JWT
     response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}"
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
     )
     assert response.status_code == 200
 
-    # Test with session-scoped JWT
     if auth_client.auth_type == "empty":
+        # Test with session-scoped JWT
         auth_client.headers["Authorization"] = (
             f"Bearer {create_jwt(JWTParams(se=session_id))}"
         )
 
         response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}"
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
         )
         assert response.status_code == 200
+
+        response = auth_client.get(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
+        )
+
+        assert response.status_code == 200
+
+        assert response.json()["id"] == session_id
+
+        # Test with wrong session_id (should be 401 since we have a session-scoped JWT)
+        assert (
+            auth_client.get(
+                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={generate_nanoid()}"
+            ).status_code
+            == 401
+        )
+
+        # Test with user-scoped JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+        )
+
+        assert (
+            auth_client.get(
+                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
+            ).status_code
+            == 200
+        )
+        assert (
+            auth_client.get(
+                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
+            ).status_code
+            == 401
+        )
+
+        # Test with app-scoped JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+        )
+
+        assert (
+            auth_client.get(
+                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
+            ).status_code
+            == 200
+        )
+
+        assert (
+            auth_client.get(
+                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
+            ).status_code
+            == 401
+        )
+
+        # Test with wrong session_id (should be 404 since we have an app-scoped JWT)
+        assert (
+            auth_client.get(
+                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={generate_nanoid()}"
+            ).status_code
+            == 404
+        )
 
 
 def test_create_collection(auth_client, sample_data) -> None:
@@ -421,7 +490,7 @@ def test_get_collection_by_id_with_auth(auth_client, sample_data) -> None:
 
     # Test with app and user scoped JWT
     response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}"
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={collection_id}"
     )
     assert response.status_code == 200
 
@@ -432,9 +501,16 @@ def test_get_collection_by_id_with_auth(auth_client, sample_data) -> None:
         )
 
         response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}"
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={collection_id}"
         )
         assert response.status_code == 200
+
+        # Test auto resolution of ID
+        response2 = auth_client.get(
+            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections"
+        )
+        assert response2.status_code == 200
+        assert response2.json()["id"] == collection_id
 
 
 def test_get_collection_by_name_with_auth(auth_client, sample_data) -> None:

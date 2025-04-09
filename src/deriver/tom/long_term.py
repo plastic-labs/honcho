@@ -23,14 +23,15 @@ USER_REPRESENTATION_MODEL = "llama-3.3-70b-versatile"
 
 MAX_FACT_DISTANCE = 0.85
 
+
 @ai_track("User Representation")
 @observe(as_type="generation")
 async def get_user_representation_long_term(
-    chat_history: str, 
+    chat_history: str,
     session_id: str,
     embedding_store: CollectionEmbeddingStore,
-    user_representation: str = "None", 
-    tom_inference: str = "None", 
+    user_representation: str = "None",
+    tom_inference: str = "None",
     facts: Optional[list[str]] = None,
 ) -> str:
     if facts is None:
@@ -88,21 +89,25 @@ UPDATES:
     if user_representation != "None":
         context_str += f"EXISTING USER REPRESENTATION - INCOMPLETE, TO BE UPDATED:\n{user_representation}"
 
-    messages = [{
-        "role": "user",
-        "content": f"Please analyze this information and provide an updated user representation. DO NOT generate persistent information - it will be injected separately:\n{context_str}"
-    }]
+    messages = [
+        {
+            "role": "user",
+            "content": f"Please analyze this information and provide an updated user representation. DO NOT generate persistent information - it will be injected separately:\n{context_str}",
+        }
+    ]
 
     # Create a new model client
-    client = ModelClient(provider=USER_REPRESENTATION_PROVIDER, model=USER_REPRESENTATION_MODEL)
-    
+    client = ModelClient(
+        provider=USER_REPRESENTATION_PROVIDER, model=USER_REPRESENTATION_MODEL
+    )
+
     # Generate the response with caching enabled
     response = await client.generate(
         messages=messages,
         system=system_prompt,
         max_tokens=1000,
         temperature=0,
-        use_caching=True  # Enable caching for the system prompt
+        use_caching=True,  # Enable caching for the system prompt
     )
 
     # Inject the facts into the response
@@ -117,7 +122,7 @@ UPDATES:
 async def extract_facts_long_term(chat_history: str) -> list[str]:
     logger.debug("Starting fact extraction from chat history")
     extract_start = time.time()
-    
+
     system_prompt = """
     You are an AI assistant specialized in extracting and formatting relevant information about users from conversations. Your task is to analyze a given conversation and create a list of concise, factual statements about the user. These statements will be stored in a vector embedding database to enhance future interactions.
 
@@ -175,30 +180,25 @@ Example of the expected output format:
 Remember to focus on clear, concise statements that capture key information about the user. Each fact should be worded in a way that will aid its semantic retrieval from a vector embedding database. It's OK for this section to be quite long.
     """
     message = system_prompt.format(chat_history=chat_history)
-    messages = [
-        {
-            "role": "user",
-            "content": message
-        }
-    ]
-    
+    messages = [{"role": "user", "content": message}]
+
     logger.debug("Calling LLM for fact extraction")
     llm_start = time.time()
-    
+
     # Create a new model client
     client = ModelClient(provider=FACT_EXTRACTION_PROVIDER, model=FACT_EXTRACTION_MODEL)
-    
+
     # Generate the response with caching enabled
     response = await client.generate(
         messages=messages,
         max_tokens=1000,
         temperature=0.0,
-        use_caching=True  # Enable caching for the system prompt
+        use_caching=True,  # Enable caching for the system prompt
     )
-    
+
     llm_time = time.time() - llm_start
     logger.debug(f"LLM response received in {llm_time:.2f}s")
-    
+
     try:
         logger.debug("Parsing JSON response")
         facts_str = parse_xml_content(response, "facts")
@@ -210,7 +210,7 @@ Remember to focus on clear, concise statements that capture key information abou
     except (json.JSONDecodeError, KeyError) as e:
         logger.error(f"Error parsing response: {str(e)}")
         facts = []
-    
+
     total_time = time.time() - extract_start
     logger.debug(f"Total extraction completed in {total_time:.2f}s")
     return facts

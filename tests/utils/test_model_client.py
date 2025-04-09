@@ -189,4 +189,3 @@ async def test_generate_with_caching(mock_anthropic_client, mock_anthropic_respo
     assert call_args["system"] == [
         {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
     ]
-

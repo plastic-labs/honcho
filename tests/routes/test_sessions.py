@@ -118,7 +118,7 @@ async def test_delete_session(client, db_session, sample_data):
     )
     assert response.status_code == 200
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}"
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={test_session.public_id}"
     )
     data = response.json()
     assert data["is_active"] is False
