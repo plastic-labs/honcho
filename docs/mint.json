@@ -65,7 +65,7 @@
     },
     {
       "group": "Application Interfaces",
-      "pages": ["guides/discord"]
+      "pages": ["guides/discord", "guides/honcho-mcp"]
     },
     {
       "group": "Personal Memory",
