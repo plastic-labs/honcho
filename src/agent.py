@@ -135,8 +135,6 @@ class Dialectic:
             stream = await self.client.stream(
                 messages=[message], system=self.system_prompt, max_tokens=1000
             )
-            logger.info(stream)
-            logger.info(type(stream))
 
             stream_setup_time = asyncio.get_event_loop().time() - model_start
             logger.debug(f"Stream started in {stream_setup_time:.2f}s")

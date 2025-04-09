@@ -110,6 +110,7 @@ class ModelClient:
         # For now, just return a dictionary that works with both Anthropic and OpenAI
         return {"role": role, "content": content}
 
+    @observe()
     async def generate(
         self,
         messages: list[dict[str, Any]],
@@ -191,6 +192,8 @@ class ModelClient:
             else:
                 params["system"] = system
 
+        langfuse_context.update_current_observation(input=messages, model=self.model)
+
         response = await self.client.messages.create(**params)
 
         # Extract the text from the response
@@ -238,7 +241,7 @@ class ModelClient:
             return choice.message.content
         return ""
 
-    @observe(as_type="generation")
+    @observe()
     async def stream(
         self,
         messages: list[dict[str, Any]],
@@ -286,6 +289,7 @@ class ModelClient:
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
 
+    @observe(as_type="generation")
     async def _stream_anthropic(
         self,
         messages: list[dict[str, Any]],
@@ -319,9 +323,12 @@ class ModelClient:
             else:
                 params["system"] = system
 
+        langfuse_context.update_current_observation(input=messages, model=self.model)
+
         # Return the stream directly without awaiting it
         return self.client.messages.stream(**params)
 
+    @observe(as_type="generation")
     async def _stream_openai(
         self,
         messages: list[dict[str, str]],
