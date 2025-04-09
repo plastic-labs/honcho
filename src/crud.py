@@ -931,8 +931,7 @@ async def get_metamessage(
         stmt = stmt.where(models.Metamessage.message_id == message_id)
 
     result = await db.execute(stmt)
-    metamessage = result.scalar_one_or_none()
-    return metamessage
+    return result.scalar_one_or_none()
 
 
 async def update_metamessage(

@@ -17,8 +17,6 @@ router = APIRouter(
     tags=["apps"],
 )
 
-# jwt_params = Depends(require_auth(app_id="app_id"))
-
 
 @router.get("", response_model=schemas.App)
 async def get_app(
