@@ -51,6 +51,7 @@ async def process_item(db: AsyncSession, payload: dict):
         logger.debug(f"Processing AI message: {payload['message_id']}")
         await process_ai_message(*processing_args)
     logger.debug(f"Finished processing message: {payload['message_id']}")
+    await summarize_if_needed(db, payload["session_id"], payload["user_id"], payload["message_id"])
     return
 
 
@@ -134,7 +135,11 @@ async def process_user_message(
 
     console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
 
-    # Check if we should create summaries for this session
+    total_time = os.times()[4] - process_start
+    logger.debug(f"Total processing time: {total_time:.2f}s")
+
+
+async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, message_id: str):
     summary_start = os.times()[4]
     logger.debug("Checking if summaries should be created")
     
@@ -157,6 +162,7 @@ async def process_user_message(
             try:
                 # Get previous long summary context if available
                 previous_long_summary = latest_long_summary.content if latest_long_summary else None
+                print(f'creating long summary with previous_long_summary: {previous_long_summary}')
                 
                 # Create a new long summary
                 long_summary_text = await history.create_summary(
@@ -164,7 +170,7 @@ async def process_user_message(
                     previous_summary=previous_long_summary,
                     summary_type=history.SummaryType.LONG
                 )
-                
+                print(f'created long summary: {long_summary_text}')
                 # Save the long summary as a metamessage and capture the returned object
                 latest_long_summary = await history.save_summary_metamessage(
                     db=db,
@@ -184,16 +190,15 @@ async def process_user_message(
         # STEP 4: Now create the short summary, using the latest long summary for context if available
         logger.debug(f"Creating new short summary covering {len(short_messages)} messages")
         try:
-            
             previous_summary = latest_long_summary.content if latest_long_summary else None
-            
+            print(f'creating short summary with previous_summary: {previous_summary}')
             # Create a new short summary
             short_summary_text = await history.create_summary(
                 messages=short_messages,
                 previous_summary=previous_summary,
                 summary_type=history.SummaryType.SHORT
             )
-            
+            print(f'created short summary: {short_summary_text}')
             # Save the short summary as a metamessage
             await history.save_summary_metamessage(
                 db=db,
@@ -212,6 +217,3 @@ async def process_user_message(
     
     summary_time = os.times()[4] - summary_start
     logger.debug(f"Summary check completed in {summary_time:.2f}s")
-
-    total_time = os.times()[4] - process_start
-    logger.debug(f"Total processing time: {total_time:.2f}s")

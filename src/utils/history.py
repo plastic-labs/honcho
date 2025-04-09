@@ -27,8 +27,8 @@ __all__ = [
 
 
 # Configuration constants for summaries
-MESSAGES_PER_SHORT_SUMMARY = 4 # How often to create short summaries
-MESSAGES_PER_LONG_SUMMARY = 8  # How often to create long summaries
+MESSAGES_PER_SHORT_SUMMARY = 30 # How often to create short summaries
+MESSAGES_PER_LONG_SUMMARY = 60  # How often to create long summaries
 
 # The types of metamessages to use for summaries
 class SummaryType(Enum):
@@ -149,6 +149,8 @@ Focus on capturing:
 5. User's apparent emotional state and personality traits
 6. Important themes and patterns across the conversation
 
+It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
+
 Provide a thorough and detailed summary that captures the essence of the conversation.
 Your summary should serve as a comprehensive record of the important information in this conversation.
 
@@ -162,6 +164,8 @@ Focus on capturing:
 4. Core topics discussed
 5. User's apparent emotional state
 
+It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
+
 Provide a concise, factual summary that captures the essence of the conversation.
 Your summary should be detailed enough to serve as context for future messages,
 but brief enough to be helpful.
@@ -172,7 +176,9 @@ Return only the summary without any explanation or meta-commentary."""
     if previous_summary:
         user_prompt = f"""Here is a previous summary of the conversation:
 {previous_summary}
-Now please summarize these additional messages, incorporating the context from the previous summary:
+Now please summarize these additional messages, incorporating the context from the previous summary.
+
+Your summary should summarize the entire conversation in a self-contained way, such that someone could read it and understand the entire conversation.
 {conversation}
 Provide a {'comprehensive' if summary_type == SummaryType.LONG else 'concise'} summary that captures both the previous context and the new information."""
     else:
