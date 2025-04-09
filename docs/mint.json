@@ -68,10 +68,6 @@
       "pages": ["guides/discord"]
     },
     {
-      "group": "Integrations",
-      "pages": ["guides/langchain"]
-    },
-    {
       "group": "Personal Memory",
       "pages": ["guides/simple-memory", "guides/dialectic-endpoint"]
     },

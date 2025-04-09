@@ -4,22 +4,24 @@ description: 'Learn the core primitives and the structure of Honcho'
 icon: 'building'
 ---
 
-Honcho is a user context management system for AI powered applications. It is
-inspired by but not a 1:1 mapping of the OpenAI Assistants API. While we are
-building many similar primitives, we are going about it differently. 
+Honcho is a user context management system for AI powered applications. 
+The storage concepts are inspired by, but not a 1:1 mapping of, the OpenAI 
+Assistants API. The insights concepts are inspired by cognitive science, 
+philosophy, and machine learning.
 
 Honcho is open source. We believe trust and transparency are vital for
 developing AI technology. We're also focused on using and supporting existing
 tools rather than developing from scratch.
 
-One of the main objectives of the Honcho project is to promote community
-exploration of *user models*. Language models are highly capable of modeling
-human psychology. By building a data management framework that is user-centric,
-we aim to address not only practical application development issues (like
-scaling, statefulness, etc.) but also kickstart exploration of the design space
-of what's possible in terms of building user models. You can read more about
-Honcho's origin, inspiration and philosophy on our
-[blog](https://blog.plasticlabs.ai).
+We focus on flexible, user-centric storage primitives to promote community 
+exploration of novel memory frameworks and the usage of the 
+[Dialectic API](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API) 
+to support them. Language models are highly capable of modeling human psychology. 
+By building a data management framework that is user-centric, we aim to address 
+not only practical application development issues (like scaling, statefulness, 
+etc.) but also kickstart exploration of the design space of what's possible 
+given access to rich user models. You can read more about Honcho's origin, 
+inspiration and philosophy on our [blog](https://blog.plasticlabs.ai).
 
 ## Core Primitives 
 
@@ -29,11 +31,88 @@ Using Honcho has the following flow:
 3. Create a `Session` for a `User`.
 4. Create a `Collection` for a `User`
 5. Add `Message`s to a `User`'s `Session`.
-6. Add `Metamessage`s to `User`'s `Message`s
+6. Add `Metamessage`s to a `User` (optional links to `Session`, `Message`)
 7. Add `Document`s to a `User`'s `Collection`
 
 
-![DB Schema](../images/db_schema.png)
+```mermaid
+erDiagram
+    App ||--o{ User : "has"
+    User ||--o{ Session : "has"
+    User ||--o{ Collection : "has"
+    User ||--o{ Metamessage : "has"
+    Session ||--o{ Message : "contains"
+    Session ||--o{ Metamessage : "has"
+    Message ||--o{ Metamessage : "has"
+    Collection ||--o{ Document : "contains"
+
+    App {
+        BigInteger id PK
+        string public_id
+        string name
+        datetime created_at
+        jsonb h_metadata "metadata"
+    }
+    
+    User {
+        BigInteger id PK
+        string public_id
+        string name
+        jsonb h_metadata "metadata"
+        datetime created_at
+        string app_id FK
+    }
+    
+    Session {
+        BigInteger id PK
+        string public_id
+        boolean is_active
+        jsonb h_metadata "metadata"
+        datetime created_at
+        string user_id FK
+    }
+    
+    Message {
+        BigInteger id PK
+        string public_id
+        string session_id FK
+        boolean is_user
+        string content
+        jsonb h_metadata "metadata"
+        datetime created_at
+    }
+    
+    Metamessage {
+        BigInteger id PK
+        string public_id
+        string metamessage_type
+        string content
+        string user_id FK
+        string session_id FK "nullable"
+        string message_id FK "nullable"
+        datetime created_at
+        jsonb h_metadata "metadata"
+    }
+    
+    Collection {
+        BigInteger id PK
+        string public_id
+        string name
+        datetime created_at
+        jsonb h_metadata "metadata"
+        string user_id FK
+    }
+    
+    Document {
+        BigInteger id PK
+        string public_id
+        jsonb h_metadata "metadata"
+        string content
+        vector embedding "1536"
+        datetime created_at
+        string collection_id FK
+    }
+```
 
 ### Users
 
@@ -54,9 +133,15 @@ This is pretty straightforward.
 
 ### Metamessages
 
-Plenty of applications have intermediate steps between `User` input and the
-response that gets sent. The `Metamessage` object allows you to store those
-intermediate steps and link them to the users, sessions, or messages they were derived from.
+Success in LLM applications is dependent on elegant context management, so we 
+provide a `Metamessage` object for flexible context storage and construction. Each 
+`Metamessage` is tied to a `User` object via the required `user_id` argument. Keeping 
+this separate from the core user-assistant message history ensures the 
+insights service running ambiently is doing so on authentic ground truth
+We've found this particularly useful for storing intermediate inferences, 
+constructing very specific chat histories, and more. Metamessages can optionally be 
+attached to sessions and/or messages, so constructing historical context for inference is 
+as easy as possible.
 
 ### Collections
 
