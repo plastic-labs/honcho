@@ -93,15 +93,15 @@ app = FastAPI(
     servers=[
         {"url": "http://localhost:8000", "description": "Local Development Server"},
         {"url": "https://demo.honcho.dev", "description": "Demo Server"},
+        {"url": "https://api.honcho.dev", "description": "Production SaaS Platform"},
     ],
     title="Honcho API",
-    summary="An API for adding personalization to AI Apps",
-    description="""This API is used to store data and get insights about users for AI
-    applications""",
+    summary="The Identity Layer for the Agentic World",
+    description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
     version="1.0.0",
     contact={
         "name": "Plastic Labs",
-        "url": "https://plasticlabs.ai",
+        "url": "https://honcho.dev",
         "email": "hello@plasticlabs.ai",
     },
     license_info={

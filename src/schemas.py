@@ -321,8 +321,9 @@ class Document(DocumentBase):
     )
 
 
-class AgentQuery(BaseModel):
+class DialecticOptions(BaseModel):
     queries: str | list[str]
+    stream: bool = False
 
     @field_validator("queries")
     def validate_queries(cls, v):
@@ -339,7 +340,7 @@ class AgentQuery(BaseModel):
         return v
 
 
-class AgentChat(BaseModel):
+class DialecticResponse(BaseModel):
     content: str
 
 

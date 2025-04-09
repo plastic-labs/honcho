@@ -179,9 +179,9 @@ async def chat(
     app_id: str,
     user_id: str,
     session_id: str,
-    query: schemas.AgentQuery,
+    queries: str | list[str],
     stream: bool = False,
-) -> schemas.AgentChat | MessageStreamManager:
+) -> schemas.DialecticResponse | MessageStreamManager:
     """
     Chat with the Dialectic API using on-demand user representation generation.
 
@@ -195,7 +195,7 @@ async def chat(
     5. Saves the representation for future use
     """
     # Format the query string
-    questions = [query.queries] if isinstance(query.queries, str) else query.queries
+    questions = [queries] if isinstance(queries, str) else queries
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
 
     logger.debug(f"Received query: {final_query} for session {session_id}")
@@ -309,7 +309,7 @@ async def chat(
     logger.debug(
         f"Dialectic response received in {query_time:.2f}s (total: {total_time:.2f}s)"
     )
-    return schemas.AgentChat(content=response[0]["text"])
+    return schemas.DialecticResponse(content=response[0]["text"])
 
 
 async def get_long_term_facts(

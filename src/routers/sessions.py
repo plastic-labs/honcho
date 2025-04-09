@@ -185,7 +185,13 @@ async def delete_session(
 
 @router.post(
     "/{session_id}/chat",
-    response_model=schemas.AgentChat,
+    response_model=schemas.DialecticResponse,
+    responses={
+        200: {
+            "description": "Response to a question informed by Honcho's User Representation",
+            "content": {"text/event-stream": {}},
+        },
+    },
     dependencies=[
         Depends(
             require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
@@ -196,54 +202,36 @@ async def chat(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
-    query: schemas.AgentQuery = Body(..., description="Chat query parameters"),
+    options: schemas.DialecticOptions = Body(
+        ..., description="Dialectic Endpoint Parameters"
+    ),
 ):
     """Chat with the Dialectic API"""
-    return await agent.chat(
-        app_id=app_id, user_id=user_id, session_id=session_id, query=query
-    )
-
-
-@router.post(
-    "/{session_id}/chat/stream",
-    responses={
-        200: {
-            "description": "Chat stream",
-            "content": {
-                "text/event-stream": {"schema": {"type": "string", "format": "binary"}}
-            },
-        }
-    },
-    dependencies=[
-        Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
-        )
-    ],
-)
-async def get_chat_stream(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
-    session_id: str = Path(..., description="ID of the session"),
-    query: schemas.AgentQuery = Body(..., description="Chat query parameters"),
-):
-    """Stream Results from the Dialectic API"""
-
-    async def parse_stream():
-        stream = await agent.chat(
+    if not options.stream:
+        return await agent.chat(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
-            query=query,
-            stream=True,
+            queries=options.queries,
         )
-        if type(stream) is AsyncMessageStreamManager:
-            async with stream as stream_manager:
-                async for text in stream_manager.text_stream:
-                    yield text
+    else:
 
-    return StreamingResponse(
-        content=parse_stream(), media_type="text/event-stream", status_code=200
-    )
+        async def parse_stream():
+            stream = await agent.chat(
+                app_id=app_id,
+                user_id=user_id,
+                session_id=session_id,
+                queries=options.queries,
+                stream=True,
+            )
+            if type(stream) is AsyncMessageStreamManager:
+                async with stream as stream_manager:
+                    async for text in stream_manager.text_stream:
+                        yield text
+
+        return StreamingResponse(
+            content=parse_stream(), media_type="text/event-stream", status_code=200
+        )
 
 
 @router.get(
