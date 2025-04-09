@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from anthropic import MessageStreamManager
+from anthropic import AsyncMessageStreamManager
 from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
@@ -236,9 +236,9 @@ async def get_chat_stream(
             query=query,
             stream=True,
         )
-        if type(stream) is MessageStreamManager:
-            with stream as stream_manager:
-                for text in stream_manager.text_stream:
+        if type(stream) is AsyncMessageStreamManager:
+            async with stream as stream_manager:
+                async for text in stream_manager.text_stream:
                     yield text
 
     return StreamingResponse(
