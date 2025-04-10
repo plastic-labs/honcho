@@ -214,7 +214,11 @@ class ModelClient:
         if response.content and len(response.content) > 0:
             content_block = response.content[0]
             # Check content_block by checking for attribute 'type' instead of using isinstance
-            if hasattr(content_block, "type") and content_block.type == "text":
+            if (
+                content_block
+                and hasattr(content_block, "type")
+                and content_block.type == "text"
+            ):
                 return content_block.text
             return str(content_block)
         return ""

@@ -1,4 +1,3 @@
-import logging
 from collections.abc import Sequence
 from logging import getLogger
 from typing import List, Optional
@@ -17,8 +16,6 @@ from .exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
-
-logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
 

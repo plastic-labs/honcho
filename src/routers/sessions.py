@@ -3,6 +3,7 @@ from typing import Optional
 
 from anthropic import AsyncMessageStreamManager
 from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
@@ -217,17 +218,21 @@ async def chat(
     else:
 
         async def parse_stream():
-            stream = await agent.chat(
-                app_id=app_id,
-                user_id=user_id,
-                session_id=session_id,
-                queries=options.queries,
-                stream=True,
-            )
-            if type(stream) is AsyncMessageStreamManager:
-                async with stream as stream_manager:
-                    async for text in stream_manager.text_stream:
-                        yield text
+            try:
+                stream = await agent.chat(
+                    app_id=app_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    queries=options.queries,
+                    stream=True,
+                )
+                if type(stream) is AsyncMessageStreamManager:
+                    async with stream as stream_manager:
+                        async for text in stream_manager.text_stream:
+                            yield text
+            except Exception as e:
+                logger.error(f"Error in stream: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e)) from e
 
         return StreamingResponse(
             content=parse_stream(), media_type="text/event-stream", status_code=200
