@@ -385,7 +385,7 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         return MockCollection()
 
     async def mock_chat_history(*args, **kwargs):
-        return "Mock chat history"
+        return "Mock chat history", [], []
 
     async def mock_get_long_term_facts(*args, **kwargs):
         return ["Mock fact 1", "Mock fact 2"]
