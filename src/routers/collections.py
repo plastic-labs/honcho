@@ -1,26 +1,82 @@
 from typing import Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-from src.security import auth
+from src.exceptions import AuthenticationException
+from src.security import JWTParams, require_auth
 
 router = APIRouter(
     prefix="/apps/{app_id}/users/{user_id}/collections",
     tags=["collections"],
-    dependencies=[Depends(auth)],
 )
 
 
-@router.post("/list", response_model=Page[schemas.Collection])
+@router.get(
+    "",
+    response_model=schemas.Collection,
+)
+async def get_collection(
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: Optional[str] = Query(
+        None, description="Collection ID to retrieve. If not provided, uses JWT token"
+    ),
+    jwt_params: JWTParams = Depends(require_auth()),
+    db=db,
+):
+    """
+    Get a specific collection for a user.
+
+    If collection_id is provided as a query parameter, it uses that (must match JWT collection_id).
+    Otherwise, it uses the collection_id from the JWT token.
+    """
+    # Verify JWT has access to the requested resource
+    if not jwt_params.ad:
+        if jwt_params.ap is not None and jwt_params.ap != app_id:
+            raise AuthenticationException("Unauthorized access to resource")
+        if jwt_params.us is not None and jwt_params.us != user_id:
+            raise AuthenticationException("Unauthorized access to resource")
+    # If collection_id provided in query, check if it matches jwt or user is admin
+    if collection_id:
+        if (
+            not jwt_params.ad
+            and jwt_params.co is not None
+            and jwt_params.co != collection_id
+        ):
+            raise AuthenticationException("Unauthorized access to resource")
+        target_collection_id = collection_id
+    else:
+        # Use collection_id from JWT
+        if not jwt_params.co:
+            raise AuthenticationException(
+                "Collection ID not found in query parameter or JWT"
+            )
+        target_collection_id = jwt_params.co
+
+    # Let crud function handle the ResourceNotFoundException
+    return await crud.get_collection_by_id(
+        db, app_id=app_id, collection_id=target_collection_id, user_id=user_id
+    )
+
+
+@router.post(
+    "/list",
+    response_model=Page[schemas.Collection],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_collections(
-    app_id: str,
-    user_id: str,
-    options: schemas.CollectionGet,
-    reverse: Optional[bool] = False,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    options: schemas.CollectionGet = Body(
+        ..., description="Filtering options for the collections list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
     db=db,
 ):
     """Get All Collections for a User"""
@@ -32,11 +88,15 @@ async def get_collections(
     )
 
 
-@router.get("/name/{name}", response_model=schemas.Collection)
+@router.get(
+    "/name/{name}",
+    response_model=schemas.Collection,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def get_collection_by_name(
-    app_id: str,
-    user_id: str,
-    name: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    name: str = Path(..., description="Name of the collection to retrieve"),
     db=db,
 ) -> schemas.Collection:
     """Get a Collection by Name"""
@@ -46,25 +106,17 @@ async def get_collection_by_name(
     return honcho_collection
 
 
-@router.get("/{collection_id}", response_model=schemas.Collection)
-async def get_collection_by_id(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    db=db,
-) -> schemas.Collection:
-    """Get a Collection by ID"""
-    honcho_collection = await crud.get_collection_by_id(
-        db, app_id=app_id, user_id=user_id, collection_id=collection_id
-    )
-    return honcho_collection
-
-
-@router.post("", response_model=schemas.Collection)
+@router.post(
+    "",
+    response_model=schemas.Collection,
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+)
 async def create_collection(
-    app_id: str,
-    user_id: str,
-    collection: schemas.CollectionCreate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection: schemas.CollectionCreate = Body(
+        ..., description="Collection creation parameters"
+    ),
     db=db,
 ):
     """Create a new Collection"""
@@ -75,12 +127,24 @@ async def create_collection(
     )
 
 
-@router.put("/{collection_id}", response_model=schemas.Collection)
+@router.put(
+    "/{collection_id}",
+    response_model=schemas.Collection,
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id", user_id="user_id", collection_id="collection_id"
+            )
+        )
+    ],
+)
 async def update_collection(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    collection: schemas.CollectionUpdate,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection to update"),
+    collection: schemas.CollectionUpdate = Body(
+        ..., description="Updated collection parameters"
+    ),
     db=db,
 ):
     "Update a Collection's name or metadata"
@@ -96,11 +160,20 @@ async def update_collection(
     return honcho_collection
 
 
-@router.delete("/{collection_id}")
+@router.delete(
+    "/{collection_id}",
+    dependencies=[
+        Depends(
+            require_auth(
+                app_id="app_id", user_id="user_id", collection_id="collection_id"
+            )
+        )
+    ],
+)
 async def delete_collection(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    collection_id: str = Path(..., description="ID of the collection to delete"),
     db=db,
 ):
     """Delete a Collection and its documents"""

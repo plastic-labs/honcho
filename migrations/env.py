@@ -95,7 +95,7 @@ def run_migrations_online() -> None:
     connectable = engine_from_config(
         configuration,
         prefix="sqlalchemy.",
-        echo=True,
+        echo=False,
         poolclass=pool.NullPool,
     )
 

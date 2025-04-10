@@ -1,4 +1,3 @@
-import pytest
 from nanoid import generate as generate_nanoid
 
 
@@ -32,8 +31,7 @@ def test_user_validations_api(client, sample_data):
 
     # Test name too short
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users",
-        json={"name": "", "metadata": {}}
+        f"/v1/apps/{test_app.public_id}/users", json={"name": "", "metadata": {}}
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -43,8 +41,7 @@ def test_user_validations_api(client, sample_data):
 
     # Test name too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users",
-        json={"name": "a" * 101, "metadata": {}}
+        f"/v1/apps/{test_app.public_id}/users", json={"name": "a" * 101, "metadata": {}}
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -58,18 +55,14 @@ def test_message_validations_api(client, sample_data):
     # Create a test session first
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test content too long
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
-        json={
-            "content": "a" * 50001,
-            "is_user": True,
-            "metadata": {}
-        }
+        json={"content": "a" * 50001, "is_user": True, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -80,11 +73,7 @@ def test_message_validations_api(client, sample_data):
     # Test invalid is_user type
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
-        json={
-            "content": "test",
-            "is_user": "not a bool",
-            "metadata": {}
-        }
+        json={"content": "test", "is_user": "not a bool", "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -98,7 +87,7 @@ def test_collection_validations_api(client, sample_data):
     # Test name too short
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "", "metadata": {}}
+        json={"name": "", "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -109,7 +98,7 @@ def test_collection_validations_api(client, sample_data):
     # Test name too long
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "a" * 101, "metadata": {}}
+        json={"name": "a" * 101, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -120,7 +109,7 @@ def test_collection_validations_api(client, sample_data):
     # Test 'honcho' name restriction
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "honcho", "metadata": {}}
+        json={"name": "honcho", "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -134,14 +123,14 @@ def test_document_validations_api(client, sample_data):
     # Create a collection first
     collection_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": str(generate_nanoid()), "metadata": {}}
+        json={"name": str(generate_nanoid()), "metadata": {}},
     )
     collection_id = collection_response.json()["id"]
 
     # Test content too short
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
-        json={"content": "", "metadata": {}}
+        json={"content": "", "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -152,7 +141,7 @@ def test_document_validations_api(client, sample_data):
     # Test content too long
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
-        json={"content": "a" * 100001, "metadata": {}}
+        json={"content": "a" * 100001, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -166,14 +155,14 @@ def test_document_query_validations_api(client, sample_data):
     # Create a collection first
     collection_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": str(generate_nanoid()), "metadata": {}}
+        json={"name": str(generate_nanoid()), "metadata": {}},
     )
     collection_id = collection_response.json()["id"]
 
     # Test query too short
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/query",
-        json={"query": "", "top_k": 5}
+        json={"query": "", "top_k": 5},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -184,7 +173,7 @@ def test_document_query_validations_api(client, sample_data):
     # Test query too long
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/query",
-        json={"query": "a" * 1001, "top_k": 5}
+        json={"query": "a" * 1001, "top_k": 5},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -195,7 +184,7 @@ def test_document_query_validations_api(client, sample_data):
     # Test top_k too small
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/query",
-        json={"query": "test", "top_k": 0}
+        json={"query": "test", "top_k": 0},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -206,7 +195,7 @@ def test_document_query_validations_api(client, sample_data):
     # Test top_k too large
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/query",
-        json={"query": "test", "top_k": 51}
+        json={"query": "test", "top_k": 51},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -220,23 +209,19 @@ def test_message_batch_validations_api(client, sample_data):
     # Create a test session first
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test batch too large
     messages = [
-        {
-            "content": f"test message {i}",
-            "is_user": True,
-            "metadata": {}
-        }
+        {"content": f"test message {i}", "is_user": True, "metadata": {}}
         for i in range(101)  # Create 101 messages
     ]
-    
+
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages/batch",
-        json={"messages": messages}
+        json={"messages": messages},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -250,25 +235,26 @@ def test_metamessage_validations_api(client, sample_data):
     # Create session and message first
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
-    
+
     message_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
-        json={"content": "test message", "is_user": True, "metadata": {}}
+        json={"content": "test message", "is_user": True, "metadata": {}},
     )
     message_id = message_response.json()["id"]
 
     # Test metamessage_type too short
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
             "metamessage_type": "",
             "content": "test content",
+            "session_id": session_id,
             "message_id": message_id,
-            "metadata": {}
-        }
+            "metadata": {},
+        },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -278,13 +264,14 @@ def test_metamessage_validations_api(client, sample_data):
 
     # Test metamessage_type too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
             "metamessage_type": "a" * 51,
             "content": "test content",
+            "session_id": session_id,
             "message_id": message_id,
-            "metadata": {}
-        }
+            "metadata": {},
+        },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -294,13 +281,14 @@ def test_metamessage_validations_api(client, sample_data):
 
     # Test content too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/metamessages",
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
             "metamessage_type": "test_type",
             "content": "a" * 50001,
             "message_id": message_id,
-            "metadata": {}
-        }
+            "session_id": session_id,
+            "metadata": {},
+        },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -314,14 +302,14 @@ def test_collection_update_validations_api(client, sample_data):
     # Create a collection first
     collection_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": str(generate_nanoid()), "metadata": {}}
+        json={"name": str(generate_nanoid()), "metadata": {}},
     )
     collection_id = collection_response.json()["id"]
 
     # Test honcho name in update
     response = client.put(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}",
-        json={"name": "honcho", "metadata": {}}
+        json={"name": "honcho", "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -335,26 +323,26 @@ def test_document_update_validations_api(client, sample_data):
     # Create collection and document first
     collection_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": str(generate_nanoid()), "metadata": {}}
+        json={"name": str(generate_nanoid()), "metadata": {}},
     )
     collection_id = collection_response.json()["id"]
-    
+
     document_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
-        json={"content": "test content", "metadata": {}}
+        json={"content": "test content", "metadata": {}},
     )
     document_id = document_response.json()["id"]
 
     # Test content too long in update
     response = client.put(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/{document_id}",
-        json={"content": "a" * 100001, "metadata": {}}
+        json={"content": "a" * 100001, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "content"]
     assert error["msg"] == "String should have at most 100000 characters"
-    assert error["type"] == "string_too_long" 
+    assert error["type"] == "string_too_long"
 
 
 def test_session_validations_api(client, sample_data):
@@ -362,14 +350,14 @@ def test_session_validations_api(client, sample_data):
     # Create a test session first
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test invalid metadata type
     response = client.put(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}",
-        json={"metadata": "not a dict"}
+        json={"metadata": "not a dict"},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -379,31 +367,89 @@ def test_session_validations_api(client, sample_data):
     # Test empty update
     response = client.put(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}",
-        json={}
+        json={},
     )
     assert response.status_code == 422
 
 
-def test_agent_query_validations_api(client, sample_data):
+def test_agent_query_validations_api(client, sample_data, monkeypatch):
+    # Mock the functions in agent.py that are causing the database issues
+
+    # Create a mock collection with a public_id
+    class MockCollection:
+        def __init__(self):
+            self.public_id = "mock_collection_id"
+
+    # Mock collection retrieval/creation function
+    async def mock_get_or_create_collection(*args, **kwargs):
+        return MockCollection()
+
+    async def mock_chat_history(*args, **kwargs):
+        return "Mock chat history", [], []
+
+    async def mock_get_long_term_facts(*args, **kwargs):
+        return ["Mock fact 1", "Mock fact 2"]
+
+    async def mock_run_tom_inference(*args, **kwargs):
+        return "Mock TOM inference"
+
+    async def mock_generate_user_representation(*args, **kwargs):
+        return "Mock user representation"
+
+    # Mock the Dialectic.call method
+    async def mock_dialectic_call(self):
+        # Create a mock response that will work with line 300 in agent.py:
+        # return schemas.AgentChat(content=response[0]["text"])
+        return [{"text": "Mock response"}]
+
+    # Mock the Dialectic.stream method
+    def mock_dialectic_stream(self):
+        class MockStream:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            @property
+            def text_stream(self):
+                yield "Mock streamed response"
+
+        return MockStream()
+
+    # Apply the monkeypatches
+    monkeypatch.setattr(
+        "src.crud.get_or_create_user_protected_collection",
+        mock_get_or_create_collection,
+    )
+    monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
+    monkeypatch.setattr("src.agent.get_long_term_facts", mock_get_long_term_facts)
+    monkeypatch.setattr("src.agent.run_tom_inference", mock_run_tom_inference)
+    monkeypatch.setattr(
+        "src.agent.generate_user_representation", mock_generate_user_representation
+    )
+    monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
+    monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
+
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test valid string query (under 10000 chars)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/chat",
-        json={"queries": "a" * 9999}
+        json={"queries": "a" * 9999},
     )
     assert response.status_code == 200
 
     # Test string query too long (over 10000 chars)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/chat",
-        json={"queries": "a" * 10001}
+        json={"queries": "a" * 10001},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -414,14 +460,14 @@ def test_agent_query_validations_api(client, sample_data):
     # Test valid list query (under 25 items, each under 10000 chars)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/chat",
-        json={"queries": ["a" * 9999 for _ in range(25)]}
+        json={"queries": ["a" * 9999 for _ in range(25)]},
     )
     assert response.status_code == 200
 
     # Test list too long (over 25 items)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/chat",
-        json={"queries": ["test" for _ in range(26)]}
+        json={"queries": ["test" for _ in range(26)]},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -431,7 +477,7 @@ def test_agent_query_validations_api(client, sample_data):
     # Test list item too long (item over 10000 chars)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/chat",
-        json={"queries": ["a" * 10001]}
+        json={"queries": ["a" * 10001]},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -442,7 +488,7 @@ def test_agent_query_validations_api(client, sample_data):
     # Test that strings over 20 chars are allowed
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/chat",
-        json={"queries": "a" * 100}  # 100 chars should be fine
+        json={"queries": "a" * 100},  # 100 chars should be fine
     )
     assert response.status_code == 200
 
@@ -451,14 +497,14 @@ def test_required_field_validations_api(client, sample_data):
     test_app, test_user = sample_data
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test missing required content in message
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
-        json={"is_user": True, "metadata": {}}
+        json={"is_user": True, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -468,7 +514,7 @@ def test_required_field_validations_api(client, sample_data):
     # Test missing required is_user in message
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
-        json={"content": "test", "metadata": {}}
+        json={"content": "test", "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -478,7 +524,7 @@ def test_required_field_validations_api(client, sample_data):
     # Test missing required name in collection
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -491,14 +537,14 @@ def test_filter_validations_api(client, sample_data):
     # Create a session first
     session_response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={"metadata": {}}
+        json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test invalid filter type in message list (at session level)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages/list",
-        json={"filter": "not a dict"}
+        json={"filter": "not a dict"},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -508,7 +554,7 @@ def test_filter_validations_api(client, sample_data):
     # Test invalid filter type in collection list (at user level)
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/list",
-        json={"filter": "not a dict"}
+        json={"filter": "not a dict"},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]

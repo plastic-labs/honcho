@@ -18,7 +18,7 @@ The minimum poetry version is `0.4.9`
 ### Setup
 
 Once the dependencies are installed on the system run the following steps to get
-the local project setup. 
+the local project setup.
 
 1. Clone the repository
 
@@ -49,14 +49,14 @@ source honcho/.venv/bin/activate
 
 3. Set up a database
 
-Honcho utilized [Postgres](https://www.postgresql.org/) for its database with 
+Honcho utilized [Postgres](https://www.postgresql.org/) for its database with
 pgvector. An easy way to get started with a postgresdb is to create a project
 with [Supabase](https://supabase.com/)
 
 A `docker-compose` template is also available with a database configuration
-available. 
+available.
 
-4. Edit the environment variables. 
+4. Edit the environment variables.
 
 Honcho uses a `.env` file for managing runtime environment variables. A
 `.env.template` file is included for convenience. Several of the configurations
@@ -75,10 +75,10 @@ ANTHROPIC_API_KEY= # API Key for Anthropic used for the deriver and dialectic AP
 
 The template has the additional functionality disabled by default. To ensure
 that they are disabled you can verify the following environment variables are
-set to false. 
+set to false.
 
 ```env
-USE_AUTH_SERVICE=false
+USE_AUTH=false
 SENTRY_ENABLED=false
 ```
 
@@ -99,7 +99,7 @@ necessary tables for Honcho to operate.
 
 As mentioned earlier a `docker-compose` template is included for running Honcho.
 As an alternative to running Honcho locally it can also be run with the compose
-template. 
+template.
 
 Copy the template and update the appropriate environment variables before
 launching the service.

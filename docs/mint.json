@@ -61,19 +61,15 @@
     },
     {
       "group": "Getting Started",
-      "pages": ["guides/overview"]
+      "pages": ["guides/overview", "guides/streaming-response"]
     },
     {
       "group": "Application Interfaces",
-      "pages": ["guides/discord"]
-    },
-    {
-      "group": "Integrations",
-      "pages": ["guides/langchain"]
+      "pages": ["guides/discord", "guides/honcho-mcp"]
     },
     {
       "group": "Personal Memory",
-      "pages": ["guides/simple-memory", "guides/dialectic-endpoint"]
+      "pages": ["guides/dialectic-endpoint"]
     },
     {
       "group": "API Documentation",
@@ -83,6 +79,7 @@
       "group": "apps",
       "pages": [
         "api-reference/endpoint/apps/get-app",
+        "api-reference/endpoint/apps/get-all-apps",
         "api-reference/endpoint/apps/update-app",
         "api-reference/endpoint/apps/get-app-by-name",
         "api-reference/endpoint/apps/create-app",
@@ -109,7 +106,6 @@
         "api-reference/endpoint/sessions/update-session",
         "api-reference/endpoint/sessions/delete-session",
         "api-reference/endpoint/sessions/chat",
-        "api-reference/endpoint/sessions/chat-stream",
         "api-reference/endpoint/sessions/clone-session"
       ]
     },
@@ -129,8 +125,7 @@
         "api-reference/endpoint/metamessages/create-metamessage",
         "api-reference/endpoint/metamessages/get-metamessages",
         "api-reference/endpoint/metamessages/get-metamessage",
-        "api-reference/endpoint/metamessages/update-metamessage",
-        "api-reference/endpoint/metamessages/get-metamessages-by-user"
+        "api-reference/endpoint/metamessages/update-metamessage"
       ]
     },
     {
@@ -139,7 +134,7 @@
         "api-reference/endpoint/collections/get-collections",
         "api-reference/endpoint/collections/create-collection",
         "api-reference/endpoint/collections/get-collection-by-name",
-        "api-reference/endpoint/collections/get-collection-by-id",
+        "api-reference/endpoint/collections/get-collection",
         "api-reference/endpoint/collections/update-collection",
         "api-reference/endpoint/collections/delete-collection"
       ]
@@ -154,6 +149,10 @@
         "api-reference/endpoint/documents/delete-document",
         "api-reference/endpoint/documents/query-documents"
       ]
+    },
+    {
+      "group": "keys",
+      "pages": ["api-reference/endpoint/keys/create-key"]
     }
   ],
   "footerSocials": {

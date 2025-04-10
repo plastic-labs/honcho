@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "0.0.16"
+version = "1.0.0"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -23,6 +23,8 @@ dependencies = [
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
     "langfuse>=2.57.1",
+    "pyjwt>=2.10.0",
+    "google-genai>=1.10.0",
 ]
 [tool.uv]
 dev-dependencies = [
@@ -32,6 +34,7 @@ dev-dependencies = [
     "coverage>=7.6.0",
     "interrogate>=1.7.0",
     "py-spy>=0.3.14",
+    "ruff>=0.11.2",
 ]
 
 [tool.ruff.lint]
@@ -50,9 +53,9 @@ select = [
     # isort
     "I",
 ]
-ignore = ["E501"]
+ignore = ["E501", "B008"]
 
-[tool.ruff.flake8-bugbear]
+[tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]
 
 [tool.pytest.ini_options]

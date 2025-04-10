@@ -5,14 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.0.0]
+
+### Added
+
+- JWT based API authentication
+- Configurable logging
+- Consolidated LLM Inference via `ModelClient` class
+- Dynamic logging configurable via environment variables
+
+### Changed
+
+- Deriver & Dialectic API to use Hybrid Memory Architecture
+- Metamessages are not strictly tied to a message
+- Database provisioning is a separate script instead of happening on startup
+- Consolidated `session/chat` and `session/chat/stream` endpoints
+
 ## [0.0.16]
 
-## Added
+### Added
 
 - Detailed custom exceptions for better error handling
 - CLAUDE.md for claude code
 
-## Changed
+### Changed
 
 - Deriver to use a new cognitive architecture that only updates on user messages
   and updates user representation to apply more confidence scores to its known
@@ -22,7 +38,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - SQLAlchemy echo changed to false by default, can be enabled with SQL_DEBUG
   environment flag
 
-## Fixed
+### Fixed
 
 - Self-hosting documentation and README to mention `uv` instead of `poetry`
 

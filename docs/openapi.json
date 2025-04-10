@@ -2,36 +2,45 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Honcho API",
-    "summary": "An API for adding personalization to AI Apps",
-    "description": "This API is used to store data and get insights about users for AI\n    applications",
+    "summary": "The Identity Layer for the Agentic World",
+    "description": "Honcho is a platform for giving agents user-centric memory and social cognition",
     "contact": {
       "name": "Plastic Labs",
-      "url": "https://plasticlabs.ai/",
+      "url": "https://honcho.dev/",
       "email": "hello@plasticlabs.ai"
     },
-    "version": "0.0.15"
+    "version": "1.0.0"
   },
   "servers": [
     {
-      "url": "http://127.0.0.1:8000",
+      "url": "http://localhost:8000",
       "description": "Local Development Server"
     },
-    { "url": "https:/demo.honcho.dev", "description": "Demo Server" }
+    { "url": "https://demo.honcho.dev", "description": "Demo Server" },
+    {
+      "url": "https://api.honcho.dev",
+      "description": "Production SaaS Platform"
+    }
   ],
   "paths": {
-    "/v1/apps/{app_id}": {
+    "/v1/apps": {
       "get": {
         "tags": ["apps"],
         "summary": "Get App",
-        "description": "Get an App by ID",
-        "operationId": "get_app_v1_apps__app_id__get",
+        "description": "Get an App by ID.\n\nIf app_id is provided as a query parameter, it uses that (must match JWT app_id).\nOtherwise, it uses the app_id from the JWT token.",
+        "operationId": "get_app_v1_apps_get",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
           {
             "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "App ID to retrieve. If not provided, uses JWT token",
+              "title": "App Id"
+            },
+            "description": "App ID to retrieve. If not provided, uses JWT token"
           }
         ],
         "responses": {
@@ -55,124 +64,30 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.get('app_id');\n\n  console.log(app.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.get();\n\n  console.log(app.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.get(\n    \"app_id\",\n)\nprint(app.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.get()\nprint(app.id)"
           }
         ]
       },
-      "put": {
-        "tags": ["apps"],
-        "summary": "Update App",
-        "description": "Update an App",
-        "operationId": "update_app_v1_apps__app_id__put",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/AppUpdate" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/App" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.update('app_id');\n\n  console.log(app.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.update(\n    app_id=\"app_id\",\n)\nprint(app.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/name/{name}": {
-      "get": {
-        "tags": ["apps"],
-        "summary": "Get App By Name",
-        "description": "Get an App by Name",
-        "operationId": "get_app_by_name_v1_apps_name__name__get",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Name" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/App" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.getByName('name');\n\n  console.log(app.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.get_by_name(\n    \"name\",\n)\nprint(app.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps": {
       "post": {
         "tags": ["apps"],
         "summary": "Create App",
         "description": "Create a new App",
         "operationId": "create_app_v1_apps_post",
+        "security": [{ "HTTPBearer": [] }, {}],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/AppCreate" }
+              "schema": {
+                "$ref": "#/components/schemas/AppCreate",
+                "description": "App creation parameters"
+              }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -192,7 +107,6 @@
             }
           }
         },
-        "security": [{ "HTTPBearer": [] }, {}],
         "x-codeSamples": [
           {
             "lang": "JavaScript",
@@ -205,127 +119,25 @@
         ]
       }
     },
-    "/v1/apps/get_or_create/{name}": {
-      "get": {
+    "/v1/apps/list": {
+      "post": {
         "tags": ["apps"],
-        "summary": "Get Or Create App",
-        "description": "Get or Create an App",
-        "operationId": "get_or_create_app_v1_apps_get_or_create__name__get",
+        "summary": "Get All Apps",
+        "description": "Get all Apps",
+        "operationId": "get_all_apps_v1_apps_list_post",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Name" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/App" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.getOrCreate('name');\n\n  console.log(app.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.get_or_create(\n    \"name\",\n)\nprint(app.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/{app_id}/users": {
-      "post": {
-        "tags": ["users"],
-        "summary": "Create User",
-        "description": "Create a new User",
-        "operationId": "create_user_v1_apps__app_id__users_post",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/UserCreate" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/User" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.create('app_id', { name: 'x' });\n\n  console.log(user.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nuser = client.apps.users.create(\n    app_id=\"app_id\",\n    name=\"x\",\n)\nprint(user.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/{app_id}/users/list": {
-      "post": {
-        "tags": ["users"],
-        "summary": "Get Users",
-        "description": "Get All Users for an App",
-        "operationId": "get_users_v1_apps__app_id__users_list_post",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
           {
             "name": "reverse",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "boolean",
+              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
-            }
+            },
+            "description": "Whether to reverse the order of results"
           },
           {
             "name": "page",
@@ -359,7 +171,391 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UserGet" }
+              "schema": {
+                "$ref": "#/components/schemas/AppGet",
+                "description": "Filtering and pagination options for the apps list"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Page_App_" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const app of client.apps.list()) {\n    console.log(app.id);\n  }\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\npage = client.apps.list()\npage = page.items[0]\nprint(page.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/name/{name}": {
+      "get": {
+        "tags": ["apps"],
+        "summary": "Get App By Name",
+        "description": "Get an App by Name",
+        "operationId": "get_app_by_name_v1_apps_name__name__get",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Name of the app to retrieve",
+              "title": "Name"
+            },
+            "description": "Name of the app to retrieve"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/App" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.getByName('name');\n\n  console.log(app.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.get_by_name(\n    \"name\",\n)\nprint(app.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/get_or_create/{name}": {
+      "get": {
+        "tags": ["apps"],
+        "summary": "Get Or Create App",
+        "description": "Get or Create an App",
+        "operationId": "get_or_create_app_v1_apps_get_or_create__name__get",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Name of the app to get or create",
+              "title": "Name"
+            },
+            "description": "Name of the app to get or create"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/App" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.getOrCreate('name');\n\n  console.log(app.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.get_or_create(\n    \"name\",\n)\nprint(app.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}": {
+      "put": {
+        "tags": ["apps"],
+        "summary": "Update App",
+        "description": "Update an App",
+        "operationId": "update_app_v1_apps__app_id__put",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app to update",
+              "title": "App Id"
+            },
+            "description": "ID of the app to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppUpdate",
+                "description": "Updated app parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/App" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const app = await client.apps.update('app_id');\n\n  console.log(app.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\napp = client.apps.update(\n    app_id=\"app_id\",\n)\nprint(app.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/users": {
+      "post": {
+        "tags": ["users"],
+        "summary": "Create User",
+        "description": "Create a new User",
+        "operationId": "create_user_v1_apps__app_id__users_post",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate",
+                "description": "User creation parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.create('app_id', { name: 'x' });\n\n  console.log(user.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nuser = client.apps.users.create(\n    app_id=\"app_id\",\n    name=\"x\",\n)\nprint(user.id)"
+          }
+        ]
+      },
+      "get": {
+        "tags": ["users"],
+        "summary": "Get User",
+        "description": "Get a User by ID\n\nIf user_id is provided as a query parameter, it uses that (must match JWT app_id).\nOtherwise, it uses the user_id from the JWT token.",
+        "operationId": "get_user_v1_apps__app_id__users_get",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "User ID to retrieve. If not provided, users JWT token",
+              "title": "User Id"
+            },
+            "description": "User ID to retrieve. If not provided, users JWT token"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/User" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.get('app_id');\n\n  console.log(user.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nuser = client.apps.users.get(\n    app_id=\"app_id\",\n)\nprint(user.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/users/list": {
+      "post": {
+        "tags": ["users"],
+        "summary": "Get Users",
+        "description": "Get All Users for an App",
+        "operationId": "get_users_v1_apps__app_id__users_list_post",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserGet",
+                "description": "Filtering options for the users list"
+              }
             }
           }
         },
@@ -405,13 +601,23 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Name" }
+            "schema": {
+              "type": "string",
+              "description": "Name of the user to retrieve",
+              "title": "Name"
+            },
+            "description": "Name of the user to retrieve"
           }
         ],
         "responses": {
@@ -444,25 +650,35 @@
         ]
       }
     },
-    "/v1/apps/{app_id}/users/{user_id}": {
+    "/v1/apps/{app_id}/users/get_or_create/{name}": {
       "get": {
         "tags": ["users"],
-        "summary": "Get User",
-        "description": "Get a User by ID",
-        "operationId": "get_user_v1_apps__app_id__users__user_id__get",
+        "summary": "Get Or Create User",
+        "description": "Get a User or create a new one by the input name",
+        "operationId": "get_or_create_user_v1_apps__app_id__users_get_or_create__name__get",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
           {
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
-            "name": "user_id",
+            "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "Name of the user to get or create",
+              "title": "Name"
+            },
+            "description": "Name of the user to get or create"
           }
         ],
         "responses": {
@@ -486,14 +702,16 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.get('app_id', 'user_id');\n\n  console.log(user.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.getOrCreate('app_id', 'name');\n\n  console.log(user.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nuser = client.apps.users.get(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nuser = client.apps.users.get_or_create(\n    name=\"name\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
           }
         ]
-      },
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}": {
       "put": {
         "tags": ["users"],
         "summary": "Update User",
@@ -505,20 +723,33 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user to update",
+              "title": "User Id"
+            },
+            "description": "ID of the user to update"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/UserUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate",
+                "description": "Updated user parameters"
+              }
             }
           }
         },
@@ -552,129 +783,54 @@
         ]
       }
     },
-    "/v1/apps/{app_id}/users/get_or_create/{name}": {
+    "/v1/apps/{app_id}/users/{user_id}/sessions": {
       "get": {
-        "tags": ["users"],
-        "summary": "Get Or Create User",
-        "description": "Get a User or create a new one by the input name",
-        "operationId": "get_or_create_user_v1_apps__app_id__users_get_or_create__name__get",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "name",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Name" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/User" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const user = await client.apps.users.getOrCreate('app_id', 'name');\n\n  console.log(user.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nuser = client.apps.users.get_or_create(\n    name=\"name\",\n    app_id=\"app_id\",\n)\nprint(user.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/{app_id}/users/{user_id}/sessions/list": {
-      "post": {
         "tags": ["sessions"],
-        "summary": "Get Sessions",
-        "description": "Get All Sessions for a User",
-        "operationId": "get_sessions_v1_apps__app_id__users__user_id__sessions_list_post",
+        "summary": "Get Session",
+        "description": "Get a specific session for a user.\n\nIf session_id is provided as a query parameter, it uses that (must match JWT session_id).\nOtherwise, it uses the session_id from the JWT token.",
+        "operationId": "get_session_v1_apps__app_id__users__user_id__sessions_get",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
           {
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "reverse",
-            "in": "query",
-            "required": false,
             "schema": {
-              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
-              "default": false,
-              "title": "Reverse"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
             },
-            "description": "Page number"
+            "description": "ID of the user"
           },
           {
-            "name": "size",
+            "name": "session_id",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "Session ID to retrieve. If not provided, uses JWT token",
+              "title": "Session Id"
             },
-            "description": "Page size"
+            "description": "Session ID to retrieve. If not provided, uses JWT token"
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/SessionGet" }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Session_" }
+                "schema": { "$ref": "#/components/schemas/Session" }
               }
             }
           },
@@ -690,16 +846,14 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const session of client.apps.users.sessions.list('app_id', 'user_id')) {\n    console.log(session.id);\n  }\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.get('app_id', 'user_id');\n\n  console.log(session.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\npage = client.apps.users.sessions.list(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\npage = page.items[0]\nprint(page.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nsession = client.apps.users.sessions.get(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\nprint(session.id)"
           }
         ]
-      }
-    },
-    "/v1/apps/{app_id}/users/{user_id}/sessions": {
+      },
       "post": {
         "tags": ["sessions"],
         "summary": "Create Session",
@@ -711,20 +865,33 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SessionCreate" }
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreate",
+                "description": "Session creation parameters"
+              }
             }
           }
         },
@@ -758,6 +925,117 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/users/{user_id}/sessions/list": {
+      "post": {
+        "tags": ["sessions"],
+        "summary": "Get Sessions",
+        "description": "Get All Sessions for a User",
+        "operationId": "get_sessions_v1_apps__app_id__users__user_id__sessions_list_post",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
+          },
+          {
+            "name": "reverse",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
+              "default": false,
+              "title": "Reverse"
+            },
+            "description": "Whether to reverse the order of results"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Page number",
+              "default": 1,
+              "title": "Page"
+            },
+            "description": "Page number"
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Page size",
+              "default": 50,
+              "title": "Size"
+            },
+            "description": "Page size"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionGet",
+                "description": "Filtering and pagination options for the sessions list"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Page_Session_" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const session of client.apps.users.sessions.list('app_id', 'user_id')) {\n    console.log(session.id);\n  }\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\npage = client.apps.users.sessions.list(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\npage = page.items[0]\nprint(page.id)"
+          }
+        ]
+      }
+    },
     "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}": {
       "put": {
         "tags": ["sessions"],
@@ -770,26 +1048,44 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session to update",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to update"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/SessionUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/SessionUpdate",
+                "description": "Updated session parameters"
+              }
             }
           }
         },
@@ -833,19 +1129,34 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session to delete",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to delete"
           }
         ],
         "responses": {
@@ -872,61 +1183,6 @@
             "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nsession = client.apps.users.sessions.delete(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(session)"
           }
         ]
-      },
-      "get": {
-        "tags": ["sessions"],
-        "summary": "Get Session",
-        "description": "Get a specific session for a user by ID",
-        "operationId": "get_session_v1_apps__app_id__users__user_id__sessions__session_id__get",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Session" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const session = await client.apps.users.sessions.get('app_id', 'user_id', 'session_id');\n\n  console.log(session.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nsession = client.apps.users.sessions.get(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(session.id)"
-          }
-        ]
       }
     },
     "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/chat": {
@@ -941,36 +1197,55 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/AgentQuery" }
+              "schema": {
+                "$ref": "#/components/schemas/DialecticOptions",
+                "description": "Dialectic Endpoint Parameters"
+              }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "Response to a question informed by Honcho's User Representation",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/AgentChat" }
-              }
+                "schema": { "$ref": "#/components/schemas/DialecticResponse" }
+              },
+              "text/event-stream": {}
             }
           },
           "422": {
@@ -985,77 +1260,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const agentChat = await client.apps.users.sessions.chat('app_id', 'user_id', 'session_id', {\n    queries: 'string',\n  });\n\n  console.log(agentChat.content);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const dialecticResponse = await client.apps.users.sessions.chat('app_id', 'user_id', 'session_id', {\n    queries: 'string',\n  });\n\n  console.log(dialecticResponse.content);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nagent_chat = client.apps.users.sessions.chat(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    queries=\"string\",\n)\nprint(agent_chat.content)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/chat/stream": {
-      "post": {
-        "tags": ["sessions"],
-        "summary": "Get Chat Stream",
-        "description": "Stream Results from the Dialectic API",
-        "operationId": "get_chat_stream_v1_apps__app_id__users__user_id__sessions__session_id__chat_stream_post",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/AgentQuery" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Chat stream",
-            "content": {
-              "application/json": { "schema": {} },
-              "text/event-stream": {
-                "schema": { "type": "string", "format": "binary" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const response = await client.apps.users.sessions.stream('app_id', 'user_id', 'session_id', {\n    queries: 'string',\n  });\n\n  console.log(response);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nresponse = client.apps.users.sessions.stream(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    queries=\"string\",\n)\nprint(response)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\ndialectic_response = client.apps.users.sessions.chat(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    queries=\"string\",\n)\nprint(dialectic_response.content)"
           }
         ]
       }
@@ -1064,7 +1273,7 @@
       "get": {
         "tags": ["sessions"],
         "summary": "Clone Session",
-        "description": "Clone a session for a user, optionally will deep clone metamessages as well",
+        "description": "Clone a session, optionally up to a specific message",
         "operationId": "clone_session_v1_apps__app_id__users__user_id__sessions__session_id__clone_get",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
@@ -1072,19 +1281,34 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session to clone",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to clone"
           },
           {
             "name": "message_id",
@@ -1092,8 +1316,10 @@
             "required": false,
             "schema": {
               "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "Message ID to cut off the clone at",
               "title": "Message Id"
-            }
+            },
+            "description": "Message ID to cut off the clone at"
           },
           {
             "name": "deep_copy",
@@ -1101,9 +1327,11 @@
             "required": false,
             "schema": {
               "type": "boolean",
+              "description": "Whether to deep copy metamessages",
               "default": false,
               "title": "Deep Copy"
-            }
+            },
+            "description": "Whether to deep copy metamessages"
           }
         ],
         "responses": {
@@ -1148,26 +1376,44 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MessageCreate" }
+              "schema": {
+                "$ref": "#/components/schemas/MessageCreate",
+                "description": "Message creation parameters"
+              }
             }
           }
         },
@@ -1213,26 +1459,44 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MessageBatchCreate" }
+              "schema": {
+                "$ref": "#/components/schemas/MessageBatchCreate",
+                "description": "Batch of messages to create"
+              }
             }
           }
         },
@@ -1282,19 +1546,34 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
           },
           {
             "name": "reverse",
@@ -1302,9 +1581,11 @@
             "required": false,
             "schema": {
               "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
-            }
+            },
+            "description": "Whether to reverse the order of results"
           },
           {
             "name": "page",
@@ -1338,7 +1619,10 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MessageGet" }
+              "schema": {
+                "$ref": "#/components/schemas/MessageGet",
+                "description": "Filtering options for the messages list"
+              }
             }
           }
         },
@@ -1384,25 +1668,45 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
           },
           {
             "name": "message_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Message Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the message to retrieve",
+              "title": "Message Id"
+            },
+            "description": "ID of the message to retrieve"
           }
         ],
         "responses": {
@@ -1445,32 +1749,55 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "session_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the session",
+              "title": "Session Id"
+            },
+            "description": "ID of the session"
           },
           {
             "name": "message_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Message Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the message to update",
+              "title": "Message Id"
+            },
+            "description": "ID of the message to update"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MessageUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/MessageUpdate",
+                "description": "Updated message parameters"
+              }
             }
           }
         },
@@ -1504,278 +1831,45 @@
         ]
       }
     },
-    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages": {
+    "/v1/apps/{app_id}/users/{user_id}/metamessages": {
       "post": {
         "tags": ["metamessages"],
         "summary": "Create Metamessage",
-        "description": "Adds a message to a session",
-        "operationId": "create_metamessage_v1_apps__app_id__users__user_id__sessions__session_id__metamessages_post",
+        "description": "Create a new metamessage associated with a user.\nOptionally link to a session and message by providing those IDs in the request body.",
+        "operationId": "create_metamessage_v1_apps__app_id__users__user_id__metamessages_post",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
           {
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/MetamessageCreate" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Metamessage" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.create(\n    'app_id',\n    'user_id',\n    'session_id',\n    { content: 'content', message_id: 'message_id', metamessage_type: 'x' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.sessions.metamessages.create(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    content=\"content\",\n    message_id=\"message_id\",\n    metamessage_type=\"x\",\n)\nprint(metamessage.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages/list": {
-      "post": {
-        "tags": ["metamessages"],
-        "summary": "Get Metamessages",
-        "description": "Get all messages for a session",
-        "operationId": "get_metamessages_v1_apps__app_id__users__user_id__sessions__session_id__metamessages_list_post",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
-          },
-          {
-            "name": "reverse",
-            "in": "query",
-            "required": false,
             "schema": {
-              "anyOf": [{ "type": "boolean" }, { "type": "null" }],
-              "default": false,
-              "title": "Reverse"
-            }
-          },
-          {
-            "name": "page",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Page number",
-              "default": 1,
-              "title": "Page"
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
             },
-            "description": "Page number"
+            "description": "ID of the app"
           },
           {
-            "name": "size",
-            "in": "query",
-            "required": false,
+            "name": "user_id",
+            "in": "path",
+            "required": true,
             "schema": {
-              "type": "integer",
-              "maximum": 100,
-              "minimum": 1,
-              "description": "Page size",
-              "default": 50,
-              "title": "Size"
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
             },
-            "description": "Page size"
+            "description": "ID of the user"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/MetamessageGet" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Page_Metamessage_" }
+              "schema": {
+                "$ref": "#/components/schemas/MetamessageCreate",
+                "description": "Metamessage creation parameters"
               }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  // Automatically fetches more pages as needed.\n  for await (const metamessage of client.apps.users.sessions.metamessages.list(\n    'app_id',\n    'user_id',\n    'session_id',\n  )) {\n    console.log(metamessage.id);\n  }\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\npage = client.apps.users.sessions.metamessages.list(\n    session_id=\"session_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\npage = page.items[0]\nprint(page.id)"
-          }
-        ]
-      }
-    },
-    "/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/metamessages/{metamessage_id}": {
-      "get": {
-        "tags": ["metamessages"],
-        "summary": "Get Metamessage",
-        "description": "Get a specific Metamessage by ID",
-        "operationId": "get_metamessage_v1_apps__app_id__users__user_id__sessions__session_id__metamessages__metamessage_id__get",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
-          },
-          {
-            "name": "metamessage_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Metamessage Id" }
-          },
-          {
-            "name": "message_id",
-            "in": "query",
-            "required": true,
-            "schema": { "type": "string", "title": "Message Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Metamessage" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.get(\n    'app_id',\n    'user_id',\n    'session_id',\n    'metamessage_id',\n    { message_id: 'message_id' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.sessions.metamessages.get(\n    metamessage_id=\"metamessage_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    session_id=\"session_id\",\n    message_id=\"message_id\",\n)\nprint(metamessage.id)"
-          }
-        ]
-      },
-      "put": {
-        "tags": ["metamessages"],
-        "summary": "Update Metamessage",
-        "description": "Update's the metadata of a metamessage",
-        "operationId": "update_metamessage_v1_apps__app_id__users__user_id__sessions__session_id__metamessages__metamessage_id__put",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Session Id" }
-          },
-          {
-            "name": "metamessage_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Metamessage Id" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/MetamessageUpdate" }
             }
           }
         },
@@ -1800,11 +1894,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.sessions.metamessages.update(\n    'app_id',\n    'user_id',\n    'session_id',\n    'metamessage_id',\n    { message_id: 'message_id' },\n  );\n\n  console.log(metamessage.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.create('app_id', 'user_id', {\n    content: 'content',\n    metamessage_type: 'x',\n  });\n\n  console.log(metamessage.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.sessions.metamessages.update(\n    metamessage_id=\"metamessage_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n    session_id=\"session_id\",\n    message_id=\"message_id\",\n)\nprint(metamessage.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    content=\"content\",\n    metamessage_type=\"x\",\n)\nprint(metamessage.id)"
           }
         ]
       }
@@ -1812,22 +1906,32 @@
     "/v1/apps/{app_id}/users/{user_id}/metamessages/list": {
       "post": {
         "tags": ["metamessages"],
-        "summary": "Get Metamessages By User",
-        "description": "Paginate through the user metamessages for a user",
-        "operationId": "get_metamessages_by_user_v1_apps__app_id__users__user_id__metamessages_list_post",
+        "summary": "Get Metamessages",
+        "description": "Get metamessages with flexible filtering.\n\n- Filter by user only: No additional parameters needed\n- Filter by session: Provide session_id\n- Filter by message: Provide message_id (and session_id)\n- Filter by type: Provide metamessage_type\n- Filter by metadata: Provide filter object",
+        "operationId": "get_metamessages_v1_apps__app_id__users__user_id__metamessages_list_post",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
           {
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "reverse",
@@ -1835,9 +1939,11 @@
             "required": false,
             "schema": {
               "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
-            }
+            },
+            "description": "Whether to reverse the order of results"
           },
           {
             "name": "page",
@@ -1872,7 +1978,8 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MetamessageGetUserLevel"
+                "$ref": "#/components/schemas/MetamessageGet",
+                "description": "Filtering options for the metamessages list"
               }
             }
           }
@@ -1907,6 +2014,301 @@
         ]
       }
     },
+    "/v1/apps/{app_id}/users/{user_id}/metamessages/{metamessage_id}": {
+      "get": {
+        "tags": ["metamessages"],
+        "summary": "Get Metamessage",
+        "description": "Get a specific Metamessage by ID",
+        "operationId": "get_metamessage_v1_apps__app_id__users__user_id__metamessages__metamessage_id__get",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
+          },
+          {
+            "name": "metamessage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the metamessage to retrieve",
+              "title": "Metamessage Id"
+            },
+            "description": "ID of the metamessage to retrieve"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Metamessage" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.get('app_id', 'user_id', 'metamessage_id');\n\n  console.log(metamessage.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.get(\n    metamessage_id=\"metamessage_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(metamessage.id)"
+          }
+        ]
+      },
+      "put": {
+        "tags": ["metamessages"],
+        "summary": "Update Metamessage",
+        "description": "Update a metamessage's metadata, type, or relationships",
+        "operationId": "update_metamessage_v1_apps__app_id__users__user_id__metamessages__metamessage_id__put",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
+          },
+          {
+            "name": "metamessage_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the metamessage to update",
+              "title": "Metamessage Id"
+            },
+            "description": "ID of the metamessage to update"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MetamessageUpdate",
+                "description": "Updated metamessage parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Metamessage" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.update('app_id', 'user_id', 'metamessage_id');\n\n  console.log(metamessage.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.update(\n    metamessage_id=\"metamessage_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(metamessage.id)"
+          }
+        ]
+      }
+    },
+    "/v1/apps/{app_id}/users/{user_id}/collections": {
+      "get": {
+        "tags": ["collections"],
+        "summary": "Get Collection",
+        "description": "Get a specific collection for a user.\n\nIf collection_id is provided as a query parameter, it uses that (must match JWT collection_id).\nOtherwise, it uses the collection_id from the JWT token.",
+        "operationId": "get_collection_v1_apps__app_id__users__user_id__collections_get",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
+          },
+          {
+            "name": "collection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "Collection ID to retrieve. If not provided, uses JWT token",
+              "title": "Collection Id"
+            },
+            "description": "Collection ID to retrieve. If not provided, uses JWT token"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Collection" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.get('app_id', 'user_id');\n\n  console.log(collection.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\ncollection = client.apps.users.collections.get(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n)\nprint(collection.id)"
+          }
+        ]
+      },
+      "post": {
+        "tags": ["collections"],
+        "summary": "Create Collection",
+        "description": "Create a new Collection",
+        "operationId": "create_collection_v1_apps__app_id__users__user_id__collections_post",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CollectionCreate",
+                "description": "Collection creation parameters"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Collection" }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.create('app_id', 'user_id', { name: 'x' });\n\n  console.log(collection.id);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\ncollection = client.apps.users.collections.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    name=\"x\",\n)\nprint(collection.id)"
+          }
+        ]
+      }
+    },
     "/v1/apps/{app_id}/users/{user_id}/collections/list": {
       "post": {
         "tags": ["collections"],
@@ -1919,13 +2321,23 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "reverse",
@@ -1933,9 +2345,11 @@
             "required": false,
             "schema": {
               "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
-            }
+            },
+            "description": "Whether to reverse the order of results"
           },
           {
             "name": "page",
@@ -1969,7 +2383,10 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CollectionGet" }
+              "schema": {
+                "$ref": "#/components/schemas/CollectionGet",
+                "description": "Filtering options for the collections list"
+              }
             }
           }
         },
@@ -2015,19 +2432,34 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "name",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Name" }
+            "schema": {
+              "type": "string",
+              "description": "Name of the collection to retrieve",
+              "title": "Name"
+            },
+            "description": "Name of the collection to retrieve"
           }
         ],
         "responses": {
@@ -2061,61 +2493,6 @@
       }
     },
     "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}": {
-      "get": {
-        "tags": ["collections"],
-        "summary": "Get Collection By Id",
-        "description": "Get a Collection by ID",
-        "operationId": "get_collection_by_id_v1_apps__app_id__users__user_id__collections__collection_id__get",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          },
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Collection" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.get('app_id', 'user_id', 'collection_id');\n\n  console.log(collection.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\ncollection = client.apps.users.collections.get(\n    collection_id=\"collection_id\",\n    app_id=\"app_id\",\n    user_id=\"user_id\",\n)\nprint(collection.id)"
-          }
-        ]
-      },
       "put": {
         "tags": ["collections"],
         "summary": "Update Collection",
@@ -2127,26 +2504,44 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection to update",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection to update"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/CollectionUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/CollectionUpdate",
+                "description": "Updated collection parameters"
+              }
             }
           }
         },
@@ -2190,19 +2585,34 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection to delete",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection to delete"
           }
         ],
         "responses": {
@@ -2231,65 +2641,6 @@
         ]
       }
     },
-    "/v1/apps/{app_id}/users/{user_id}/collections": {
-      "post": {
-        "tags": ["collections"],
-        "summary": "Create Collection",
-        "description": "Create a new Collection",
-        "operationId": "create_collection_v1_apps__app_id__users__user_id__collections_post",
-        "security": [{ "HTTPBearer": [] }, {}],
-        "parameters": [
-          {
-            "name": "app_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "App Id" }
-          },
-          {
-            "name": "user_id",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string", "title": "User Id" }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": { "$ref": "#/components/schemas/CollectionCreate" }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/Collection" }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
-              }
-            }
-          }
-        },
-        "x-codeSamples": [
-          {
-            "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const collection = await client.apps.users.collections.create('app_id', 'user_id', { name: 'x' });\n\n  console.log(collection.id);\n}\n\nmain();"
-          },
-          {
-            "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\ncollection = client.apps.users.collections.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    name=\"x\",\n)\nprint(collection.id)"
-          }
-        ]
-      }
-    },
     "/v1/apps/{app_id}/users/{user_id}/collections/{collection_id}/documents/list": {
       "post": {
         "tags": ["documents"],
@@ -2302,19 +2653,34 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection"
           },
           {
             "name": "reverse",
@@ -2322,9 +2688,11 @@
             "required": false,
             "schema": {
               "anyOf": [{ "type": "boolean" }, { "type": "null" }],
+              "description": "Whether to reverse the order of results",
               "default": false,
               "title": "Reverse"
-            }
+            },
+            "description": "Whether to reverse the order of results"
           },
           {
             "name": "page",
@@ -2358,7 +2726,10 @@
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/DocumentGet" }
+              "schema": {
+                "$ref": "#/components/schemas/DocumentGet",
+                "description": "Filtering options for the documents list"
+              }
             }
           }
         },
@@ -2404,25 +2775,45 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection"
           },
           {
             "name": "document_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Document Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the document to retrieve",
+              "title": "Document Id"
+            },
+            "description": "ID of the document to retrieve"
           }
         ],
         "responses": {
@@ -2465,32 +2856,55 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection"
           },
           {
             "name": "document_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Document Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the document to update",
+              "title": "Document Id"
+            },
+            "description": "ID of the document to update"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/DocumentUpdate" }
+              "schema": {
+                "$ref": "#/components/schemas/DocumentUpdate",
+                "description": "Updated document parameters"
+              }
             }
           }
         },
@@ -2534,25 +2948,45 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection"
           },
           {
             "name": "document_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Document Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the document to delete",
+              "title": "Document Id"
+            },
+            "description": "ID of the document to delete"
           }
         ],
         "responses": {
@@ -2593,26 +3027,44 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/DocumentQuery" }
+              "schema": {
+                "$ref": "#/components/schemas/DocumentQuery",
+                "description": "Query parameters for document search"
+              }
             }
           }
         },
@@ -2662,26 +3114,44 @@
             "name": "app_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "App Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the app",
+              "title": "App Id"
+            },
+            "description": "ID of the app"
           },
           {
             "name": "user_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "User Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the user",
+              "title": "User Id"
+            },
+            "description": "ID of the user"
           },
           {
             "name": "collection_id",
             "in": "path",
             "required": true,
-            "schema": { "type": "string", "title": "Collection Id" }
+            "schema": {
+              "type": "string",
+              "description": "ID of the collection",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection"
           }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/DocumentCreate" }
+              "schema": {
+                "$ref": "#/components/schemas/DocumentCreate",
+                "description": "Document creation parameters"
+              }
             }
           }
         },
@@ -2714,38 +3184,109 @@
           }
         ]
       }
+    },
+    "/v1/keys": {
+      "post": {
+        "tags": ["keys"],
+        "summary": "Create Key",
+        "description": "Create a new Key",
+        "operationId": "create_key_v1_keys_post",
+        "security": [{ "HTTPBearer": [] }, {}],
+        "parameters": [
+          {
+            "name": "app_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "ID of the app to scope the key to",
+              "title": "App Id"
+            },
+            "description": "ID of the app to scope the key to"
+          },
+          {
+            "name": "user_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "ID of the user to scope the key to",
+              "title": "User Id"
+            },
+            "description": "ID of the user to scope the key to"
+          },
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "ID of the session to scope the key to",
+              "title": "Session Id"
+            },
+            "description": "ID of the session to scope the key to"
+          },
+          {
+            "name": "collection_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [{ "type": "string" }, { "type": "null" }],
+              "description": "ID of the collection to scope the key to",
+              "title": "Collection Id"
+            },
+            "description": "ID of the collection to scope the key to"
+          },
+          {
+            "name": "expires_at",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                { "type": "string", "format": "date-time" },
+                { "type": "null" }
+              ],
+              "title": "Expires At"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": { "application/json": { "schema": {} } }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPValidationError" }
+              }
+            }
+          }
+        },
+        "x-codeSamples": [
+          {
+            "lang": "JavaScript",
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const key = await client.keys.create();\n\n  console.log(key);\n}\n\nmain();"
+          },
+          {
+            "lang": "Python",
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nkey = client.keys.create()\nprint(key)"
+          }
+        ]
+      }
     }
   },
   "components": {
     "schemas": {
-      "AgentChat": {
-        "properties": { "content": { "type": "string", "title": "Content" } },
-        "type": "object",
-        "required": ["content"],
-        "title": "AgentChat"
-      },
-      "AgentQuery": {
-        "properties": {
-          "queries": {
-            "anyOf": [
-              { "type": "string" },
-              { "items": { "type": "string" }, "type": "array" }
-            ],
-            "title": "Queries"
-          }
-        },
-        "type": "object",
-        "required": ["queries"],
-        "title": "AgentQuery"
-      },
       "App": {
         "properties": {
           "id": { "type": "string", "title": "Id" },
           "name": { "type": "string", "title": "Name" },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           },
           "created_at": {
             "type": "string",
@@ -2767,15 +3308,28 @@
             "title": "Name"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
         "required": ["name"],
         "title": "AppCreate"
+      },
+      "AppGet": {
+        "properties": {
+          "filter": {
+            "anyOf": [
+              { "additionalProperties": true, "type": "object" },
+              { "type": "null" }
+            ],
+            "title": "Filter"
+          }
+        },
+        "type": "object",
+        "title": "AppGet"
       },
       "AppUpdate": {
         "properties": {
@@ -2785,7 +3339,7 @@
           },
           "metadata": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Metadata"
@@ -2800,9 +3354,9 @@
           "name": { "type": "string", "title": "Name" },
           "user_id": { "type": "string", "title": "User Id" },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           },
           "created_at": {
             "type": "string",
@@ -2824,10 +3378,10 @@
             "title": "Name"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
@@ -2838,7 +3392,7 @@
         "properties": {
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -2855,7 +3409,7 @@
           },
           "metadata": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Metadata"
@@ -2864,14 +3418,35 @@
         "type": "object",
         "title": "CollectionUpdate"
       },
+      "DialecticOptions": {
+        "properties": {
+          "queries": {
+            "anyOf": [
+              { "type": "string" },
+              { "items": { "type": "string" }, "type": "array" }
+            ],
+            "title": "Queries"
+          },
+          "stream": { "type": "boolean", "title": "Stream", "default": false }
+        },
+        "type": "object",
+        "required": ["queries"],
+        "title": "DialecticOptions"
+      },
+      "DialecticResponse": {
+        "properties": { "content": { "type": "string", "title": "Content" } },
+        "type": "object",
+        "required": ["content"],
+        "title": "DialecticResponse"
+      },
       "Document": {
         "properties": {
           "id": { "type": "string", "title": "Id" },
           "content": { "type": "string", "title": "Content" },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           },
           "created_at": {
             "type": "string",
@@ -2900,10 +3475,10 @@
             "title": "Content"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
@@ -2914,7 +3489,7 @@
         "properties": {
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -2933,7 +3508,7 @@
           },
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -2955,9 +3530,9 @@
           "metadata": {
             "anyOf": [
               {
+                "additionalProperties": true,
                 "type": "object",
-                "maxProperties": 10000,
-                "additionalProperties": true
+                "maxProperties": 10000
               },
               { "type": "null" }
             ],
@@ -2992,9 +3567,9 @@
           "is_user": { "type": "boolean", "title": "Is User" },
           "session_id": { "type": "string", "title": "Session Id" },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           },
           "created_at": {
             "type": "string",
@@ -3038,10 +3613,10 @@
           },
           "is_user": { "type": "boolean", "title": "Is User" },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
@@ -3052,7 +3627,7 @@
         "properties": {
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -3064,9 +3639,9 @@
       "MessageUpdate": {
         "properties": {
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           }
         },
         "type": "object",
@@ -3078,11 +3653,19 @@
           "id": { "type": "string", "title": "Id" },
           "metamessage_type": { "type": "string", "title": "Metamessage Type" },
           "content": { "type": "string", "title": "Content" },
-          "message_id": { "type": "string", "title": "Message Id" },
+          "user_id": { "type": "string", "title": "User Id" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "message_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Message Id"
+          },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           },
           "created_at": {
             "type": "string",
@@ -3095,6 +3678,8 @@
           "id",
           "metamessage_type",
           "content",
+          "user_id",
+          "session_id",
           "message_id",
           "metadata",
           "created_at"
@@ -3116,16 +3701,23 @@
             "minLength": 0,
             "title": "Content"
           },
-          "message_id": { "type": "string", "title": "Message Id" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "message_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Message Id"
+          },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
-        "required": ["metamessage_type", "content", "message_id"],
+        "required": ["metamessage_type", "content"],
         "title": "MetamessageCreate"
       },
       "MetamessageGet": {
@@ -3134,13 +3726,17 @@
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Metamessage Type"
           },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
           "message_id": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Message Id"
           },
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -3149,41 +3745,46 @@
         "type": "object",
         "title": "MetamessageGet"
       },
-      "MetamessageGetUserLevel": {
-        "properties": {
-          "filter": {
-            "anyOf": [
-              { "type": "object", "additionalProperties": true },
-              { "type": "null" }
-            ],
-            "title": "Filter"
-          },
-          "metamessage_type": {
-            "anyOf": [{ "type": "string" }, { "type": "null" }],
-            "title": "Metamessage Type"
-          }
-        },
-        "type": "object",
-        "title": "MetamessageGetUserLevel"
-      },
       "MetamessageUpdate": {
         "properties": {
-          "message_id": { "type": "string", "title": "Message Id" },
+          "session_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Session Id"
+          },
+          "message_id": {
+            "anyOf": [{ "type": "string" }, { "type": "null" }],
+            "title": "Message Id"
+          },
           "metamessage_type": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Metamessage Type"
           },
           "metadata": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Metadata"
           }
         },
         "type": "object",
-        "required": ["message_id"],
         "title": "MetamessageUpdate"
+      },
+      "Page_App_": {
+        "properties": {
+          "items": {
+            "items": { "$ref": "#/components/schemas/App" },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": { "type": "integer", "minimum": 0, "title": "Total" },
+          "page": { "type": "integer", "minimum": 1, "title": "Page" },
+          "size": { "type": "integer", "minimum": 1, "title": "Size" },
+          "pages": { "type": "integer", "minimum": 0, "title": "Pages" }
+        },
+        "type": "object",
+        "required": ["items", "total", "page", "size"],
+        "title": "Page[App]"
       },
       "Page_Collection_": {
         "properties": {
@@ -3287,9 +3888,9 @@
           "is_active": { "type": "boolean", "title": "Is Active" },
           "user_id": { "type": "string", "title": "User Id" },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           },
           "created_at": {
             "type": "string",
@@ -3305,10 +3906,10 @@
       "SessionCreate": {
         "properties": {
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
@@ -3318,7 +3919,7 @@
         "properties": {
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -3335,9 +3936,9 @@
       "SessionUpdate": {
         "properties": {
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           }
         },
         "type": "object",
@@ -3355,9 +3956,9 @@
             "title": "Created At"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
-            "title": "Metadata",
-            "additionalProperties": true
+            "title": "Metadata"
           }
         },
         "type": "object",
@@ -3374,10 +3975,10 @@
             "title": "Name"
           },
           "metadata": {
+            "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
-            "default": {},
-            "additionalProperties": true
+            "default": {}
           }
         },
         "type": "object",
@@ -3388,7 +3989,7 @@
         "properties": {
           "filter": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Filter"
@@ -3405,7 +4006,7 @@
           },
           "metadata": {
             "anyOf": [
-              { "type": "object", "additionalProperties": true },
+              { "additionalProperties": true, "type": "object" },
               { "type": "null" }
             ],
             "title": "Metadata"
@@ -3432,3 +4033,4 @@
     "securitySchemes": { "HTTPBearer": { "type": "http", "scheme": "bearer" } }
   }
 }
+

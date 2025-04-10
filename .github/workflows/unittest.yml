@@ -47,7 +47,7 @@ jobs:
       run: uv run pytest -x
       env:
         CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
-        USE_AUTH_SERVICE: false
+        USE_AUTH: false
         SENTRY_ENABLED: false
         OPENTELEMETRY_ENABLED: false
         OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

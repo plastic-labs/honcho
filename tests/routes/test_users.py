@@ -17,7 +17,9 @@ def test_create_user(client, sample_data):
 
 def test_get_user_by_id(client, sample_data):
     test_app, test_user = sample_data
-    response = client.get(f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}")
+    response = client.get(
+        f"/v1/apps/{test_app.public_id}/users?user_id={test_user.public_id}"
+    )
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == test_user.name
