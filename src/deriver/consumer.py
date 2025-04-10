@@ -21,14 +21,14 @@ USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term"
 
 
 # FIXME see if this is SAFE
-async def add_metamessage(db, message_id, metamessage_type, content):
-    metamessage = models.Metamessage(
-        message_id=message_id,
-        metamessage_type=metamessage_type,
-        content=content,
-        h_metadata={},
-    )
-    db.add(metamessage)
+# async def add_metamessage(db, message_id, metamessage_type, content):
+# metamessage = models.Metamessage(
+#     message_id=message_id,
+#     metamessage_type=metamessage_type,
+#     content=content,
+#     h_metadata={},
+# )
+# db.add(metamessage)
 
 
 async def get_chat_history(db, session_id, message_id, limit: int = 10) -> str:
