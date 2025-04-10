@@ -15,8 +15,8 @@ from .embeddings import CollectionEmbeddingStore
 logger = logging.getLogger(__name__)
 
 # Constants for fact extraction
-FACT_EXTRACTION_PROVIDER = ModelProvider.GROQ
-FACT_EXTRACTION_MODEL = "llama-3.3-70b-versatile"
+FACT_EXTRACTION_PROVIDER = ModelProvider.GEMINI
+FACT_EXTRACTION_MODEL = "gemini-2.0-flash-lite"
 
 USER_REPRESENTATION_PROVIDER = ModelProvider.GROQ
 USER_REPRESENTATION_MODEL = "llama-3.3-70b-versatile"

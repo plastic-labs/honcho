@@ -19,6 +19,7 @@ class CollectionEmbeddingStore:
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
+        message_id: str = None,
     ) -> None:
         """Save facts to the collection.
 
@@ -30,9 +31,12 @@ class CollectionEmbeddingStore:
         for fact in facts:
             # Create document with duplicate checking
             try:
+                metadata = {}
+                if message_id:
+                    metadata["message_id"] = message_id
                 await crud.create_document(
                     self.db,
-                    document=schemas.DocumentCreate(content=fact, metadata={}),
+                    document=schemas.DocumentCreate(content=fact, metadata=metadata),
                     app_id=self.app_id,
                     user_id=self.user_id,
                     collection_id=self.collection_id,

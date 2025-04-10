@@ -51,7 +51,9 @@ async def process_item(db: AsyncSession, payload: dict):
         logger.debug(f"Processing AI message: {payload['message_id']}")
         await process_ai_message(*processing_args)
     logger.debug(f"Finished processing message: {payload['message_id']}")
-    await summarize_if_needed(db, payload["session_id"], payload["user_id"], payload["message_id"])
+    await summarize_if_needed(
+        db, payload["session_id"], payload["user_id"], payload["message_id"]
+    )
     return
 
 
@@ -91,7 +93,13 @@ async def process_user_message(
 
     # Get chat history and append current message
     logger.debug(f"Retrieving chat history for session: {session_id}")
-    short_history_text, short_history_messages, latest_short_summary = await history.get_summarized_history(db, session_id, summary_type=history.SummaryType.SHORT)
+    (
+        short_history_text,
+        short_history_messages,
+        latest_short_summary,
+    ) = await history.get_summarized_history(
+        db, session_id, summary_type=history.SummaryType.SHORT
+    )
     chat_history_str = f"{short_history_text}\nhuman: {content}"
 
     # Extract facts from chat history
@@ -127,7 +135,7 @@ async def process_user_message(
     if unique_facts:
         logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
         save_start = os.times()[4]
-        await embedding_store.save_facts(unique_facts)
+        await embedding_store.save_facts(unique_facts, message_id=message_id)
         save_time = os.times()[4] - save_start
         logger.debug(f"Facts saved in {save_time:.2f}s")
     else:
@@ -139,35 +147,49 @@ async def process_user_message(
     logger.debug(f"Total processing time: {total_time:.2f}s")
 
 
-async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, message_id: str):
+async def summarize_if_needed(
+    db: AsyncSession, session_id: str, user_id: str, message_id: str
+):
     summary_start = os.times()[4]
     logger.debug("Checking if summaries should be created")
-    
+
     # STEP 1: First check if we need a short summary (every 10 messages)
-    should_create_short, short_messages, latest_short_summary = await history.should_create_summary(
+    (
+        should_create_short,
+        short_messages,
+        latest_short_summary,
+    ) = await history.should_create_summary(
         db, session_id, summary_type=history.SummaryType.SHORT
     )
-    
+
     if should_create_short:
         logger.debug(f"Short summary needed for {len(short_messages)} messages")
-        
+
         # STEP 2: If we need a short summary, check if we also need a long summary
-        should_create_long, long_messages, latest_long_summary = await history.should_create_summary(
+        (
+            should_create_long,
+            long_messages,
+            latest_long_summary,
+        ) = await history.should_create_summary(
             db, session_id, summary_type=history.SummaryType.LONG
         )
-        
+
         # STEP 3: If we need a long summary, create it first before creating the short summary
         if should_create_long:
-            logger.debug(f"Creating new long summary covering {len(long_messages)} messages")
+            logger.debug(
+                f"Creating new long summary covering {len(long_messages)} messages"
+            )
             try:
                 # Get previous long summary context if available
-                previous_long_summary = latest_long_summary.content if latest_long_summary else None
-                
+                previous_long_summary = (
+                    latest_long_summary.content if latest_long_summary else None
+                )
+
                 # Create a new long summary
                 long_summary_text = await history.create_summary(
                     messages=long_messages,
                     previous_summary=previous_long_summary,
-                    summary_type=history.SummaryType.LONG
+                    summary_type=history.SummaryType.LONG,
                 )
                 # Save the long summary as a metamessage and capture the returned object
                 latest_long_summary = await history.save_summary_metamessage(
@@ -177,23 +199,29 @@ async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, m
                     message_id=message_id,
                     summary_content=long_summary_text,
                     message_count=len(long_messages),
-                    summary_type=history.SummaryType.LONG
+                    summary_type=history.SummaryType.LONG,
                 )
                 logger.debug("Long summary created and saved successfully")
             except Exception as e:
                 logger.error(f"Error creating long summary: {str(e)}")
         else:
-            logger.debug(f"No long summary needed. Need {history.MESSAGES_PER_LONG_SUMMARY} messages since last long summary.")
-        
+            logger.debug(
+                f"No long summary needed. Need {history.MESSAGES_PER_LONG_SUMMARY} messages since last long summary."
+            )
+
         # STEP 4: Now create the short summary, using the latest long summary for context if available
-        logger.debug(f"Creating new short summary covering {len(short_messages)} messages")
+        logger.debug(
+            f"Creating new short summary covering {len(short_messages)} messages"
+        )
         try:
-            previous_summary = latest_long_summary.content if latest_long_summary else None
+            previous_summary = (
+                latest_long_summary.content if latest_long_summary else None
+            )
             # Create a new short summary
             short_summary_text = await history.create_summary(
                 messages=short_messages,
                 previous_summary=previous_summary,
-                summary_type=history.SummaryType.SHORT
+                summary_type=history.SummaryType.SHORT,
             )
             # Save the short summary as a metamessage
             await history.save_summary_metamessage(
@@ -203,13 +231,15 @@ async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, m
                 message_id=message_id,
                 summary_content=short_summary_text,
                 message_count=len(short_messages),
-                summary_type=history.SummaryType.SHORT
+                summary_type=history.SummaryType.SHORT,
             )
             logger.debug("Short summary created and saved successfully")
         except Exception as e:
             logger.error(f"Error creating short summary: {str(e)}")
     else:
-        logger.debug(f"No short summary needed. Need {history.MESSAGES_PER_SHORT_SUMMARY} messages since last short summary.")
-    
+        logger.debug(
+            f"No short summary needed. Need {history.MESSAGES_PER_SHORT_SUMMARY} messages since last short summary."
+        )
+
     summary_time = os.times()[4] - summary_start
     logger.debug(f"Summary check completed in {summary_time:.2f}s")

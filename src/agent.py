@@ -30,7 +30,7 @@ DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
 DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
 
 DEF_QUERY_GENERATION_PROVIDER = ModelProvider.GROQ
-DEF_QUERY_GENERATION_MODEL = "llama-3.3-70b-versatile"
+DEF_QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
 QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
     For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
@@ -146,7 +146,6 @@ class Dialectic:
             return stream
 
 
-
 @observe()
 async def chat(
     app_id: str,
@@ -213,7 +212,9 @@ async def chat(
         logger.debug(f"Latest user message ID: {latest_message_id}")
 
         # Get chat history for the session
-        chat_history, _, _ = await history.get_summarized_history(db, session_id, summary_type=history.SummaryType.SHORT)
+        chat_history, _, _ = await history.get_summarized_history(
+            db, session_id, summary_type=history.SummaryType.SHORT
+        )
         if not chat_history:
             logger.warning(f"No chat history found for session {session_id}")
             chat_history = f"someone asked this about the user's message: {final_query}"
@@ -461,7 +462,10 @@ async def generate_user_representation(
             )
             .join(models.Session, models.Message.session_id == models.Session.public_id)
             .where(models.Session.public_id == session_id)  # Only from the same session
-            .where(models.Metamessage.metamessage_type == USER_REPRESENTATION_METAMESSAGE_TYPE)
+            .where(
+                models.Metamessage.metamessage_type
+                == USER_REPRESENTATION_METAMESSAGE_TYPE
+            )
             .order_by(models.Metamessage.id.desc())
             .limit(1)
         )
