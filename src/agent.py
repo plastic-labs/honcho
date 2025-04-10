@@ -18,11 +18,13 @@ from src.db import SessionLocal
 from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
-from src.utils import parse_xml_content
+from src.utils import history, parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
 
 DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
 DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
@@ -64,7 +66,7 @@ class Dialectic:
         self.user_representation = user_representation
         self.chat_history = chat_history
         self.client = ModelClient(
-            provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219"
+            provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
         self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
 
@@ -144,35 +146,6 @@ class Dialectic:
             return stream
 
 
-async def get_chat_history(app_id: str, user_id: str, session_id: str) -> str:
-    logger.debug(f"Retrieving chat history for session {session_id}")
-    async with SessionLocal() as db:
-        stmt = await crud.get_messages(db, app_id, user_id, session_id)
-        results = await db.execute(stmt)
-        messages = results.scalars().all()
-
-        if not messages:
-            logger.debug(f"No messages found for session {session_id}")
-            return ""
-
-        logger.debug(f"Found {len(messages)} messages for session {session_id}")
-        history = ""
-        user_count = 0
-        assistant_count = 0
-
-        for message in messages:
-            if message.is_user:
-                user_count += 1
-                history += f"user:{message.content}\n"
-            else:
-                assistant_count += 1
-                history += f"assistant:{message.content}\n"
-
-        logger.debug(
-            f"Constructed history with {user_count} user messages and {assistant_count} assistant messages"
-        )
-        return history
-
 
 @observe()
 async def chat(
@@ -240,18 +213,18 @@ async def chat(
         logger.debug(f"Latest user message ID: {latest_message_id}")
 
         # Get chat history for the session
-        history = await get_chat_history(app_id, user_id, session_id)
-        if not history:
+        chat_history, _, _ = await history.get_summarized_history(db, session_id, summary_type=history.SummaryType.SHORT)
+        if not chat_history:
             logger.warning(f"No chat history found for session {session_id}")
-            history = f"someone asked this about the user's message: {final_query}"
+            chat_history = f"someone asked this about the user's message: {final_query}"
         logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
-        message_count = len(history.split("\n"))
+        message_count = len(chat_history.split("\n"))
         logger.debug(f"Retrieved chat history: {message_count} messages")
 
         # Run both long-term and short-term context retrieval concurrently
         logger.debug("Starting parallel tasks for context retrieval")
         long_term_task = get_long_term_facts(final_query, embedding_store)
-        short_term_task = run_tom_inference(history, session_id)
+        short_term_task = run_tom_inference(chat_history, session_id)
 
         # Wait for both tasks to complete
         facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
@@ -264,7 +237,7 @@ async def chat(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
-            chat_history=history,
+            chat_history=chat_history,
             tom_inference=tom_inference,
             facts=facts,
             embedding_store=embedding_store,
@@ -280,7 +253,7 @@ async def chat(
     chain = Dialectic(
         agent_input=final_query,
         user_representation=user_representation,
-        chat_history=history,
+        chat_history=chat_history,
     )
 
     generation_time = asyncio.get_event_loop().time() - start_time
@@ -488,7 +461,7 @@ async def generate_user_representation(
             )
             .join(models.Session, models.Message.session_id == models.Session.public_id)
             .where(models.Session.public_id == session_id)  # Only from the same session
-            .where(models.Metamessage.metamessage_type == "user_representation")
+            .where(models.Metamessage.metamessage_type == USER_REPRESENTATION_METAMESSAGE_TYPE)
             .order_by(models.Metamessage.id.desc())
             .limit(1)
         )
@@ -533,9 +506,7 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
 """
     logger.debug(f"Representation: {representation}")
     # If message_id is provided, save the representation as a metamessage
-    if message_id is None:
-        logger.debug("No message_id provided, skipping save")
-    elif not representation:
+    if not representation:
         logger.debug("Empty representation, skipping save")
     else:
         logger.debug(f"Saving representation to message_id: {message_id}")
@@ -551,13 +522,13 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
                     message_exists = message_check.scalar_one_or_none() is not None
 
                     if not message_exists:
-                        logger.error(f"Message with ID {message_id} does not exist")
+                        message_id = None
                     else:
                         metamessage = models.Metamessage(
                             user_id=user_id,
                             session_id=session_id,
-                            message_id=message_id,
-                            metamessage_type="user_representation",
+                            message_id=message_id if message_id else None,
+                            metamessage_type=USER_REPRESENTATION_METAMESSAGE_TYPE,
                             content=representation,
                             h_metadata={},
                         )

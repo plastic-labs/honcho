@@ -385,7 +385,7 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         return MockCollection()
 
     async def mock_chat_history(*args, **kwargs):
-        return "Mock chat history"
+        return "Mock chat history", [], []
 
     async def mock_get_long_term_facts(*args, **kwargs):
         return ["Mock fact 1", "Mock fact 2"]
@@ -422,7 +422,7 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         "src.crud.get_or_create_user_protected_collection",
         mock_get_or_create_collection,
     )
-    monkeypatch.setattr("src.agent.get_chat_history", mock_chat_history)
+    monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
     monkeypatch.setattr("src.agent.get_long_term_facts", mock_get_long_term_facts)
     monkeypatch.setattr("src.agent.run_tom_inference", mock_run_tom_inference)
     monkeypatch.setattr(
