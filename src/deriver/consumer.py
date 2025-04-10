@@ -162,7 +162,6 @@ async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, m
             try:
                 # Get previous long summary context if available
                 previous_long_summary = latest_long_summary.content if latest_long_summary else None
-                print(f'creating long summary with previous_long_summary: {previous_long_summary}')
                 
                 # Create a new long summary
                 long_summary_text = await history.create_summary(
@@ -170,7 +169,6 @@ async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, m
                     previous_summary=previous_long_summary,
                     summary_type=history.SummaryType.LONG
                 )
-                print(f'created long summary: {long_summary_text}')
                 # Save the long summary as a metamessage and capture the returned object
                 latest_long_summary = await history.save_summary_metamessage(
                     db=db,
@@ -191,14 +189,12 @@ async def summarize_if_needed(db: AsyncSession, session_id: str, user_id: str, m
         logger.debug(f"Creating new short summary covering {len(short_messages)} messages")
         try:
             previous_summary = latest_long_summary.content if latest_long_summary else None
-            print(f'creating short summary with previous_summary: {previous_summary}')
             # Create a new short summary
             short_summary_text = await history.create_summary(
                 messages=short_messages,
                 previous_summary=previous_summary,
                 summary_type=history.SummaryType.SHORT
             )
-            print(f'created short summary: {short_summary_text}')
             # Save the short summary as a metamessage
             await history.save_summary_metamessage(
                 db=db,

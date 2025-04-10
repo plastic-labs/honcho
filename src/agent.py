@@ -214,7 +214,6 @@ async def chat(
 
         # Get chat history for the session
         chat_history, _, _ = await history.get_summarized_history(db, session_id, summary_type=history.SummaryType.SHORT)
-        print(f'chat_history: {chat_history}')
         if not chat_history:
             logger.warning(f"No chat history found for session {session_id}")
             chat_history = f"someone asked this about the user's message: {final_query}"

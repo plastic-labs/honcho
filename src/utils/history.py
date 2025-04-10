@@ -290,7 +290,6 @@ async def get_summarized_history(
     else:
         # No summary available, return just the messages
         history_text = messages_text
-    print(f'got summary of type {summary_type.name}: {history_text}')
     return history_text, messages, latest_summary
 
 async def get_messages_since_latest_summary(
@@ -354,7 +353,6 @@ async def should_create_summary(
     )
     threshold = MESSAGES_PER_SHORT_SUMMARY if summary_type == SummaryType.SHORT else MESSAGES_PER_LONG_SUMMARY
     should_create = len(messages) >= threshold
-    print(f"Should create {summary_type.name} summary: {should_create}")
     return should_create, messages, latest_summary
 
 def format_messages(messages: list[models.Message]) -> str:
