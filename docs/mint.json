@@ -68,6 +68,10 @@
       "pages": ["guides/discord", "guides/honcho-mcp"]
     },
     {
+      "group": "Personal Memory",
+      "pages": ["guides/dialectic-endpoint"]
+    },
+    {
       "group": "API Documentation",
       "pages": ["api-reference/introduction"]
     },
