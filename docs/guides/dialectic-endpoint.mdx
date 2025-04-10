@@ -42,13 +42,13 @@ import Honcho from 'honcho-ai';
 const honcho = new Honcho(); // defaults to demo server
 
 // Create or get an existing App
-const app = await client.apps.getOrCreate('demo-app');
+const app = await honcho.apps.getOrCreate('demo-app');
 
 // create or get user
-const user = await client.apps.users.getOrCreate(app.id, 'demo-user');
+const user = await honcho.apps.users.getOrCreate(app.id, 'demo-user');
 
 // create a new session (need to send empty body because it's a POST request)
-const session = await client.apps.users.sessions.create(app.id, user.id, {});
+const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
 
 // (assuming some messages have been written to Honcho for the deriver to use)
 ```
@@ -63,7 +63,7 @@ answer = honcho.apps.users.session.chat(app_id=app.id, user_id=user.id, session_
 
 ```javascript NodeJS
 const query = 'What is the user's favorite way of completing the task?'
-const DialecticResponse = await client.apps.users.sessions.chat(app.id, user.id, session.id, {
+const DialecticResponse = await honcho.apps.users.sessions.chat(app.id, user.id, session.id, {
     queries: query,
 });
 ```
