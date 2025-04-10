@@ -61,7 +61,7 @@
     },
     {
       "group": "Getting Started",
-      "pages": ["guides/overview"]
+      "pages": ["guides/overview", "guides/streaming-response"]
     },
     {
       "group": "Application Interfaces",
