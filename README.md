@@ -103,7 +103,7 @@ The `Session` object represents a set of interactions a `User` has with an
 **Messages**
 
 The `Message` represents an atomic interaction of a `User` in a `Session`.
-`Message`s are labled as either a `User` or AI message.
+`Message`s are labeled as either a `User` or AI message.
 
 #### Collections
 
