@@ -1,0 +1,30 @@
+# See https://fly.io/docs/app-guides/continuous-deployment-with-github-actions/
+
+name: Fly Deploy (Production Environment)
+on:
+  push:
+    tags:
+      - v*
+
+jobs:
+  deploy-honcho-prod-image:
+    name: Deploy Honcho Image (Production Environment)
+    runs-on: ubuntu-latest
+    concurrency: deploy-group
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy -c fly-prod.toml --remote-only --build-only --push --no-cache --image-label "deployment-${{ github.ref_name }}"
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_PROD_API_TOKEN }}
+
+  prompt-service:
+    name: Push to Service (Production Environment)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send POST request
+        run: |
+          curl -X POST -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.PROD_ENV_WEBHOOK_SECRET }}" \
+          -d '{"version": "${{ github.ref_name##v* }}", "image_label": "honcho-prod-image:deployment-${{ github.ref_name }}"}' \
+          "${{ secrets.PROD_ENV_URL }}"
