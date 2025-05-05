@@ -103,12 +103,12 @@ The `Session` object represents a set of interactions a `User` has with an
 **Messages**
 
 The `Message` represents an atomic interaction of a `User` in a `Session`.
-`Message`s are labed as either a `User` or AI message.
+`Message`s are labeled as either a `User` or AI message.
 
 #### Collections
 
 At a high level a `Collection` is a named group of `Documents`. Developers
-familiar with RAG based applications will be familar with these. `Collection`s
+familiar with RAG based applications will be familiar with these. `Collection`s
 store vector embedded data that developers and agents can retrieve against using
 functions like cosine similarity.
 
