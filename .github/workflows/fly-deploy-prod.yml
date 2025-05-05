@@ -13,7 +13,7 @@ jobs:
     concurrency: deploy-group
     steps:
       - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - uses: superfly/flyctl-actions/setup-flyctl@0.3.114
       - run: flyctl deploy -c fly-prod.toml --remote-only --build-only --push --no-cache --image-label "deployment-${{ github.ref_name }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_PROD_API_TOKEN }}
@@ -23,8 +23,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Send POST request
+        env:
+          GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
-          curl -X POST -H "Content-Type: application/json" \
-          -H "Authorization: Bearer ${{ secrets.PROD_ENV_WEBHOOK_SECRET }}" \
-          -d '{"version": "${{ github.ref_name##v* }}", "image_label": "honcho-prod-image:deployment-${{ github.ref_name }}"}' \
-          "${{ secrets.PROD_ENV_URL }}"
+          TAG=${GITHUB_REF_NAME#v}
+          IMAGE_LABEL="honcho-image:deployment-${GITHUB_REF_NAME}"
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.PROD_ENV_WEBHOOK_SECRET }}" \
+            -d "{\"version\":\"$TAG\",\"image_label\":\"$IMAGE_LABEL\"}" \
+            "${{ secrets.PROD_ENV_URL }}"
