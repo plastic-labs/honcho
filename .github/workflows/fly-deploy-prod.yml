@@ -27,7 +27,7 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
           TAG=${GITHUB_REF_NAME#v}
-          IMAGE_LABEL="honcho-image:deployment-${GITHUB_REF_NAME}"
+          IMAGE_LABEL="honcho-prod-image:deployment-${GITHUB_REF_NAME}"
           curl -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.PROD_ENV_WEBHOOK_SECRET }}" \
