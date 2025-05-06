@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
 from src.db import engine
@@ -66,12 +67,22 @@ async def setup_admin_jwt():
 
 # Sentry Setup
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
-if SENTRY_ENABLED:
+if SENTRY_ENABLED:    
+    
+    def before_send(event, hint):        
+        if 'exc_info' in hint:
+            exc_type, exc_value, _ = hint['exc_info']
+            # Filter out HonchoExceptions from being sent to Sentry
+            if isinstance(exc_value, HonchoException):
+                return None
+        
+        return event
+    
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN"),
         traces_sample_rate=0.4,
         profiles_sample_rate=0.4,
-        ignore_errors=[HonchoException],
+        before_send=before_send,
         integrations=[
             StarletteIntegration(
                 transaction_style="endpoint",
@@ -140,7 +151,7 @@ app.include_router(keys.router, prefix="/v1")
 @app.exception_handler(HonchoException)
 async def honcho_exception_handler(request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
-    logger.error(f"{exc.__class__.__name__}: {exc.detail}")
+    logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
