@@ -71,6 +71,7 @@ if SENTRY_ENABLED:
         dsn=os.getenv("SENTRY_DSN"),
         traces_sample_rate=0.4,
         profiles_sample_rate=0.4,
+        ignore_errors=[HonchoException],
         integrations=[
             StarletteIntegration(
                 transaction_style="endpoint",
