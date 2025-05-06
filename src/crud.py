@@ -1,6 +1,7 @@
+import datetime
 from collections.abc import Sequence
 from logging import getLogger
-from typing import List, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -30,7 +31,12 @@ DEF_PROTECTED_COLLECTION_NAME = "honcho"
 ########################################################
 
 
-async def get_app(db: AsyncSession, app_id: str) -> models.App:
+async def get_app(
+    db: AsyncSession,
+    app_id: str,
+    *,
+    transaction_id: int | None = None,
+) -> models.App:
     """
     Get an app by its ID.
 
@@ -44,6 +50,15 @@ async def get_app(db: AsyncSession, app_id: str) -> models.App:
     Raises:
         ResourceNotFoundException: If the app does not exist
     """
+    if transaction_id:
+        await create_staged_operation(
+            db,
+            transaction_id,
+            {"app_id": app_id},
+            {},
+            "get_app",
+        )
+
     stmt = select(models.App).where(models.App.public_id == app_id)
     result = await db.execute(stmt)
     app = result.scalar_one_or_none()
@@ -943,7 +958,7 @@ async def update_metamessage(
             db,
             app_id=app_id,
             session_id=metamessage.session_id,
-            user_id=metamessage.user_id,
+            user_id=user_id,
             message_id=metamessage.message_id,
         )
         if message is None:
@@ -1417,7 +1432,7 @@ async def create_document(
     """
 
     # This will raise ResourceNotFoundException if collection not found
-    collection = await get_collection_by_id(
+    _collection = await get_collection_by_id(
         db, app_id=app_id, collection_id=collection_id, user_id=user_id
     )
 
@@ -1537,7 +1552,7 @@ async def get_duplicate_documents(
     collection_id: str,
     content: str,
     similarity_threshold: float = 0.85,
-) -> List[models.Document]:
+) -> list[models.Document]:
     """Check if a document with similar content already exists in the collection.
 
     Args:
@@ -1571,3 +1586,56 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+########################################################
+# transaction methods
+########################################################
+
+
+async def create_transaction(
+    db: AsyncSession, expires_at: datetime.datetime | None = None
+) -> models.Transaction:
+    transaction = models.Transaction(
+        status="pending",
+        expires_at=expires_at,
+    )
+    db.add(transaction)
+    await db.commit()
+    return transaction
+
+
+async def get_transaction(db: AsyncSession, transaction_id: int) -> models.Transaction:
+    stmt = select(models.Transaction).where(
+        models.Transaction.transaction_id == transaction_id
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_staged_operation(
+    db: AsyncSession,
+    transaction_id: int,
+    operation_params: dict,
+    operation_payload: dict,
+    operation_handler: str,
+) -> models.StagedOperation:
+    staged_operation = models.StagedOperation(
+        transaction_id=transaction_id,
+        parameters=operation_params,
+        payload=operation_payload,
+        handler_function=operation_handler,
+    )
+    db.add(staged_operation)
+    await db.commit()
+    return staged_operation
+
+
+async def get_staged_operations(
+    db: AsyncSession, transaction_id: int
+) -> Sequence[models.StagedOperation]:
+    stmt = select(models.StagedOperation).where(
+        models.StagedOperation.transaction_id == transaction_id
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()

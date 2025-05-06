@@ -289,3 +289,48 @@ class ActiveQueueSession(Base):
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+    transaction_id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now(), onupdate=func.now()
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+        default=lambda: datetime.datetime.now(datetime.timezone.utc)
+        + datetime.timedelta(minutes=60),
+    )
+    status: Mapped[str] = mapped_column(TEXT, index=True, default="pending")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'committed', 'rolled_back', 'expired')",
+            name="valid_status_check",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="valid_expiration_check",
+        ),
+    )
+
+
+class StagedOperation(Base):
+    __tablename__ = "staged_operations"
+    operation_id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.transaction_id", ondelete="CASCADE")
+    )
+    sequence_number: Mapped[int] = mapped_column(BigInteger)
+    parameters: Mapped[dict] = mapped_column(JSONB)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    handler_function: Mapped[str] = mapped_column(TEXT)

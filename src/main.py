@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import sentry_sdk
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
@@ -20,6 +20,7 @@ from src.routers import (
     messages,
     metamessages,
     sessions,
+    transactions,
     users,
 )
 from src.security import create_admin_jwt
@@ -133,6 +134,7 @@ app.include_router(metamessages.router, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
 app.include_router(keys.router, prefix="/v1")
+app.include_router(transactions.router, prefix="/v1")
 
 
 # Global exception handlers

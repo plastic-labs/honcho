@@ -8,6 +8,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException, ResourceNotFoundException
+from src.routers import transactions
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,7 @@ async def get_app(
         None, description="App ID to retrieve. If not provided, uses JWT token"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """
@@ -43,7 +45,7 @@ async def get_app(
             raise AuthenticationException("App ID not found in query parameter or JWT")
         target_app_id = jwt_params.ap
 
-    return await crud.get_app(db, app_id=target_app_id)
+    return await crud.get_app(db, app_id=target_app_id, transaction_id=transaction_id)
 
 
 @router.post(
