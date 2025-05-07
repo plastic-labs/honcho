@@ -32,7 +32,7 @@ jobs:
           else
             IMAGE_LABEL="deployment-${{ github.ref_name }}"
           fi
-          flyctl deploy -a honcho-prod-image --remote-only --build-only --push --no-cache --image-label "deployment-${{ github.ref_name }}"
+          flyctl deploy -a honcho-prod-image --remote-only --build-only --push --no-cache --image-label "$IMAGE_LABEL"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_PROD_API_TOKEN }}
 
