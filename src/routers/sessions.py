@@ -15,6 +15,7 @@ from src.exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
+from src.routers import transactions
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ async def get_session(
         None, description="Session ID to retrieve. If not provided, uses JWT token"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """
@@ -69,7 +71,11 @@ async def get_session(
 
     # Let crud function handle the ResourceNotFoundException
     return await crud.get_session(
-        db, app_id=app_id, session_id=target_session_id, user_id=user_id
+        db,
+        app_id=app_id,
+        session_id=target_session_id,
+        user_id=user_id,
+        transaction_id=transaction_id,
     )
 
 
@@ -87,6 +93,7 @@ async def get_sessions(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get All Sessions for a User"""
@@ -99,6 +106,7 @@ async def get_sessions(
             reverse=reverse,
             is_active=options.is_active,
             filter=options.filter,
+            transaction_id=transaction_id,
         ),
     )
 
@@ -114,12 +122,17 @@ async def create_session(
     session: schemas.SessionCreate = Body(
         ..., description="Session creation parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Create a Session for a User"""
     try:
         session_obj = await crud.create_session(
-            db, app_id=app_id, user_id=user_id, session=session
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            session=session,
+            transaction_id=transaction_id,
         )
         logger.info(f"Session created successfully for user {user_id}")
         return session_obj
@@ -144,12 +157,18 @@ async def update_session(
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Update the metadata of a Session"""
     try:
         updated_session = await crud.update_session(
-            db, app_id=app_id, user_id=user_id, session_id=session_id, session=session
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            session=session,
+            transaction_id=transaction_id,
         )
         logger.info(f"Session {session_id} updated successfully")
         return updated_session
@@ -170,12 +189,17 @@ async def delete_session(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session to delete"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Delete a session by marking it as inactive"""
     try:
         await crud.delete_session(
-            db, app_id=app_id, user_id=user_id, session_id=session_id
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            transaction_id=transaction_id,
         )
         logger.info(f"Session {session_id} deleted successfully")
         return {"message": "Session deleted successfully"}

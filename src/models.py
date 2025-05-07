@@ -289,3 +289,63 @@ class ActiveQueueSession(Base):
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+    transaction_id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now()
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now(), onupdate=func.now()
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True),
+        index=True,
+        default=lambda: datetime.datetime.now(datetime.timezone.utc)
+        + datetime.timedelta(minutes=60),
+    )
+    status: Mapped[str] = mapped_column(TEXT, index=True, default="pending")
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'committed', 'failed','rolled_back', 'expired')",
+            name="valid_status_check",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="valid_expiration_check",
+        ),
+    )
+
+
+class StagedOperation(Base):
+    __tablename__ = "staged_operations"
+    operation_id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    transaction_id: Mapped[int] = mapped_column(
+        ForeignKey("transactions.transaction_id", ondelete="CASCADE")
+    )
+    sequence_number: Mapped[int] = mapped_column(BigInteger)
+    parameters: Mapped[dict] = mapped_column(JSONB)
+    # Payload can be a dict (single Pydantic model dump) or a list (list of model dumps)
+    payload: Mapped[dict | list] = mapped_column(JSONB)
+    handler_function: Mapped[str] = mapped_column(TEXT)
+    resource_public_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    schema_arg_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    is_list_schema: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "transaction_id", "sequence_number", name="uq_transaction_sequence"
+        ),
+        Index(
+            "idx_staged_operations_transaction_sequence",
+            "transaction_id",
+            "sequence_number",
+        ),
+    )

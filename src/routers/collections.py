@@ -7,6 +7,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException
+from src.routers import transactions
 from src.security import JWTParams, require_auth
 
 router = APIRouter(
@@ -26,6 +27,7 @@ async def get_collection(
         None, description="Collection ID to retrieve. If not provided, uses JWT token"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """
@@ -59,7 +61,11 @@ async def get_collection(
 
     # Let crud function handle the ResourceNotFoundException
     return await crud.get_collection_by_id(
-        db, app_id=app_id, collection_id=target_collection_id, user_id=user_id
+        db,
+        app_id=app_id,
+        collection_id=target_collection_id,
+        user_id=user_id,
+        transaction_id=transaction_id,
     )
 
 
@@ -77,13 +83,19 @@ async def get_collections(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get All Collections for a User"""
     return await paginate(
         db,
         await crud.get_collections(
-            db, app_id=app_id, user_id=user_id, filter=options.filter, reverse=reverse
+            db,
+            app_id=app_id,
+            user_id=user_id,
+            filter=options.filter,
+            reverse=reverse,
+            transaction_id=transaction_id,
         ),
     )
 
@@ -97,11 +109,12 @@ async def get_collection_by_name(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     name: str = Path(..., description="Name of the collection to retrieve"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ) -> schemas.Collection:
     """Get a Collection by Name"""
     honcho_collection = await crud.get_collection_by_name(
-        db, app_id=app_id, user_id=user_id, name=name
+        db, app_id=app_id, user_id=user_id, name=name, transaction_id=transaction_id
     )
     return honcho_collection
 
@@ -117,13 +130,18 @@ async def create_collection(
     collection: schemas.CollectionCreate = Body(
         ..., description="Collection creation parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Create a new Collection"""
     # ValidationException will be caught by global handler if collection is invalid
     # ConflictException will be caught by global handler if collection name already exists
     return await crud.create_collection(
-        db, collection=collection, app_id=app_id, user_id=user_id
+        db,
+        collection=collection,
+        app_id=app_id,
+        user_id=user_id,
+        transaction_id=transaction_id,
     )
 
 
@@ -145,6 +163,7 @@ async def update_collection(
     collection: schemas.CollectionUpdate = Body(
         ..., description="Updated collection parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     "Update a Collection's name or metadata"
@@ -156,6 +175,7 @@ async def update_collection(
         app_id=app_id,
         user_id=user_id,
         collection_id=collection_id,
+        transaction_id=transaction_id,
     )
     return honcho_collection
 
@@ -174,11 +194,16 @@ async def delete_collection(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection to delete"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Delete a Collection and its documents"""
     # ResourceNotFoundException will be caught by global handler if collection not found
     await crud.delete_collection(
-        db, app_id=app_id, user_id=user_id, collection_id=collection_id
+        db,
+        app_id=app_id,
+        user_id=user_id,
+        collection_id=collection_id,
+        transaction_id=transaction_id,
     )
     return {"message": "Collection deleted successfully"}
