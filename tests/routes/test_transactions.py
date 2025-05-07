@@ -409,3 +409,40 @@ async def test_transaction_too_many_operations(client):
         headers={"X-Transaction-ID": f"{transaction_id}"},
     )
     assert response.status_code == 422
+
+
+async def test_transaction_multiple_clients(client, secondary_client):
+    # Create a transaction
+    response = client.post("/v1/transactions/begin")
+    assert response.status_code == 200
+    transaction_id = response.json()
+
+    # Create an app
+    app_response = secondary_client.post(
+        "/v1/apps",
+        json={"name": "transaction_test_app"},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert app_response.status_code == 200
+    app_id = app_response.json()["id"]
+
+    # Continue the transaction in the original client
+    response = client.post(
+        f"/v1/apps/{app_id}/users",
+        json={"name": "transaction_test_user"},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert response.status_code == 200
+    user_id = response.json()["id"]
+    # Commit the transaction
+    commit_response = secondary_client.post(f"/v1/transactions/{transaction_id}/commit")
+    assert commit_response.status_code == 200
+
+    # Verify the app exists for both clients
+    assert secondary_client.get(f"/v1/apps/?app_id={app_id}").status_code == 200
+    assert (
+        secondary_client.get(f"/v1/apps/{app_id}/users?user_id={user_id}").status_code
+        == 200
+    )
+    assert client.get(f"/v1/apps/?app_id={app_id}").status_code == 200
+    assert client.get(f"/v1/apps/{app_id}/users?user_id={user_id}").status_code == 200

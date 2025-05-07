@@ -163,6 +163,29 @@ async def client(db_session):
         yield c
 
 
+@pytest.fixture(scope="function")
+async def secondary_client(db_session):
+    """Create a FastAPI TestClient for the scope of a single test function"""
+
+    # Register exception handlers for tests
+    @app.exception_handler(HonchoException)
+    async def test_exception_handler(request: Request, exc: HonchoException):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": exc.detail},
+        )
+
+    async def override_get_db():
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as c:
+        if USE_AUTH:
+            # give the test client the admin JWT
+            c.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
+        yield c
+
+
 def create_invalid_jwt() -> str:
     return jwt.encode({"ad": "invalid"}, "this is not the secret", algorithm="HS256")
 
