@@ -11,6 +11,7 @@ from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
 )
+from src.routers import transactions
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,13 @@ router = APIRouter(
 async def create_user(
     app_id: str = Path(..., description="ID of the app"),
     user: schemas.UserCreate = Body(..., description="User creation parameters"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Create a new User"""
-    user_obj = await crud.create_user(db, app_id=app_id, user=user)
+    user_obj = await crud.create_user(
+        db, app_id=app_id, user=user, transaction_id=transaction_id
+    )
     return user_obj
 
 
@@ -47,12 +51,19 @@ async def get_users(
         ..., description="Filtering options for the users list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get All Users for an App"""
     return await paginate(
         db,
-        await crud.get_users(db, app_id=app_id, reverse=reverse, filter=options.filter),
+        await crud.get_users(
+            db,
+            app_id=app_id,
+            reverse=reverse,
+            filter=options.filter,
+            transaction_id=transaction_id,
+        ),
     )
 
 
@@ -66,6 +77,7 @@ async def get_user(
         None, description="User ID to retrieve. If not provided, users JWT token"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """
@@ -87,7 +99,9 @@ async def get_user(
         if not jwt_params.us:
             raise AuthenticationException("User ID not found in query parameter or JWT")
         target_user_id = jwt_params.us
-    user = await crud.get_user(db, app_id=app_id, user_id=target_user_id)
+    user = await crud.get_user(
+        db, app_id=app_id, user_id=target_user_id, transaction_id=transaction_id
+    )
     return user
 
 
@@ -105,10 +119,13 @@ async def get_user(
 async def get_user_by_name(
     app_id: str = Path(..., description="ID of the app"),
     name: str = Path(..., description="Name of the user to retrieve"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get a User by name"""
-    user = await crud.get_user_by_name(db, app_id=app_id, name=name)
+    user = await crud.get_user_by_name(
+        db, app_id=app_id, name=name, transaction_id=transaction_id
+    )
     return user
 
 
@@ -126,16 +143,22 @@ async def get_user_by_name(
 async def get_or_create_user(
     app_id: str = Path(..., description="ID of the app"),
     name: str = Path(..., description="Name of the user to get or create"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get a User or create a new one by the input name"""
     try:
-        user = await crud.get_user_by_name(db, app_id=app_id, name=name)
+        user = await crud.get_user_by_name(
+            db, app_id=app_id, name=name, transaction_id=transaction_id
+        )
         return user
     except ResourceNotFoundException:
         # User doesn't exist, create it
         user = await create_user(
-            db=db, app_id=app_id, user=schemas.UserCreate(name=name)
+            db=db,
+            app_id=app_id,
+            user=schemas.UserCreate(name=name),
+            transaction_id=transaction_id,
         )
         return user
 
@@ -149,8 +172,11 @@ async def update_user(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user to update"),
     user: schemas.UserUpdate = Body(..., description="Updated user parameters"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Update a User's name and/or metadata"""
-    updated_user = await crud.update_user(db, app_id=app_id, user_id=user_id, user=user)
+    updated_user = await crud.update_user(
+        db, app_id=app_id, user_id=user_id, user=user, transaction_id=transaction_id
+    )
     return updated_user

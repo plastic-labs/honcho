@@ -49,7 +49,7 @@ async def commit_transaction(
     db=db,
 ):
     """Commit a Transaction"""
-    pass
+    await crud.commit_transaction(db, transaction_id)
 
 
 @router.post(
@@ -61,4 +61,4 @@ async def rollback_transaction(
     db=db,
 ):
     """Rollback a Transaction"""
-    pass
+    await crud.rollback_transaction(db, transaction_id)

@@ -98,7 +98,7 @@ async def query_documents(
             filter = None
 
         documents = await crud.query_documents(
-            db=db,
+            db,
             app_id=app_id,
             user_id=user_id,
             collection_id=collection_id,

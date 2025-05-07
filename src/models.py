@@ -312,7 +312,7 @@ class Transaction(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('pending', 'committed', 'rolled_back', 'expired')",
+            "status IN ('pending', 'committed', 'failed','rolled_back', 'expired')",
             name="valid_status_check",
         ),
         CheckConstraint(
@@ -332,5 +332,20 @@ class StagedOperation(Base):
     )
     sequence_number: Mapped[int] = mapped_column(BigInteger)
     parameters: Mapped[dict] = mapped_column(JSONB)
-    payload: Mapped[dict] = mapped_column(JSONB)
+    # Payload can be a dict (single Pydantic model dump) or a list (list of model dumps)
+    payload: Mapped[dict | list] = mapped_column(JSONB)
     handler_function: Mapped[str] = mapped_column(TEXT)
+    resource_public_id: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    schema_arg_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    is_list_schema: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "transaction_id", "sequence_number", name="uq_transaction_sequence"
+        ),
+        Index(
+            "idx_staged_operations_transaction_sequence",
+            "transaction_id",
+            "sequence_number",
+        ),
+    )
