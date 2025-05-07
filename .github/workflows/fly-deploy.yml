@@ -7,16 +7,32 @@ on:
   push:
     tags:
       - v*
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to deploy (without v prefix)"
+        required: true
+        type: string
+        default: 'manual'
 
 jobs:
   deploy-honcho-image:
     name: Deploy Honcho Image (Test Environment)
     runs-on: ubuntu-latest
-    concurrency: deploy-group
+    concurrency: 
+      group: deploy-group
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: superfly/flyctl-actions/setup-flyctl@1.5
-      - run: flyctl deploy -a honcho-image --remote-only --build-only --push --no-cache --image-label "deployment-${{ github.ref_name }}"
+      - run: |
+          # Determine the image label based on trigger type
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            IMAGE_LABEL="deployment-${{ github.event.inputs.version }}"
+          else
+            IMAGE_LABEL="deployment-${{ github.ref_name }}"
+          fi
+          flyctl deploy -a honcho-image --remote-only --build-only --push --no-cache --image-label "deployment-${{ github.ref_name }}"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
@@ -29,9 +45,16 @@ jobs:
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
-          TAG=${GITHUB_REF_NAME#v}
-          IMAGE_LABEL="honcho-image:deployment-${GITHUB_REF_NAME}"
-          curl -X POST \
+          # Determine version and image label based on trigger type
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.version }}"
+            IMAGE_LABEL="honcho-image:deployment-${{ github.event.inputs.version }}"
+          else
+            TAG=${GITHUB_REF_NAME#v}
+            IMAGE_LABEL="honcho-image:deployment-${GITHUB_REF_NAME}"
+          fi
+
+          curl --fail -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.TEST_ENV_WEBHOOK_SECRET }}" \
             -d "{\"version\":\"$TAG\",\"image_label\":\"$IMAGE_LABEL\"}" \
