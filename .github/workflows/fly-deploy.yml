@@ -20,7 +20,7 @@ jobs:
     name: Deploy Honcho Image (Test Environment)
     runs-on: ubuntu-latest
     concurrency: 
-      group: deploy-group
+      group: deploy-test-group
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
