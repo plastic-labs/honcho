@@ -22,6 +22,7 @@ jobs:
 
   prompt-service:
     name: Push to Service (Production Environment)
+    needs: deploy-honcho-prod-image
     runs-on: ubuntu-latest
     steps:
       - name: Send POST request
