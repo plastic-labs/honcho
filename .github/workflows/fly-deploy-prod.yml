@@ -19,7 +19,7 @@ jobs:
   deploy-honcho-prod-image:
     name: Deploy Honcho Image (Production Environment)
     runs-on: ubuntu-latest
-    concurrency: 
+    concurrency:
       group: deploy-prod-group
       cancel-in-progress: true
     steps:
@@ -48,10 +48,10 @@ jobs:
           # Determine version and image label based on trigger type
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             TAG="${{ github.event.inputs.version }}"
-            IMAGE_LABEL="honcho-image:deployment-${{ github.event.inputs.version }}"
+            IMAGE_LABEL="honcho-prod-image:deployment-${{ github.event.inputs.version }}"
           else
             TAG=${GITHUB_REF_NAME#v}
-            IMAGE_LABEL="honcho-image:deployment-${GITHUB_REF_NAME}"
+            IMAGE_LABEL="honcho-prod-image:deployment-${GITHUB_REF_NAME}"
           fi
 
           curl --fail -X POST \
