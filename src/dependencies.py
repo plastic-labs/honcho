@@ -13,6 +13,8 @@ async def get_db():
         await db.rollback()
         raise
     finally:
+        if db.in_transaction():
+            await db.rollback()
         await db.close()
 
 
