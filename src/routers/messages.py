@@ -8,8 +8,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy.sql import insert
 
 from src import crud, schemas
-from src.db import SessionLocal
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import QueueItem
 from src.security import require_auth
@@ -34,7 +33,9 @@ async def enqueue(payload: dict | list[dict]):
     Args:
         payload: Single message payload or list of message payloads
     """
-    async with SessionLocal() as db:
+
+    # Use the get_db dependency to ensure proper transaction handling
+    async with tracked_db("message_enqueue") as db_session:
         try:
             if isinstance(payload, list):
                 if not payload:  # Empty list check
@@ -46,7 +47,7 @@ async def enqueue(payload: dict | list[dict]):
                 # Check session once since all messages are for same session
                 try:
                     session = await crud.get_session(
-                        db,
+                        db_session,
                         app_id=payload[0]["app_id"],
                         user_id=payload[0]["user_id"],
                         session_id=payload[0]["session_id"],
@@ -89,8 +90,8 @@ async def enqueue(payload: dict | list[dict]):
 
                 # Use insert to maintain order
                 stmt = insert(QueueItem).returning(QueueItem)
-                await db.execute(stmt, queue_records)
-                await db.commit()
+                await db_session.execute(stmt, queue_records)
+                await db_session.commit()
                 logger.info(f"Successfully enqueued batch of {len(payload)} messages")
                 return
             else:
@@ -101,7 +102,7 @@ async def enqueue(payload: dict | list[dict]):
 
                 try:
                     session = await crud.get_session(
-                        db,
+                        db_session,
                         app_id=payload["app_id"],
                         user_id=payload["user_id"],
                         session_id=payload["session_id"],
@@ -134,8 +135,8 @@ async def enqueue(payload: dict | list[dict]):
                     .values(payload=processed_payload, session_id=session.id)
                     .returning(QueueItem)
                 )
-                await db.execute(stmt)
-                await db.commit()
+                await db_session.execute(stmt)
+                await db_session.commit()
                 logger.info(
                     f"Successfully enqueued message for session {payload['session_id']}"
                 )
@@ -146,7 +147,6 @@ async def enqueue(payload: dict | list[dict]):
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)
-            await db.rollback()
 
 
 @router.post("", response_model=schemas.Message)

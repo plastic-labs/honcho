@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.db import SessionLocal
+from src.dependencies import tracked_db
 from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
@@ -179,9 +179,7 @@ async def chat(
     # Setup phase - create resources we'll need for all operations
 
     # 1. Create embedding store
-    collection = await crud.get_or_create_user_protected_collection(
-        db, app_id, user_id
-    )
+    collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
 
     embedding_store = CollectionEmbeddingStore(
         db=db,
@@ -516,7 +514,7 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
         logger.debug(f"Saving representation to message_id: {message_id}")
         save_start = asyncio.get_event_loop().time()
         try:
-            async with SessionLocal() as save_db:
+            async with tracked_db("agent.generate_user_representation") as save_db:
                 try:
                     # First check if message exists
                     message_check_stmt = select(models.Message).where(

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from .. import models
-from ..db import SessionLocal
+from ..dependencies import tracked_db
 from .consumer import process_item
 
 logger = getLogger(__name__)
@@ -91,7 +91,8 @@ class QueueManager:
         if self.owned_sessions:
             logger.info(f"Cleaning up {len(self.owned_sessions)} owned sessions...")
             try:
-                async with SessionLocal() as db:
+                # Use the tracked_db dependency for transaction safety
+                async with tracked_db("queue_cleanup") as db:
                     await db.execute(
                         delete(models.ActiveQueueSession).where(
                             models.ActiveQueueSession.session_id.in_(
@@ -153,7 +154,8 @@ class QueueManager:
                     await asyncio.sleep(1)  # Wait before trying again
                     continue
 
-                async with SessionLocal() as db:
+                # Use the dependency for transaction safety
+                async with tracked_db("queue_polling_loop") as db:
                     try:
                         new_sessions = await self.get_available_sessions(db)
 
@@ -181,7 +183,7 @@ class QueueManager:
                                         )
                                         self.add_task(task)
                                 except IntegrityError:
-                                    await db.rollback()
+                                    # Note: rollback is handled by tracked_db dependency
                                     logger.debug(
                                         f"Failed to claim session {session_id}, already owned"
                                     )
@@ -192,7 +194,7 @@ class QueueManager:
                         logger.error(f"Error in polling loop: {str(e)}", exc_info=True)
                         if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
                             sentry_sdk.capture_exception(e)
-                        await db.rollback()
+                        # Note: rollback is handled by tracked_db dependency
                         await asyncio.sleep(1)
         finally:
             logger.info("Polling loop stopped")
@@ -206,7 +208,8 @@ class QueueManager:
         """Process all messages for a session"""
         logger.debug(f"Starting to process session {session_id}")
         async with self.semaphore:  # Hold the semaphore for the entire session duration
-            async with SessionLocal() as db:
+            # Use the tracked_db dependency for transaction safety
+            async with tracked_db("queue_process_session") as db:
                 try:
                     message_count = 0
                     while not self.shutdown_event.is_set():

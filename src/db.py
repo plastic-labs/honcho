@@ -1,3 +1,4 @@
+import contextvars
 import os
 
 from dotenv import load_dotenv
@@ -7,9 +8,10 @@ from sqlalchemy.orm import declarative_base
 
 load_dotenv()
 
-connect_args = {
-    "prepare_threshold": None,
-}
+connect_args = {"prepare_threshold": None}
+
+# Context variable to store request context
+request_context = contextvars.ContextVar("request_context", default=None)
 
 engine = create_async_engine(
     os.environ["CONNECTION_URI"],
