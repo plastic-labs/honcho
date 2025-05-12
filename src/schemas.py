@@ -93,7 +93,6 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     is_user: bool
     metadata: dict = {}
-    public_id: str | None = None
 
 
 class MessageGet(MessageBase):
@@ -180,7 +179,6 @@ class MetamessageCreate(MetamessageBase):
     session_id: str | None = None
     message_id: str | None = None
     metadata: dict = {}
-    public_id: str | None = None
 
 
 class MetamessageGet(MetamessageBase):

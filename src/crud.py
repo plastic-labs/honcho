@@ -1079,7 +1079,6 @@ async def create_messages(
             "is_user": message.is_user,
             "content": message.content,
             "h_metadata": message.metadata,
-            "public_id": message.public_id,
         }
         for message in messages
     ]
@@ -1191,7 +1190,6 @@ async def create_metamessage(
         "metamessage_type": metamessage.metamessage_type,
         "content": metamessage.content,
         "h_metadata": metamessage.metadata,
-        "public_id": metamessage.public_id,
     }
 
     # Validate session_id if provided
