@@ -247,7 +247,7 @@ async def create_batch_messages_for_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.post("/list", response_model=Page[schemas.Message])
+@router.post("/list", response_model=Page[schemas.Message], dependencies=[Depends(transactions.disallow_transaction_header)])
 async def get_messages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
@@ -258,7 +258,6 @@ async def get_messages(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
-    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get all messages for a session"""
@@ -274,7 +273,6 @@ async def get_messages(
             session_id=session_id,
             filter=filter,
             reverse=reverse,
-            transaction_id=transaction_id,
         )
 
         return await paginate(db, messages_query)

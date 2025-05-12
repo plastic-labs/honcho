@@ -72,7 +72,7 @@ async def get_collection(
 @router.post(
     "/list",
     response_model=Page[schemas.Collection],
-    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id")), Depends(transactions.disallow_transaction_header)],
 )
 async def get_collections(
     app_id: str = Path(..., description="ID of the app"),
@@ -83,7 +83,6 @@ async def get_collections(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
-    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get All Collections for a User"""
@@ -95,7 +94,6 @@ async def get_collections(
             user_id=user_id,
             filter=options.filter,
             reverse=reverse,
-            transaction_id=transaction_id,
         ),
     )
 

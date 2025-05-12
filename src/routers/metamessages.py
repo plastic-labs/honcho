@@ -49,7 +49,7 @@ async def create_metamessage(
         raise
 
 
-@router.post("/list", response_model=Page[schemas.Metamessage])
+@router.post("/list", response_model=Page[schemas.Metamessage], dependencies=[Depends(transactions.disallow_transaction_header)])
 async def get_metamessages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
@@ -59,7 +59,6 @@ async def get_metamessages(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
-    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """
@@ -81,7 +80,6 @@ async def get_metamessages(
             metamessage_type=options.metamessage_type,
             filter=options.filter,
             reverse=reverse,
-            transaction_id=transaction_id,
         )
         return await paginate(db, metamessages_query)
     except (ResourceNotFoundException, ValidationException) as e:

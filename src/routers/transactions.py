@@ -1,7 +1,7 @@
 import datetime
 import logging
 
-from fastapi import APIRouter, Depends, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 
 from src import crud
 from src.dependencies import db
@@ -23,6 +23,11 @@ async def get_transaction_id(request: Request) -> int | None:
         except ValueError:
             return None
     return None
+
+
+async def disallow_transaction_header(request: Request):
+    if request.headers.get("X-Transaction-ID"):
+        raise HTTPException(status_code=422, detail="This route is not supported inside transactions.")
 
 
 @router.post(

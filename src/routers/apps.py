@@ -51,7 +51,7 @@ async def get_app(
 @router.post(
     "/list",
     response_model=Page[schemas.App],
-    dependencies=[Depends(require_auth(admin=True))],
+    dependencies=[Depends(require_auth(admin=True)), Depends(transactions.disallow_transaction_header)],
 )
 async def get_all_apps(
     options: schemas.AppGet = Body(
@@ -60,7 +60,6 @@ async def get_all_apps(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
-    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get all Apps"""
@@ -70,7 +69,6 @@ async def get_all_apps(
             db,
             reverse=reverse,
             filter=options.filter,
-            transaction_id=transaction_id,
         ),
     )
 

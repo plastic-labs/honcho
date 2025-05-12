@@ -82,7 +82,7 @@ async def get_session(
 @router.post(
     "/list",
     response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id")), Depends(transactions.disallow_transaction_header)],
 )
 async def get_sessions(
     app_id: str = Path(..., description="ID of the app"),
@@ -93,7 +93,6 @@ async def get_sessions(
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
     ),
-    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get All Sessions for a User"""
@@ -106,7 +105,6 @@ async def get_sessions(
             reverse=reverse,
             is_active=options.is_active,
             filter=options.filter,
-            transaction_id=transaction_id,
         ),
     )
 

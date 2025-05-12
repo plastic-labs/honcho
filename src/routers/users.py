@@ -43,7 +43,7 @@ async def create_user(
 @router.post(
     "/list",
     response_model=Page[schemas.User],
-    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id")), Depends(transactions.disallow_transaction_header)],
 )
 async def get_users(
     app_id: str = Path(..., description="ID of the app"),
@@ -51,7 +51,6 @@ async def get_users(
         ..., description="Filtering options for the users list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
-    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get All Users for an App"""
@@ -62,7 +61,6 @@ async def get_users(
             app_id=app_id,
             reverse=reverse,
             filter=options.filter,
-            transaction_id=transaction_id,
         ),
     )
 

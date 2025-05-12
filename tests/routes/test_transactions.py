@@ -1,8 +1,11 @@
 import asyncio
 import datetime
+import logging
 import os
 
 import pytest
+
+logger = logging.getLogger(__name__)
 
 
 def test_create_transaction(client):
@@ -24,11 +27,7 @@ def test_create_transaction_with_expiry(client):
     assert isinstance(transaction_id, int)
     assert transaction_id > 0
 
-    # We can also add a test to check if fetching this transaction shows the expiry (if such an endpoint exists)
-    # or test the behavior of an expired transaction later.
 
-
-# Placeholder for commit and rollback tests
 @pytest.mark.asyncio
 async def test_commit_transaction(client, db_session):
     # Create a transaction
@@ -53,6 +52,111 @@ async def test_commit_transaction(client, db_session):
     )
     assert user_response.status_code == 200
     user_id = user_response.json()["id"]
+
+    # Verify the app does not exist outside of the transaction
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 404
+
+    # Commit the transaction
+    commit_response = client.post(f"/v1/transactions/{transaction_id}/commit")
+    assert commit_response.status_code == 200
+    # Commit endpoint usually returns 200 or 204 No Content, and no body or a success message.
+    # Based on src/routers/transactions.py, it returns None which means 200 OK with no body.
+
+    # Verify the operations were committed by fetching the resources
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 200
+
+    user = client.get(f"/v1/apps/{app_id}/users?user_id={user_id}")
+    assert user.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_read_inside_transaction(client, db_session):
+    # Create a transaction
+    response = client.post("/v1/transactions/begin")
+    assert response.status_code == 200
+    transaction_id = int(response.json())
+
+    # create an app
+    app_response = client.post(
+        "/v1/apps",
+        json={"name": "transaction_read_test_app"},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert app_response.status_code == 200
+    app_id = app_response.json()["id"]
+
+    logger.info(f"app_id: {app_id}")
+
+    # Verify the app does not exist outside of the transaction
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 404
+
+    # create a user
+    user_response = client.post(
+        f"/v1/apps/{app_id}/users",
+        json={"name": "test_user"},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert user_response.status_code == 200
+    user_id = user_response.json()["id"]
+
+    logger.info(f"user_id: {user_id}")
+
+    # Verify the app does not exist outside of the transaction
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 404
+
+    # create a session
+    session_response = client.post(
+        f"/v1/apps/{app_id}/users/{user_id}/sessions",
+        json={},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert session_response.status_code == 200
+    session_id = session_response.json()["id"]
+
+    logger.info(f"SESSION ID: {session_id}")
+
+    # Verify the app does not exist outside of the transaction
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 404
+
+    # create a message
+    message_response = client.post(
+        f"/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
+        json={"content": "test_message", "is_user": True},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert message_response.status_code == 200
+    message_id = message_response.json()["id"]
+
+    logger.info(f"MESSAGE ID: {message_id}")
+
+    # Verify the app does not exist outside of the transaction
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 404
+
+    # get the message
+    message = client.get(
+        f"/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/{message_id}",
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert message.status_code == 200
+    assert message.json()["content"] == "test_message"
+
+    # Verify the app does not exist outside of the transaction
+    app = client.get(f"/v1/apps/?app_id={app_id}")
+    assert app.status_code == 404
+
+    # list all messages
+    messages_response = client.post(
+        f"/v1/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/list",
+        json={},
+        headers={"X-Transaction-ID": f"{transaction_id}"},
+    )
+    assert messages_response.status_code == 422
 
     # Verify the app does not exist outside of the transaction
     app = client.get(f"/v1/apps/?app_id={app_id}")
@@ -125,12 +229,6 @@ def test_rollback_non_existent_transaction(client):
     assert response.status_code == 404
     assert "detail" in response.json()
     assert response.json()["detail"] == "Transaction not found"
-
-
-# TODO: Add tests for committing/rolling back an already committed/rolled-back transaction.
-# TODO: Add tests for committing/rolling back an expired transaction.
-# TODO: Add tests for transactions that involve actual data changes and verify commit/rollback effects.
-# This will require creating data within a transaction and then checking its state after commit/rollback.
 
 
 def test_commit_already_committed_transaction(client):

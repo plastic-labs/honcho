@@ -160,7 +160,7 @@ def _apply_forced_public_id(
             )
 
 
-def stageable_write(
+def stageable(
     schema_payload_arg_name: Optional[str] = None, is_list_payload: bool = False
 ):
     def decorator(func: Callable[..., Coroutine[Any, Any, Any]]):
@@ -265,7 +265,13 @@ def stageable_write(
                             db_param_name,
                         )
                     )
-
+                    
+                    if isinstance(func_call_result_for_staging, Select):
+                        logger.debug(
+                            f"func_call_result_for_staging is a Select: {func_call_result_for_staging}, therefore not rolling back"
+                        )
+                        return func_call_result_for_staging
+                    
                     resource_public_id_for_staging = None
                     if func_call_result_for_staging and hasattr(
                         func_call_result_for_staging, "public_id"
@@ -323,54 +329,12 @@ def stageable_write(
     return decorator
 
 
-def stageable_read():
-    def decorator(func: Callable[..., Coroutine[Any, Any, Any]]):
-        sig = inspect.signature(func)  # Get signature once when decorator is applied
-
-        @functools.wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            db_session: AsyncSession = args[0]
-            transaction_id_val: Optional[int] = kwargs.get("transaction_id")
-
-            if transaction_id_val is not None:
-                bound_original_args = sig.bind(*args, **kwargs)
-                bound_original_args.apply_defaults()
-
-                operation_params = {}
-
-                # Determine the name of the 'db' parameter (usually the first one)
-                db_param_name = next(iter(sig.parameters))
-
-                for name, value in bound_original_args.arguments.items():
-                    if name == db_param_name or name == "transaction_id":
-                        continue
-                    if value is not None:
-                        operation_params[name] = value
-
-                staged_ops = await get_staged_operations(db_session, transaction_id_val)
-                await db_session.begin()
-                for op in staged_ops:
-                    # call the function referenced by handler_function
-                    # with parameters and payload
-                    handler_func = globals()[op.handler_function]
-                    await handler_func(**op.parameters, **op.payload)
-                result = await func(*args, **kwargs)
-                await db_session.rollback()
-                return result
-
-            return await func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
 ########################################################
 # app methods
 ########################################################
 
 
-@stageable_read()
+@stageable()
 async def get_app(
     db: AsyncSession,
     app_id: str,
@@ -400,13 +364,10 @@ async def get_app(
     return app
 
 
-@stageable_read()
 async def get_all_apps(
     db: AsyncSession,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
     """
     Get all apps.
@@ -415,7 +376,6 @@ async def get_all_apps(
         db: Database session
         reverse: Whether to reverse the order of the apps
         filter: Filter the apps by a dictionary of metadata
-        transaction_id: Optional transaction ID for staging.
     """
     stmt = select(models.App)
     if reverse:
@@ -427,7 +387,7 @@ async def get_all_apps(
     return stmt
 
 
-@stageable_read()
+@stageable()
 async def get_app_by_name(
     db: AsyncSession, name: str, *, transaction_id: int | None = None
 ) -> models.App:
@@ -454,7 +414,7 @@ async def get_app_by_name(
     return app
 
 
-@stageable_write(schema_payload_arg_name="app")
+@stageable(schema_payload_arg_name="app")
 async def create_app(
     db: AsyncSession,
     app: schemas.AppCreate,
@@ -491,7 +451,7 @@ async def create_app(
         raise ConflictException(f"App with name '{app.name}' already exists") from e
 
 
-@stageable_write(schema_payload_arg_name="app")
+@stageable(schema_payload_arg_name="app")
 async def update_app(
     db: AsyncSession,
     app_id: str,
@@ -538,7 +498,7 @@ async def update_app(
 ########################################################
 
 
-@stageable_write(schema_payload_arg_name="user")
+@stageable(schema_payload_arg_name="user")
 async def create_user(
     db: AsyncSession,
     app_id: str,
@@ -580,7 +540,7 @@ async def create_user(
         raise ConflictException("User with this name already exists") from e
 
 
-@stageable_read()
+@stageable()
 async def get_user(
     db: AsyncSession, app_id: str, user_id: str, *, transaction_id: int | None = None
 ) -> models.User:
@@ -612,7 +572,7 @@ async def get_user(
     return user
 
 
-@stageable_read()
+@stageable()
 async def get_user_by_name(
     db: AsyncSession, app_id: str, name: str, *, transaction_id: int | None = None
 ) -> models.User:
@@ -644,19 +604,12 @@ async def get_user_by_name(
     return user
 
 
-@stageable_read()
 async def get_users(
     db: AsyncSession,
     app_id: str,
     reverse: bool = False,
     filter: Optional[dict] = None,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
-    """
-    Args:
-        transaction_id: Optional transaction ID for staging.
-    """
     stmt = select(models.User).where(models.User.app_id == app_id)
 
     if filter is not None:
@@ -670,7 +623,7 @@ async def get_users(
     return stmt
 
 
-@stageable_write(schema_payload_arg_name="user")
+@stageable(schema_payload_arg_name="user")
 async def update_user(
     db: AsyncSession,
     app_id: str,
@@ -723,7 +676,7 @@ async def update_user(
 ########################################################
 
 
-@stageable_read()
+@stageable()
 async def get_session(
     db: AsyncSession,
     app_id: str,
@@ -764,7 +717,6 @@ async def get_session(
     return session
 
 
-@stageable_read()
 async def get_sessions(
     db: AsyncSession,
     app_id: str,
@@ -772,13 +724,7 @@ async def get_sessions(
     reverse: Optional[bool] = False,
     is_active: Optional[bool] = False,
     filter: Optional[dict] = None,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
-    """
-    Args:
-        transaction_id: Optional transaction ID for staging.
-    """
     stmt = (
         select(models.Session)
         .join(models.User, models.User.public_id == models.Session.user_id)
@@ -800,7 +746,7 @@ async def get_sessions(
     return stmt
 
 
-@stageable_write(schema_payload_arg_name="session")
+@stageable(schema_payload_arg_name="session")
 async def create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
@@ -846,7 +792,7 @@ async def create_session(
         raise
 
 
-@stageable_write(schema_payload_arg_name="session")
+@stageable(schema_payload_arg_name="session")
 async def update_session(
     db: AsyncSession,
     session: schemas.SessionUpdate,
@@ -891,7 +837,7 @@ async def update_session(
     return honcho_session
 
 
-@stageable_write()
+@stageable()
 async def delete_session(
     db: AsyncSession,
     app_id: str,
@@ -1078,7 +1024,7 @@ async def clone_session(
 ########################################################
 
 
-@stageable_write(schema_payload_arg_name="message")
+@stageable(schema_payload_arg_name="message")
 async def create_message(
     db: AsyncSession,
     message: schemas.MessageCreate,
@@ -1105,7 +1051,7 @@ async def create_message(
     return honcho_message
 
 
-@stageable_write(schema_payload_arg_name="messages", is_list_payload=True)
+@stageable(schema_payload_arg_name="messages", is_list_payload=True)
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
@@ -1145,7 +1091,6 @@ async def create_messages(
     return list(result.scalars().all())
 
 
-@stageable_read()
 async def get_messages(
     db: AsyncSession,
     app_id: str,
@@ -1153,8 +1098,6 @@ async def get_messages(
     session_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
     stmt = (
         select(models.Message)
@@ -1177,7 +1120,7 @@ async def get_messages(
     return stmt
 
 
-@stageable_read()
+@stageable()
 async def get_message(
     db: AsyncSession,
     app_id: str,
@@ -1200,7 +1143,7 @@ async def get_message(
     return result.scalar_one_or_none()
 
 
-@stageable_write(schema_payload_arg_name="message")
+@stageable(schema_payload_arg_name="message")
 async def update_message(
     db: AsyncSession,
     message: schemas.MessageUpdate,
@@ -1231,7 +1174,7 @@ async def update_message(
 ########################################################
 
 
-@stageable_write(schema_payload_arg_name="metamessage")
+@stageable(schema_payload_arg_name="metamessage")
 async def create_metamessage(
     db: AsyncSession,
     user_id: str,
@@ -1279,7 +1222,6 @@ async def create_metamessage(
     return honcho_metamessage
 
 
-@stageable_read()
 async def get_metamessages(
     db: AsyncSession,
     app_id: str,
@@ -1289,8 +1231,6 @@ async def get_metamessages(
     metamessage_type: Optional[str] = None,
     filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
     # Base query starts with metamessage and user relationship
     stmt = (
@@ -1326,7 +1266,7 @@ async def get_metamessages(
     return stmt
 
 
-@stageable_read()
+@stageable()
 async def get_metamessage(
     db: AsyncSession,
     app_id: str,
@@ -1356,7 +1296,7 @@ async def get_metamessage(
     return result.scalar_one_or_none()
 
 
-@stageable_write(schema_payload_arg_name="metamessage")
+@stageable(schema_payload_arg_name="metamessage")
 async def update_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageUpdate,
@@ -1408,15 +1348,12 @@ async def update_metamessage(
 ########################################################
 
 
-@stageable_read()
 async def get_collections(
     db: AsyncSession,
     app_id: str,
     user_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
     """Get a distinct list of the names of collections associated with a user
     Args:
@@ -1439,7 +1376,7 @@ async def get_collections(
     return stmt
 
 
-@stageable_read()
+@stageable()
 async def get_collection_by_id(
     db: AsyncSession,
     app_id: str,
@@ -1483,7 +1420,7 @@ async def get_collection_by_id(
     return collection
 
 
-@stageable_read()
+@stageable()
 async def get_collection_by_name(
     db: AsyncSession,
     app_id: str,
@@ -1523,7 +1460,7 @@ async def get_collection_by_name(
     return collection
 
 
-@stageable_write(schema_payload_arg_name="collection")
+@stageable(schema_payload_arg_name="collection")
 async def create_collection(
     db: AsyncSession,
     collection: schemas.CollectionCreate,
@@ -1616,7 +1553,7 @@ async def get_or_create_user_protected_collection(
         return honcho_collection
 
 
-@stageable_write(schema_payload_arg_name="collection")
+@stageable(schema_payload_arg_name="collection")
 async def update_collection(
     db: AsyncSession,
     collection: schemas.CollectionUpdate,
@@ -1685,7 +1622,7 @@ async def update_collection(
         raise ConflictException("Collection update failed - name already in use") from e
 
 
-@stageable_write()
+@stageable()
 async def delete_collection(
     db: AsyncSession,
     app_id: str,
@@ -1741,7 +1678,6 @@ async def delete_collection(
 # Should be similar to the messages methods outside of query
 
 
-@stageable_read()
 async def get_documents(
     db: AsyncSession,
     app_id: str,
@@ -1749,8 +1685,6 @@ async def get_documents(
     collection_id: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
-    *,
-    transaction_id: int | None = None,
 ) -> Select:
     stmt = (
         select(models.Document)
@@ -1775,7 +1709,7 @@ async def get_documents(
     return stmt
 
 
-@stageable_read()
+@stageable()
 async def get_document(
     db: AsyncSession,
     app_id: str,
@@ -1825,7 +1759,6 @@ async def get_document(
     return document
 
 
-@stageable_read()
 async def query_documents(
     db: AsyncSession,
     app_id: str,
@@ -1835,8 +1768,6 @@ async def query_documents(
     filter: Optional[dict] = None,
     max_distance: Optional[float] = None,
     top_k: int = 5,
-    *,
-    transaction_id: int | None = None,
 ) -> Sequence[models.Document]:
     # Using async client with await
     response = await openai_client.embeddings.create(
@@ -1868,7 +1799,7 @@ async def query_documents(
     return result.scalars().all()
 
 
-@stageable_write(schema_payload_arg_name="document")
+@stageable(schema_payload_arg_name="document")
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
@@ -1940,7 +1871,7 @@ async def create_document(
     return honcho_document
 
 
-@stageable_write(schema_payload_arg_name="document")
+@stageable(schema_payload_arg_name="document")
 async def update_document(
     db: AsyncSession,
     document: schemas.DocumentUpdate,
@@ -1978,7 +1909,7 @@ async def update_document(
     return honcho_document
 
 
-@stageable_write()
+@stageable()
 async def delete_document(
     db: AsyncSession,
     app_id: str,
