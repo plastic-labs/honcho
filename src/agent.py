@@ -410,7 +410,7 @@ async def generate_semantic_queries(query: str) -> list[str]:
                 logger.debug("LLM response not a list, using as single query")
                 queries = [result]
         except json.JSONDecodeError:
-            # Fallback if response is not valid JSONe
+            # Fallback if response is not valid JSON
             logger.debug("Failed to parse JSON response, using raw response as query")
             queries = [query]  # Fall back to the original query
 
