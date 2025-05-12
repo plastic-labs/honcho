@@ -312,9 +312,9 @@ def stageable_write(
                     await db_session.commit()
                 else:
                     logger.debug(
-                        f"Executed {func.__name__} within an existing main transaction (not staging related). Flushing."
+                        f"Executed {func.__name__} within an existing main transaction (not staging related). Committing."
                     )
-                    await db_session.flush()
+                    await db_session.commit()
 
                 return original_func_result
 

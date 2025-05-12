@@ -420,7 +420,7 @@ async def test_transaction_multiple_clients(client, secondary_client):
     # Create an app
     app_response = secondary_client.post(
         "/v1/apps",
-        json={"name": "transaction_test_app"},
+        json={"name": "transaction_test_app_multiple_clients"},
         headers={"X-Transaction-ID": f"{transaction_id}"},
     )
     assert app_response.status_code == 200
