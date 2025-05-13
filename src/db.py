@@ -1,7 +1,7 @@
 import os
 
 from dotenv import load_dotenv
-from sqlalchemy import MetaData, create_engine, inspect, text
+from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -37,37 +37,27 @@ if table_schema:
 Base = declarative_base(metadata=meta)
 
 
-def scaffold_db():
-    """use a sync engine for scaffolding the database. ddl operations are unavailable
-    with async engines
-    """
+def init_db():
+    """Initialize the database using Alembic migrations"""
+    from alembic import command
+    from alembic.config import Config
 
-    # Debug: Print all tables that should be created
-    print("Tables defined in Base.metadata:")
-    for table in Base.metadata.sorted_tables:
-        print(f" - {table.name}")
-
-    # Create engine
-    engine = create_engine(
+    # Create a sync engine for schema operations
+    sync_engine = create_engine(
         os.environ["CONNECTION_URI"],
         pool_pre_ping=True,
         echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
     )
 
-    # Create inspector to check if database exists
-    inspector = inspect(engine)
-
+    # Create schema if it doesn't exist
     if table_schema:
-        with engine.connect() as connection:
+        with sync_engine.connect() as connection:
             connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
             connection.commit()
 
-    print(inspector.get_table_names(Base.metadata.schema))
-
-    # If no tables exist, create them with SQLAlchemy
-    if not inspector.get_table_names(Base.metadata.schema):
-        print("No tables found. Creating database schema...")
-        Base.metadata.create_all(bind=engine)
+    # Run Alembic migrations
+    alembic_cfg = Config("alembic.ini")
+    command.upgrade(alembic_cfg, "head")
 
     # Clean up
-    engine.dispose()
+    sync_engine.dispose()
