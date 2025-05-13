@@ -10,15 +10,16 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.dependencies import get_db
+from src.config import settings
 
 from .exceptions import AuthenticationException
 
 logger = logging.getLogger(__name__)
 
-USE_AUTH = os.getenv("USE_AUTH", "False").lower() == "true"
-AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "") if USE_AUTH else ""
+USE_AUTH = settings.AUTH.USE_AUTH
+AUTH_JWT_SECRET = settings.AUTH.JWT_SECRET
 
-if USE_AUTH and AUTH_JWT_SECRET == "":
+if USE_AUTH and not AUTH_JWT_SECRET:
     print(
         "\n    ERROR: No JWT secret provided. Set the AUTH_JWT_SECRET environment variable.\n"
     )
@@ -81,6 +82,8 @@ def create_admin_jwt() -> str:
 def create_jwt(params: JWTParams) -> str:
     """Create a JWT token from the given parameters."""
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
+    if not AUTH_JWT_SECRET:
+        raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
     return jwt.encode(payload, AUTH_JWT_SECRET.encode("utf-8"), algorithm="HS256")
 
 
@@ -89,6 +92,8 @@ async def verify_jwt(token: str) -> JWTParams:
 
     params = JWTParams()
     try:
+        if not AUTH_JWT_SECRET:
+            raise ValueError("AUTH_JWT_SECRET is not set, cannot verify JWT.")
         decoded = jwt.decode(
             token, AUTH_JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )

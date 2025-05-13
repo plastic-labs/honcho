@@ -25,6 +25,7 @@ dependencies = [
     "langfuse>=2.57.1",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
+    "pydantic-settings>=2.9.1",
 ]
 [tool.uv]
 dev-dependencies = [

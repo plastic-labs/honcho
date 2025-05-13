@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.utils.model_client import ModelClient, ModelProvider
+from src.config import settings
 
 from .. import models
 
@@ -27,8 +28,8 @@ __all__ = [
 
 
 # Configuration constants for summaries
-MESSAGES_PER_SHORT_SUMMARY = 20  # How often to create short summaries
-MESSAGES_PER_LONG_SUMMARY = 60  # How often to create long summaries
+MESSAGES_PER_SHORT_SUMMARY = settings.HISTORY.MESSAGES_PER_SHORT_SUMMARY
+MESSAGES_PER_LONG_SUMMARY = settings.HISTORY.MESSAGES_PER_LONG_SUMMARY
 
 
 # The types of metamessages to use for summaries
@@ -38,8 +39,8 @@ class SummaryType(Enum):
 
 
 # Default model settings for summary generation
-DEFAULT_PROVIDER = ModelProvider.GEMINI
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
+# DEFAULT_PROVIDER = ModelProvider.GEMINI
+# DEFAULT_MODEL = "gemini-2.0-flash-lite"
 
 
 async def get_session_summaries(
@@ -196,19 +197,25 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
 Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} summary that captures the key points and context."""
 
     # Create a model client
-    client = ModelClient(provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL)
+    client = ModelClient(
+        provider=ModelProvider(settings.LLM.SUMMARY_PROVIDER),
+        model=settings.LLM.SUMMARY_MODEL
+    )
 
     # Generate the summary
     llm_messages = [{"role": "user", "content": user_prompt}]
 
     try:
+        current_max_tokens = (
+            settings.LLM.SUMMARY_MAX_TOKENS_SHORT
+            if summary_type == SummaryType.SHORT
+            else settings.LLM.SUMMARY_MAX_TOKENS_LONG
+        )
         summary = await client.generate(
             messages=llm_messages,
             system=system_prompt,
-            max_tokens=1000
-            if summary_type == SummaryType.SHORT
-            else 2000,  # Allow longer responses for long summaries
-            temperature=0.0,
+            max_tokens=current_max_tokens,
+            temperature=settings.LLM.DEFAULT_TEMPERATURE,
             use_caching=True,
         )
         return summary
