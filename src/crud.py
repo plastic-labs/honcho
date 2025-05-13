@@ -1,10 +1,14 @@
-from collections.abc import Sequence
+import datetime
+import functools
+import inspect
+import os
+from collections.abc import Coroutine, Sequence
 from logging import getLogger
-from typing import List, Optional
+from typing import Any, Callable, Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, insert, select
+from sqlalchemy import Select, cast, delete, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -24,19 +28,326 @@ openai_client = AsyncOpenAI()
 logger = getLogger(__name__)
 
 DEF_PROTECTED_COLLECTION_NAME = "honcho"
+MAX_STAGED_OPERATIONS = int(os.getenv("MAX_STAGED_OPERATIONS", 10))
+
+
+async def _get_reconstructed_schema_arg(
+    target_handler_func_obj: Callable,
+    schema_arg_name: str | None,
+    is_list_schema_arg: bool,
+    raw_payload: dict | list | None,
+    context_for_logging: str = "operation",
+) -> Any | None:
+    """Helper to reconstruct Pydantic model(s) from stored data."""
+    if not schema_arg_name or raw_payload is None:
+        return None
+
+    reconstructed_value = None
+    original_target_func = inspect.unwrap(target_handler_func_obj)
+    try:
+        annotations = inspect.get_annotations(
+            original_target_func, globals=globals(), eval_str=True
+        )
+    except NameError as e:
+        msg = f"Could not evaluate annotations for {original_target_func.__name__} to reconstruct schema for {context_for_logging}: {e}"
+        logger.error(msg)
+        raise ValueError(msg) from e
+
+    param_type_hint = annotations.get(schema_arg_name)
+    if not param_type_hint:
+        msg = f"Could not find annotation for schema param '{schema_arg_name}' in {original_target_func.__name__} for {context_for_logging}"
+        logger.error(msg)
+        raise ValueError(msg)
+
+    actual_item_type = None
+    if is_list_schema_arg:
+        if (
+            hasattr(param_type_hint, "__origin__")
+            and param_type_hint.__origin__ in (list, Sequence)
+            and param_type_hint.__args__
+        ):
+            actual_item_type = param_type_hint.__args__[0]
+        else:
+            msg = f"Schema '{schema_arg_name}' in {original_target_func.__name__} marked as list, but type hint is not List[ModelType]: {param_type_hint} for {context_for_logging}"
+            logger.error(msg)
+            raise ValueError(msg)
+    else:
+        actual_item_type = param_type_hint
+
+    if actual_item_type and hasattr(actual_item_type, "model_validate"):
+        try:
+            if is_list_schema_arg:
+                if not isinstance(raw_payload, list):
+                    msg = f"Payload for list schema '{schema_arg_name}' of {original_target_func.__name__} is not a list: {raw_payload} for {context_for_logging}"
+                    logger.error(msg)
+                    raise ValueError(msg)
+                else:
+                    reconstructed_value = [
+                        actual_item_type.model_validate(item_data)
+                        for item_data in raw_payload
+                    ]
+            else:
+                if not isinstance(raw_payload, dict):
+                    msg = f"Payload for schema '{schema_arg_name}' of {original_target_func.__name__} is not a dict: {raw_payload} for {context_for_logging}"
+                    logger.error(msg)
+                    raise ValueError(msg)
+                else:
+                    reconstructed_value = actual_item_type.model_validate(raw_payload)
+        except Exception as e_reconstruct:
+            logger.error(
+                f"Error reconstructing schema for '{schema_arg_name}' in {original_target_func.__name__} during {context_for_logging}: {e_reconstruct}"
+            )
+            raise  # Propagate original Pydantic validation error or other exceptions
+    elif actual_item_type:
+        logger.warning(
+            f"Type {actual_item_type} for '{schema_arg_name}' in {original_target_func.__name__} is not a Pydantic model for {context_for_logging}. Skipping reconstruction."
+        )
+
+    return reconstructed_value
+
+
+def _extract_staging_params_and_payload(
+    bound_arguments: inspect.BoundArguments,
+    schema_payload_arg_name_from_decorator: str | None,
+    is_list_payload_from_decorator: bool,
+    db_session_param_name: str,
+) -> tuple[dict, dict | list]:
+    """Extracts parameters and payload for staging from bound arguments of a function call."""
+    operation_params = {}
+    operation_payload_data: dict | list = {}
+
+    for name, value in bound_arguments.arguments.items():
+        if name == db_session_param_name or name == "transaction_id":
+            continue
+
+        if (
+            schema_payload_arg_name_from_decorator
+            and name == schema_payload_arg_name_from_decorator
+        ):
+            if value is not None:
+                if is_list_payload_from_decorator:
+                    if isinstance(value, list) and all(
+                        hasattr(item, "model_dump") for item in value
+                    ):
+                        operation_payload_data = [item.model_dump() for item in value]
+                    else:
+                        operation_payload_data = []
+                else:
+                    if hasattr(value, "model_dump"):
+                        operation_payload_data = value.model_dump()
+
+        else:
+            if value is not None:
+                operation_params[name] = value
+
+    return operation_params, operation_payload_data
+
+
+def _apply_forced_public_id(
+    target_kwargs: dict,
+    staged_op: models.StagedOperation,
+    handler_func_obj: Callable,
+    context_for_logging: str = "operation",
+) -> None:
+    """Modifies target_kwargs in place to include public_id if applicable."""
+    if staged_op.resource_public_id:
+        unwrapped_func = inspect.unwrap(handler_func_obj)
+        func_sig = inspect.signature(unwrapped_func)
+        if "public_id" in func_sig.parameters:
+            target_kwargs["public_id"] = staged_op.resource_public_id
+            logger.debug(
+                f"Forcing public_id='{staged_op.resource_public_id}' for {context_for_logging} of {staged_op.handler_function}"
+            )
+
+
+def stageable(
+    schema_payload_arg_name: Optional[str] = None, is_list_payload: bool = False
+):
+    def decorator(func: Callable[..., Coroutine[Any, Any, Any]]):
+        sig = inspect.signature(func)
+        db_param_name = next(iter(sig.parameters))
+
+        @functools.wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            db_session: AsyncSession = args[0]
+            transaction_id_val: Optional[int] = kwargs.get("transaction_id")
+
+            if transaction_id_val is not None:
+                logger.debug(
+                    f"Staging operation for function {func.__name__} within transaction {transaction_id_val}"
+                )
+
+                current_sequence_number = await get_next_sequence_number(
+                    db_session, transaction_id_val
+                )
+
+                async with db_session.begin_nested() as func_execution_tx:
+                    logger.debug(
+                        f"Replaying prior operations for transaction {transaction_id_val} before executing {func.__name__}"
+                    )
+
+                    prior_staged_ops_stmt = (
+                        select(models.StagedOperation)
+                        .where(
+                            models.StagedOperation.transaction_id == transaction_id_val
+                        )
+                        .where(
+                            models.StagedOperation.sequence_number
+                            < current_sequence_number
+                        )
+                        .order_by(models.StagedOperation.sequence_number)
+                    )
+                    prior_staged_ops_result = await db_session.execute(
+                        prior_staged_ops_stmt
+                    )
+                    prior_staged_ops = prior_staged_ops_result.scalars().all()
+
+                    for op in prior_staged_ops:
+                        logger.debug(
+                            f"Replaying staged op: {op.handler_function} (seq: {op.sequence_number}, res_id: {op.resource_public_id}) in tx {transaction_id_val}"
+                        )
+                        handler_func_to_replay_obj = globals().get(op.handler_function)
+                        if not handler_func_to_replay_obj:
+                            # This is a critical error for transaction integrity if a handler is missing.
+                            msg = f"Handler function {op.handler_function} not found during replay."
+                            logger.error(msg)
+                            # Depending on desired behavior, could mark transaction as failed here too.
+                            raise RuntimeError(msg)
+
+                        replay_kwargs = {**op.parameters}
+                        replay_kwargs.pop("transaction_id", None)
+
+                        try:
+                            reconstructed_schema_model = await _get_reconstructed_schema_arg(
+                                handler_func_to_replay_obj,
+                                op.schema_arg_name,
+                                op.is_list_schema,
+                                op.payload,
+                                context_for_logging=f"replay of {op.handler_function}",
+                            )
+                            if (
+                                reconstructed_schema_model is not None
+                                and op.schema_arg_name
+                            ):
+                                replay_kwargs[op.schema_arg_name] = (
+                                    reconstructed_schema_model
+                                )
+
+                            _apply_forced_public_id(
+                                replay_kwargs,
+                                op,
+                                handler_func_to_replay_obj,
+                                context_for_logging="replay",
+                            )
+
+                            await handler_func_to_replay_obj(
+                                db_session, **replay_kwargs
+                            )
+                        except ValueError as e_replay_arg_prep:
+                            # Error during Pydantic reconstruction or other value error from helpers
+                            logger.error(
+                                f"Error preparing arguments for replayed operation {op.handler_function}: {e_replay_arg_prep}"
+                            )
+                            # This error should lead to the failure of the overall staging operation.
+                            # The func_execution_tx will be rolled back by the context manager's exit if an exception propagates.
+                            raise  # Re-raise to ensure the staging of the current `func` call fails.
+
+                    func_call_result_for_staging = await func(*args, **kwargs)
+
+                    bound_args = sig.bind(*args, **kwargs)
+                    bound_args.apply_defaults()
+
+                    operation_params_for_staging, operation_payload_for_staging = (
+                        _extract_staging_params_and_payload(
+                            bound_args,
+                            schema_payload_arg_name,
+                            is_list_payload,
+                            db_param_name,
+                        )
+                    )
+                    
+                    if isinstance(func_call_result_for_staging, Select):
+                        logger.debug(
+                            f"func_call_result_for_staging is a Select: {func_call_result_for_staging}, therefore not rolling back"
+                        )
+                        return func_call_result_for_staging
+                    
+                    resource_public_id_for_staging = None
+                    if func_call_result_for_staging and hasattr(
+                        func_call_result_for_staging, "public_id"
+                    ):
+                        resource_public_id_for_staging = (
+                            func_call_result_for_staging.public_id
+                        )
+
+                    # Rollback happens automatically if an exception (like ValueError from helpers) occurred above.
+                    # If no exception, this explicit rollback is for the successful path of func execution.
+                    await func_execution_tx.rollback()
+                    logger.debug(
+                        f"Rolled back nested transaction for {func.__name__} in transaction {transaction_id_val} after replay and execution."
+                    )
+
+                logger.debug(
+                    f"Creating staged operation for {func.__name__}, sequence {current_sequence_number}"
+                )
+                await create_staged_operation(
+                    db_session,
+                    transaction_id_val,
+                    current_sequence_number,
+                    operation_params_for_staging,
+                    operation_payload_for_staging,
+                    func.__name__,
+                    resource_public_id_for_staging,
+                    schema_arg_name_for_db=schema_payload_arg_name,
+                    is_list_schema_for_db=is_list_payload,
+                )
+
+                return func_call_result_for_staging
+            else:
+                original_func_result = await func(*args, **kwargs)
+
+                if db_session.in_nested_transaction():
+                    logger.debug(
+                        f"Executed {func.__name__} within a nested transaction (replay context). Flushing."
+                    )
+                    await db_session.flush()
+                elif not db_session.in_transaction():
+                    logger.debug(
+                        f"Executed {func.__name__} as a standalone operation (no active transaction). Committing."
+                    )
+                    await db_session.commit()
+                else:
+                    logger.debug(
+                        f"Executed {func.__name__} within an existing main transaction (not staging related). Committing."
+                    )
+                    await db_session.commit()
+
+                return original_func_result
+
+        return wrapper
+
+    return decorator
+
 
 ########################################################
 # app methods
 ########################################################
 
 
-async def get_app(db: AsyncSession, app_id: str) -> models.App:
+@stageable()
+async def get_app(
+    db: AsyncSession,
+    app_id: str,
+    *,
+    transaction_id: int | None = None,
+) -> models.App:
     """
     Get an app by its ID.
 
     Args:
         db: Database session
         app_id: Public ID of the app
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The app if found
@@ -76,13 +387,17 @@ async def get_all_apps(
     return stmt
 
 
-async def get_app_by_name(db: AsyncSession, name: str) -> models.App:
+@stageable()
+async def get_app_by_name(
+    db: AsyncSession, name: str, *, transaction_id: int | None = None
+) -> models.App:
     """
     Get an app by its name.
 
     Args:
         db: Database session
         name: Name of the app
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The app if found
@@ -99,18 +414,22 @@ async def get_app_by_name(db: AsyncSession, name: str) -> models.App:
     return app
 
 
-# def get_apps(db: AsyncSession) -> Sequence[models.App]:
-#     return db.query(models.App).all()
-
-
-async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
+@stageable(schema_payload_arg_name="app")
+async def create_app(
+    db: AsyncSession,
+    app: schemas.AppCreate,
+    *,
+    transaction_id: int | None = None,
+    public_id: str | None = None,
+) -> models.App:
     """
     Create a new app.
 
     Args:
         db: Database session
         app: App creation schema
-
+        transaction_id: Optional transaction ID for staging.
+        public_id: Optional public ID for the app.
     Returns:
         The created app
 
@@ -118,9 +437,12 @@ async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
         ConflictException: If an app with the same name already exists
     """
     try:
-        honcho_app = models.App(name=app.name, h_metadata=app.metadata)
+        honcho_app = models.App(
+            name=app.name, h_metadata=app.metadata, public_id=public_id
+        )
         db.add(honcho_app)
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_app)
         logger.info(f"App created successfully: {app.name}")
         return honcho_app
     except IntegrityError as e:
@@ -129,8 +451,13 @@ async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
         raise ConflictException(f"App with name '{app.name}' already exists") from e
 
 
+@stageable(schema_payload_arg_name="app")
 async def update_app(
-    db: AsyncSession, app_id: str, app: schemas.AppUpdate
+    db: AsyncSession,
+    app_id: str,
+    app: schemas.AppUpdate,
+    *,
+    transaction_id: int | None = None,
 ) -> models.App:
     """
     Update an app.
@@ -139,7 +466,7 @@ async def update_app(
         db: Database session
         app_id: Public ID of the app
         app: App update schema
-
+        transaction_id: Optional transaction ID for staging.
     Returns:
         The updated app
 
@@ -154,7 +481,8 @@ async def update_app(
         if app.metadata is not None:
             honcho_app.h_metadata = app.metadata
 
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_app)
         logger.info(f"App with ID {app_id} updated successfully")
         return honcho_app
     except IntegrityError as e:
@@ -170,8 +498,14 @@ async def update_app(
 ########################################################
 
 
+@stageable(schema_payload_arg_name="user")
 async def create_user(
-    db: AsyncSession, app_id: str, user: schemas.UserCreate
+    db: AsyncSession,
+    app_id: str,
+    user: schemas.UserCreate,
+    *,
+    transaction_id: int | None = None,
+    public_id: str | None = None,
 ) -> models.User:
     """
     Create a new user.
@@ -180,7 +514,8 @@ async def create_user(
         db: Database session
         app_id: Public ID of the app
         user: User creation schema
-
+        transaction_id: Optional transaction ID for staging.
+        public_id: Optional public ID for the user.
     Returns:
         The created user
 
@@ -192,9 +527,11 @@ async def create_user(
             app_id=app_id,
             name=user.name,
             h_metadata=user.metadata,
+            public_id=public_id,
         )
         db.add(honcho_user)
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_user)
         logger.info(f"User created successfully: {user.name} for app {app_id}")
         return honcho_user
     except IntegrityError as e:
@@ -203,7 +540,10 @@ async def create_user(
         raise ConflictException("User with this name already exists") from e
 
 
-async def get_user(db: AsyncSession, app_id: str, user_id: str) -> models.User:
+@stageable()
+async def get_user(
+    db: AsyncSession, app_id: str, user_id: str, *, transaction_id: int | None = None
+) -> models.User:
     """
     Get a user by app ID and user ID.
 
@@ -211,6 +551,7 @@ async def get_user(db: AsyncSession, app_id: str, user_id: str) -> models.User:
         db: Database session
         app_id: Public ID of the app
         user_id: Public ID of the user
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The user if found
@@ -231,7 +572,10 @@ async def get_user(db: AsyncSession, app_id: str, user_id: str) -> models.User:
     return user
 
 
-async def get_user_by_name(db: AsyncSession, app_id: str, name: str) -> models.User:
+@stageable()
+async def get_user_by_name(
+    db: AsyncSession, app_id: str, name: str, *, transaction_id: int | None = None
+) -> models.User:
     """
     Get a user by app ID and name.
 
@@ -239,6 +583,7 @@ async def get_user_by_name(db: AsyncSession, app_id: str, name: str) -> models.U
         db: Database session
         app_id: Public ID of the app
         name: Name of the user
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The user if found
@@ -278,8 +623,14 @@ async def get_users(
     return stmt
 
 
+@stageable(schema_payload_arg_name="user")
 async def update_user(
-    db: AsyncSession, app_id: str, user_id: str, user: schemas.UserUpdate
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    user: schemas.UserUpdate,
+    *,
+    transaction_id: int | None = None,
 ) -> models.User:
     """
     Update a user.
@@ -289,6 +640,7 @@ async def update_user(
         app_id: Public ID of the app
         user_id: Public ID of the user
         user: User update schema
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The updated user
@@ -307,7 +659,8 @@ async def update_user(
         if user.metadata is not None:
             honcho_user.h_metadata = user.metadata
 
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_user)
         logger.info(f"User {user_id} updated successfully")
         return honcho_user
     except IntegrityError as e:
@@ -323,11 +676,14 @@ async def update_user(
 ########################################################
 
 
+@stageable()
 async def get_session(
     db: AsyncSession,
     app_id: str,
     session_id: str,
     user_id: Optional[str] = None,
+    *,
+    transaction_id: int | None = None,
 ) -> models.Session:
     """
     Get a session by ID for a specific user and app.
@@ -337,6 +693,7 @@ async def get_session(
         app_id: Public ID of the app
         session_id: Public ID of the session
         user_id: Optional public ID of the user
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The session if found
@@ -389,11 +746,15 @@ async def get_sessions(
     return stmt
 
 
+@stageable(schema_payload_arg_name="session")
 async def create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
     app_id: str,
     user_id: str,
+    *,
+    transaction_id: int | None = None,
+    public_id: str | None = None,
 ) -> models.Session:
     """
     Create a new session for a user.
@@ -403,7 +764,8 @@ async def create_session(
         session: Session creation schema
         app_id: ID of the app
         user_id: ID of the user
-
+        transaction_id: Optional transaction ID for staging.
+        public_id: Optional public ID for the session.
     Returns:
         The created session
 
@@ -417,9 +779,11 @@ async def create_session(
         honcho_session = models.Session(
             user_id=user_id,
             h_metadata=session.metadata,
+            public_id=public_id,
         )
         db.add(honcho_session)
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_session)
         logger.info(f"Session created successfully for user {user_id}")
         return honcho_session
     except Exception as e:
@@ -428,12 +792,15 @@ async def create_session(
         raise
 
 
+@stageable(schema_payload_arg_name="session")
 async def update_session(
     db: AsyncSession,
     session: schemas.SessionUpdate,
     app_id: str,
     user_id: str,
     session_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> models.Session:
     """
     Update a session.
@@ -444,6 +811,7 @@ async def update_session(
         app_id: ID of the app
         user_id: ID of the user
         session_id: ID of the session
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The updated session
@@ -463,13 +831,20 @@ async def update_session(
     ):  # Need to explicitly be there won't make it empty by default
         honcho_session.h_metadata = session.metadata
 
-    await db.commit()
+    await db.flush()
+    await db.refresh(honcho_session)
     logger.info(f"Session {session_id} updated successfully")
     return honcho_session
 
 
+@stageable()
 async def delete_session(
-    db: AsyncSession, app_id: str, user_id: str, session_id: str
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> bool:
     """
     Mark a session as inactive (soft delete).
@@ -479,6 +854,7 @@ async def delete_session(
         app_id: ID of the app
         user_id: ID of the user
         session_id: ID of the session
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         True if the session was deleted successfully
@@ -501,7 +877,6 @@ async def delete_session(
         raise ResourceNotFoundException("Session not found or does not belong to user")
 
     honcho_session.is_active = False
-    await db.commit()
     logger.info(f"Session {session_id} marked as inactive")
     return True
 
@@ -524,6 +899,7 @@ async def clone_session(
         user_id: ID of the user the target session belongs to
         original_session_id: ID of the session to clone
         cutoff_message_id: Optional ID of the last message to include in the clone
+        deep_copy: bool for deep copy of metamessages
 
     Returns:
         The newly created session
@@ -648,46 +1024,53 @@ async def clone_session(
 ########################################################
 
 
+@stageable(schema_payload_arg_name="message")
 async def create_message(
     db: AsyncSession,
     message: schemas.MessageCreate,
     app_id: str,
     user_id: str,
     session_id: str,
+    *,
+    transaction_id: int | None = None,
+    public_id: str | None = None,
 ) -> models.Message:
-    honcho_session = await get_session(
+    _honcho_session = await get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
-    if honcho_session is None:
-        raise ValueError("Session not found or does not belong to user")
-
     honcho_message = models.Message(
         session_id=session_id,
         is_user=message.is_user,
         content=message.content,
         h_metadata=message.metadata,
+        public_id=public_id,
     )
     db.add(honcho_message)
-    await db.commit()
-    # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
-    # await db.refresh(honcho_message)
+    await db.flush()
+    await db.refresh(honcho_message)
     return honcho_message
 
 
+@stageable(schema_payload_arg_name="messages", is_list_payload=True)
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
     app_id: str,
     user_id: str,
     session_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> list[models.Message]:
-    """Bulk create messages for a session while maintaining order"""
+    """
+    Bulk create messages for a session while maintaining order.
+
+    Args:
+        transaction_id: Optional transaction ID for staging.
+    """
     # Verify session exists and belongs to user
-    honcho_session = await get_session(
+    _honcho_session = await get_session(
         db, app_id=app_id, session_id=session_id, user_id=user_id
     )
-    if honcho_session is None:
-        raise ValueError("Session not found or does not belong to user")
 
     # Create list of message records
     message_records = [
@@ -703,7 +1086,6 @@ async def create_messages(
     # Bulk insert messages and return them in order
     stmt = insert(models.Message).returning(models.Message)
     result = await db.execute(stmt, message_records)
-    await db.commit()
 
     return list(result.scalars().all())
 
@@ -737,12 +1119,15 @@ async def get_messages(
     return stmt
 
 
+@stageable()
 async def get_message(
     db: AsyncSession,
     app_id: str,
     user_id: str,
     session_id: str,
     message_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
@@ -757,6 +1142,7 @@ async def get_message(
     return result.scalar_one_or_none()
 
 
+@stageable(schema_payload_arg_name="message")
 async def update_message(
     db: AsyncSession,
     message: schemas.MessageUpdate,
@@ -764,7 +1150,9 @@ async def update_message(
     user_id: str,
     session_id: str,
     message_id: str,
-) -> bool:
+    *,
+    transaction_id: int | None = None,
+) -> models.Message:
     honcho_message = await get_message(
         db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
     )
@@ -774,8 +1162,9 @@ async def update_message(
         message.metadata is not None
     ):  # Need to explicitly be there won't make it empty by default
         honcho_message.h_metadata = message.metadata
-    await db.commit()
-    # await db.refresh(honcho_message)
+
+    await db.flush()
+    await db.refresh(honcho_message)
     return honcho_message
 
 
@@ -784,18 +1173,18 @@ async def update_message(
 ########################################################
 
 
+@stageable(schema_payload_arg_name="metamessage")
 async def create_metamessage(
     db: AsyncSession,
     user_id: str,
     metamessage: schemas.MetamessageCreate,
     app_id: str,
-):
+    *,
+    transaction_id: int | None = None,
+) -> models.Metamessage:
     # Validate user exists
-    user = await get_user(db, app_id=app_id, user_id=user_id)
-    if user is None:
-        raise ResourceNotFoundException(f"User with ID '{user_id}' not found")
+    _user = await get_user(db, app_id=app_id, user_id=user_id)
 
-    # Initialize metamessage data
     metamessage_data = {
         "user_id": user_id,
         "metamessage_type": metamessage.metamessage_type,
@@ -805,40 +1194,29 @@ async def create_metamessage(
 
     # Validate session_id if provided
     if metamessage.session_id is not None:
-        session = await get_session(
-            db,
-            app_id=app_id,
-            user_id=user_id,
-            session_id=metamessage.session_id,
+        _session = await get_session(
+            db, app_id=app_id, user_id=user_id, session_id=metamessage.session_id
         )
-        if session is None:
-            raise ResourceNotFoundException(
-                "Session not found or does not belong to user"
-            )
         metamessage_data["session_id"] = metamessage.session_id
 
         # Validate message_id if provided
         if metamessage.message_id is not None:
-            message = await get_message(
+            _message = await get_message(
                 db,
                 app_id=app_id,
                 session_id=metamessage.session_id,
                 user_id=user_id,
                 message_id=metamessage.message_id,
             )
-            if message is None:
-                raise ResourceNotFoundException(
-                    "Message not found or does not belong to session"
-                )
             metamessage_data["message_id"] = metamessage.message_id
     elif metamessage.message_id is not None:
         # If message_id provided but no session_id, that's an error
         raise ValidationException("Cannot specify message_id without session_id")
 
-    # Create metamessage
     honcho_metamessage = models.Metamessage(**metamessage_data)
     db.add(honcho_metamessage)
-    await db.commit()
+    await db.flush()
+    await db.refresh(honcho_metamessage)
     return honcho_metamessage
 
 
@@ -886,6 +1264,7 @@ async def get_metamessages(
     return stmt
 
 
+@stageable()
 async def get_metamessage(
     db: AsyncSession,
     app_id: str,
@@ -893,6 +1272,8 @@ async def get_metamessage(
     metamessage_id: str,
     session_id: Optional[str] = None,
     message_id: Optional[str] = None,
+    *,
+    transaction_id: int | None = None,
 ) -> Optional[models.Metamessage]:
     # Base query for metamessage by ID
     stmt = (
@@ -913,14 +1294,16 @@ async def get_metamessage(
     return result.scalar_one_or_none()
 
 
+@stageable(schema_payload_arg_name="metamessage")
 async def update_metamessage(
     db: AsyncSession,
     metamessage: schemas.MetamessageUpdate,
     app_id: str,
     user_id: str,
     metamessage_id: str,
-) -> bool:
-    # First retrieve the metamessage
+    *,
+    transaction_id: int | None = None,
+) -> models.Metamessage:
     metamessage_obj = await get_metamessage(
         db, app_id=app_id, user_id=user_id, metamessage_id=metamessage_id
     )
@@ -929,50 +1312,38 @@ async def update_metamessage(
             f"Metamessage with ID {metamessage_id} not found"
         )
 
-    # Validate the consistency of relationships if they're being changed
-    # If we're setting message_id, we must have a session_id
     if metamessage.message_id is not None and metamessage.session_id is None:
-        # If updating message_id but not session_id, use the existing session_id
         metamessage.session_id = metamessage_obj.session_id
         if metamessage.session_id is None:
             raise ValidationException("Cannot specify message_id without session_id")
 
-    # If we're updating session_id and message_id, validate they belong together
     if metamessage.session_id is not None and metamessage.message_id is not None:
-        message = await get_message(
+        _message = await get_message(
             db,
             app_id=app_id,
             session_id=metamessage.session_id,
-            user_id=metamessage.user_id,
+            user_id=user_id,
             message_id=metamessage.message_id,
         )
-        if message is None:
-            raise ResourceNotFoundException(
-                "Message not found or doesn't belong to session"
-            )
+        # Assuming get_message raises if not found.
 
-    # Update fields
     if metamessage.session_id is not None:
         metamessage_obj.session_id = metamessage.session_id
-
     if metamessage.message_id is not None:
         metamessage_obj.message_id = metamessage.message_id
-
     if metamessage.metadata is not None:
         metamessage_obj.h_metadata = metamessage.metadata
-
     if metamessage.metamessage_type is not None:
         metamessage_obj.metamessage_type = metamessage.metamessage_type
 
-    await db.commit()
+    await db.flush()
+    await db.refresh(metamessage_obj)
     return metamessage_obj
 
 
 ########################################################
 # collection methods
 ########################################################
-
-# Should be very similar to the session methods
 
 
 async def get_collections(
@@ -982,7 +1353,10 @@ async def get_collections(
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
-    """Get a distinct list of the names of collections associated with a user"""
+    """Get a distinct list of the names of collections associated with a user
+    Args:
+        transaction_id: Optional transaction ID for staging.
+    """
     stmt = (
         select(models.Collection)
         .join(models.User, models.User.public_id == models.Collection.user_id)
@@ -992,7 +1366,6 @@ async def get_collections(
 
     if filter is not None:
         stmt = stmt.where(models.Collection.h_metadata.contains(filter))
-
     if reverse:
         stmt = stmt.order_by(models.Collection.id.desc())
     else:
@@ -1001,8 +1374,14 @@ async def get_collections(
     return stmt
 
 
+@stageable()
 async def get_collection_by_id(
-    db: AsyncSession, app_id: str, user_id: str, collection_id: str
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> models.Collection:
     """
     Get a collection by ID for a specific user and app.
@@ -1012,6 +1391,7 @@ async def get_collection_by_id(
         app_id: Public ID of the app
         user_id: Public ID of the user
         collection_id: Public ID of the collection
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The collection if found
@@ -1038,8 +1418,14 @@ async def get_collection_by_id(
     return collection
 
 
+@stageable()
 async def get_collection_by_name(
-    db: AsyncSession, app_id: str, user_id: str, name: str
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    name: str,
+    *,
+    transaction_id: int | None = None,
 ) -> models.Collection:
     """
     Get a collection by name for a specific user and app.
@@ -1049,6 +1435,7 @@ async def get_collection_by_name(
         app_id: Public ID of the app
         user_id: Public ID of the user
         name: Name of the collection
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The collection if found
@@ -1071,11 +1458,15 @@ async def get_collection_by_name(
     return collection
 
 
+@stageable(schema_payload_arg_name="collection")
 async def create_collection(
     db: AsyncSession,
     collection: schemas.CollectionCreate,
     app_id: str,
     user_id: str,
+    *,
+    transaction_id: int | None = None,
+    public_id: str | None = None,
 ) -> models.Collection:
     """
     Create a new collection for a user.
@@ -1085,7 +1476,8 @@ async def create_collection(
         collection: Collection creation schema
         app_id: ID of the app
         user_id: ID of the user
-
+        transaction_id: Optional transaction ID for staging.
+        public_id: Optional public ID for the collection.
     Returns:
         The created collection
 
@@ -1095,10 +1487,8 @@ async def create_collection(
         ResourceNotFoundException: If the user does not exist
     """
     try:
-        # This will raise ResourceNotFoundException if user not found
-        await get_user(db, app_id=app_id, user_id=user_id)
+        _user = await get_user(db, app_id=app_id, user_id=user_id)
 
-        # Check for reserved names
         if collection.name == "honcho":
             logger.warning(
                 f"Attempted to create collection with reserved name 'honcho' for user {user_id}"
@@ -1108,12 +1498,14 @@ async def create_collection(
             )
 
         honcho_collection = models.Collection(
-            user_id=user_id,
+            user_id=user_id,  # from func param
             name=collection.name,
             h_metadata=collection.metadata,
+            public_id=public_id,
         )
         db.add(honcho_collection)
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_collection)
         logger.info(
             f"Collection '{collection.name}' created successfully for user {user_id}"
         )
@@ -1159,12 +1551,15 @@ async def get_or_create_user_protected_collection(
         return honcho_collection
 
 
+@stageable(schema_payload_arg_name="collection")
 async def update_collection(
     db: AsyncSession,
     collection: schemas.CollectionUpdate,
     app_id: str,
     user_id: str,
     collection_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> models.Collection:
     """
     Update a collection.
@@ -1175,6 +1570,7 @@ async def update_collection(
         app_id: ID of the app
         user_id: ID of the user
         collection_id: ID of the collection
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The updated collection
@@ -1214,7 +1610,8 @@ async def update_collection(
         if collection.name is not None:
             honcho_collection.name = collection.name
 
-        await db.commit()
+        await db.flush()
+        await db.refresh(honcho_collection)
         logger.info(f"Collection {collection_id} updated successfully")
         return honcho_collection
     except IntegrityError as e:
@@ -1223,8 +1620,14 @@ async def update_collection(
         raise ConflictException("Collection update failed - name already in use") from e
 
 
+@stageable()
 async def delete_collection(
-    db: AsyncSession, app_id: str, user_id: str, collection_id: str
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    collection_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> bool:
     """
     Delete a Collection and all documents associated with it. Takes advantage of
@@ -1235,6 +1638,7 @@ async def delete_collection(
         app_id: ID of the app
         user_id: ID of the user
         collection_id: ID of the collection
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         True if the collection was deleted successfully
@@ -1257,7 +1661,6 @@ async def delete_collection(
             )
 
         await db.delete(honcho_collection)
-        await db.commit()
         logger.info(f"Collection {collection_id} deleted successfully")
         return True
     except Exception as e:
@@ -1304,12 +1707,15 @@ async def get_documents(
     return stmt
 
 
+@stageable()
 async def get_document(
     db: AsyncSession,
     app_id: str,
     user_id: str,
     collection_id: str,
     document_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> models.Document:
     """
     Get a document by ID.
@@ -1320,6 +1726,7 @@ async def get_document(
         user_id: Public ID of the user
         collection_id: Public ID of the collection
         document_id: Public ID of the document
+        transaction_id: Optional transaction ID for staging.
 
     Returns:
         The document if found
@@ -1390,6 +1797,7 @@ async def query_documents(
     return result.scalars().all()
 
 
+@stageable(schema_payload_arg_name="document")
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
@@ -1397,6 +1805,9 @@ async def create_document(
     user_id: str,
     collection_id: str,
     duplicate_threshold: Optional[float] = None,
+    *,
+    transaction_id: int | None = None,
+    public_id: str | None = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.
@@ -1407,7 +1818,9 @@ async def create_document(
         app_id: ID of the app
         user_id: ID of the user
         collection_id: ID of the collection
-
+        duplicate_threshold: Optional threshold for preventing duplicates.
+        transaction_id: Optional transaction ID for staging.
+        public_id: Optional public ID for the document.
     Returns:
         The created document
 
@@ -1415,13 +1828,10 @@ async def create_document(
         ResourceNotFoundException: If the collection does not exist
         ValidationException: If the document data is invalid
     """
-
-    # This will raise ResourceNotFoundException if collection not found
-    collection = await get_collection_by_id(
+    _collection = await get_collection_by_id(
         db, app_id=app_id, collection_id=collection_id, user_id=user_id
     )
 
-    # Using async client with await
     response = await openai_client.embeddings.create(
         input=document.content, model="text-embedding-3-small"
     )
@@ -1451,12 +1861,15 @@ async def create_document(
         content=document.content,
         h_metadata=document.metadata,
         embedding=embedding,
+        public_id=public_id,
     )
     db.add(honcho_document)
-    await db.commit()
+    await db.flush()
+    await db.refresh(honcho_document)
     return honcho_document
 
 
+@stageable(schema_payload_arg_name="document")
 async def update_document(
     db: AsyncSession,
     document: schemas.DocumentUpdate,
@@ -1464,7 +1877,9 @@ async def update_document(
     user_id: str,
     collection_id: str,
     document_id: str,
-) -> bool:
+    *,
+    transaction_id: int | None = None,
+) -> models.Document:
     honcho_document = await get_document(
         db,
         app_id=app_id,
@@ -1473,7 +1888,7 @@ async def update_document(
         document_id=document_id,
     )
     if honcho_document is None:
-        raise ValueError("Session not found or does not belong to user")
+        raise ResourceNotFoundException("Document not found or does not belong to user")
     if document.content is not None:
         honcho_document.content = document.content
         # Using async client with await
@@ -1486,23 +1901,28 @@ async def update_document(
 
     if document.metadata is not None:
         honcho_document.h_metadata = document.metadata
-    await db.commit()
+
+    await db.flush()
+    await db.refresh(honcho_document)
     return honcho_document
 
 
+@stageable()
 async def delete_document(
     db: AsyncSession,
     app_id: str,
     user_id: str,
     collection_id: str,
     document_id: str,
+    *,
+    transaction_id: int | None = None,
 ) -> bool:
-    honcho_collection = await get_collection_by_id(
+    _honcho_collection = await get_collection_by_id(
         db, app_id=app_id, collection_id=collection_id, user_id=user_id
     )
-    if honcho_collection is None:
+    if _honcho_collection is None:
         raise ResourceNotFoundException("Collection or Document not found")
-    if honcho_collection.name == "honcho":
+    if _honcho_collection.name == "honcho":
         logger.warning(
             f"Attempted to delete collection with reserved name 'honcho' for user {user_id}"
         )
@@ -1526,7 +1946,6 @@ async def delete_document(
     if document is None:
         return False
     await db.delete(document)
-    await db.commit()
     return True
 
 
@@ -1537,7 +1956,7 @@ async def get_duplicate_documents(
     collection_id: str,
     content: str,
     similarity_threshold: float = 0.85,
-) -> List[models.Document]:
+) -> list[models.Document]:
     """Check if a document with similar content already exists in the collection.
 
     Args:
@@ -1571,3 +1990,197 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+########################################################
+# transaction methods
+########################################################
+# These methods are NOT decorated with @stageable
+
+
+async def create_transaction(
+    db: AsyncSession, expires_at: datetime.datetime | None = None
+) -> models.Transaction:
+    transaction = models.Transaction(
+        status="pending",
+        expires_at=expires_at,
+    )
+    db.add(transaction)
+    await db.commit()
+    return transaction
+
+
+async def get_transaction(db: AsyncSession, transaction_id: int) -> models.Transaction:
+    stmt = select(models.Transaction).where(
+        models.Transaction.transaction_id == transaction_id
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def commit_transaction(db: AsyncSession, transaction_id: int) -> None:
+    stmt = select(models.Transaction).where(
+        models.Transaction.transaction_id == transaction_id
+    )
+    result = await db.execute(stmt)
+    transaction = result.scalar_one_or_none()
+    if transaction is None:
+        raise ResourceNotFoundException("Transaction not found")
+    if transaction.status != "pending":
+        raise ValidationException("Transaction is not pending")
+    if transaction.expires_at < datetime.datetime.now(datetime.timezone.utc):
+        transaction.status = "expired"
+        await db.commit()
+        raise ValidationException("Transaction has expired")
+
+    staged_operations = await get_staged_operations(db, transaction_id)
+
+    if not db.in_transaction():
+        await db.begin()
+        logger.warning(
+            "commit_transaction was called with a db session not in an active transaction. Began a new one."
+        )
+
+    for staged_op in staged_operations:
+        handler_func_obj = globals().get(staged_op.handler_function)
+        if not handler_func_obj:
+            logger.error(
+                f"Handler function {staged_op.handler_function} not found during commit."
+            )
+            await db.rollback()
+            transaction.status = "failed"
+            await db.commit()
+            raise RuntimeError(
+                f"Handler function {staged_op.handler_function} not found."
+            )
+
+        commit_kwargs = {**staged_op.parameters}
+        commit_kwargs.pop("transaction_id", None)
+
+        try:
+            reconstructed_schema_model = await _get_reconstructed_schema_arg(
+                handler_func_obj,
+                staged_op.schema_arg_name,
+                staged_op.is_list_schema,
+                staged_op.payload,
+                context_for_logging=f"commit of {staged_op.handler_function}",
+            )
+            if reconstructed_schema_model is not None and staged_op.schema_arg_name:
+                commit_kwargs[staged_op.schema_arg_name] = reconstructed_schema_model
+
+            _apply_forced_public_id(
+                commit_kwargs, staged_op, handler_func_obj, context_for_logging="commit"
+            )
+
+            await handler_func_obj(db, **commit_kwargs)
+        except (
+            ValueError,
+            IntegrityError,
+            ConflictException,
+            ResourceNotFoundException,
+        ) as e_commit_exec:
+            logger.error(
+                f"Error executing staged operation {staged_op.handler_function} during commit: {e_commit_exec}"
+            )
+            await db.rollback()
+            transaction.status = "failed"
+            await db.commit()
+            raise
+        except (
+            Exception
+        ) as e_unexpected_commit_exec:  # Catch any other unexpected errors
+            logger.error(
+                f"Unexpected error executing staged operation {staged_op.handler_function} during commit: {e_unexpected_commit_exec}"
+            )
+            await db.rollback()
+            transaction.status = "failed"
+            await db.commit()
+            raise RuntimeError(
+                f"Unexpected error during commit of {staged_op.handler_function}"
+            ) from e_unexpected_commit_exec
+
+    stmt = delete(models.StagedOperation).where(
+        models.StagedOperation.transaction_id == transaction_id
+    )
+    await db.execute(stmt)
+
+    transaction.status = "committed"
+    await db.commit()
+
+
+async def rollback_transaction(db: AsyncSession, transaction_id: int) -> None:
+    stmt = select(models.Transaction).where(
+        models.Transaction.transaction_id == transaction_id
+    )
+    result = await db.execute(stmt)
+    transaction = result.scalar_one_or_none()
+    if transaction is None:
+        raise ResourceNotFoundException("Transaction not found")
+    if transaction.status != "pending":
+        raise ValidationException("Transaction is not pending")
+    if transaction.expires_at < datetime.datetime.now(datetime.timezone.utc):
+        raise ValidationException("Transaction has expired")
+
+    # Delete all staged operations for the transaction
+    stmt = delete(models.StagedOperation).where(
+        models.StagedOperation.transaction_id == transaction_id
+    )
+    await db.execute(stmt)
+
+    # Update the transaction status to rolled back
+    transaction.status = "rolled_back"
+    await db.commit()
+
+
+async def create_staged_operation(
+    db: AsyncSession,
+    transaction_id: int,
+    sequence_number: int,
+    operation_params: dict,
+    operation_payload: dict | list,
+    operation_handler: str,
+    resource_public_id: str | None = None,
+    schema_arg_name_for_db: str | None = None,
+    is_list_schema_for_db: bool = False,
+) -> models.StagedOperation:
+    if sequence_number > MAX_STAGED_OPERATIONS:
+        raise ValidationException(
+            f"Sequence number {sequence_number} is greater than the maximum allowed value of {MAX_STAGED_OPERATIONS}"
+        )
+    staged_operation = models.StagedOperation(
+        transaction_id=transaction_id,
+        sequence_number=sequence_number,
+        parameters=operation_params,
+        payload=operation_payload,
+        handler_function=operation_handler,
+        resource_public_id=resource_public_id,
+        schema_arg_name=schema_arg_name_for_db,
+        is_list_schema=is_list_schema_for_db,
+    )
+    db.add(staged_operation)
+    await db.commit()
+    logger.info(
+        f"Staged operation {operation_handler} created for transaction {transaction_id} with sequence {sequence_number}"
+    )
+    return staged_operation
+
+
+async def get_staged_operations(
+    db: AsyncSession, transaction_id: int
+) -> Sequence[models.StagedOperation]:
+    stmt = (
+        select(models.StagedOperation)
+        .where(models.StagedOperation.transaction_id == transaction_id)
+        .order_by(models.StagedOperation.sequence_number)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def get_next_sequence_number(db: AsyncSession, transaction_id: int) -> int:
+    stmt = select(func.max(models.StagedOperation.sequence_number)).where(
+        models.StagedOperation.transaction_id == transaction_id
+    )
+    result = await db.execute(stmt)
+    max_seq = result.scalar_one_or_none()
+    return (max_seq + 1) if max_seq is not None else 1

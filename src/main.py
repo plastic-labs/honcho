@@ -21,6 +21,7 @@ from src.routers import (
     messages,
     metamessages,
     sessions,
+    transactions,
     users,
 )
 from src.security import create_admin_jwt
@@ -145,6 +146,7 @@ app.include_router(metamessages.router, prefix="/v1")
 app.include_router(collections.router, prefix="/v1")
 app.include_router(documents.router, prefix="/v1")
 app.include_router(keys.router, prefix="/v1")
+app.include_router(transactions.router, prefix="/v1")
 
 
 # Global exception handlers

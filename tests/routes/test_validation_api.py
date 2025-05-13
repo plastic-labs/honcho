@@ -1,5 +1,7 @@
 from nanoid import generate as generate_nanoid
 
+from src import schemas
+
 
 def test_app_validations_api(client):
     # Test name too short
@@ -416,6 +418,11 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
                 yield "Mock streamed response"
 
         return MockStream()
+    
+    async def mock_chat(*args, **kwargs):
+        return schemas.DialecticResponse(
+            content="Mock chat response",
+        )
 
     # Apply the monkeypatches
     monkeypatch.setattr(
@@ -430,6 +437,7 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
     )
     monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
     monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
+    monkeypatch.setattr("src.agent.chat", mock_chat)
 
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based

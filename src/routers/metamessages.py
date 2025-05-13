@@ -8,6 +8,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import ResourceNotFoundException, ValidationException
+from src.routers import transactions
 from src.security import require_auth
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ async def create_metamessage(
     metamessage: schemas.MetamessageCreate = Body(
         ..., description="Metamessage creation parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """
@@ -38,6 +40,7 @@ async def create_metamessage(
             user_id=user_id,
             metamessage=metamessage,
             app_id=app_id,
+            transaction_id=transaction_id,
         )
         logger.info(f"Metamessage created successfully for user {user_id}")
         return metamessage_obj
@@ -46,7 +49,7 @@ async def create_metamessage(
         raise
 
 
-@router.post("/list", response_model=Page[schemas.Metamessage])
+@router.post("/list", response_model=Page[schemas.Metamessage], dependencies=[Depends(transactions.disallow_transaction_header)])
 async def get_metamessages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
@@ -92,6 +95,7 @@ async def get_metamessage(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     metamessage_id: str = Path(..., description="ID of the metamessage to retrieve"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get a specific Metamessage by ID"""
@@ -100,6 +104,7 @@ async def get_metamessage(
         app_id=app_id,
         user_id=user_id,
         metamessage_id=metamessage_id,
+        transaction_id=transaction_id,
     )
     if honcho_metamessage is None:
         logger.warning(f"Metamessage {metamessage_id} not found")
@@ -120,6 +125,7 @@ async def update_metamessage(
     metamessage: schemas.MetamessageUpdate = Body(
         ..., description="Updated metamessage parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Update a metamessage's metadata, type, or relationships"""
@@ -130,6 +136,7 @@ async def update_metamessage(
             app_id=app_id,
             user_id=user_id,
             metamessage_id=metamessage_id,
+            transaction_id=transaction_id,
         )
         logger.info(f"Metamessage {metamessage_id} updated successfully")
         return updated_metamessage

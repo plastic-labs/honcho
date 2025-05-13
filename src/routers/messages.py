@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
@@ -11,6 +11,7 @@ from src import crud, schemas
 from src.dependencies import db, tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import QueueItem
+from src.routers import transactions
 from src.security import require_auth
 
 logger = logging.getLogger(__name__)
@@ -158,12 +159,18 @@ async def create_message_for_session(
     message: schemas.MessageCreate = Body(
         ..., description="Message creation parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Adds a message to a session"""
     try:
         honcho_message = await crud.create_message(
-            db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
+            db,
+            message=message,
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            transaction_id=transaction_id,
         )
 
         # Prepare message payload for background processing
@@ -189,7 +196,7 @@ async def create_message_for_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.post("/batch", response_model=List[schemas.Message])
+@router.post("/batch", response_model=list[schemas.Message])
 async def create_batch_messages_for_session(
     background_tasks: BackgroundTasks,
     app_id: str = Path(..., description="ID of the app"),
@@ -198,6 +205,7 @@ async def create_batch_messages_for_session(
     batch: schemas.MessageBatchCreate = Body(
         ..., description="Batch of messages to create"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
@@ -208,6 +216,7 @@ async def create_batch_messages_for_session(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
+            transaction_id=transaction_id,
         )
 
         # Create payloads for all messages
@@ -238,7 +247,7 @@ async def create_batch_messages_for_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.post("/list", response_model=Page[schemas.Message])
+@router.post("/list", response_model=Page[schemas.Message], dependencies=[Depends(transactions.disallow_transaction_header)])
 async def get_messages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
@@ -278,11 +287,17 @@ async def get_message(
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to retrieve"),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Get a Message by ID"""
     honcho_message = await crud.get_message(
-        db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
+        db,
+        app_id=app_id,
+        session_id=session_id,
+        user_id=user_id,
+        message_id=message_id,
+        transaction_id=transaction_id,
     )
     if honcho_message is None:
         logger.warning(f"Message {message_id} not found in session {session_id}")
@@ -299,6 +314,7 @@ async def update_message(
     message: schemas.MessageUpdate = Body(
         ..., description="Updated message parameters"
     ),
+    transaction_id: int | None = Depends(transactions.get_transaction_id),
     db=db,
 ):
     """Update the metadata of a Message"""
@@ -310,6 +326,7 @@ async def update_message(
             user_id=user_id,
             session_id=session_id,
             message_id=message_id,
+            transaction_id=transaction_id,
         )
         logger.info(f"Message {message_id} updated successfully")
         return updated_message
