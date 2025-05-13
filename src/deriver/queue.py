@@ -207,67 +207,69 @@ class QueueManager:
     async def process_session(self, session_id: int):
         """Process all messages for a session"""
         logger.debug(f"Starting to process session {session_id}")
-        async with self.semaphore:  # Hold the semaphore for the entire session duration
-            # Use the tracked_db dependency for transaction safety
-            async with tracked_db("queue_process_session") as db:
-                try:
-                    message_count = 0
-                    while not self.shutdown_event.is_set():
-                        message = await self.get_next_message(db, session_id)
-                        if not message:
-                            logger.debug(f"No more messages for session {session_id}")
-                            break
+        # Use the tracked_db dependency for transaction safety
+        async with (
+            self.semaphore,
+            tracked_db("queue_process_session") as db,
+        ):  # Hold the semaphore for the entire session duration
+            try:
+                message_count = 0
+                while not self.shutdown_event.is_set():
+                    message = await self.get_next_message(db, session_id)
+                    if not message:
+                        logger.debug(f"No more messages for session {session_id}")
+                        break
 
-                        message_count += 1
-                        logger.debug(
-                            f"Processing message {message.id} for session {session_id} (message {message_count})"
-                        )
-                        try:
-                            logger.info(
-                                f"Processing message {message.id} from session {session_id}"
-                            )
-                            await process_item(db, payload=message.payload)
-                            logger.debug(f"Successfully processed message {message.id}")
-                        except Exception as e:
-                            logger.error(
-                                f"Error processing message {message.id}: {str(e)}",
-                                exc_info=True,
-                            )
-                            if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
-                                sentry_sdk.capture_exception(e)
-                        finally:
-                            # Prevent malformed messages from stalling queue indefinitely
-                            message.processed = True
-                            await db.commit()
-                            logger.debug(f"Marked message {message.id} as processed")
-
-                        if self.shutdown_event.is_set():
-                            logger.debug(
-                                f"Shutdown requested, stopping processing for session {session_id}"
-                            )
-                            break
-
-                        # Update last_updated timestamp to show this session is still being processed
-                        await db.execute(
-                            update(models.ActiveQueueSession)
-                            .where(models.ActiveQueueSession.session_id == session_id)
-                            .values(last_updated=func.now())
-                        )
-                        await db.commit()
-
+                    message_count += 1
                     logger.debug(
-                        f"Completed processing session {session_id}, processed {message_count} messages"
+                        f"Processing message {message.id} for session {session_id} (message {message_count})"
                     )
-                finally:
-                    # Remove session from active_sessions when done
-                    logger.debug(f"Removing session {session_id} from active sessions")
-                    await db.execute(
-                        delete(models.ActiveQueueSession).where(
-                            models.ActiveQueueSession.session_id == session_id
+                    try:
+                        logger.info(
+                            f"Processing message {message.id} from session {session_id}"
                         )
+                        await process_item(db, payload=message.payload)
+                        logger.debug(f"Successfully processed message {message.id}")
+                    except Exception as e:
+                        logger.error(
+                            f"Error processing message {message.id}: {str(e)}",
+                            exc_info=True,
+                        )
+                        if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                            sentry_sdk.capture_exception(e)
+                    finally:
+                        # Prevent malformed messages from stalling queue indefinitely
+                        message.processed = True
+                        await db.commit()
+                        logger.debug(f"Marked message {message.id} as processed")
+
+                    if self.shutdown_event.is_set():
+                        logger.debug(
+                            f"Shutdown requested, stopping processing for session {session_id}"
+                        )
+                        break
+
+                    # Update last_updated timestamp to show this session is still being processed
+                    await db.execute(
+                        update(models.ActiveQueueSession)
+                        .where(models.ActiveQueueSession.session_id == session_id)
+                        .values(last_updated=func.now())
                     )
                     await db.commit()
-                    self.untrack_session(session_id)
+
+                logger.debug(
+                    f"Completed processing session {session_id}, processed {message_count} messages"
+                )
+            finally:
+                # Remove session from active_sessions when done
+                logger.debug(f"Removing session {session_id} from active sessions")
+                await db.execute(
+                    delete(models.ActiveQueueSession).where(
+                        models.ActiveQueueSession.session_id == session_id
+                    )
+                )
+                await db.commit()
+                self.untrack_session(session_id)
 
     @sentry_sdk.trace
     async def get_next_message(self, db: AsyncSession, session_id: int):
