@@ -297,18 +297,17 @@ class Transaction(Base):
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
+        DateTime(timezone=True), default=func.now()
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now(), onupdate=func.now()
+        DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
     expires_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True),
-        index=True,
         default=lambda: datetime.datetime.now(datetime.timezone.utc)
         + datetime.timedelta(minutes=60),
     )
-    status: Mapped[str] = mapped_column(TEXT, index=True, default="pending")
+    status: Mapped[str] = mapped_column(TEXT, default="pending")
 
     __table_args__ = (
         CheckConstraint(
