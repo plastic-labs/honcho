@@ -112,6 +112,8 @@ class Message(MessageBase):
     h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
+    app_id: str
+    user_id: str
 
     @field_validator("metadata", mode="before")
     def fetch_h_metadata(cls, value, info):
@@ -150,6 +152,7 @@ class Session(SessionBase):
     # messages: list[Message]
     is_active: bool
     user_id: str
+    app_id: str
     h_metadata: dict = Field(exclude=True)
     metadata: dict
 
@@ -201,6 +204,7 @@ class Metamessage(MetamessageBase):
     metamessage_type: str
     content: str
     user_id: str
+    app_id: str
     session_id: str | None
     message_id: str | None
     h_metadata: dict = Field(exclude=True)
@@ -256,6 +260,7 @@ class Collection(CollectionBase):
     id: str
     name: str
     user_id: str
+    app_id: str
     h_metadata: dict = Field(exclude=True)
     metadata: dict
     created_at: datetime.datetime
@@ -306,6 +311,8 @@ class Document(DocumentBase):
     metadata: dict
     created_at: datetime.datetime
     collection_id: str
+    app_id: str
+    user_id: str
 
     @field_validator("metadata", mode="before")
     def fetch_h_metadata(cls, value, info):
