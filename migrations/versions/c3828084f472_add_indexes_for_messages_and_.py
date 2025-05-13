@@ -1,7 +1,7 @@
 """Add indexes for messages and metamessages for reads
 
 Revision ID: c3828084f472
-Revises:
+Revises: a1b2c3d4e5f6
 Create Date: 2024-12-12 13:41:40.156095
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "c3828084f472"
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = "a1b2c3d4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
