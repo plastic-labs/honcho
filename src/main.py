@@ -25,20 +25,17 @@ from src.routers import (
     users,
 )
 from src.security import create_admin_jwt
+from src.config import settings
 
 
-def get_log_level(env_var="LOG_LEVEL", default="INFO"):
+def get_log_level():
     """
-    Convert log level string from environment variable to logging module constant.
-
-    Args:
-        env_var: Name of the environment variable to check
-        default: Default log level if environment variable is not set
+    Convert log level string from settings to logging module constant.
 
     Returns:
         int: The logging level constant (e.g., logging.INFO)
     """
-    log_level_str = os.getenv(env_var, default).upper()
+    log_level_str = settings.LOG_LEVEL.upper()
 
     log_levels = {
         "CRITICAL": logging.CRITICAL,  # 50
@@ -67,7 +64,7 @@ async def setup_admin_jwt():
 
 
 # Sentry Setup
-SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
+SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
 
     def before_send(event, hint):
@@ -80,9 +77,9 @@ if SENTRY_ENABLED:
         return event
 
     sentry_sdk.init(
-        dsn=os.getenv("SENTRY_DSN"),
-        traces_sample_rate=0.4,
-        profiles_sample_rate=0.4,
+        dsn=settings.SENTRY.DSN,
+        traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
+        profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
         before_send=before_send,
         integrations=[
             StarletteIntegration(
@@ -124,7 +121,12 @@ app = FastAPI(
     },
 )
 
-origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]
+origins = [
+    "http://localhost",
+    "http://127.0.0.1:8000",
+    "https://demo.honcho.dev",
+    "https://api.honcho.dev",
+]
 
 app.add_middleware(
     CORSMiddleware,

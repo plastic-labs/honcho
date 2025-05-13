@@ -15,6 +15,7 @@ from sqlalchemy.sql import func
 from .. import models
 from ..dependencies import tracked_db
 from .consumer import process_item
+from src.config import settings
 
 logger = getLogger(__name__)
 
@@ -28,17 +29,17 @@ class QueueManager:
         self.owned_sessions: set[int] = set()
         self.queue_empty_flag = asyncio.Event()
 
-        # Initialize from environment
-        self.workers = int(os.getenv("DERIVER_WORKERS", 1))
+        # Initialize from settings
+        self.workers = settings.DERIVER.WORKERS
         self.semaphore = asyncio.Semaphore(self.workers)
 
-        # Initialize Sentry if enabled
-        if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+        # Initialize Sentry if enabled, using settings
+        if settings.SENTRY.ENABLED:
             sentry_sdk.init(
-                dsn=os.getenv("SENTRY_DSN"),
+                dsn=settings.SENTRY.DSN,
                 enable_tracing=True,
-                traces_sample_rate=0.1,
-                profiles_sample_rate=0.1,
+                traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
+                profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
                 integrations=[AsyncioIntegration()],
             )
 
@@ -104,7 +105,7 @@ class QueueManager:
                     logger.info("Cleanup completed successfully")
             except Exception as e:
                 logger.error(f"Error during cleanup: {str(e)}")
-                if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
 
     ##########################
@@ -114,7 +115,8 @@ class QueueManager:
     async def get_available_sessions(self, db: AsyncSession):
         """Get available sessions that aren't being processed"""
         # Clean up stale sessions
-        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+        stale_delta = timedelta(minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES)
+        five_minutes_ago = datetime.utcnow() - stale_delta
         await db.execute(
             delete(models.ActiveQueueSession).where(
                 models.ActiveQueueSession.last_updated < five_minutes_ago
@@ -144,14 +146,14 @@ class QueueManager:
             while not self.shutdown_event.is_set():
                 if self.queue_empty_flag.is_set():
                     # logger.debug("Queue empty flag set, waiting")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     self.queue_empty_flag.clear()
                     continue
 
                 # Check if we have capacity before querying
                 if self.semaphore.locked():
                     # logger.debug("All workers busy, waiting")
-                    await asyncio.sleep(1)  # Wait before trying again
+                    await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     continue
 
                 # Use the dependency for transaction safety
@@ -189,13 +191,13 @@ class QueueManager:
                                     )
                         else:
                             self.queue_empty_flag.set()
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     except Exception as e:
                         logger.error(f"Error in polling loop: {str(e)}", exc_info=True)
-                        if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                        if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
                         # Note: rollback is handled by tracked_db dependency
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
         finally:
             logger.info("Polling loop stopped")
 
@@ -235,7 +237,7 @@ class QueueManager:
                             f"Error processing message {message.id}: {str(e)}",
                             exc_info=True,
                         )
-                        if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+                        if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
                     finally:
                         # Prevent malformed messages from stalling queue indefinitely
