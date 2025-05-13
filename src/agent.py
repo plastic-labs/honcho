@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.db import SessionLocal
+from src.dependencies import tracked_db
 from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
@@ -152,6 +152,7 @@ async def chat(
     user_id: str,
     session_id: str,
     queries: str | list[str],
+    db: AsyncSession,
     stream: bool = False,
 ) -> schemas.DialecticResponse | MessageStreamManager:
     """
@@ -175,80 +176,77 @@ async def chat(
 
     start_time = asyncio.get_event_loop().time()
 
-    async with SessionLocal() as db:
-        # Setup phase - create resources we'll need for all operations
+    # Setup phase - create resources we'll need for all operations
 
-        # 1. Create embedding store
-        collection = await crud.get_or_create_user_protected_collection(
-            db, app_id, user_id
-        )
+    # 1. Create embedding store
+    collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
 
-        embedding_store = CollectionEmbeddingStore(
-            db=db,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection.public_id,  # type: ignore
-        )
-        logger.debug(
-            f"Created embedding store with collection_id: {collection.public_id if collection else None}"
-        )
+    embedding_store = CollectionEmbeddingStore(
+        db=db,
+        app_id=app_id,
+        user_id=user_id,
+        collection_id=collection.public_id,  # type: ignore
+    )
+    logger.debug(
+        f"Created embedding store with collection_id: {collection.public_id if collection else None}"
+    )
 
-        # 2. Get the latest user message to attach the user representation to
-        stmt = (
-            select(models.Message)
-            .join(models.Session, models.Session.public_id == models.Message.session_id)
-            .join(models.User, models.User.public_id == models.Session.user_id)
-            .join(models.App, models.App.public_id == models.User.app_id)
-            .where(models.App.public_id == app_id)
-            .where(models.User.public_id == user_id)
-            .where(models.Message.session_id == session_id)
-            .where(models.Message.is_user)
-            .order_by(models.Message.id.desc())
-            .limit(1)
-        )
-        latest_messages = await db.execute(stmt)
-        latest_message = latest_messages.scalar_one_or_none()
-        latest_message_id = latest_message.public_id if latest_message else None
-        logger.debug(f"Latest user message ID: {latest_message_id}")
+    # 2. Get the latest user message to attach the user representation to
+    stmt = (
+        select(models.Message)
+        .join(models.Session, models.Session.public_id == models.Message.session_id)
+        .join(models.User, models.User.public_id == models.Session.user_id)
+        .join(models.App, models.App.public_id == models.User.app_id)
+        .where(models.App.public_id == app_id)
+        .where(models.User.public_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .where(models.Message.is_user)
+        .order_by(models.Message.id.desc())
+        .limit(1)
+    )
+    latest_messages = await db.execute(stmt)
+    latest_message = latest_messages.scalar_one_or_none()
+    latest_message_id = latest_message.public_id if latest_message else None
+    logger.debug(f"Latest user message ID: {latest_message_id}")
 
-        # Get chat history for the session
-        chat_history, _, _ = await history.get_summarized_history(
-            db, session_id, summary_type=history.SummaryType.SHORT
-        )
-        if not chat_history:
-            logger.warning(f"No chat history found for session {session_id}")
-            chat_history = f"someone asked this about the user's message: {final_query}"
-        logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
-        message_count = len(chat_history.split("\n"))
-        logger.debug(f"Retrieved chat history: {message_count} messages")
+    # Get chat history for the session
+    chat_history, _, _ = await history.get_summarized_history(
+        db, session_id, summary_type=history.SummaryType.SHORT
+    )
+    if not chat_history:
+        logger.warning(f"No chat history found for session {session_id}")
+        chat_history = f"someone asked this about the user's message: {final_query}"
+    logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
+    message_count = len(chat_history.split("\n"))
+    logger.debug(f"Retrieved chat history: {message_count} messages")
 
-        # Run both long-term and short-term context retrieval concurrently
-        logger.debug("Starting parallel tasks for context retrieval")
-        long_term_task = get_long_term_facts(final_query, embedding_store)
-        short_term_task = run_tom_inference(chat_history, session_id)
+    # Run both long-term and short-term context retrieval concurrently
+    logger.debug("Starting parallel tasks for context retrieval")
+    long_term_task = get_long_term_facts(final_query, embedding_store)
+    short_term_task = run_tom_inference(chat_history, session_id)
 
-        # Wait for both tasks to complete
-        facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
-        logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
-        logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
+    # Wait for both tasks to complete
+    facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
+    logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
+    logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
 
-        # Generate a fresh user representation
-        logger.debug("Generating user representation")
-        user_representation = await generate_user_representation(
-            app_id=app_id,
-            user_id=user_id,
-            session_id=session_id,
-            chat_history=chat_history,
-            tom_inference=tom_inference,
-            facts=facts,
-            embedding_store=embedding_store,
-            db=db,
-            message_id=latest_message_id,
-            with_inference=False,
-        )
-        logger.debug(
-            f"User representation generated: {len(user_representation)} characters"
-        )
+    # Generate a fresh user representation
+    logger.debug("Generating user representation")
+    user_representation = await generate_user_representation(
+        app_id=app_id,
+        user_id=user_id,
+        session_id=session_id,
+        chat_history=chat_history,
+        tom_inference=tom_inference,
+        facts=facts,
+        embedding_store=embedding_store,
+        db=db,
+        message_id=latest_message_id,
+        with_inference=False,
+    )
+    logger.debug(
+        f"User representation generated: {len(user_representation)} characters"
+    )
 
     # Create a Dialectic chain with the fresh user representation
     chain = Dialectic(
@@ -516,7 +514,7 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
         logger.debug(f"Saving representation to message_id: {message_id}")
         save_start = asyncio.get_event_loop().time()
         try:
-            async with SessionLocal() as save_db:
+            async with tracked_db("agent.generate_user_representation") as save_db:
                 try:
                     # First check if message exists
                     message_check_stmt = select(models.Message).where(

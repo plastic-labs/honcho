@@ -1,5 +1,6 @@
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 
 import sentry_sdk
@@ -10,7 +11,7 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from src.db import engine
+from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
     apps,
@@ -66,17 +67,17 @@ async def setup_admin_jwt():
 
 # Sentry Setup
 SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
-if SENTRY_ENABLED:    
-    
-    def before_send(event, hint):        
-        if 'exc_info' in hint:
-            exc_type, exc_value, _ = hint['exc_info']
+if SENTRY_ENABLED:
+
+    def before_send(event, hint):
+        if "exc_info" in hint:
+            exc_type, exc_value, _ = hint["exc_info"]
             # Filter out HonchoExceptions from being sent to Sentry
             if isinstance(exc_value, HonchoException):
                 return None
-        
+
         return event
-    
+
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN"),
         traces_sample_rate=0.4,
@@ -167,3 +168,19 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "An unexpected error occurred"},
     )
+
+
+@app.middleware("http")
+async def track_request(request: Request, call_next):
+    # Create a request ID that includes endpoint information
+    endpoint = request.url.path.replace("/", "_")
+    request_id = f"{endpoint}:{str(uuid.uuid4())[:8]}"
+
+    # Store in request state and context var
+    request.state.request_id = request_id
+    token = request_context.set(f"api:{request_id}")
+
+    try:
+        return await call_next(request)
+    finally:
+        request_context.reset(token)

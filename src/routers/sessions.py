@@ -206,7 +206,9 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
+    db=db,
 ):
+
     """Chat with the Dialectic API"""
     if not options.stream:
         return await agent.chat(
@@ -214,6 +216,7 @@ async def chat(
             user_id=user_id,
             session_id=session_id,
             queries=options.queries,
+            db=db,
         )
     else:
 
@@ -225,6 +228,7 @@ async def chat(
                     session_id=session_id,
                     queries=options.queries,
                     stream=True,
+                    db=db,
                 )
                 if type(stream) is AsyncMessageStreamManager:
                     async with stream as stream_manager:
