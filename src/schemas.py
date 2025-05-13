@@ -1,7 +1,7 @@
 import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, computed_field
 
 
 class AppBase(BaseModel):
@@ -23,24 +23,14 @@ class AppUpdate(AppBase):
 
 
 class App(AppBase):
-    public_id: str = Field(exclude=True)
-    id: str
+    public_id: str = Field(serialization_alias='id')
     name: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        populate_by_name=True
     )
 
 
@@ -59,29 +49,19 @@ class UserGet(UserBase):
 
 class UserUpdate(UserBase):
     name: str | None = None
-    metadata: dict | None = None  # Allow user to explicitly set metadata to empty
+    metadata: dict | None = None
 
 
 class User(UserBase):
-    public_id: str = Field(exclude=True)
-    id: str
+    public_id: str = Field(serialization_alias='id')
     name: str
     app_id: str
     created_at: datetime.datetime
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        populate_by_name=True
     )
 
 
@@ -104,28 +84,18 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
-    public_id: str = Field(exclude=True)
-    id: str
+    public_id: str = Field(serialization_alias='id')
     content: str
     is_user: bool
     session_id: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
     app_id: str
     user_id: str
 
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
-
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        populate_by_name=True
     )
 
 
@@ -147,28 +117,16 @@ class SessionUpdate(SessionBase):
 
 
 class Session(SessionBase):
-    public_id: str = Field(exclude=True)
-    id: str
-    # messages: list[Message]
+    public_id: str = Field(serialization_alias='id')
     is_active: bool
     user_id: str
     app_id: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
-
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        populate_by_name=True
     )
 
 
@@ -183,7 +141,7 @@ class MetamessageCreate(MetamessageBase):
     message_id: str | None = None
     metadata: dict = {}
 
-    model_config = ConfigDict(validate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class MetamessageGet(MetamessageBase):
@@ -192,7 +150,7 @@ class MetamessageGet(MetamessageBase):
     message_id: str | None = None
     filter: dict | None = None
 
-    model_config = ConfigDict(validate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class MetamessageUpdate(MetamessageBase):
@@ -201,34 +159,29 @@ class MetamessageUpdate(MetamessageBase):
     label: str | None = Field(default=None, alias='metamessage_type')
     metadata: dict | None = None
 
-    model_config = ConfigDict(validate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class Metamessage(MetamessageBase):
-    public_id: str = Field(exclude=True)
-    id: str
+    public_id: str = Field(serialization_alias='id')
     label: str
     content: str
     user_id: str
     app_id: str
     session_id: str | None
     message_id: str | None
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
 
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
+    # Included for backwards compatibility with the old metamessage_type field
+    @computed_field
+    @property
+    def metamessage_type(self) -> str:
+        return self.label
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
-        validate_by_name=True
+        populate_by_name=True
     )
 
 
@@ -263,26 +216,16 @@ class CollectionUpdate(CollectionBase):
 
 
 class Collection(CollectionBase):
-    public_id: str = Field(exclude=True)
-    id: str
+    public_id: str = Field(serialization_alias='id')
     name: str
     user_id: str
     app_id: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
-
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
 
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        populate_by_name=True
     )
 
 
@@ -311,27 +254,17 @@ class DocumentUpdate(DocumentBase):
 
 
 class Document(DocumentBase):
-    public_id: str = Field(exclude=True)
-    id: str
+    public_id: str = Field(serialization_alias='id')
     content: str
-    h_metadata: dict = Field(exclude=True)
-    metadata: dict
+    h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
     collection_id: str
     app_id: str
     user_id: str
 
-    @field_validator("metadata", mode="before")
-    def fetch_h_metadata(cls, value, info):
-        return info.data.get("h_metadata", {})
-
-    @field_validator("id", mode="before")
-    def internal_to_public(cls, value, info):
-        return info.data.get("public_id", {})
-
     model_config = ConfigDict(
         from_attributes=True,
-        json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        populate_by_name=True
     )
 
 
