@@ -30,10 +30,9 @@ SessionLocal = async_sessionmaker(
     bind=engine,
 )
 
-table_schema = os.getenv("DATABASE_SCHEMA")
+table_schema = os.getenv("DATABASE_SCHEMA", "public")
 meta = MetaData()
-if table_schema:
-    meta.schema = table_schema
+meta.schema = table_schema
 Base = declarative_base(metadata=meta)
 
 
