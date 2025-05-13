@@ -20,8 +20,11 @@ async def get_transaction_id(request: Request) -> int | None:
     if transaction_id:
         try:
             return int(transaction_id)
-        except ValueError:
-            return None
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail="X-Transaction-ID header must be an integer",
+            ) from e
     return None
 
 

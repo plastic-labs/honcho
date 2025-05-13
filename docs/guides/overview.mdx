@@ -4,3 +4,80 @@ sidebarTitle: 'Overview'
 description: 'Helpful guides and design patterns for building with Honcho'
 icon: 'hat-wizard'
 ---
+
+
+## Transactions
+
+Honcho supports transactions, which allow you to group multiple operations together. Transactions are useful for ensuring that a series of operations are executed together, or are rolled back if any of the operations fail. When building user-facing applications, this helps maintain consistency between the frontend and backend representation of, say, a text conversation.
+
+Here's an example of a context manager in Python that you can use to combine calls to Honcho inside a transaction.
+
+```python
+from contextlib import contextmanager
+from typing import Generator
+from honcho import Honcho
+
+@contextmanager
+def honcho_transaction(honcho: Honcho) -> Generator[Honcho, None, None]:
+    """
+    A context manager that automatically handles Honcho transaction lifecycle.
+    Modifies the client's headers to include the transaction ID for all requests.
+    
+    Args:
+        honcho: The base Honcho client instance
+        
+    Yields:
+        The same Honcho client instance with transaction headers attached
+        
+    Example:
+        ```python
+        with honcho_transaction(honcho) as honcho_txn:
+            # All requests made with honcho_txn will include the transaction ID header
+            message = honcho_txn.apps.users.sessions.messages.create(...)
+        ```
+
+    Detailed Example:
+        ```python
+        honcho = Honcho()
+        app = honcho.apps.get_or_create(name="test-app")
+
+        print(f"Honcho app acquired with id {app.id}")
+
+        user = honcho.apps.users.get_or_create(app_id=app.id, name="hello")
+        session = honcho.apps.users.sessions.create(app_id=app.id, user_id=user.id)
+
+        with honcho_transaction(honcho) as honcho_txn:
+            message = honcho_txn.apps.users.sessions.messages.create(
+                app_id=app.id,
+                session_id=session.id,
+                user_id=user.id,
+                is_user=True,
+                content="Hello, how are you?",
+            )
+
+            # within the transaction, the message is visible
+            message = honcho_txn.apps.users.sessions.messages.get(message.id, app_id=app.id, session_id=session.id, user_id=user.id)
+            assert message.content == "Hello, how are you?"
+
+            # List all messages will fail, because the transaction is not yet committed
+            # Paginated requests cannot be used inside transactions.
+            # messages = honcho_txn.apps.users.sessions.messages.list(app_id=app.id, session_id=session.id, user_id=user.id)
+
+        # after the transaction completes, the message is visible outside
+        messages = honcho.apps.users.sessions.messages.list(app_id=app.id, session_id=session.id, user_id=user.id)
+        assert messages.total == 1
+        ```
+    """
+    old_transaction_id = honcho.transaction_id
+    transaction_id = honcho.transactions.begin()
+    
+    try:
+        # Add transaction ID to custom headers
+        honcho.transaction_id = transaction_id
+        yield honcho
+        honcho.transaction_id = old_transaction_id
+        honcho.transactions.commit(transaction_id)
+    except Exception:
+        honcho.transactions.rollback(transaction_id)
+        raise
+```
