@@ -62,7 +62,7 @@ async def get_session_summaries(
         If only_latest is False: A list of all summary metamessages for the session
     """
     # Determine the metamessage type based on summary_type
-    metamessage_type = (
+    label = (
         SummaryType.SHORT.value
         if summary_type == SummaryType.SHORT
         else SummaryType.LONG.value
@@ -71,7 +71,7 @@ async def get_session_summaries(
     stmt = (
         select(models.Metamessage)
         .where(models.Metamessage.session_id == session_id)
-        .where(models.Metamessage.metamessage_type == metamessage_type)
+        .where(models.Metamessage.label == label)
         .order_by(models.Metamessage.id.desc())
     )
 
@@ -242,15 +242,15 @@ async def save_summary_metamessage(
     Returns:
         The created metamessage
     """
-    # Get the metamessage_type value from the enum
-    metamessage_type = summary_type.value
+    # Get the label value from the enum
+    label_value = summary_type.value
 
     # Create and save the metamessage
     metamessage = models.Metamessage(
         user_id=user_id,
         session_id=session_id,
         message_id=message_id,
-        metamessage_type=metamessage_type,
+        label=label_value,
         content=summary_content,
         h_metadata={"message_count": message_count, "summary_type": summary_type.name},
     )

@@ -177,31 +177,37 @@ class MetamessageBase(BaseModel):
 
 
 class MetamessageCreate(MetamessageBase):
-    metamessage_type: Annotated[str, Field(min_length=1, max_length=50)]
+    label: Annotated[str, Field(min_length=1, max_length=50, alias='metamessage_type')]
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     session_id: str | None = None
     message_id: str | None = None
     metadata: dict = {}
 
+    model_config = ConfigDict(validate_by_name=True)
+
 
 class MetamessageGet(MetamessageBase):
-    metamessage_type: str | None = None
+    label: str | None = Field(default=None, alias='metamessage_type')
     session_id: str | None = None
     message_id: str | None = None
     filter: dict | None = None
+
+    model_config = ConfigDict(validate_by_name=True)
 
 
 class MetamessageUpdate(MetamessageBase):
     session_id: str | None = None
     message_id: str | None = None
-    metamessage_type: str | None = None
+    label: str | None = Field(default=None, alias='metamessage_type')
     metadata: dict | None = None
+
+    model_config = ConfigDict(validate_by_name=True)
 
 
 class Metamessage(MetamessageBase):
     public_id: str = Field(exclude=True)
     id: str
-    metamessage_type: str
+    label: str
     content: str
     user_id: str
     app_id: str
@@ -222,6 +228,7 @@ class Metamessage(MetamessageBase):
     model_config = ConfigDict(
         from_attributes=True,
         json_schema_extra={"exclude": ["h_metadata", "public_id"]},
+        validate_by_name=True
     )
 
 

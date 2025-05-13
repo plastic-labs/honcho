@@ -453,7 +453,7 @@ async def generate_user_representation(
             select(models.Metamessage)
             .where(models.Metamessage.session_id == session_id) # only from the same session
             .where(
-                models.Metamessage.metamessage_type
+                models.Metamessage.label
                 == USER_REPRESENTATION_METAMESSAGE_TYPE
             )
             .order_by(models.Metamessage.id.desc())
@@ -522,7 +522,7 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
                             user_id=user_id,
                             session_id=session_id,
                             message_id=message_id if message_id else None,
-                            metamessage_type=USER_REPRESENTATION_METAMESSAGE_TYPE,
+                            label=USER_REPRESENTATION_METAMESSAGE_TYPE,
                             content=representation,
                             h_metadata={},
                         )

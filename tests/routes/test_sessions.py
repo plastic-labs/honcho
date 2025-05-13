@@ -287,6 +287,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_2 = models.Metamessage(
         user_id=test_user.public_id,
@@ -296,6 +297,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_3 = models.Metamessage(
         user_id=test_user.public_id,
@@ -305,6 +307,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_4 = models.Metamessage(
         user_id=test_user.public_id,
@@ -314,6 +317,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type_2",
         app_id=test_app.public_id,
+        label="test_type_2",
     )
 
     db_session.add(test_metamessage_1)
@@ -360,16 +364,16 @@ async def test_deep_clone_session(client, db_session, sample_data):
     assert len(data["items"]) > 0
     assert len(data["items"]) == 4
     assert data["items"][0]["content"] == "Test Metamessage 1"
-    assert data["items"][0]["metamessage_type"] == "test_type"
+    assert data["items"][0]["label"] == "test_type"
     assert data["items"][0]["metadata"] == {}
     assert data["items"][1]["content"] == "Test Metamessage 2"
-    assert data["items"][1]["metamessage_type"] == "test_type"
+    assert data["items"][1]["label"] == "test_type"
     assert data["items"][1]["metadata"] == {}
     assert data["items"][2]["content"] == "Test Metamessage 3"
-    assert data["items"][2]["metamessage_type"] == "test_type"
+    assert data["items"][2]["label"] == "test_type"
     assert data["items"][2]["metadata"] == {}
     assert data["items"][3]["content"] == "Test Metamessage 4"
-    assert data["items"][3]["metamessage_type"] == "test_type_2"
+    assert data["items"][3]["label"] == "test_type_2"
     assert data["items"][3]["metadata"] == {}
 
 
@@ -411,6 +415,7 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_2 = models.Metamessage(
         user_id=test_user.public_id,
@@ -420,6 +425,7 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_3 = models.Metamessage(
         user_id=test_user.public_id,
@@ -429,6 +435,7 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_4 = models.Metamessage(
         user_id=test_user.public_id,
@@ -438,6 +445,7 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         h_metadata={},
         metamessage_type="test_type_2",
         app_id=test_app.public_id,
+        label="test_type_2",
     )
 
     db_session.add(test_metamessage_1)
@@ -480,8 +488,8 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     assert len(data["items"]) > 0
     assert len(data["items"]) == 2
     assert data["items"][0]["content"] == "Test Metamessage 1"
-    assert data["items"][0]["metamessage_type"] == "test_type"
+    assert data["items"][0]["label"] == "test_type"
     assert data["items"][0]["metadata"] == {}
     assert data["items"][1]["content"] == "Test Metamessage 2"
-    assert data["items"][1]["metamessage_type"] == "test_type"
+    assert data["items"][1]["label"] == "test_type"
     assert data["items"][1]["metadata"] == {}

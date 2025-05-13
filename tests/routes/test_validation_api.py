@@ -245,11 +245,11 @@ def test_metamessage_validations_api(client, sample_data):
     )
     message_id = message_response.json()["id"]
 
-    # Test metamessage_type too short
+    # Test label too short
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
-            "metamessage_type": "",
+            "label": "",
             "content": "test content",
             "session_id": session_id,
             "message_id": message_id,
@@ -258,15 +258,15 @@ def test_metamessage_validations_api(client, sample_data):
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "metamessage_type"]
+    assert error["loc"] == ["body", "label"]
     assert error["msg"] == "String should have at least 1 character"
     assert error["type"] == "string_too_short"
 
-    # Test metamessage_type too long
+    # Test label too long
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
-            "metamessage_type": "a" * 51,
+            "label": "a" * 51,
             "content": "test content",
             "session_id": session_id,
             "message_id": message_id,
@@ -275,7 +275,7 @@ def test_metamessage_validations_api(client, sample_data):
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "metamessage_type"]
+    assert error["loc"] == ["body", "label"]
     assert error["msg"] == "String should have at most 50 characters"
     assert error["type"] == "string_too_long"
 
@@ -283,7 +283,7 @@ def test_metamessage_validations_api(client, sample_data):
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages",
         json={
-            "metamessage_type": "test_type",
+            "label": "test_type",
             "content": "a" * 50001,
             "message_id": message_id,
             "session_id": session_id,
