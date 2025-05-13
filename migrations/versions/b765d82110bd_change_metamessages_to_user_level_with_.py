@@ -7,6 +7,7 @@ Create Date: 2025-04-03 15:32:16.733312
 """
 
 from collections.abc import Sequence
+from os import getenv
 from typing import Union
 
 import sqlalchemy as sa
@@ -22,6 +23,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    schema = getenv("DATABASE_SCHEMA", "public")
+
     conn = op.get_bind()
 
     # Check which columns already exist in the metamessages table
@@ -30,13 +33,13 @@ def upgrade() -> None:
 
     # 1. Add new columns to metamessages table if they don't exist
     if "user_id" not in existing_columns:
-        op.add_column("metamessages", sa.Column("user_id", sa.TEXT(), nullable=True))
+        op.add_column("metamessages", sa.Column("user_id", sa.TEXT(), nullable=True), schema=schema)
         print("Added user_id column")
     else:
         print("user_id column already exists")
 
     if "session_id" not in existing_columns:
-        op.add_column("metamessages", sa.Column("session_id", sa.TEXT(), nullable=True))
+        op.add_column("metamessages", sa.Column("session_id", sa.TEXT(), nullable=True), schema=schema)
         print("Added session_id column")
     else:
         print("session_id column already exists")
@@ -53,7 +56,7 @@ def upgrade() -> None:
                 "metamessages",
                 "users",
                 ["user_id"],
-                ["public_id"],
+                ["public_id"]
             )
             print("Created user_id foreign key")
         except IntegrityError:
@@ -75,7 +78,7 @@ def upgrade() -> None:
     # 3. Make message_id nullable if it's not already
     try:
         op.alter_column(
-            "metamessages", "message_id", existing_type=sa.TEXT(), nullable=True
+            "metamessages", "message_id", existing_type=sa.TEXT(), nullable=True, schema=schema
         )
         print("Made message_id nullable")
     except (ProgrammingError, IntegrityError) as e:
@@ -102,7 +105,7 @@ def upgrade() -> None:
             )
         ).scalar()
 
-        if orphaned_count > 0:
+        if orphaned_count and orphaned_count > 0:
             print(
                 f"Found {orphaned_count} orphaned records. Setting message_id to NULL."
             )
@@ -130,7 +133,6 @@ def upgrade() -> None:
     # 7. Create indices for the various lookups - only if they don't exist
     existing_indices = {
         idx["name"]
-        for schema in [None, "public"]
         for tbl in inspector.get_table_names(schema=schema)
         if tbl in ["metamessages", "users", "sessions", "messages"]
         for idx in inspector.get_indexes(tbl, schema=schema)
@@ -145,43 +147,25 @@ def upgrade() -> None:
             except Exception as e:
                 print(f"Error creating index {index_name}: {e}")
 
-    # Create all indices with the helper function
-    create_index_if_not_exists("idx_users_app_lookup", "users", ["app_id", "public_id"])
-    create_index_if_not_exists(
-        "idx_sessions_user_lookup", "sessions", ["user_id", "public_id"]
-    )
-
-    # For complex indices
-    create_index_if_not_exists(
-        "idx_messages_session_lookup",
-        "messages",
-        ["session_id", "id"],
-        postgresql_include=["public_id", "is_user", "created_at"],
-    )
-
-    create_index_if_not_exists(
-        "idx_metamessages_lookup",
-        "metamessages",
-        ["metamessage_type", text("id DESC")],
-        postgresql_include=["public_id", "message_id", "created_at"],
-    )
-
     create_index_if_not_exists(
         "idx_metamessages_user_lookup",
         "metamessages",
         ["user_id", "metamessage_type", text("id DESC")],
+        schema=schema,
     )
 
     create_index_if_not_exists(
         "idx_metamessages_session_lookup",
         "metamessages",
         ["session_id", "metamessage_type", text("id DESC")],
+        schema=schema,
     )
 
     create_index_if_not_exists(
         "idx_metamessages_message_lookup",
         "metamessages",
         ["message_id", "metamessage_type", text("id DESC")],
+        schema=schema,
     )
 
     # 8. Verify the data is ready for the constraint
@@ -191,7 +175,7 @@ def upgrade() -> None:
         )
     ).scalar()
 
-    if constraint_violations > 0:
+    if constraint_violations and constraint_violations > 0:
         print(f"WARNING: {constraint_violations} records would violate the constraint!")
         print("Setting these message_ids to NULL to prevent constraint violation")
         op.execute("""
@@ -230,7 +214,7 @@ def upgrade() -> None:
         text("SELECT COUNT(*) FROM metamessages WHERE user_id IS NULL")
     ).scalar()
 
-    if null_user_count > 0:
+    if null_user_count and null_user_count > 0:
         print(f"WARNING: {null_user_count} records have NULL user_id!")
         # Try to derive user_id from message for these orphaned records
         op.execute("""
@@ -251,7 +235,7 @@ def upgrade() -> None:
         if null_user_count == 0:
             try:
                 op.alter_column(
-                    "metamessages", "user_id", existing_type=sa.TEXT(), nullable=False
+                    "metamessages", "user_id", existing_type=sa.TEXT(), nullable=False, schema=schema
                 )
                 print("Made user_id not nullable")
             except Exception as e:
@@ -263,7 +247,7 @@ def upgrade() -> None:
     else:
         try:
             op.alter_column(
-                "metamessages", "user_id", existing_type=sa.TEXT(), nullable=False
+                "metamessages", "user_id", existing_type=sa.TEXT(), nullable=False, schema=schema
             )
             print("Made user_id not nullable")
         except Exception as e:
@@ -271,11 +255,12 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    schema = getenv("DATABASE_SCHEMA", "public")
     # Add try-except blocks to handle case where elements don't exist
 
     # 1. Remove the check constraint
     try:
-        op.drop_constraint("message_requires_session", "metamessages", type_="check")
+        op.drop_constraint("message_requires_session", "metamessages", type_="check", schema=schema)
     except Exception as e:
         print(f"Error dropping message_requires_session constraint: {e}")
 
@@ -284,27 +269,23 @@ def downgrade() -> None:
         ("idx_metamessages_message_lookup", "metamessages"),
         ("idx_metamessages_session_lookup", "metamessages"),
         ("idx_metamessages_user_lookup", "metamessages"),
-        ("idx_metamessages_lookup", "metamessages"),
-        ("idx_messages_session_lookup", "messages"),
-        ("idx_sessions_user_lookup", "sessions"),
-        ("idx_users_app_lookup", "users"),
     ]:
         try:
-            op.drop_index(index_name, table_name=table_name)
+            op.drop_index(index_name, table_name=table_name, schema=schema)
         except Exception as e:
             print(f"Error dropping index {index_name}: {e}")
 
     # 3. Remove foreign key constraints
     try:
         op.drop_constraint(
-            "fk_metamessages_session_id_sessions", "metamessages", type_="foreignkey"
+            "fk_metamessages_session_id_sessions", "metamessages", type_="foreignkey", schema=schema
         )
     except Exception as e:
         print(f"Error dropping session_id foreign key: {e}")
 
     try:
         op.drop_constraint(
-            "fk_metamessages_user_id_users", "metamessages", type_="foreignkey"
+            "fk_metamessages_user_id_users", "metamessages", type_="foreignkey", schema=schema
         )
     except Exception as e:
         print(f"Error dropping user_id foreign key: {e}")
@@ -315,18 +296,18 @@ def downgrade() -> None:
             DELETE FROM metamessages WHERE message_id IS NULL
         """)
         op.alter_column(
-            "metamessages", "message_id", existing_type=sa.TEXT(), nullable=False
+            "metamessages", "message_id", existing_type=sa.TEXT(), nullable=False, schema=schema
         )
     except Exception as e:
         print(f"Error making message_id not nullable: {e}")
 
     # 5. Drop the new columns
     try:
-        op.drop_column("metamessages", "session_id")
+        op.drop_column("metamessages", "session_id", schema=schema)
     except Exception as e:
         print(f"Error dropping session_id column: {e}")
 
     try:
-        op.drop_column("metamessages", "user_id")
+        op.drop_column("metamessages", "user_id", schema=schema)
     except Exception as e:
         print(f"Error dropping user_id column: {e}")

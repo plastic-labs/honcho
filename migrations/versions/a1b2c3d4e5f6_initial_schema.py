@@ -6,6 +6,7 @@ Create Date: 2024-01-01 00:00:00.000000
 
 """
 from collections.abc import Sequence
+from os import getenv
 from typing import Union
 
 import sqlalchemy as sa
@@ -21,6 +22,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    schema = getenv("DATABASE_SCHEMA", "public")
+
     # Create apps table
     op.create_table('apps',
         sa.Column('id', sa.BigInteger(), sa.Identity(), nullable=False),
@@ -33,12 +36,13 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name='public_id_format'),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_apps')),
         sa.UniqueConstraint('name', name=op.f('uq_apps_name')),
-        sa.UniqueConstraint('public_id', name=op.f('uq_apps_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_apps_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_apps_created_at'), 'apps', ['created_at'], unique=False)
-    op.create_index(op.f('ix_apps_id'), 'apps', ['id'], unique=False)
-    op.create_index(op.f('ix_apps_name'), 'apps', ['name'], unique=False)
-    op.create_index(op.f('ix_apps_public_id'), 'apps', ['public_id'], unique=False)
+    op.create_index(op.f('ix_apps_created_at'), 'apps', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_apps_id'), 'apps', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_apps_name'), 'apps', ['name'], unique=False, schema=schema)
+    op.create_index(op.f('ix_apps_public_id'), 'apps', ['public_id'], unique=False, schema=schema)
 
     # Create users table
     op.create_table('users',
@@ -54,13 +58,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['app_id'], ['apps.public_id'], name=op.f('fk_users_app_id_apps')),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_users')),
         sa.UniqueConstraint('name', 'app_id', name='unique_name_app_user'),
-        sa.UniqueConstraint('public_id', name=op.f('uq_users_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_users_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_users_app_id'), 'users', ['app_id'], unique=False)
-    op.create_index(op.f('ix_users_created_at'), 'users', ['created_at'], unique=False)
-    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False)
-    op.create_index(op.f('ix_users_name'), 'users', ['name'], unique=False)
-    op.create_index(op.f('ix_users_public_id'), 'users', ['public_id'], unique=False)
+    op.create_index(op.f('ix_users_app_id'), 'users', ['app_id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_users_created_at'), 'users', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_users_id'), 'users', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_users_name'), 'users', ['name'], unique=False, schema=schema)
+    op.create_index(op.f('ix_users_public_id'), 'users', ['public_id'], unique=False, schema=schema)
 
     # Create sessions table
     op.create_table('sessions',
@@ -74,12 +79,13 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name='public_id_format'),
         sa.ForeignKeyConstraint(['user_id'], ['users.public_id'], name=op.f('fk_sessions_user_id_users')),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_sessions')),
-        sa.UniqueConstraint('public_id', name=op.f('uq_sessions_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_sessions_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_sessions_created_at'), 'sessions', ['created_at'], unique=False)
-    op.create_index(op.f('ix_sessions_id'), 'sessions', ['id'], unique=False)
-    op.create_index(op.f('ix_sessions_public_id'), 'sessions', ['public_id'], unique=False)
-    op.create_index(op.f('ix_sessions_user_id'), 'sessions', ['user_id'], unique=False)
+    op.create_index(op.f('ix_sessions_created_at'), 'sessions', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_sessions_id'), 'sessions', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_sessions_public_id'), 'sessions', ['public_id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_sessions_user_id'), 'sessions', ['user_id'], unique=False, schema=schema)
 
     # Create messages table
     op.create_table('messages',
@@ -95,12 +101,13 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name='public_id_format'),
         sa.ForeignKeyConstraint(['session_id'], ['sessions.public_id'], name=op.f('fk_messages_session_id_sessions')),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_messages')),
-        sa.UniqueConstraint('public_id', name=op.f('uq_messages_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_messages_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_messages_created_at'), 'messages', ['created_at'], unique=False)
-    op.create_index(op.f('ix_messages_id'), 'messages', ['id'], unique=False)
-    op.create_index(op.f('ix_messages_public_id'), 'messages', ['public_id'], unique=False)
-    op.create_index(op.f('ix_messages_session_id'), 'messages', ['session_id'], unique=False)
+    op.create_index(op.f('ix_messages_created_at'), 'messages', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_messages_id'), 'messages', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_messages_public_id'), 'messages', ['public_id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_messages_session_id'), 'messages', ['session_id'], unique=False, schema=schema)
 
     # Create metamessages table
     op.create_table('metamessages',
@@ -117,13 +124,14 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name='public_id_format'),
         sa.ForeignKeyConstraint(['message_id'], ['messages.public_id'], name=op.f('fk_metamessages_message_id_messages')),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_metamessages')),
-        sa.UniqueConstraint('public_id', name=op.f('uq_metamessages_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_metamessages_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_metamessages_created_at'), 'metamessages', ['created_at'], unique=False)
-    op.create_index(op.f('ix_metamessages_id'), 'metamessages', ['id'], unique=False)
-    op.create_index(op.f('ix_metamessages_message_id'), 'metamessages', ['message_id'], unique=False)
-    op.create_index(op.f('ix_metamessages_metamessage_type'), 'metamessages', ['metamessage_type'], unique=False)
-    op.create_index(op.f('ix_metamessages_public_id'), 'metamessages', ['public_id'], unique=False)
+    op.create_index(op.f('ix_metamessages_created_at'), 'metamessages', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_metamessages_id'), 'metamessages', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_metamessages_message_id'), 'metamessages', ['message_id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_metamessages_metamessage_type'), 'metamessages', ['metamessage_type'], unique=False, schema=schema)
+    op.create_index(op.f('ix_metamessages_public_id'), 'metamessages', ['public_id'], unique=False, schema=schema)
 
     # Create collections table
     op.create_table('collections',
@@ -139,13 +147,14 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['user_id'], ['users.public_id'], name=op.f('fk_collections_user_id_users')),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_collections')),
         sa.UniqueConstraint('name', 'user_id', name='unique_name_collection_user'),
-        sa.UniqueConstraint('public_id', name=op.f('uq_collections_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_collections_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_collections_created_at'), 'collections', ['created_at'], unique=False)
-    op.create_index(op.f('ix_collections_id'), 'collections', ['id'], unique=False)
-    op.create_index(op.f('ix_collections_name'), 'collections', ['name'], unique=False)
-    op.create_index(op.f('ix_collections_public_id'), 'collections', ['public_id'], unique=False)
-    op.create_index(op.f('ix_collections_user_id'), 'collections', ['user_id'], unique=False)
+    op.create_index(op.f('ix_collections_created_at'), 'collections', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_collections_id'), 'collections', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_collections_name'), 'collections', ['name'], unique=False, schema=schema)
+    op.create_index(op.f('ix_collections_public_id'), 'collections', ['public_id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_collections_user_id'), 'collections', ['user_id'], unique=False, schema=schema)
 
     # Create documents table
     op.create_table('documents',
@@ -161,12 +170,13 @@ def upgrade() -> None:
         sa.CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name='public_id_format'),
         sa.ForeignKeyConstraint(['collection_id'], ['collections.public_id'], name=op.f('fk_documents_collection_id_collections')),
         sa.PrimaryKeyConstraint('id', name=op.f('pk_documents')),
-        sa.UniqueConstraint('public_id', name=op.f('uq_documents_public_id'))
+        sa.UniqueConstraint('public_id', name=op.f('uq_documents_public_id')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_documents_collection_id'), 'documents', ['collection_id'], unique=False)
-    op.create_index(op.f('ix_documents_created_at'), 'documents', ['created_at'], unique=False)
-    op.create_index(op.f('ix_documents_id'), 'documents', ['id'], unique=False)
-    op.create_index(op.f('ix_documents_public_id'), 'documents', ['public_id'], unique=False)
+    op.create_index(op.f('ix_documents_collection_id'), 'documents', ['collection_id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_documents_created_at'), 'documents', ['created_at'], unique=False, schema=schema)
+    op.create_index(op.f('ix_documents_id'), 'documents', ['id'], unique=False, schema=schema)
+    op.create_index(op.f('ix_documents_public_id'), 'documents', ['public_id'], unique=False, schema=schema)
 
     # Create queue table
     op.create_table('queue',
@@ -175,27 +185,30 @@ def upgrade() -> None:
         sa.Column('payload', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column('processed', sa.Boolean(), nullable=False, server_default='false'),
         sa.ForeignKeyConstraint(['session_id'], ['sessions.id'], name=op.f('fk_queue_session_id_sessions')),
-        sa.PrimaryKeyConstraint('id', name=op.f('pk_queue'))
+        sa.PrimaryKeyConstraint('id', name=op.f('pk_queue')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_queue_session_id'), 'queue', ['session_id'], unique=False)
+    op.create_index(op.f('ix_queue_session_id'), 'queue', ['session_id'], unique=False, schema=schema)
 
     # Create active_queue_sessions table
     op.create_table('active_queue_sessions',
         sa.Column('session_id', sa.BigInteger(), nullable=False),
         sa.Column('last_updated', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
         sa.ForeignKeyConstraint(['session_id'], ['sessions.id'], name=op.f('fk_active_queue_sessions_session_id_sessions')),
-        sa.PrimaryKeyConstraint('session_id', name=op.f('pk_active_queue_sessions'))
+        sa.PrimaryKeyConstraint('session_id', name=op.f('pk_active_queue_sessions')),
+        schema=schema,
     )
-    op.create_index(op.f('ix_active_queue_sessions_session_id'), 'active_queue_sessions', ['session_id'], unique=False)
+    op.create_index(op.f('ix_active_queue_sessions_session_id'), 'active_queue_sessions', ['session_id'], unique=False, schema=schema)
 
 
 def downgrade() -> None:
-    op.drop_table('active_queue_sessions')
-    op.drop_table('queue')
-    op.drop_table('documents')
-    op.drop_table('collections')
-    op.drop_table('metamessages')
-    op.drop_table('messages')
-    op.drop_table('sessions')
-    op.drop_table('users')
-    op.drop_table('apps') 
+    schema = getenv("DATABASE_SCHEMA", "public")
+    op.drop_table('active_queue_sessions', schema=schema)
+    op.drop_table('queue', schema=schema)
+    op.drop_table('documents', schema=schema)
+    op.drop_table('collections', schema=schema)
+    op.drop_table('metamessages', schema=schema)
+    op.drop_table('messages', schema=schema)
+    op.drop_table('sessions', schema=schema)
+    op.drop_table('users', schema=schema)
+    op.drop_table('apps', schema=schema) 
