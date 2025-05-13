@@ -30,7 +30,7 @@ def upgrade() -> None:
         sa.Column('status', sa.Text(), server_default='pending', nullable=False),
         sa.PrimaryKeyConstraint('transaction_id'),
         sa.CheckConstraint(
-            "status IN ('pending', 'committed', 'failed','rolled_back', 'expired')",
+            "status IN ('pending', 'committed', 'failed', 'rolled_back', 'expired')",
             name='valid_status_check'
         ),
         sa.CheckConstraint(

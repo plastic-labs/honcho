@@ -78,6 +78,7 @@ def honcho_transaction(honcho: Honcho) -> Generator[Honcho, None, None]:
         honcho.transaction_id = old_transaction_id
         honcho.transactions.commit(transaction_id)
     except Exception:
+        honcho.transaction_id = old_transaction_id
         honcho.transactions.rollback(transaction_id)
         raise
 ```
