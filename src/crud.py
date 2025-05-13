@@ -16,6 +16,7 @@ from .exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
+from src.utils.cache import LRUCache, generate_cache_key
 
 load_dotenv(override=True)
 
@@ -24,6 +25,8 @@ openai_client = AsyncOpenAI()
 logger = getLogger(__name__)
 
 DEF_PROTECTED_COLLECTION_NAME = "honcho"
+
+cache = LRUCache(capacity=500)
 
 ########################################################
 # app methods
@@ -344,6 +347,7 @@ async def get_session(
     Raises:
         ResourceNotFoundException: If the session does not exist or doesn't belong to the user
     """
+
     stmt = (
         select(models.Session)
         .join(models.User, models.User.public_id == models.Session.user_id)
@@ -351,12 +355,23 @@ async def get_session(
         .where(models.Session.public_id == session_id)
     )
     if user_id is not None:
+        cache_key = generate_cache_key(model_type="session", app_id=app_id, model_id=session_id, user_id=user_id)
+        cached_session = cache.get(cache_key)
+
+        if cached_session:
+            return cached_session
+        
         stmt = stmt.where(models.Session.user_id == user_id)
+
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
+
     if session is None:
         logger.warning(f"Session with ID '{session_id}' not found for user {user_id}")
         raise ResourceNotFoundException("Session not found or does not belong to user")
+
+    if user_id is not None:
+        cache.put(cache_key, session)
     return session
 
 
@@ -421,6 +436,9 @@ async def create_session(
         db.add(honcho_session)
         await db.commit()
         logger.info(f"Session created successfully for user {user_id}")
+
+        cache_key = generate_cache_key(model_type="session", app_id=app_id, model_id=honcho_session.public_id, user_id=user_id)
+        cache.put(cache_key, honcho_session)
         return honcho_session
     except Exception as e:
         await db.rollback()
@@ -465,6 +483,9 @@ async def update_session(
 
     await db.commit()
     logger.info(f"Session {session_id} updated successfully")
+
+    cache_key = generate_cache_key(model_type="session", app_id=app_id, model_id=session_id, user_id=user_id)
+    cache.put(cache_key, honcho_session)
     return honcho_session
 
 
@@ -503,6 +524,9 @@ async def delete_session(
     honcho_session.is_active = False
     await db.commit()
     logger.info(f"Session {session_id} marked as inactive")
+
+    cache_key = generate_cache_key(model_type="session", app_id=app_id, model_id=session_id, user_id=user_id)
+    cache.delete(cache_key)
     return True
 
 
@@ -911,7 +935,6 @@ async def get_metamessage(
 
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
-
 
 async def update_metamessage(
     db: AsyncSession,
@@ -1349,7 +1372,6 @@ async def get_document(
         raise ResourceNotFoundException(f"Document with ID '{document_id}' not found")
     return document
 
-
 async def query_documents(
     db: AsyncSession,
     app_id: str,
@@ -1388,7 +1410,6 @@ async def query_documents(
     )
     result = await db.execute(stmt)
     return result.scalars().all()
-
 
 async def create_document(
     db: AsyncSession,
