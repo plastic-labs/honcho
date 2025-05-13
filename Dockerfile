@@ -41,5 +41,5 @@ COPY --chown=app:app alembic.ini /app/alembic.ini
 EXPOSE 8000
 
 # https://stackoverflow.com/questions/29663459/python-app-does-not-print-anything-when-running-detached-in-docker
-CMD ["fastapi", "dev", "--host", "0.0.0.0", "src/main.py"]
+CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
 
