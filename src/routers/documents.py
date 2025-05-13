@@ -31,8 +31,8 @@ async def get_documents(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     collection_id: str = Path(..., description="ID of the collection"),
-    options: schemas.DocumentGet = Body(
-        ..., description="Filtering options for the documents list"
+    options: Optional[schemas.DocumentGet] = Body(
+        None, description="Filtering options for the documents list"
     ),
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
@@ -40,13 +40,19 @@ async def get_documents(
     db=db,
 ):
     """Get all of the Documents in a Collection"""
+    filter_param = None
+    if options and hasattr(options, 'filter'):
+        filter_param = options.filter
+        if filter_param == {}: # Explicitly check for empty dict
+            filter_param = None
+
     try:
         documents_query = await crud.get_documents(
             db,
             app_id=app_id,
             user_id=user_id,
             collection_id=collection_id,
-            filter=options.filter,
+            filter=filter_param,
             reverse=reverse,
         )
 

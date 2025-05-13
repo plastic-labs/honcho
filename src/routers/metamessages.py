@@ -50,8 +50,8 @@ async def create_metamessage(
 async def get_metamessages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    options: schemas.MetamessageGet = Body(
-        ..., description="Filtering options for the metamessages list"
+    options: Optional[schemas.MetamessageGet] = Body(
+        None, description="Filtering options for the metamessages list"
     ),
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
@@ -67,15 +67,32 @@ async def get_metamessages(
     - Filter by type: Provide metamessage_type
     - Filter by metadata: Provide filter object
     """
+    session_id_param = None
+    message_id_param = None
+    metamessage_type_param = None
+    filter_param = None
+
+    if options:
+        if hasattr(options, 'session_id') and options.session_id:
+            session_id_param = options.session_id
+        if hasattr(options, 'message_id') and options.message_id:
+            message_id_param = options.message_id
+        if hasattr(options, 'metamessage_type') and options.metamessage_type:
+            metamessage_type_param = options.metamessage_type
+        if hasattr(options, 'filter') and options.filter:
+            filter_param = options.filter
+            if filter_param == {}: # Explicitly check for empty dict
+                filter_param = None
+
     try:
         metamessages_query = await crud.get_metamessages(
             db,
             app_id=app_id,
             user_id=user_id,
-            session_id=options.session_id,
-            message_id=options.message_id,
-            metamessage_type=options.metamessage_type,
-            filter=options.filter,
+            session_id=session_id_param,
+            message_id=message_id_param,
+            metamessage_type=metamessage_type_param,
+            filter=filter_param,
             reverse=reverse,
         )
         return await paginate(db, metamessages_query)

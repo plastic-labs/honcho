@@ -52,8 +52,8 @@ async def get_app(
     dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_all_apps(
-    options: schemas.AppGet = Body(
-        ..., description="Filtering and pagination options for the apps list"
+    options: Optional[schemas.AppGet] = Body(
+        None, description="Filtering and pagination options for the apps list"
     ),
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
@@ -61,12 +61,18 @@ async def get_all_apps(
     db=db,
 ):
     """Get all Apps"""
+    filter_param = None
+    if options and hasattr(options, 'filter'):
+        filter_param = options.filter
+        if filter_param == {}:
+            filter_param = None
+
     return await paginate(
         db,
         await crud.get_all_apps(
             db,
             reverse=reverse,
-            filter=options.filter,
+            filter=filter_param,
         ),
     )
 

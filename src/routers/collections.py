@@ -71,8 +71,8 @@ async def get_collection(
 async def get_collections(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    options: schemas.CollectionGet = Body(
-        ..., description="Filtering options for the collections list"
+    options: Optional[schemas.CollectionGet] = Body(
+        None, description="Filtering options for the collections list"
     ),
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
@@ -80,10 +80,16 @@ async def get_collections(
     db=db,
 ):
     """Get All Collections for a User"""
+    filter_param = None
+    if options and hasattr(options, 'filter'):
+        filter_param = options.filter
+        if filter_param == {}: # Explicitly check for empty dict
+            filter_param = None
+
     return await paginate(
         db,
         await crud.get_collections(
-            db, app_id=app_id, user_id=user_id, filter=options.filter, reverse=reverse
+            db, app_id=app_id, user_id=user_id, filter=filter_param, reverse=reverse
         ),
     )
 
