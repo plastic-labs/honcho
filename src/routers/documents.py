@@ -41,9 +41,9 @@ async def get_documents(
 ):
     """Get all of the Documents in a Collection"""
     filter_param = None
-    if options and hasattr(options, 'filter'):
+    if options and hasattr(options, "filter"):
         filter_param = options.filter
-        if filter_param == {}: # Explicitly check for empty dict
+        if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
     try:

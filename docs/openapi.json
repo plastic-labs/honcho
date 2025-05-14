@@ -1894,11 +1894,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.create('app_id', 'user_id', {\n    content: 'content',\n    metamessage_type: 'x',\n  });\n\n  console.log(metamessage.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.create('app_id', 'user_id', {\n    content: 'content',\n    label: 'x',\n  });\n\n  console.log(metamessage.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    content=\"content\",\n    metamessage_type=\"x\",\n)\nprint(metamessage.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    content=\"content\",\n    label=\"x\",\n)\nprint(metamessage.id)"
           }
         ]
       }
@@ -1907,7 +1907,7 @@
       "post": {
         "tags": ["metamessages"],
         "summary": "Get Metamessages",
-        "description": "Get metamessages with flexible filtering.\n\n- Filter by user only: No additional parameters needed\n- Filter by session: Provide session_id\n- Filter by message: Provide message_id (and session_id)\n- Filter by type: Provide metamessage_type\n- Filter by metadata: Provide filter object",
+        "description": "Get metamessages with flexible filtering.\n\n- Filter by user only: No additional parameters needed\n- Filter by session: Provide session_id\n- Filter by message: Provide message_id (and session_id)\n- Filter by type: Provide label\n- Filter by metadata: Provide filter object",
         "operationId": "get_metamessages_v1_apps__app_id__users__user_id__metamessages_list_post",
         "security": [{ "HTTPBearer": [] }, {}],
         "parameters": [
@@ -3651,7 +3651,7 @@
       "Metamessage": {
         "properties": {
           "id": { "type": "string", "title": "Id" },
-          "metamessage_type": { "type": "string", "title": "Metamessage Type" },
+          "label": { "type": "string", "title": "Label" },
           "content": { "type": "string", "title": "Content" },
           "user_id": { "type": "string", "title": "User Id" },
           "session_id": {
@@ -3676,7 +3676,7 @@
         "type": "object",
         "required": [
           "id",
-          "metamessage_type",
+          "label",
           "content",
           "user_id",
           "session_id",
@@ -3689,7 +3689,7 @@
       },
       "MetamessageCreate": {
         "properties": {
-          "metamessage_type": {
+          "label": {
             "type": "string",
             "maxLength": 50,
             "minLength": 1,
@@ -3717,12 +3717,12 @@
           }
         },
         "type": "object",
-        "required": ["metamessage_type", "content"],
+        "required": ["label", "content"],
         "title": "MetamessageCreate"
       },
       "MetamessageGet": {
         "properties": {
-          "metamessage_type": {
+          "label": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Metamessage Type"
           },
@@ -3755,7 +3755,7 @@
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Message Id"
           },
-          "metamessage_type": {
+          "label": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Metamessage Type"
           },
@@ -4033,4 +4033,3 @@
     "securitySchemes": { "HTTPBearer": { "type": "http", "scheme": "bearer" } }
   }
 }
-
