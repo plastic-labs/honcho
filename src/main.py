@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+import re
 from contextlib import asynccontextmanager
 
 import sentry_sdk
@@ -173,8 +174,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.middleware("http")
 async def track_request(request: Request, call_next):
     # Create a request ID that includes endpoint information
-    endpoint = request.url.path.replace("/", "_")
-    request_id = f"{endpoint}:{str(uuid.uuid4())[:8]}"
+    # Remove any IDs from the path - updated regex for NanoIDs (21 chars, A-Za-z0-9_-)
+    endpoint = re.sub(r'/[A-Za-z0-9_-]{21}', '', request.url.path).replace("/", "_")
+    request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"
 
     # Store in request state and context var
     request.state.request_id = request_id
