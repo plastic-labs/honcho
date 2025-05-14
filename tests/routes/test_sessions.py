@@ -59,7 +59,9 @@ async def test_get_sessions(client, db_session, sample_data):
 async def test_empty_update_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
 
@@ -75,7 +77,9 @@ async def test_update_delete_metadata(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"default": "value"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"default": "value"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -93,7 +97,9 @@ async def test_update_delete_metadata(client, db_session, sample_data):
 async def test_update_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
 
@@ -110,7 +116,9 @@ async def test_update_session(client, db_session, sample_data):
 async def test_delete_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     response = client.delete(
@@ -129,7 +137,9 @@ async def test_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -188,7 +198,9 @@ async def test_partial_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -254,7 +266,9 @@ async def test_deep_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -285,7 +299,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 1",
         h_metadata={},
-        metamessage_type="test_type",
+        label="test_type",
         app_id=test_app.public_id,
     )
     test_metamessage_2 = models.Metamessage(
@@ -294,7 +308,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 2",
         h_metadata={},
-        metamessage_type="test_type",
+        label="test_type",
         app_id=test_app.public_id,
     )
     test_metamessage_3 = models.Metamessage(
@@ -303,7 +317,7 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 3",
         h_metadata={},
-        metamessage_type="test_type",
+        label="test_type",
         app_id=test_app.public_id,
     )
     test_metamessage_4 = models.Metamessage(
@@ -312,8 +326,8 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 4",
         h_metadata={},
-        metamessage_type="test_type_2",
         app_id=test_app.public_id,
+        label="test_type_2",
     )
 
     db_session.add(test_metamessage_1)
@@ -360,15 +374,19 @@ async def test_deep_clone_session(client, db_session, sample_data):
     assert len(data["items"]) > 0
     assert len(data["items"]) == 4
     assert data["items"][0]["content"] == "Test Metamessage 1"
+    assert data["items"][0]["label"] == "test_type"
     assert data["items"][0]["metamessage_type"] == "test_type"
     assert data["items"][0]["metadata"] == {}
     assert data["items"][1]["content"] == "Test Metamessage 2"
+    assert data["items"][1]["label"] == "test_type"
     assert data["items"][1]["metamessage_type"] == "test_type"
     assert data["items"][1]["metadata"] == {}
     assert data["items"][2]["content"] == "Test Metamessage 3"
+    assert data["items"][2]["label"] == "test_type"
     assert data["items"][2]["metamessage_type"] == "test_type"
     assert data["items"][2]["metadata"] == {}
     assert data["items"][3]["content"] == "Test Metamessage 4"
+    assert data["items"][3]["label"] == "test_type_2"
     assert data["items"][3]["metamessage_type"] == "test_type_2"
     assert data["items"][3]["metadata"] == {}
 
@@ -378,7 +396,9 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -409,8 +429,8 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 1",
         h_metadata={},
-        metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_2 = models.Metamessage(
         user_id=test_user.public_id,
@@ -418,8 +438,8 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 2",
         h_metadata={},
-        metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_3 = models.Metamessage(
         user_id=test_user.public_id,
@@ -427,8 +447,8 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 3",
         h_metadata={},
-        metamessage_type="test_type",
         app_id=test_app.public_id,
+        label="test_type",
     )
     test_metamessage_4 = models.Metamessage(
         user_id=test_user.public_id,
@@ -436,8 +456,8 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 4",
         h_metadata={},
-        metamessage_type="test_type_2",
         app_id=test_app.public_id,
+        label="test_type_2",
     )
 
     db_session.add(test_metamessage_1)
@@ -480,8 +500,10 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     assert len(data["items"]) > 0
     assert len(data["items"]) == 2
     assert data["items"][0]["content"] == "Test Metamessage 1"
+    assert data["items"][0]["label"] == "test_type"
     assert data["items"][0]["metamessage_type"] == "test_type"
     assert data["items"][0]["metadata"] == {}
     assert data["items"][1]["content"] == "Test Metamessage 2"
+    assert data["items"][1]["label"] == "test_type"
     assert data["items"][1]["metamessage_type"] == "test_type"
     assert data["items"][1]["metadata"] == {}

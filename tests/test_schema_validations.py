@@ -80,41 +80,43 @@ class TestMessageValidations:
 class TestMetamessageValidations:
     def test_valid_metamessage_create(self):
         meta = MetamessageCreate(
-            metamessage_type="test",
+            label="test",
             content="test content",
             message_id="123",
             metadata={},
         )
-        assert meta.metamessage_type == "test"
+        assert meta.label == "test"
         assert meta.content == "test content"
         assert meta.message_id == "123"
 
-    def test_metamessage_type_too_short(self):
+    def test_label_too_short(self):
         with pytest.raises(ValidationError) as exc_info:
             MetamessageCreate(
-                metamessage_type="",
+                label="",
                 content="test",
                 message_id="123",
                 metadata={},
             )
-        error_dict = exc_info.value.errors()[0]
+        error_dict = exc_info.value.errors(include_input=False)[0]
         assert error_dict["type"] == "string_too_short"
+        assert error_dict["loc"] == ('label',)
 
-    def test_metamessage_type_too_long(self):
+    def test_label_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
             MetamessageCreate(
-                metamessage_type="a" * 51,
+                label="a" * 51,
                 content="test",
                 message_id="123",
                 metadata={},
             )
-        error_dict = exc_info.value.errors()[0]
+        error_dict = exc_info.value.errors(include_input=False)[0]
         assert error_dict["type"] == "string_too_long"
+        assert error_dict["loc"] == ('label',)
 
     def test_metamessage_content_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
             MetamessageCreate(
-                metamessage_type="test",
+                label="test",
                 content="a" * 50001,
                 message_id="123",
                 metadata={},

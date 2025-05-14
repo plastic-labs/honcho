@@ -81,8 +81,8 @@ async def get_session(
 async def get_sessions(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
-    options: schemas.SessionGet = Body(
-        ..., description="Filtering and pagination options for the sessions list"
+    options: Optional[schemas.SessionGet] = Body(
+        None, description="Filtering and pagination options for the sessions list"
     ),
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
@@ -90,14 +90,25 @@ async def get_sessions(
     db=db,
 ):
     """Get All Sessions for a User"""
+    filter_param = None
+    is_active_param = False  # Default to None, meaning no filter on is_active
+
+    if options:
+        if hasattr(options, 'filter') and options.filter:
+            filter_param = options.filter
+            if filter_param == {}: # Explicitly check for empty dict
+                filter_param = None
+        if hasattr(options, 'is_active'): # Check if is_active is present
+            is_active_param = options.is_active
+
     return await paginate(
         db,
         await crud.get_sessions(
             app_id=app_id,
             user_id=user_id,
             reverse=reverse,
-            is_active=options.is_active,
-            filter=options.filter,
+            is_active=is_active_param,
+            filter=filter_param,
         ),
     )
 

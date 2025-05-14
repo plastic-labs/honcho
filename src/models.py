@@ -152,7 +152,7 @@ class Metamessage(Base):
     public_id: Mapped[str] = mapped_column(
         TEXT, index=True, unique=True, default=generate_nanoid
     )
-    metamessage_type: Mapped[str] = mapped_column(TEXT, index=True)
+    label: Mapped[str] = mapped_column(TEXT, index=True)
     content: Mapped[str] = mapped_column(TEXT)
 
     # Foreign keys - message_id is now optional
@@ -179,9 +179,7 @@ class Metamessage(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
-        CheckConstraint(
-            "length(metamessage_type) <= 512", name="metamessage_type_length"
-        ),
+        CheckConstraint("length(label) <= 512", name="label_length"),
         # Added constraints to ensure consistency
         CheckConstraint(
             "(message_id IS NULL) OR (session_id IS NOT NULL)",
@@ -190,7 +188,7 @@ class Metamessage(Base):
         # Keep existing index
         Index(
             "idx_metamessages_lookup",
-            "metamessage_type",
+            "label",
             text("id DESC"),
             postgresql_include=["public_id", "message_id", "created_at"],
         ),
@@ -198,25 +196,25 @@ class Metamessage(Base):
         Index(
             "idx_metamessages_user_lookup",
             "user_id",
-            "metamessage_type",
+            "label",
             text("id DESC"),
         ),
         Index(
             "idx_metamessages_session_lookup",
             "session_id",
-            "metamessage_type",
+            "label",
             text("id DESC"),
         ),
         Index(
             "idx_metamessages_message_lookup",
             "message_id",
-            "metamessage_type",
+            "label",
             text("id DESC"),
         ),
     )
 
     def __repr__(self) -> str:
-        return f"Metamessages(id={self.id}, user_id={self.user_id}, session_id={self.session_id}, message_id={self.message_id}, metamessage_type={self.metamessage_type})"
+        return f"Metamessages(id={self.id}, user_id={self.user_id}, session_id={self.session_id}, message_id={self.message_id}, label={self.label})"
 
 
 class Collection(Base):

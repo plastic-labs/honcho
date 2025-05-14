@@ -623,7 +623,7 @@ async def clone_session(
                 meta_data = {
                     "user_id": meta.user_id,  # Preserve original user
                     "session_id": new_session.public_id,
-                    "metamessage_type": meta.metamessage_type,
+                    "label": meta.label,
                     "content": meta.content,
                     "h_metadata": meta.h_metadata,
                     "app_id": original_session.app_id,
@@ -800,7 +800,7 @@ async def create_metamessage(
     metamessage_data = {
         "user_id": user_id,
         "app_id": app_id,
-        "metamessage_type": metamessage.metamessage_type,
+        "label": metamessage.label,
         "content": metamessage.content,
         "h_metadata": metamessage.metadata,
     }
@@ -850,7 +850,7 @@ async def get_metamessages(
     user_id: str,
     session_id: Optional[str] = None,
     message_id: Optional[str] = None,
-    metamessage_type: Optional[str] = None,
+    label: Optional[str] = None,
     filter: Optional[dict] = None,
     reverse: Optional[bool] = False,
 ) -> Select:
@@ -869,9 +869,9 @@ async def get_metamessages(
     if message_id is not None:
         stmt = stmt.where(models.Metamessage.message_id == message_id)
 
-    # Filter by metamessage_type if provided
-    if metamessage_type is not None:
-        stmt = stmt.where(models.Metamessage.metamessage_type == metamessage_type)
+    # Filter by label if provided
+    if label is not None:
+        stmt = stmt.where(models.Metamessage.label == label)
 
     # Apply metadata filter if provided
     if filter is not None:
@@ -960,8 +960,8 @@ async def update_metamessage(
     if metamessage.metadata is not None:
         metamessage_obj.h_metadata = metamessage.metadata
 
-    if metamessage.metamessage_type is not None:
-        metamessage_obj.metamessage_type = metamessage.metamessage_type
+    if metamessage.label is not None:
+        metamessage_obj.label = metamessage.label
 
     await db.commit()
     return metamessage_obj

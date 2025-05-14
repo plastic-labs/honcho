@@ -43,16 +43,22 @@ async def create_user(
 )
 async def get_users(
     app_id: str = Path(..., description="ID of the app"),
-    options: schemas.UserGet = Body(
-        ..., description="Filtering options for the users list"
+    options: Optional[schemas.UserGet] = Body(
+        None, description="Filtering options for the users list"
     ),
     reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get All Users for an App"""
+    filter_param = None
+    if options and hasattr(options, 'filter'):
+        filter_param = options.filter
+        if filter_param == {}:
+            filter_param = None
+
     return await paginate(
         db,
-        await crud.get_users(db, app_id=app_id, reverse=reverse, filter=options.filter),
+        await crud.get_users(db, app_id=app_id, reverse=reverse, filter=filter_param),
     )
 
 

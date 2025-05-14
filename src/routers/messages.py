@@ -243,8 +243,8 @@ async def get_messages(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
-    options: schemas.MessageGet = Body(
-        ..., description="Filtering options for the messages list"
+    options: Optional[schemas.MessageGet] = Body(
+        None, description="Filtering options for the messages list"
     ),
     reverse: Optional[bool] = Query(
         False, description="Whether to reverse the order of results"
@@ -253,9 +253,11 @@ async def get_messages(
 ):
     """Get all messages for a session"""
     try:
-        filter = options.filter
-        if options.filter == {}:
-            filter = None
+        filter = None
+        if options and hasattr(options, 'filter'):
+            filter = options.filter
+            if filter == {}:
+                filter = None
 
         messages_query = await crud.get_messages(
             db,
