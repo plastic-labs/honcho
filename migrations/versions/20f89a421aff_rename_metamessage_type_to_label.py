@@ -1,16 +1,15 @@
 """rename metamessage_type to label
 
 Revision ID: 20f89a421aff
-Revises: b765d82110bd
+Revises: 556a16564f50
 Create Date: 2025-05-13 16:11:54.859842
 
 """
 
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "20f89a421aff"
