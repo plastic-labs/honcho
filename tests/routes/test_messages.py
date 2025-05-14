@@ -7,7 +7,7 @@ from src import models  # Import your SQLAlchemy models
 async def test_create_message(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
 
@@ -31,11 +31,11 @@ async def test_create_message(client, db_session, sample_data):
 async def test_get_messages(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session and message
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True
+        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -57,19 +57,23 @@ async def test_get_messages(client, db_session, sample_data):
 async def test_get_filtered_messages(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session and message
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
         session_id=test_session.public_id,
         content="Test message",
         is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
         h_metadata={"key": "value"},
     )
     test_message2 = models.Message(
         session_id=test_session.public_id,
         content="Test message",
         is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
         h_metadata={"key": "value2"},
     )
     db_session.add(test_message)
@@ -94,11 +98,11 @@ async def test_get_filtered_messages(client, db_session, sample_data):
 async def test_update_message(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session and message
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True
+        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -116,11 +120,11 @@ async def test_update_message(client, db_session, sample_data):
 async def test_update_message_empty_metadata(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session and message
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True
+        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -139,7 +143,7 @@ async def test_update_message_empty_metadata(client, db_session, sample_data):
 async def test_create_batch_messages(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
 
@@ -187,7 +191,7 @@ async def test_create_batch_messages(client, db_session, sample_data):
 @pytest.mark.asyncio
 async def test_create_batch_messages_limit(client, db_session, sample_data):
     test_app, test_user = sample_data
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
     db_session.add(test_session)
     await db_session.commit()
 

@@ -93,7 +93,6 @@ async def get_sessions(
     return await paginate(
         db,
         await crud.get_sessions(
-            db,
             app_id=app_id,
             user_id=user_id,
             reverse=reverse,

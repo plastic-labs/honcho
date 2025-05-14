@@ -346,8 +346,7 @@ async def get_session(
     """
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .where(models.User.app_id == app_id)
+        .where(models.Session.app_id == app_id)
         .where(models.Session.public_id == session_id)
     )
     if user_id is not None:
@@ -361,7 +360,6 @@ async def get_session(
 
 
 async def get_sessions(
-    db: AsyncSession,
     app_id: str,
     user_id: str,
     reverse: Optional[bool] = False,
@@ -370,8 +368,7 @@ async def get_sessions(
 ) -> Select:
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .where(models.User.app_id == app_id)
+        .where(models.Session.app_id == app_id)
         .where(models.Session.user_id == user_id)
     )
 
@@ -416,6 +413,7 @@ async def create_session(
 
         honcho_session = models.Session(
             user_id=user_id,
+            app_id=app_id,
             h_metadata=session.metadata,
         )
         db.add(honcho_session)
@@ -488,10 +486,9 @@ async def delete_session(
     """
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.public_id == models.Session.user_id)
         .where(models.Session.public_id == session_id)
-        .where(models.User.app_id == app_id)
         .where(models.Session.user_id == user_id)
+        .where(models.Session.app_id == app_id)
     )
     result = await db.execute(stmt)
     honcho_session = result.scalar_one_or_none()
@@ -531,10 +528,9 @@ async def clone_session(
     # Get the original session
     stmt = (
         select(models.Session)
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .where(models.Session.public_id == original_session_id)
+        .where(models.Session.app_id == app_id)
         .where(models.Session.user_id == user_id)
-        .where(models.User.app_id == app_id)
+        .where(models.Session.public_id == original_session_id)
     )
     original_session = await db.scalar(stmt)
     if not original_session:
@@ -556,6 +552,7 @@ async def clone_session(
     # Create new session
     new_session = models.Session(
         user_id=original_session.user_id,
+        app_id=original_session.app_id,
         h_metadata=original_session.h_metadata,
     )
     db.add(new_session)
@@ -583,6 +580,8 @@ async def clone_session(
             "content": message.content,
             "is_user": message.is_user,
             "h_metadata": message.h_metadata,
+            "app_id": original_session.app_id,
+            "user_id": original_session.user_id,
         }
         for message in messages_to_clone
     ]
@@ -599,8 +598,10 @@ async def clone_session(
     # Handle metamessages if deep copy is requested
     if deep_copy:
         # Fetch all metamessages tied to the session in a single query
-        stmt = select(models.Metamessage).where(
-            models.Metamessage.session_id == original_session_id
+        stmt = (
+            select(models.Metamessage)
+            .where(models.Metamessage.session_id == original_session_id)
+            .order_by(models.Metamessage.id)  # Explicit ordering by id
         )
         if cutoff_message_id is not None and cutoff_message is not None:
             # Only get metamessages related to messages we're cloning
@@ -625,6 +626,7 @@ async def clone_session(
                     "metamessage_type": meta.metamessage_type,
                     "content": meta.content,
                     "h_metadata": meta.h_metadata,
+                    "app_id": original_session.app_id,
                 }
 
                 # If the metamessage was tied to a message, tie it to the corresponding new message
@@ -666,6 +668,8 @@ async def create_message(
         is_user=message.is_user,
         content=message.content,
         h_metadata=message.metadata,
+        user_id=user_id,
+        app_id=app_id,
     )
     db.add(honcho_message)
     await db.commit()
@@ -696,6 +700,8 @@ async def create_messages(
             "is_user": message.is_user,
             "content": message.content,
             "h_metadata": message.metadata,
+            "user_id": user_id,
+            "app_id": app_id,
         }
         for message in messages
     ]
@@ -718,11 +724,8 @@ async def get_messages(
 ) -> Select:
     stmt = (
         select(models.Message)
-        .join(models.Session, models.Session.public_id == models.Message.session_id)
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .join(models.App, models.App.public_id == models.User.app_id)
-        .where(models.App.public_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Message.app_id == app_id)
+        .where(models.Message.user_id == user_id)
         .where(models.Message.session_id == session_id)
     )
 
@@ -746,11 +749,9 @@ async def get_message(
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
-        .join(models.Session, models.Session.public_id == models.Message.session_id)
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
-        .where(models.Session.public_id == session_id)
+        .where(models.Message.app_id == app_id) 
+        .where(models.Message.user_id == user_id)
+        .where(models.Message.session_id == session_id)
         .where(models.Message.public_id == message_id)
     )
     result = await db.execute(stmt)
@@ -798,6 +799,7 @@ async def create_metamessage(
     # Initialize metamessage data
     metamessage_data = {
         "user_id": user_id,
+        "app_id": app_id,
         "metamessage_type": metamessage.metamessage_type,
         "content": metamessage.content,
         "h_metadata": metamessage.metadata,
@@ -855,10 +857,8 @@ async def get_metamessages(
     # Base query starts with metamessage and user relationship
     stmt = (
         select(models.Metamessage)
-        .join(models.User, models.User.public_id == models.Metamessage.user_id)
-        .join(models.App, models.App.public_id == models.User.app_id)
-        .where(models.App.public_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Metamessage.app_id == app_id)
+        .where(models.Metamessage.user_id == user_id)
     )
 
     # If session_id is provided, filter by it
@@ -897,9 +897,8 @@ async def get_metamessage(
     # Base query for metamessage by ID
     stmt = (
         select(models.Metamessage)
-        .join(models.User, models.User.public_id == models.Metamessage.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Metamessage.app_id == app_id)
+        .where(models.Metamessage.user_id == user_id)
         .where(models.Metamessage.public_id == metamessage_id)
     )
 
@@ -985,9 +984,8 @@ async def get_collections(
     """Get a distinct list of the names of collections associated with a user"""
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
     )
 
     if filter is not None:
@@ -1021,9 +1019,8 @@ async def get_collection_by_id(
     """
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
         .where(models.Collection.public_id == collection_id)
     )
     result = await db.execute(stmt)
@@ -1058,9 +1055,8 @@ async def get_collection_by_name(
     """
     stmt = (
         select(models.Collection)
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Collection.app_id == app_id)
+        .where(models.Collection.user_id == user_id)
         .where(models.Collection.name == name)
     )
     result = await db.execute(stmt)
@@ -1109,6 +1105,7 @@ async def create_collection(
 
         honcho_collection = models.Collection(
             user_id=user_id,
+            app_id=app_id,
             name=collection.name,
             h_metadata=collection.metadata,
         )
@@ -1133,6 +1130,7 @@ async def create_user_protected_collection(
 ) -> models.Collection:
     honcho_collection = models.Collection(
         user_id=user_id,
+        app_id=app_id,
         name=DEF_PROTECTED_COLLECTION_NAME,
     )
     try:
@@ -1283,13 +1281,8 @@ async def get_documents(
 ) -> Select:
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
     )
 
@@ -1329,13 +1322,8 @@ async def get_document(
     """
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.public_id == document_id)
     )
@@ -1367,13 +1355,8 @@ async def query_documents(
     embedding_query = response.data[0].embedding
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         # .limit(top_k)
     )
@@ -1447,6 +1430,8 @@ async def create_document(
             return duplicate
 
     honcho_document = models.Document(
+        app_id=app_id,
+        user_id=user_id,
         collection_id=collection_id,
         content=document.content,
         h_metadata=document.metadata,
@@ -1454,6 +1439,7 @@ async def create_document(
     )
     db.add(honcho_document)
     await db.commit()
+    await db.refresh(honcho_document)
     return honcho_document
 
 
@@ -1511,13 +1497,8 @@ async def delete_document(
         )
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.public_id == document_id)
     )

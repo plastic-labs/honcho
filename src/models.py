@@ -92,6 +92,7 @@ class Session(Base):
     messages = relationship("Message", back_populates="session")
     metamessages = relationship("Metamessage", back_populates="session")
     user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.public_id"), index=True)
     user = relationship("User", back_populates="sessions")
 
     __table_args__ = (
@@ -124,6 +125,8 @@ class Message(Base):
     )
     session = relationship("Session", back_populates="messages")
     metamessages = relationship("Metamessage", back_populates="message")
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.public_id"), index=True)
 
     __table_args__ = (
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
@@ -154,6 +157,7 @@ class Metamessage(Base):
 
     # Foreign keys - message_id is now optional
     user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.public_id"), index=True)
     session_id: Mapped[str | None] = mapped_column(
         ForeignKey("sessions.public_id"), index=True, nullable=True
     )
@@ -236,6 +240,7 @@ class Collection(Base):
     user_id: Mapped[str] = mapped_column(
         TEXT, ForeignKey("users.public_id"), index=True
     )
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.public_id"), index=True)
 
     __table_args__ = (
         UniqueConstraint("name", "user_id", name="unique_name_collection_user"),
@@ -263,6 +268,8 @@ class Document(Base):
     collection_id: Mapped[str] = mapped_column(
         TEXT, ForeignKey("collections.public_id"), index=True
     )
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.public_id"), index=True)
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
