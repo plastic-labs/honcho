@@ -451,12 +451,7 @@ async def generate_user_representation(
         logger.debug(f"Fetching latest representation for session {session_id}")
         latest_representation_stmt = (
             select(models.Metamessage)
-            .join(
-                models.Message,
-                models.Message.public_id == models.Metamessage.message_id,
-            )
-            .join(models.Session, models.Message.session_id == models.Session.public_id)
-            .where(models.Session.public_id == session_id)  # Only from the same session
+            .where(models.Metamessage.session_id == session_id) # only from the same session
             .where(
                 models.Metamessage.metamessage_type
                 == USER_REPRESENTATION_METAMESSAGE_TYPE

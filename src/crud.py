@@ -1279,12 +1279,8 @@ async def get_documents(
 ) -> Select:
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
     )
 
@@ -1324,13 +1320,8 @@ async def get_document(
     """
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.public_id == document_id)
     )
@@ -1362,13 +1353,8 @@ async def query_documents(
     embedding_query = response.data[0].embedding
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         # .limit(top_k)
     )
@@ -1509,13 +1495,8 @@ async def delete_document(
         )
     stmt = (
         select(models.Document)
-        .join(
-            models.Collection,
-            models.Collection.public_id == models.Document.collection_id,
-        )
-        .join(models.User, models.User.public_id == models.Collection.user_id)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(models.Document.public_id == document_id)
     )
