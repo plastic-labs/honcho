@@ -38,10 +38,10 @@ def upgrade() -> None:
         print("app_id column already exists in sessions table")
 
     # Create foreign key constraint for app_id
-    if not fk_exists("sessions", "fk_sessions_app_id_apps", inspector):
+    if not fk_exists("sessions", "sessions_app_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_sessions_app_id_apps",
+                "sessions_app_id_fkey",
                 "sessions",
                 "apps",
                 ["app_id"],
@@ -94,10 +94,10 @@ def upgrade() -> None:
         print("user_id column already exists in messages table")
 
     # Create foreign key constraints for app_id and user_id
-    if not fk_exists("messages", "fk_messages_app_id_apps", inspector):
+    if not fk_exists("messages", "messages_app_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_messages_app_id_apps",
+                "messages_app_id_fkey",
                 "messages",
                 "apps",
                 ["app_id"],
@@ -109,10 +109,10 @@ def upgrade() -> None:
     else:
         print("app_id foreign key already exists for messages table")
         
-    if not fk_exists("messages", "fk_messages_user_id_users", inspector):
+    if not fk_exists("messages", "messages_user_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_messages_user_id_users",
+                "messages_user_id_fkey",
                 "messages",
                 "users",
                 ["user_id"],
@@ -167,10 +167,10 @@ def upgrade() -> None:
         print("app_id column already exists in metamessages table")
 
     # Create foreign key constraint for app_id
-    if not fk_exists("metamessages", "fk_metamessages_app_id_apps", inspector):
+    if not fk_exists("metamessages", "metamessages_app_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_metamessages_app_id_apps",
+                "metamessages_app_id_fkey",
                 "metamessages",
                 "apps",
                 ["app_id"],
@@ -217,10 +217,10 @@ def upgrade() -> None:
         print("app_id column already exists in collections table")
 
     # Create foreign key constraint for app_id
-    if not fk_exists("collections", "fk_collections_app_id_apps", inspector):
+    if not fk_exists("collections", "collections_app_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_collections_app_id_apps",
+                "collections_app_id_fkey",
                 "collections",
                 "apps",
                 ["app_id"],
@@ -273,10 +273,10 @@ def upgrade() -> None:
         print("user_id column already exists in documents table")
 
     # Create foreign key constraints for app_id and user_id
-    if not fk_exists("documents", "fk_documents_app_id_apps", inspector):
+    if not fk_exists("documents", "documents_app_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_documents_app_id_apps",
+                "documents_app_id_fkey",
                 "documents",
                 "apps",
                 ["app_id"],
@@ -288,10 +288,10 @@ def upgrade() -> None:
     else:
         print("app_id foreign key already exists for documents table")
         
-    if not fk_exists("documents", "fk_documents_user_id_users", inspector):
+    if not fk_exists("documents", "documents_user_id_fkey", inspector):
         try:
             op.create_foreign_key(
-                "fk_documents_user_id_users",
+                "documents_user_id_fkey",
                 "documents",
                 "users",
                 ["user_id"],
@@ -359,13 +359,13 @@ def downgrade():
     
     # Drop foreign key constraints
     try:
-        op.drop_constraint("fk_documents_user_id_users", "documents", schema=schema)
+        op.drop_constraint("documents_user_id_fkey", "documents", schema=schema)
         print("Dropped user_id foreign key for documents table")
     except Exception as e:
         print(f"Error dropping user_id foreign key for documents table: {e}")
         
     try:
-        op.drop_constraint("fk_documents_app_id_apps", "documents", schema=schema)
+        op.drop_constraint("documents_app_id_fkey", "documents", schema=schema)
         print("Dropped app_id foreign key for documents table")
     except Exception as e:
         print(f"Error dropping app_id foreign key for documents table: {e}")
@@ -388,7 +388,7 @@ def downgrade():
     
     # Drop foreign key constraint
     try:
-        op.drop_constraint("fk_collections_app_id_apps", "collections", schema=schema)
+        op.drop_constraint("collections_app_id_fkey", "collections", schema=schema)
         print("Dropped app_id foreign key for collections table")
     except Exception as e:
         print(f"Error dropping app_id foreign key for collections table: {e}")
@@ -410,7 +410,7 @@ def downgrade():
     
     # Drop foreign key constraint
     try:
-        op.drop_constraint("fk_metamessages_app_id_apps", "metamessages", schema=schema)
+        op.drop_constraint("metamessages_app_id_fkey", "metamessages", schema=schema)
         print("Dropped app_id foreign key for metamessages table")
     except Exception as e:
         print(f"Error dropping app_id foreign key for metamessages table: {e}")
@@ -436,13 +436,13 @@ def downgrade():
     
     # Drop foreign key constraints
     try:
-        op.drop_constraint("fk_messages_user_id_users", "messages", schema=schema)
+        op.drop_constraint("messages_user_id_fkey", "messages", schema=schema)
         print("Dropped user_id foreign key for messages table")
     except Exception as e:
         print(f"Error dropping user_id foreign key for messages table: {e}")
         
     try:
-        op.drop_constraint("fk_messages_app_id_apps", "messages", schema=schema)
+        op.drop_constraint("messages_app_id_fkey", "messages", schema=schema)
         print("Dropped app_id foreign key for messages table")
     except Exception as e:
         print(f"Error dropping app_id foreign key for messages table: {e}")
@@ -465,7 +465,7 @@ def downgrade():
     
     # Drop foreign key constraint
     try:
-        op.drop_constraint("fk_sessions_app_id_apps", "sessions", schema=schema)
+        op.drop_constraint("sessions_app_id_fkey", "sessions", schema=schema)
         print("Dropped app_id foreign key for sessions table")
     except Exception as e:
         print(f"Error dropping app_id foreign key for sessions table: {e}")
