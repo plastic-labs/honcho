@@ -246,7 +246,9 @@ class ModelClient:
         formatted_messages.extend(messages)
 
         # Make the API call with the OpenAI client
-        response = await self.openai_client.chat.completions.create(
+        response = await self.openai_client.with_options(
+            timeout=10.0, max_retries=2
+        ).chat.completions.create(
             model=self.model,
             messages=formatted_messages,
             max_tokens=max_tokens,

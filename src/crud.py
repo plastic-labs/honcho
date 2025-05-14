@@ -1346,9 +1346,9 @@ async def query_documents(
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using async client with await
-    response = await openai_client.embeddings.create(
-        model="text-embedding-3-small", input=query
-    )
+    response = await openai_client.with_options(
+        timeout=10, max_retries=3
+    ).embeddings.create(model="text-embedding-3-small", input=query)
     embedding_query = response.data[0].embedding
     stmt = (
         select(models.Document)
@@ -1402,9 +1402,9 @@ async def create_document(
     )
 
     # Using async client with await
-    response = await openai_client.embeddings.create(
-        input=document.content, model="text-embedding-3-small"
-    )
+    response = await openai_client.with_options(
+        timeout=10, max_retries=3
+    ).embeddings.create(input=document.content, model="text-embedding-3-small")
 
     embedding = response.data[0].embedding
 
@@ -1460,9 +1460,9 @@ async def update_document(
     if document.content is not None:
         honcho_document.content = document.content
         # Using async client with await
-        response = await openai_client.embeddings.create(
-            input=document.content, model="text-embedding-3-small"
-        )
+        response = await openai_client.with_options(
+            timeout=10, max_retries=3
+        ).embeddings.create(input=document.content, model="text-embedding-3-small")
         embedding = response.data[0].embedding
         honcho_document.embedding = embedding
         honcho_document.created_at = func.now()
@@ -1531,9 +1531,9 @@ async def get_duplicate_documents(
     """
     # Get embedding for the content
     # Using async client with await
-    response = await openai_client.embeddings.create(
-        input=content, model="text-embedding-3-small"
-    )
+    response = await openai_client.with_options(
+        timeout=10, max_retries=3
+    ).embeddings.create(input=content, model="text-embedding-3-small")
     embedding = response.data[0].embedding
 
     # Find documents with similar embeddings
