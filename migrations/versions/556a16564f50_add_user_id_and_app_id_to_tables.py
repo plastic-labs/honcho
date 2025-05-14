@@ -45,7 +45,9 @@ def upgrade() -> None:
                 "sessions",
                 "apps",
                 ["app_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created app_id foreign key for sessions table")
         except IntegrityError:
@@ -60,7 +62,7 @@ def upgrade() -> None:
             SET app_id = u.app_id
             FROM users u
             WHERE s.user_id = u.public_id
-            AND s.app_id IS NULL
+            AND (s.app_id IS NULL OR s.app_id <> u.app_id)
         """)
         print("Updated app_id values from users for sessions table")
     except Exception as e:
@@ -101,7 +103,9 @@ def upgrade() -> None:
                 "messages",
                 "apps",
                 ["app_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created app_id foreign key for messages table")
         except IntegrityError:
@@ -116,7 +120,9 @@ def upgrade() -> None:
                 "messages",
                 "users",
                 ["user_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created user_id foreign key for messages table")
         except IntegrityError:
@@ -131,8 +137,10 @@ def upgrade() -> None:
             SET app_id = s.app_id, user_id = s.user_id
             FROM sessions s
             WHERE m.session_id = s.public_id
-            AND m.app_id IS NULL
-            AND m.user_id IS NULL
+            AND (
+                m.app_id IS NULL OR m.app_id <> s.app_id OR
+                m.user_id IS NULL OR m.user_id <> s.user_id
+            )
         """)
         print("Updated app_id and user_id values from sessions for messages table")
     except Exception as e:
@@ -174,7 +182,9 @@ def upgrade() -> None:
                 "metamessages",
                 "apps",
                 ["app_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created app_id foreign key for metamessages table")
         except IntegrityError:
@@ -189,7 +199,7 @@ def upgrade() -> None:
             SET app_id = u.app_id
             FROM users u
             WHERE m.user_id = u.public_id
-            AND m.app_id IS NULL
+            AND (m.app_id IS NULL OR m.app_id <> u.app_id)
         """)
         print("Updated app_id values from users")
     except Exception as e:
@@ -224,7 +234,9 @@ def upgrade() -> None:
                 "collections",
                 "apps",
                 ["app_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created app_id foreign key for collections table")
         except IntegrityError:
@@ -239,7 +251,7 @@ def upgrade() -> None:
             SET app_id = u.app_id
             FROM users u
             WHERE c.user_id = u.public_id
-            AND c.app_id IS NULL
+            AND (c.app_id IS NULL OR c.app_id <> u.app_id)
         """)
         print("Updated app_id values from users for collections table")
     except Exception as e:
@@ -280,7 +292,9 @@ def upgrade() -> None:
                 "documents",
                 "apps",
                 ["app_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created app_id foreign key for documents table")
         except IntegrityError:
@@ -295,7 +309,9 @@ def upgrade() -> None:
                 "documents",
                 "users",
                 ["user_id"],
-                ["public_id"]
+                ["public_id"],
+                source_schema=schema,
+                referent_schema=schema
             )
             print("Created user_id foreign key for documents table")
         except IntegrityError:
@@ -303,15 +319,17 @@ def upgrade() -> None:
     else:
         print("user_id foreign key already exists for documents table")
             
-    # Data migration: Fill app_id and user_id from users table
+    # Data migration: Fill app_id and user_id from collections table
     try:
         op.execute("""
             UPDATE documents d
             SET app_id = c.app_id, user_id = c.user_id
             FROM collections c
             WHERE d.collection_id = c.public_id
-            AND d.app_id IS NULL
-            AND d.user_id IS NULL
+            AND (
+                d.app_id IS NULL OR d.app_id <> c.app_id OR
+                d.user_id IS NULL OR d.user_id <> c.user_id
+            )
         """)
         print("Updated app_id and user_id values from collections for documents table")
     except Exception as e:

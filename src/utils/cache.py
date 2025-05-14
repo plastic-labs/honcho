@@ -83,4 +83,16 @@ class LRUCache:
 
     
 def generate_cache_key(model_type: str, app_id: str, user_id: str, model_id: str):
+    """
+    Generate a cache key for a given model type, app ID, user ID, and model ID.
+
+    Args:
+        model_type (str): The type of model to generate a cache key for (e.g. "collection", "document", "message", "session", "user")
+        app_id (str): The ID of the app to generate a cache key for
+        user_id (str): The ID of the user to generate a cache key for
+        model_id (str): The ID of the model to generate a cache key for
+
+    Returns:
+        str: A cache key for the given model type, app ID, user ID, and model ID
+    """
     return f"{model_type}:{app_id}:{user_id}:{model_id}"

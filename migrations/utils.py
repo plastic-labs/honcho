@@ -11,14 +11,16 @@ def column_exists(table_name: str, column_name: str, inspector: Optional[sa.Insp
     """Check if a column exists in a table."""
     if inspector is None:
         inspector = sa.inspect(op.get_bind())
-    existing_columns = [col["name"] for col in inspector.get_columns(table_name)]
+    schema = get_schema()
+    existing_columns = [col["name"] for col in inspector.get_columns(table_name, schema=schema)]
     return column_name in existing_columns
 
 def fk_exists(table_name: str, fk_name: str, inspector: Optional[sa.Inspector] = None) -> bool:
     """Check if a foreign key exists in a table."""
     if inspector is None:
         inspector = sa.inspect(op.get_bind())
-    foreign_keys = inspector.get_foreign_keys(table_name)
+    schema = get_schema()
+    foreign_keys = inspector.get_foreign_keys(table_name, schema=schema)
     return any(fk.get("name") == fk_name for fk in foreign_keys)
 
 def index_exists(table_name: str, index_name: str, inspector: Optional[sa.Inspector] = None) -> bool:
