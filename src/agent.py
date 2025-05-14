@@ -191,19 +191,16 @@ async def chat(
         f"Created embedding store with collection_id: {collection.public_id if collection else None}"
     )
 
-    # 2. Get the latest user message to attach the user representation to
     stmt = (
-        select(models.Message)
-        .join(models.Session, models.Session.public_id == models.Message.session_id)
-        .join(models.User, models.User.public_id == models.Session.user_id)
-        .join(models.App, models.App.public_id == models.User.app_id)
-        .where(models.App.public_id == app_id)
-        .where(models.User.public_id == user_id)
-        .where(models.Message.session_id == session_id)
-        .where(models.Message.is_user)
-        .order_by(models.Message.id.desc())
-        .limit(1)
-    )
+            select(models.Message)
+            .where(models.Message.app_id == app_id)
+            .where(models.Message.user_id == user_id)
+            .where(models.Message.session_id == session_id)
+            .where(models.Message.is_user)
+            .order_by(models.Message.id.desc())
+            .limit(1)
+        )
+    
     latest_messages = await db.execute(stmt)
     latest_message = latest_messages.scalar_one_or_none()
     latest_message_id = latest_message.public_id if latest_message else None
