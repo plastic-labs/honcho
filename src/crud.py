@@ -598,8 +598,10 @@ async def clone_session(
     # Handle metamessages if deep copy is requested
     if deep_copy:
         # Fetch all metamessages tied to the session in a single query
-        stmt = select(models.Metamessage).where(
-            models.Metamessage.session_id == original_session_id
+        stmt = (
+            select(models.Metamessage)
+            .where(models.Metamessage.session_id == original_session_id)
+            .order_by(models.Metamessage.id)  # Explicit ordering by id
         )
         if cutoff_message_id is not None and cutoff_message is not None:
             # Only get metamessages related to messages we're cloning
