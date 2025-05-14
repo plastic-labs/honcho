@@ -50,11 +50,12 @@ def init_db():
         echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
     )
 
-    # Create schema if it doesn't exist
-    if table_schema:
-        with sync_engine.connect() as connection:
-            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
-            connection.commit()
+    with sync_engine.connect() as connection:
+        # Create schema if it doesn't exist
+        connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
+        # Install pgvector extension if it doesn't exist
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        connection.commit()
 
     # Run Alembic migrations
     alembic_cfg = Config("alembic.ini")
