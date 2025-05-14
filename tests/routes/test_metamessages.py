@@ -7,11 +7,17 @@ from src import models  # Import your SQLAlchemy models
 async def test_create_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -41,11 +47,17 @@ async def test_create_metamessage(client, db_session, sample_data):
 async def test_get_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -80,11 +92,17 @@ async def test_get_metamessage(client, db_session, sample_data):
 async def test_get_metamessages_by_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -152,13 +170,20 @@ async def test_get_metamessages_by_session(client, db_session, sample_data):
     assert data["items"][0]["metadata"] == {}
     assert data["items"][0]["app_id"] == str(test_app.public_id)
 
+
 @pytest.mark.asyncio
 async def test_get_metamessage_by_user(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create 3 test sessions
-    test_session_1 = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
-    test_session_2 = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
-    test_session_3 = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
+    test_session_1 = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
+    test_session_2 = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
+    test_session_3 = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
     db_session.add(test_session_1)
     db_session.add(test_session_2)
     db_session.add(test_session_3)
@@ -166,13 +191,25 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
 
     # Create a message in each session
     test_message_1 = models.Message(
-        session_id=test_session_1.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session_1.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     test_message_2 = models.Message(
-        session_id=test_session_2.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session_2.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     test_message_3 = models.Message(
-        session_id=test_session_3.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session_3.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     db_session.add(test_message_1)
     db_session.add(test_message_2)
@@ -245,6 +282,7 @@ async def test_get_metamessage_by_user(client, db_session, sample_data):
     assert data["items"][0]["user_id"] == str(test_user.public_id)
     assert data["items"][0]["app_id"] == str(test_app.public_id)
 
+
 @pytest.mark.asyncio
 async def test_create_user_level_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
@@ -275,11 +313,17 @@ async def test_create_user_level_metamessage(client, db_session, sample_data):
 async def test_update_metamessage(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Test message", is_user=True, app_id=test_app.public_id, user_id=test_user.public_id
+        session_id=test_session.public_id,
+        content="Test message",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -317,11 +361,17 @@ async def test_update_metamessage(client, db_session, sample_data):
 async def test_create_metamessage_with_label_and_alias(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a common session and message for both test cases
-    test_session = models.Session(user_id=test_user.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     test_message = models.Message(
-        session_id=test_session.public_id, content="Shared message content", is_user=True
+        session_id=test_session.public_id,
+        content="Shared message content",
+        is_user=True,
+        app_id=test_app.public_id,
+        user_id=test_user.public_id,
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -351,7 +401,7 @@ async def test_create_metamessage_with_label_and_alias(client, db_session, sampl
         json={
             **common_payload_parts,
             "content": "Content created with alias",
-            "metamessage_type": test_value_for_type, # Using alias
+            "metamessage_type": test_value_for_type,  # Using alias
         },
     )
     assert response_with_alias.status_code == 200
@@ -370,7 +420,9 @@ async def test_create_metamessage_with_label_and_alias(client, db_session, sampl
 
     # Assertions for the second response (created with "metamessage_type")
     assert data_from_alias_input["content"] == "Content created with alias"
-    assert data_from_alias_input["label"] == test_value_for_type # Output should still be "label"
+    assert (
+        data_from_alias_input["label"] == test_value_for_type
+    )  # Output should still be "label"
     assert data_from_alias_input["metamessage_type"] == test_value_for_type
     assert data_from_alias_input["metadata"] == common_payload_parts["metadata"]
     assert data_from_alias_input["metamessage_type"] == test_value_for_type
@@ -380,6 +432,9 @@ async def test_create_metamessage_with_label_and_alias(client, db_session, sampl
     assert data_from_alias_input["app_id"] == str(test_app.public_id)
     # Key assertion: The output for the type/label field is consistent ("label") and has the correct value
     assert data_from_label_input["label"] == data_from_alias_input["label"]
-    assert data_from_label_input["metamessage_type"] == data_from_alias_input["metamessage_type"]
+    assert (
+        data_from_label_input["metamessage_type"]
+        == data_from_alias_input["metamessage_type"]
+    )
     assert data_from_label_input["label"] == data_from_label_input["metamessage_type"]
     assert data_from_alias_input["label"] == data_from_alias_input["metamessage_type"]

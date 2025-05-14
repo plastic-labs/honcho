@@ -59,7 +59,9 @@ async def test_get_sessions(client, db_session, sample_data):
 async def test_empty_update_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
 
@@ -75,7 +77,9 @@ async def test_update_delete_metadata(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"default": "value"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"default": "value"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -93,7 +97,9 @@ async def test_update_delete_metadata(client, db_session, sample_data):
 async def test_update_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
 
@@ -110,7 +116,9 @@ async def test_update_session(client, db_session, sample_data):
 async def test_delete_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id)
+    test_session = models.Session(
+        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    )
     db_session.add(test_session)
     await db_session.commit()
     response = client.delete(
@@ -129,7 +137,9 @@ async def test_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -188,7 +198,9 @@ async def test_partial_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -254,7 +266,9 @@ async def test_deep_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -285,9 +299,8 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 1",
         h_metadata={},
-        metamessage_type="test_type",
-        app_id=test_app.public_id,
         label="test_type",
+        app_id=test_app.public_id,
     )
     test_metamessage_2 = models.Metamessage(
         user_id=test_user.public_id,
@@ -295,9 +308,8 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 2",
         h_metadata={},
-        metamessage_type="test_type",
-        app_id=test_app.public_id,
         label="test_type",
+        app_id=test_app.public_id,
     )
     test_metamessage_3 = models.Metamessage(
         user_id=test_user.public_id,
@@ -305,9 +317,8 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 3",
         h_metadata={},
-        metamessage_type="test_type",
-        app_id=test_app.public_id,
         label="test_type",
+        app_id=test_app.public_id,
     )
     test_metamessage_4 = models.Metamessage(
         user_id=test_user.public_id,
@@ -315,7 +326,6 @@ async def test_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 4",
         h_metadata={},
-        metamessage_type="test_type_2",
         app_id=test_app.public_id,
         label="test_type_2",
     )
@@ -386,7 +396,9 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={"test": "key"}, app_id=test_app.public_id
+        user_id=test_user.public_id,
+        h_metadata={"test": "key"},
+        app_id=test_app.public_id,
     )
     db_session.add(test_session)
     await db_session.commit()
@@ -417,7 +429,6 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 1",
         h_metadata={},
-        metamessage_type="test_type",
         app_id=test_app.public_id,
         label="test_type",
     )
@@ -427,7 +438,6 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message.public_id,
         content="Test Metamessage 2",
         h_metadata={},
-        metamessage_type="test_type",
         app_id=test_app.public_id,
         label="test_type",
     )
@@ -437,7 +447,6 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 3",
         h_metadata={},
-        metamessage_type="test_type",
         app_id=test_app.public_id,
         label="test_type",
     )
@@ -447,7 +456,6 @@ async def test_partial_deep_clone_session(client, db_session, sample_data):
         message_id=test_message2.public_id,
         content="Test Metamessage 4",
         h_metadata={},
-        metamessage_type="test_type_2",
         app_id=test_app.public_id,
         label="test_type_2",
     )
