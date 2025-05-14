@@ -98,7 +98,7 @@ class Session(Base):
     __table_args__ = (
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
-        Index("idx_sessions_app_user_lookup", "app_id", "user_id", "public_id"),
+        Index("idx_sessions_user_lookup", "user_id", "public_id"),
     )
 
     def __repr__(self) -> str:
@@ -247,8 +247,6 @@ class Collection(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         CheckConstraint("length(name) <= 512", name="name_length"),
-        Index("idx_collections_app_user_lookup", "app_id", "user_id", "public_id"),
-        Index("idx_collections_app_user_name_lookup", "app_id", "user_id", "name"),
     )
 
 
@@ -278,7 +276,6 @@ class Document(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
-        Index("idx_documents_app_user_coll_lookup", "app_id", "user_id", "collection_id", "public_id"),
     )
 
 

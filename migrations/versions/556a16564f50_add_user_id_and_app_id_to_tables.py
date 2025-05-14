@@ -6,12 +6,17 @@ Create Date: 2025-05-13 17:10:33.805495
 
 """
 from typing import Sequence, Union
-from os import getenv
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError, ProgrammingError
+
+from migrations.utils import (
+    get_schema,
+    column_exists,
+    fk_exists,
+    index_exists,
+)
 
 # revision identifiers, used by Alembic.
 revision: str = '556a16564f50'
@@ -21,25 +26,32 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = get_schema()
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
 
-    # 1. Sessions table
-    # Add app_id to sessions table
-    op.add_column("sessions", sa.Column("app_id", sa.Text(), nullable=True), schema=schema)
-    print("Added app_id column to sessions table")
+    # 1. SESSIONS TABLE
+    if not column_exists("sessions", "app_id", inspector):
+        op.add_column("sessions", sa.Column("app_id", sa.Text(), nullable=True), schema=schema)
+        print("Added app_id column to sessions table")
+    else:
+        print("app_id column already exists in sessions table")
 
     # Create foreign key constraint for app_id
-    try:
-        op.create_foreign_key(
-            "fk_sessions_app_id_apps",
-            "sessions",
-            "apps",
-            ["app_id"],
-            ["public_id"]
-        )
-        print("Created app_id foreign key")
-    except IntegrityError:
-        print("Cannot create app_id foreign key - integrity error")
+    if not fk_exists("sessions", "fk_sessions_app_id_apps", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_sessions_app_id_apps",
+                "sessions",
+                "apps",
+                ["app_id"],
+                ["public_id"]
+            )
+            print("Created app_id foreign key for sessions table")
+        except IntegrityError:
+            print("Cannot create app_id foreign key for sessions table - integrity error")
+    else:
+        print("app_id foreign key already exists for sessions table")
 
     # Data migration: Fill app_id from users table
     try:
@@ -60,37 +72,57 @@ def upgrade() -> None:
         print("Made app_id non-nullable for sessions table")
     except (ProgrammingError, IntegrityError) as e:
         print(f"Error making app_id non-nullable for sessions table: {e}")
-        
-    # 2. Messages table
 
-    # Add app_id and user_id to messages table
-    op.add_column("messages", sa.Column("app_id", sa.Text()), schema=schema)
-    op.add_column("messages", sa.Column("user_id", sa.Text()), schema=schema)
+    # Create index for sessions.app_id
+    if not index_exists("sessions", "ix_sessions_app_id"):
+        op.create_index(op.f("ix_sessions_app_id"), "sessions", ["app_id"], unique=False, schema=schema)
+        print("Created index ix_sessions_app_id")
+    else:
+        print("Index ix_sessions_app_id already exists")
+        
+    # 2. MESSAGES TABLE
+    if not column_exists("messages", "app_id", inspector):
+        op.add_column("messages", sa.Column("app_id", sa.Text()), schema=schema)
+        print("Added app_id column to messages table")
+    else:
+        print("app_id column already exists in messages table")
+
+    if not column_exists("messages", "user_id", inspector):
+        op.add_column("messages", sa.Column("user_id", sa.Text()), schema=schema)
+        print("Added user_id column to messages table")
+    else:
+        print("user_id column already exists in messages table")
 
     # Create foreign key constraints for app_id and user_id
-    try:
-        op.create_foreign_key(
-            "fk_messages_app_id_apps",
-            "messages",
-            "apps",
-            ["app_id"],
-            ["public_id"]
-        )
-        print("Created app_id foreign key")
-    except IntegrityError:
-        print("Cannot create app_id foreign key - integrity error")
+    if not fk_exists("messages", "fk_messages_app_id_apps", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_messages_app_id_apps",
+                "messages",
+                "apps",
+                ["app_id"],
+                ["public_id"]
+            )
+            print("Created app_id foreign key for messages table")
+        except IntegrityError:
+            print("Cannot create app_id foreign key for messages table - integrity error")
+    else:
+        print("app_id foreign key already exists for messages table")
         
-    try:
-        op.create_foreign_key(
-            "fk_messages_user_id_users",
-            "messages",
-            "users",
-            ["user_id"],
-            ["public_id"]
-        )
-        print("Created user_id foreign key")
-    except IntegrityError:
-        print("Cannot create user_id foreign key - integrity error")
+    if not fk_exists("messages", "fk_messages_user_id_users", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_messages_user_id_users",
+                "messages",
+                "users",
+                ["user_id"],
+                ["public_id"]
+            )
+            print("Created user_id foreign key for messages table")
+        except IntegrityError:
+            print("Cannot create user_id foreign key for messages table - integrity error")
+    else:
+        print("user_id foreign key already exists for messages table")
 
     # Data migration: Fill app_id and user_id from sessions table
     try:
@@ -113,24 +145,42 @@ def upgrade() -> None:
         print("Made app_id and user_id non-nullable for messages table")
     except (ProgrammingError, IntegrityError) as e:
         print(f"Error making app_id and user_id non-nullable for messages table: {e}")
+
+    # Create indices for messages foreign keys
+    if not index_exists("messages", "ix_messages_app_id"):
+        op.create_index(op.f("ix_messages_app_id"), "messages", ["app_id"], unique=False, schema=schema)
+        print("Created index ix_messages_app_id")
+    else:
+        print("Index ix_messages_app_id already exists")
+
+    if not index_exists("messages", "ix_messages_user_id"):
+        op.create_index(op.f("ix_messages_user_id"), "messages", ["user_id"], unique=False, schema=schema)
+        print("Created index ix_messages_user_id")
+    else:
+        print("Index ix_messages_user_id already exists")  
         
-    # 3. Metamessages table
-    # Add app_id to metamessages table
-    op.add_column("metamessages", sa.Column("app_id", sa.Text()), schema=schema)
-    print("Added app_id column to metamessages table")
+    # 3. METAMESSAGES TABLE
+    if not column_exists("metamessages", "app_id", inspector):
+        op.add_column("metamessages", sa.Column("app_id", sa.Text()), schema=schema)
+        print("Added app_id column to metamessages table")
+    else:
+        print("app_id column already exists in metamessages table")
 
     # Create foreign key constraint for app_id
-    try:
-        op.create_foreign_key(
-            "fk_metamessages_app_id_apps",
-            "metamessages",
-            "apps",
-            ["app_id"],
-            ["public_id"]
-        )
-        print("Created app_id foreign key")
-    except IntegrityError:
-        print("Cannot create app_id foreign key - integrity error")
+    if not fk_exists("metamessages", "fk_metamessages_app_id_apps", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_metamessages_app_id_apps",
+                "metamessages",
+                "apps",
+                ["app_id"],
+                ["public_id"]
+            )
+            print("Created app_id foreign key for metamessages table")
+        except IntegrityError:
+            print("Cannot create app_id foreign key for metamessages table - integrity error")
+    else:
+        print("app_id foreign key already exists for metamessages table")
         
     # Data migration: Fill app_id from users table
     try:
@@ -151,25 +201,36 @@ def upgrade() -> None:
         print("Made app_id non-nullable for metamessages table")
     except (ProgrammingError, IntegrityError) as e:
         print(f"Error making app_id non-nullable for metamessages table: {e}")
-        
-    # 4. Collections table
 
-    # Add app_id to collections table
-    op.add_column("collections", sa.Column("app_id", sa.Text()), schema=schema)
-    print("Added app_id column to collections table")
+    # Create index for metamessages.app_id
+    if not index_exists("metamessages", "ix_metamessages_app_id"):
+        op.create_index(op.f("ix_metamessages_app_id"), "metamessages", ["app_id"], unique=False, schema=schema)
+        print("Created index ix_metamessages_app_id")
+    else:
+        print("Index ix_metamessages_app_id already exists")
+
+    # 4. COLLECTIONS TABLE
+    if not column_exists("collections", "app_id", inspector):
+        op.add_column("collections", sa.Column("app_id", sa.Text()), schema=schema)
+        print("Added app_id column to collections table")
+    else:
+        print("app_id column already exists in collections table")
 
     # Create foreign key constraint for app_id
-    try:
-        op.create_foreign_key(
-            "fk_collections_app_id_apps",
-            "collections",
-            "apps",
-            ["app_id"],
-            ["public_id"]
-        )
-        print("Created app_id foreign key for collections table")
-    except IntegrityError:
-        print("Cannot create app_id foreign key for collections table - integrity error")
+    if not fk_exists("collections", "fk_collections_app_id_apps", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_collections_app_id_apps",
+                "collections",
+                "apps",
+                ["app_id"],
+                ["public_id"]
+            )
+            print("Created app_id foreign key for collections table")
+        except IntegrityError:
+            print("Cannot create app_id foreign key for collections table - integrity error")
+    else:
+        print("app_id foreign key already exists for collections table")
         
     # Data migration: Fill app_id from users table
     try:
@@ -190,38 +251,57 @@ def upgrade() -> None:
         print("Made app_id non-nullable for collections table")
     except (ProgrammingError, IntegrityError) as e:
         print(f"Error making app_id non-nullable for collections table: {e}")
-        
-    # 5. Documents table
 
-    # Add app_id and user_id to documents table
-    op.add_column("documents", sa.Column("app_id", sa.Text()), schema=schema)
-    op.add_column("documents", sa.Column("user_id", sa.Text()), schema=schema)
-    print("Added app_id and user_id columns to documents table")
+    # Create index for collections.app_id
+    if not index_exists("collections", "ix_collections_app_id"):
+        op.create_index(op.f("ix_collections_app_id"), "collections", ["app_id"], unique=False, schema=schema)
+        print("Created index ix_collections_app_id")
+    else:
+        print("Index ix_collections_app_id already exists")
+        
+    # 5. DOCUMENTS TABLE
+    if not column_exists("documents", "app_id", inspector):
+        op.add_column("documents", sa.Column("app_id", sa.Text()), schema=schema)
+        print("Added app_id column to documents table")
+    else:
+        print("app_id column already exists in documents table")
+
+    if not column_exists("documents", "user_id", inspector):
+        op.add_column("documents", sa.Column("user_id", sa.Text()), schema=schema)
+        print("Added user_id column to documents table")
+    else:
+        print("user_id column already exists in documents table")
 
     # Create foreign key constraints for app_id and user_id
-    try:
-        op.create_foreign_key(
-            "fk_documents_app_id_apps",
-            "documents",
-            "apps",
-            ["app_id"],
-            ["public_id"]
-        )
-        print("Created app_id foreign key for documents table")
-    except IntegrityError:
-        print("Cannot create app_id foreign key for documents table - integrity error")
+    if not fk_exists("documents", "fk_documents_app_id_apps", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_documents_app_id_apps",
+                "documents",
+                "apps",
+                ["app_id"],
+                ["public_id"]
+            )
+            print("Created app_id foreign key for documents table")
+        except IntegrityError:
+            print("Cannot create app_id foreign key for documents table - integrity error")
+    else:
+        print("app_id foreign key already exists for documents table")
         
-    try:
-        op.create_foreign_key(
-            "fk_documents_user_id_users",
-            "documents",
-            "users",
-            ["user_id"],
-            ["public_id"]
-        )
-        print("Created user_id foreign key for documents table")
-    except IntegrityError:
-        print("Cannot create user_id foreign key for documents table - integrity error")
+    if not fk_exists("documents", "fk_documents_user_id_users", inspector):
+        try:
+            op.create_foreign_key(
+                "fk_documents_user_id_users",
+                "documents",
+                "users",
+                ["user_id"],
+                ["public_id"]
+            )
+            print("Created user_id foreign key for documents table")
+        except IntegrityError:
+            print("Cannot create user_id foreign key for documents table - integrity error")
+    else:
+        print("user_id foreign key already exists for documents table")
             
     # Data migration: Fill app_id and user_id from users table
     try:
@@ -245,10 +325,33 @@ def upgrade() -> None:
     except (ProgrammingError, IntegrityError) as e:
         print(f"Error making app_id and user_id non-nullable for documents table: {e}")
 
+    # Create indices for documents foreign keys
+    if not index_exists("documents", "ix_documents_app_id"):
+        op.create_index(op.f("ix_documents_app_id"), "documents", ["app_id"], unique=False, schema=schema)
+        print("Created index ix_documents_app_id")
+    else:
+        print("Index ix_documents_app_id already exists")
+
+    if not index_exists("documents", "ix_documents_user_id"):
+        op.create_index(op.f("ix_documents_user_id"), "documents", ["user_id"], unique=False, schema=schema)
+        print("Created index ix_documents_user_id")
+    else:
+        print("Index ix_documents_user_id already exists")
+        
 def downgrade():
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = get_schema()
+    inspector = sa.inspect(op.get_bind())
     
     # 5. Documents table
+    
+    # Drop indices
+    if index_exists("documents", "ix_documents_app_id", inspector):
+        op.drop_index("ix_documents_app_id", table_name="documents", schema=schema)
+        print("Dropped index ix_documents_app_id")
+    if index_exists("documents", "ix_documents_user_id", inspector):
+        op.drop_index("ix_documents_user_id", table_name="documents", schema=schema)
+        print("Dropped index ix_documents_user_id")
+
     # Make app_id and user_id nullable again
     op.alter_column("documents", "app_id", nullable=True, schema=schema)
     op.alter_column("documents", "user_id", nullable=True, schema=schema)
@@ -273,6 +376,12 @@ def downgrade():
     print("Dropped app_id and user_id columns from documents table")
     
     # 4. Collections table
+    
+    # Drop indices
+    if index_exists("collections", "ix_collections_app_id", inspector):
+        op.drop_index("ix_collections_app_id", table_name="collections", schema=schema)
+        print("Dropped index ix_collections_app_id")
+
     # Make app_id nullable again
     op.alter_column("collections", "app_id", nullable=True, schema=schema)
     print("Made app_id nullable again for collections table")
@@ -289,6 +398,12 @@ def downgrade():
     print("Dropped app_id column from collections table")
     
     # 3. Metamessages table
+    
+    # Drop indices
+    if index_exists("metamessages", "ix_metamessages_app_id", inspector):
+        op.drop_index("ix_metamessages_app_id", table_name="metamessages", schema=schema)
+        print("Dropped index ix_metamessages_app_id")
+
     # Make app_id nullable again
     op.alter_column("metamessages", "app_id", nullable=True, schema=schema)
     print("Made app_id nullable again for metamessages table")
@@ -305,6 +420,15 @@ def downgrade():
     print("Dropped app_id column from metamessages table")
     
     # 2. Messages table
+    
+    # Drop indices
+    if index_exists("messages", "ix_messages_app_id", inspector):
+        op.drop_index("ix_messages_app_id", table_name="messages", schema=schema)
+        print("Dropped index ix_messages_app_id")
+    if index_exists("messages", "ix_messages_user_id", inspector):
+        op.drop_index("ix_messages_user_id", table_name="messages", schema=schema)
+        print("Dropped index ix_messages_user_id")
+
     # Make app_id and user_id nullable again
     op.alter_column("messages", "app_id", nullable=True, schema=schema)
     op.alter_column("messages", "user_id", nullable=True, schema=schema)
@@ -329,6 +453,12 @@ def downgrade():
     print("Dropped app_id and user_id columns from messages table")
     
     # 1. Sessions table
+    
+    # Drop indices
+    if index_exists("sessions", "ix_sessions_app_id", inspector):
+        op.drop_index("ix_sessions_app_id", table_name="sessions", schema=schema)
+        print("Dropped index ix_sessions_app_id")
+
     # Make app_id nullable again
     op.alter_column("sessions", "app_id", nullable=True, schema=schema)
     print("Made app_id nullable again for sessions table")
