@@ -62,7 +62,7 @@ async def get_all_apps(
 ):
     """Get all Apps"""
     filter_param = None
-    if options and hasattr(options, 'filter'):
+    if options and hasattr(options, "filter"):
         filter_param = options.filter
         if filter_param == {}:
             filter_param = None
@@ -70,7 +70,6 @@ async def get_all_apps(
     return await paginate(
         db,
         await crud.get_all_apps(
-            db,
             reverse=reverse,
             filter=filter_param,
         ),

@@ -81,15 +81,15 @@ async def get_collections(
 ):
     """Get All Collections for a User"""
     filter_param = None
-    if options and hasattr(options, 'filter'):
+    if options and hasattr(options, "filter"):
         filter_param = options.filter
-        if filter_param == {}: # Explicitly check for empty dict
+        if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
     return await paginate(
         db,
         await crud.get_collections(
-            db, app_id=app_id, user_id=user_id, filter=filter_param, reverse=reverse
+            app_id=app_id, user_id=user_id, filter=filter_param, reverse=reverse
         ),
     )
 

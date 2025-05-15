@@ -192,15 +192,15 @@ async def chat(
     )
 
     stmt = (
-            select(models.Message)
-            .where(models.Message.app_id == app_id)
-            .where(models.Message.user_id == user_id)
-            .where(models.Message.session_id == session_id)
-            .where(models.Message.is_user)
-            .order_by(models.Message.id.desc())
-            .limit(1)
-        )
-    
+        select(models.Message)
+        .where(models.Message.app_id == app_id)
+        .where(models.Message.user_id == user_id)
+        .where(models.Message.session_id == session_id)
+        .where(models.Message.is_user)
+        .order_by(models.Message.id.desc())
+        .limit(1)
+    )
+
     latest_messages = await db.execute(stmt)
     latest_message = latest_messages.scalar_one_or_none()
     latest_message_id = latest_message.public_id if latest_message else None
@@ -451,11 +451,10 @@ async def generate_user_representation(
         logger.debug(f"Fetching latest representation for session {session_id}")
         latest_representation_stmt = (
             select(models.Metamessage)
-            .where(models.Metamessage.session_id == session_id) # only from the same session
             .where(
-                models.Metamessage.label
-                == USER_REPRESENTATION_METAMESSAGE_TYPE
-            )
+                models.Metamessage.session_id == session_id
+            )  # only from the same session
+            .where(models.Metamessage.label == USER_REPRESENTATION_METAMESSAGE_TYPE)
             .order_by(models.Metamessage.id.desc())
             .limit(1)
         )
@@ -519,6 +518,7 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
                         message_id = None
                     else:
                         metamessage = models.Metamessage(
+                            app_id=app_id,
                             user_id=user_id,
                             session_id=session_id,
                             message_id=message_id if message_id else None,

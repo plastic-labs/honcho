@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from logging import getLogger
-from typing import List, Optional
+from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -54,7 +54,6 @@ async def get_app(db: AsyncSession, app_id: str) -> models.App:
 
 
 async def get_all_apps(
-    db: AsyncSession,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
@@ -260,7 +259,6 @@ async def get_user_by_name(db: AsyncSession, app_id: str, name: str) -> models.U
 
 
 async def get_users(
-    db: AsyncSession,
     app_id: str,
     reverse: bool = False,
     filter: Optional[dict] = None,
@@ -409,7 +407,7 @@ async def create_session(
     """
     try:
         # This will raise ResourceNotFoundException if user not found
-        _honcho_user = await get_user(db, app_id=app_id, user_id=user_id)
+        await get_user(db, app_id=app_id, user_id=user_id)
 
         honcho_session = models.Session(
             user_id=user_id,
@@ -715,7 +713,6 @@ async def create_messages(
 
 
 async def get_messages(
-    db: AsyncSession,
     app_id: str,
     user_id: str,
     session_id: str,
@@ -749,7 +746,7 @@ async def get_message(
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
-        .where(models.Message.app_id == app_id) 
+        .where(models.Message.app_id == app_id)
         .where(models.Message.user_id == user_id)
         .where(models.Message.session_id == session_id)
         .where(models.Message.public_id == message_id)
@@ -845,7 +842,6 @@ async def create_metamessage(
 
 
 async def get_metamessages(
-    db: AsyncSession,
     app_id: str,
     user_id: str,
     session_id: Optional[str] = None,
@@ -942,7 +938,7 @@ async def update_metamessage(
             db,
             app_id=app_id,
             session_id=metamessage.session_id,
-            user_id=metamessage.user_id,
+            user_id=user_id,
             message_id=metamessage.message_id,
         )
         if message is None:
@@ -975,7 +971,6 @@ async def update_metamessage(
 
 
 async def get_collections(
-    db: AsyncSession,
     app_id: str,
     user_id: str,
     reverse: Optional[bool] = False,
@@ -1272,7 +1267,6 @@ async def delete_collection(
 
 
 async def get_documents(
-    db: AsyncSession,
     app_id: str,
     user_id: str,
     collection_id: str,
@@ -1400,7 +1394,7 @@ async def create_document(
     """
 
     # This will raise ResourceNotFoundException if collection not found
-    collection = await get_collection_by_id(
+    await get_collection_by_id(
         db, app_id=app_id, collection_id=collection_id, user_id=user_id
     )
 
@@ -1518,7 +1512,7 @@ async def get_duplicate_documents(
     collection_id: str,
     content: str,
     similarity_threshold: float = 0.85,
-) -> List[models.Document]:
+) -> list[models.Document]:
     """Check if a document with similar content already exists in the collection.
 
     Args:
@@ -1542,6 +1536,8 @@ async def get_duplicate_documents(
     # Find documents with similar embeddings
     stmt = (
         select(models.Document)
+        .where(models.Document.app_id == app_id)
+        .where(models.Document.user_id == user_id)
         .where(models.Document.collection_id == collection_id)
         .where(
             models.Document.embedding.cosine_distance(embedding)

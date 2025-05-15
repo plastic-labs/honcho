@@ -51,14 +51,14 @@ async def get_users(
 ):
     """Get All Users for an App"""
     filter_param = None
-    if options and hasattr(options, 'filter'):
+    if options and hasattr(options, "filter"):
         filter_param = options.filter
         if filter_param == {}:
             filter_param = None
 
     return await paginate(
         db,
-        await crud.get_users(db, app_id=app_id, reverse=reverse, filter=filter_param),
+        await crud.get_users(app_id=app_id, reverse=reverse, filter=filter_param),
     )
 
 
