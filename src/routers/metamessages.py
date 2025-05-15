@@ -73,20 +73,19 @@ async def get_metamessages(
     filter_param = None
 
     if options:
-        if hasattr(options, 'session_id') and options.session_id:
+        if hasattr(options, "session_id") and options.session_id:
             session_id_param = options.session_id
-        if hasattr(options, 'message_id') and options.message_id:
+        if hasattr(options, "message_id") and options.message_id:
             message_id_param = options.message_id
-        if hasattr(options, 'label') and options.label:
+        if hasattr(options, "label") and options.label:
             label_param = options.label
-        if hasattr(options, 'filter') and options.filter:
+        if hasattr(options, "filter") and options.filter:
             filter_param = options.filter
-            if filter_param == {}: # Explicitly check for empty dict
+            if filter_param == {}:  # Explicitly check for empty dict
                 filter_param = None
 
     try:
         metamessages_query = await crud.get_metamessages(
-            db,
             app_id=app_id,
             user_id=user_id,
             session_id=session_id_param,

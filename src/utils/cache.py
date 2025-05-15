@@ -1,5 +1,6 @@
-from collections import OrderedDict
 import asyncio
+from collections import OrderedDict
+
 
 class LRUCache:
     """

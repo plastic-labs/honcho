@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 
@@ -110,7 +111,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="1.0.0",
+    version="1.1.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -173,8 +174,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 @app.middleware("http")
 async def track_request(request: Request, call_next):
     # Create a request ID that includes endpoint information
-    endpoint = request.url.path.replace("/", "_")
-    request_id = f"{endpoint}:{str(uuid.uuid4())[:8]}"
+    endpoint = re.sub(r"/[A-Za-z0-9_-]{21}", "", request.url.path).replace("/", "_")
+    request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"
 
     # Store in request state and context var
     request.state.request_id = request_id

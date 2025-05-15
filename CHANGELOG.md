@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.1.0]
+
+### Added
+
+- Normalize resources to remove joins and increase query performance
+- Query tracing for debugging
+
+### Changed
+
+- `/list` endpoints to not require a request body
+- `metamessage_type` to `label` with backwards compatability
+- Database Provisioning to rely on alembic
+- Database Session Manager to explicitly rollback transactions before closing
+  the connection
+
+### Fixed
+
+- Alembic Migrations to include initial database migrations
+- Sentry Middleware to not report Honcho Exceptions
+
 ## [1.0.0]
 
 ### Added

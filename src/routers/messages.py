@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
@@ -189,7 +189,7 @@ async def create_message_for_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
-@router.post("/batch", response_model=List[schemas.Message])
+@router.post("/batch", response_model=list[schemas.Message])
 async def create_batch_messages_for_session(
     background_tasks: BackgroundTasks,
     app_id: str = Path(..., description="ID of the app"),
@@ -254,13 +254,12 @@ async def get_messages(
     """Get all messages for a session"""
     try:
         filter = None
-        if options and hasattr(options, 'filter'):
+        if options and hasattr(options, "filter"):
             filter = options.filter
             if filter == {}:
                 filter = None
 
         messages_query = await crud.get_messages(
-            db,
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
