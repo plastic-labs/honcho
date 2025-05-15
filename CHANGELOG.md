@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - `/list` endpoints to not require a request body
 - `metamessage_type` to `label` with backwards compatability
-- Database Provisiong to rely on alembic
+- Database Provisioning to rely on alembic
 - Database Session Manager to explicitly rollback transactions before closing
   the connection
 
