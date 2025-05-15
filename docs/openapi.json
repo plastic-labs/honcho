@@ -9,7 +9,7 @@
       "url": "https://honcho.dev/",
       "email": "hello@plasticlabs.ai"
     },
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "servers": [
     {
@@ -168,12 +168,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AppGet",
-                "description": "Filtering and pagination options for the apps list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/AppGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering and pagination options for the apps list",
+                "title": "Options"
               }
             }
           }
@@ -549,12 +552,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/UserGet",
-                "description": "Filtering options for the users list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/UserGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering options for the users list",
+                "title": "Options"
               }
             }
           }
@@ -996,12 +1002,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SessionGet",
-                "description": "Filtering and pagination options for the sessions list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/SessionGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering and pagination options for the sessions list",
+                "title": "Options"
               }
             }
           }
@@ -1616,12 +1625,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MessageGet",
-                "description": "Filtering options for the messages list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/MessageGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering options for the messages list",
+                "title": "Options"
               }
             }
           }
@@ -1894,11 +1906,11 @@
         "x-codeSamples": [
           {
             "lang": "JavaScript",
-            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.create('app_id', 'user_id', {\n    content: 'content',\n    label: 'x',\n  });\n\n  console.log(metamessage.id);\n}\n\nmain();"
+            "source": "import Honcho from 'honcho-ai';\n\nconst client = new Honcho({\n  apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted\n});\n\nasync function main() {\n  const metamessage = await client.apps.users.metamessages.create('app_id', 'user_id', {\n    content: 'content',\n    metamessage_type: 'x',\n  });\n\n  console.log(metamessage.id);\n}\n\nmain();"
           },
           {
             "lang": "Python",
-            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    content=\"content\",\n    label=\"x\",\n)\nprint(metamessage.id)"
+            "source": "import os\nfrom honcho import Honcho\n\nclient = Honcho(\n    api_key=os.environ.get(\"HONCHO_API_KEY\"),  # This is the default and can be omitted\n)\nmetamessage = client.apps.users.metamessages.create(\n    user_id=\"user_id\",\n    app_id=\"app_id\",\n    content=\"content\",\n    metamessage_type=\"x\",\n)\nprint(metamessage.id)"
           }
         ]
       }
@@ -1974,12 +1986,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/MetamessageGet",
-                "description": "Filtering options for the metamessages list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/MetamessageGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering options for the metamessages list",
+                "title": "Options"
               }
             }
           }
@@ -2380,12 +2395,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/CollectionGet",
-                "description": "Filtering options for the collections list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/CollectionGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering options for the collections list",
+                "title": "Options"
               }
             }
           }
@@ -2723,12 +2741,15 @@
           }
         ],
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/DocumentGet",
-                "description": "Filtering options for the documents list"
+                "anyOf": [
+                  { "$ref": "#/components/schemas/DocumentGet" },
+                  { "type": "null" }
+                ],
+                "description": "Filtering options for the documents list",
+                "title": "Options"
               }
             }
           }
@@ -3286,7 +3307,8 @@
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           },
           "created_at": {
             "type": "string",
@@ -3295,9 +3317,8 @@
           }
         },
         "type": "object",
-        "required": ["id", "name", "metadata", "created_at"],
-        "title": "App",
-        "exclude": ["h_metadata", "public_id"]
+        "required": ["id", "name", "created_at"],
+        "title": "App"
       },
       "AppCreate": {
         "properties": {
@@ -3353,10 +3374,12 @@
           "id": { "type": "string", "title": "Id" },
           "name": { "type": "string", "title": "Name" },
           "user_id": { "type": "string", "title": "User Id" },
+          "app_id": { "type": "string", "title": "App Id" },
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           },
           "created_at": {
             "type": "string",
@@ -3365,9 +3388,8 @@
           }
         },
         "type": "object",
-        "required": ["id", "name", "user_id", "metadata", "created_at"],
-        "title": "Collection",
-        "exclude": ["h_metadata", "public_id"]
+        "required": ["id", "name", "user_id", "app_id", "created_at"],
+        "title": "Collection"
       },
       "CollectionCreate": {
         "properties": {
@@ -3446,25 +3468,28 @@
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
           },
-          "collection_id": { "type": "string", "title": "Collection Id" }
+          "collection_id": { "type": "string", "title": "Collection Id" },
+          "app_id": { "type": "string", "title": "App Id" },
+          "user_id": { "type": "string", "title": "User Id" }
         },
         "type": "object",
         "required": [
           "id",
           "content",
-          "metadata",
           "created_at",
-          "collection_id"
+          "collection_id",
+          "app_id",
+          "user_id"
         ],
-        "title": "Document",
-        "exclude": ["h_metadata", "public_id"]
+        "title": "Document"
       },
       "DocumentCreate": {
         "properties": {
@@ -3569,13 +3594,16 @@
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
-          }
+          },
+          "app_id": { "type": "string", "title": "App Id" },
+          "user_id": { "type": "string", "title": "User Id" }
         },
         "type": "object",
         "required": [
@@ -3583,11 +3611,11 @@
           "content",
           "is_user",
           "session_id",
-          "metadata",
-          "created_at"
+          "created_at",
+          "app_id",
+          "user_id"
         ],
-        "title": "Message",
-        "exclude": ["h_metadata", "public_id"]
+        "title": "Message"
       },
       "MessageBatchCreate": {
         "properties": {
@@ -3654,6 +3682,7 @@
           "label": { "type": "string", "title": "Label" },
           "content": { "type": "string", "title": "Content" },
           "user_id": { "type": "string", "title": "User Id" },
+          "app_id": { "type": "string", "title": "App Id" },
           "session_id": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Session Id"
@@ -3665,12 +3694,18 @@
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           },
           "created_at": {
             "type": "string",
             "format": "date-time",
             "title": "Created At"
+          },
+          "metamessage_type": {
+            "type": "string",
+            "title": "Metamessage Type",
+            "readOnly": true
           }
         },
         "type": "object",
@@ -3679,17 +3714,17 @@
           "label",
           "content",
           "user_id",
+          "app_id",
           "session_id",
           "message_id",
-          "metadata",
-          "created_at"
+          "created_at",
+          "metamessage_type"
         ],
-        "title": "Metamessage",
-        "exclude": ["h_metadata", "public_id"]
+        "title": "Metamessage"
       },
       "MetamessageCreate": {
         "properties": {
-          "label": {
+          "metamessage_type": {
             "type": "string",
             "maxLength": 50,
             "minLength": 1,
@@ -3717,12 +3752,12 @@
           }
         },
         "type": "object",
-        "required": ["label", "content"],
+        "required": ["metamessage_type", "content"],
         "title": "MetamessageCreate"
       },
       "MetamessageGet": {
         "properties": {
-          "label": {
+          "metamessage_type": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Metamessage Type"
           },
@@ -3755,7 +3790,7 @@
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Message Id"
           },
-          "label": {
+          "metamessage_type": {
             "anyOf": [{ "type": "string" }, { "type": "null" }],
             "title": "Metamessage Type"
           },
@@ -3887,10 +3922,12 @@
           "id": { "type": "string", "title": "Id" },
           "is_active": { "type": "boolean", "title": "Is Active" },
           "user_id": { "type": "string", "title": "User Id" },
+          "app_id": { "type": "string", "title": "App Id" },
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           },
           "created_at": {
             "type": "string",
@@ -3899,9 +3936,8 @@
           }
         },
         "type": "object",
-        "required": ["id", "is_active", "user_id", "metadata", "created_at"],
-        "title": "Session",
-        "exclude": ["h_metadata", "public_id"]
+        "required": ["id", "is_active", "user_id", "app_id", "created_at"],
+        "title": "Session"
       },
       "SessionCreate": {
         "properties": {
@@ -3958,13 +3994,13 @@
           "metadata": {
             "additionalProperties": true,
             "type": "object",
-            "title": "Metadata"
+            "title": "Metadata",
+            "default": {}
           }
         },
         "type": "object",
-        "required": ["id", "name", "app_id", "created_at", "metadata"],
-        "title": "User",
-        "exclude": ["h_metadata", "public_id"]
+        "required": ["id", "name", "app_id", "created_at"],
+        "title": "User"
       },
       "UserCreate": {
         "properties": {
@@ -4033,3 +4069,4 @@
     "securitySchemes": { "HTTPBearer": { "type": "http", "scheme": "bearer" } }
   }
 }
+

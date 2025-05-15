@@ -13,6 +13,6 @@
   "dependencies": {
     "@mintlify/scraping": "^3.0.92",
     "honcho-ai": "^0.0.11",
-    "mintlify": "^4.0.245"
+    "mintlify": "^4.0.531"
   }
 }
