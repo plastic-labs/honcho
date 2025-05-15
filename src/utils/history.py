@@ -220,6 +220,7 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
 
 async def save_summary_metamessage(
     db: AsyncSession,
+    app_id: str,
     user_id: str,
     session_id: str,
     message_id: str,
@@ -247,6 +248,7 @@ async def save_summary_metamessage(
 
     # Create and save the metamessage
     metamessage = models.Metamessage(
+        app_id=app_id,
         user_id=user_id,
         session_id=session_id,
         message_id=message_id,
@@ -389,4 +391,3 @@ def format_messages(messages: list[models.Message]) -> str:
     return "\n".join(
         [f"{'user' if msg.is_user else 'assistant'}: {msg.content}" for msg in messages]
     )
-

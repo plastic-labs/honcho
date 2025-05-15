@@ -51,7 +51,11 @@ async def process_item(db: AsyncSession, payload: dict):
         await process_ai_message(*processing_args)
     logger.debug(f"Finished processing message: {payload['message_id']}")
     await summarize_if_needed(
-        db, payload["session_id"], payload["user_id"], payload["message_id"]
+        db,
+        payload["app_id"],
+        payload["session_id"],
+        payload["user_id"],
+        payload["message_id"],
     )
     return
 
@@ -147,7 +151,7 @@ async def process_user_message(
 
 
 async def summarize_if_needed(
-    db: AsyncSession, session_id: str, user_id: str, message_id: str
+    db: AsyncSession, app_id: str, session_id: str, user_id: str, message_id: str
 ):
     summary_start = os.times()[4]
     logger.debug("Checking if summaries should be created")
@@ -193,6 +197,7 @@ async def summarize_if_needed(
                 # Save the long summary as a metamessage and capture the returned object
                 latest_long_summary = await history.save_summary_metamessage(
                     db=db,
+                    app_id=app_id,
                     user_id=user_id,
                     session_id=session_id,
                     message_id=message_id,
@@ -225,6 +230,7 @@ async def summarize_if_needed(
             # Save the short summary as a metamessage
             await history.save_summary_metamessage(
                 db=db,
+                app_id=app_id,
                 user_id=user_id,
                 session_id=session_id,
                 message_id=message_id,

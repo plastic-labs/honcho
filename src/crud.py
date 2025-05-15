@@ -1129,6 +1129,9 @@ async def create_user_protected_collection(
         name=DEF_PROTECTED_COLLECTION_NAME,
     )
     try:
+        # This will raise ResourceNotFoundException if user not found
+        await get_user(db, app_id=app_id, user_id=user_id)
+
         db.add(honcho_collection)
         await db.commit()
     except IntegrityError:
