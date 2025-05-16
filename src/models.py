@@ -253,6 +253,9 @@ class Document(Base):
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
     )
+    collection_id: Mapped[str] = mapped_column(
+        TEXT, ForeignKey("collections.public_id"), primary_key=True
+    )
     public_id: Mapped[str] = mapped_column(
         TEXT, index=True, unique=True, default=generate_nanoid
     )
@@ -263,9 +266,6 @@ class Document(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
 
-    collection_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("collections.public_id"), index=True
-    )
     user_id: Mapped[str] = mapped_column(ForeignKey("users.public_id"), index=True)
     app_id: Mapped[str] = mapped_column(ForeignKey("apps.public_id"), index=True)
     collection = relationship("Collection", back_populates="documents")
@@ -274,8 +274,8 @@ class Document(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        {"postgresql_partition_by": "HASH (collection_id)"}
     )
-
 
 class QueueItem(Base):
     __tablename__ = "queue"
