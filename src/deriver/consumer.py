@@ -6,6 +6,8 @@ from langfuse.decorators import observe
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .surprise_reasoner import SurpriseReasoner
+
 from .. import crud
 from ..utils import history
 from .tom.embeddings import CollectionEmbeddingStore
@@ -103,18 +105,8 @@ async def process_user_message(
     ) = await history.get_summarized_history(
         db, session_id, summary_type=history.SummaryType.SHORT
     )
-    chat_history_str = f"{short_history_text}\nhuman: {content}"
 
-    # Extract facts from chat history
-    logger.debug("Extracting facts from chat history")
-    extract_start = os.times()[4]
-    facts = await extract_facts_long_term(chat_history_str)
-    extract_time = os.times()[4] - extract_start
-    console.print(f"Extracted Facts: {facts}", style="bright_blue")
-    logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
-
-    # Save the facts to the collection
-    logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
+    # Set up embedding store
     collection = await crud.get_or_create_user_protected_collection(
         db=db, app_id=app_id, user_id=user_id
     )
@@ -123,27 +115,70 @@ async def process_user_message(
         user_id=user_id,
         collection_id=collection.public_id,  # type: ignore
     )
-
-    # Filter out facts that are duplicates of existing facts in the vector store
-    logger.debug("Removing duplicate facts")
-    dedup_start = os.times()[4]
-    unique_facts = await embedding_store.remove_duplicates(facts)
-    dedup_time = os.times()[4] - dedup_start
-    logger.debug(
-        f"Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s"
+    
+    # Retrieve most recent facts for each reasoning level
+    logger.debug("Retrieving most recent facts from collection")
+    initial_context = await embedding_store.get_most_recent_facts()
+    
+    reasoner = SurpriseReasoner(embedding_store=embedding_store)
+    
+    # Use the history messages directly and content as the new turn
+    await reasoner.recursive_reason(
+        context=initial_context,
+        history=short_history_messages,
+        new_turn=content,
+        message_id=message_id
     )
+    rsr_time = os.times()[4] - process_start
+    logger.debug(f"Recursive surprise reasoner completed in {rsr_time:.2f}s")
 
-    # Only save the unique facts
-    if unique_facts:
-        logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
-        save_start = os.times()[4]
-        await embedding_store.save_facts(unique_facts, message_id=message_id)
-        save_time = os.times()[4] - save_start
-        logger.debug(f"Facts saved in {save_time:.2f}s")
-    else:
-        logger.debug("No unique facts to save")
+    
+    
 
-    console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
+
+
+
+
+    # # Extract facts from chat history
+    # logger.debug("Extracting facts from chat history")
+    # extract_start = os.times()[4]
+    # facts = await extract_facts_long_term(chat_history_str)
+    # extract_time = os.times()[4] - extract_start
+    # console.print(f"Extracted Facts: {facts}", style="bright_blue")
+    # logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
+
+    # # Save the facts to the collection
+    # logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
+    # collection = await crud.get_or_create_user_protected_collection(
+    #     db=db, app_id=app_id, user_id=user_id
+    # )
+    # embedding_store = CollectionEmbeddingStore(
+    #     db=db,
+    #     app_id=app_id,
+    #     user_id=user_id,
+    #     collection_id=collection.public_id,  # type: ignore
+    # )
+
+    # # Filter out facts that are duplicates of existing facts in the vector store
+    # logger.debug("Removing duplicate facts")
+    # dedup_start = os.times()[4]
+    # unique_facts = await embedding_store.remove_duplicates(facts)
+    # dedup_time = os.times()[4] - dedup_start
+    # logger.debug(
+    #     f"Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s"
+    # )
+
+    # # Only save the unique facts
+    # if unique_facts:
+    #     logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
+    #     save_start = os.times()[4]
+    #     await embedding_store.save_facts(unique_facts, message_id=message_id)
+    #     save_time = os.times()[4] - save_start
+    #     logger.debug(f"Facts saved in {save_time:.2f}s")
+    # else:
+    #     logger.debug("No unique facts to save")
+
+    # console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
 
     total_time = os.times()[4] - process_start
     logger.debug(f"Total processing time: {total_time:.2f}s")

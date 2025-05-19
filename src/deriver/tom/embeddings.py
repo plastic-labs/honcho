@@ -10,16 +10,107 @@ logger = logging.getLogger(__name__)
 
 class CollectionEmbeddingStore:
     def __init__(self, app_id: str, user_id: str, collection_id: str):
+    # Default number of facts to retrieve for each reasoning level
+    DEFAULT_ABDUCTIVE_FACTS = 1
+    DEFAULT_INDUCTIVE_FACTS = 3
+    DEFAULT_DEDUCTIVE_FACTS = 5
+
+    def __init__(self, db: AsyncSession, app_id: str, user_id: str, collection_id: str):
+        self.db = db
         self.app_id = app_id
         self.user_id = user_id
         self.collection_id = collection_id
+        # Initialize fact counts with defaults
+        self.abductive_facts = self.DEFAULT_ABDUCTIVE_FACTS
+        self.inductive_facts = self.DEFAULT_INDUCTIVE_FACTS
+        self.deductive_facts = self.DEFAULT_DEDUCTIVE_FACTS
+
+    def set_fact_counts(self, abductive: int | None = None, inductive: int | None = None, deductive: int | None = None):
+        """Set the number of facts to retrieve for each reasoning level.
+        
+        Args:
+            abductive: Number of abductive facts to retrieve
+            inductive: Number of inductive facts to retrieve
+            deductive: Number of deductive facts to retrieve
+        """
+        if abductive is not None:
+            self.abductive_facts = abductive
+        if inductive is not None:
+            self.inductive_facts = inductive
+        if deductive is not None:
+            self.deductive_facts = deductive
+
+    async def get_most_recent_facts(self) -> dict[str, list[str]]:
+        """Retrieve the most recent facts for each reasoning level.
+        
+        Returns:
+            Dictionary with reasoning levels as keys and lists of facts as values.
+            Each list contains the most recent facts for that reasoning level.
+        """
+        try:
+            # Get most recent abductive facts
+            abductive_stmt = await crud.get_documents(
+                db=self.db,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                filter={"reasoning_level": "abductive"},
+                reverse=True  # Sort by created_at in descending order
+            )
+            abductive_docs = (await self.db.execute(abductive_stmt)).scalars().all()[:self.abductive_facts]
+            
+            # Get most recent inductive facts
+            inductive_stmt = await crud.get_documents(
+                db=self.db,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                filter={"reasoning_level": "inductive"},
+                reverse=True
+            )
+            inductive_docs = (await self.db.execute(inductive_stmt)).scalars().all()[:self.inductive_facts]
+            
+            # Get most recent deductive facts
+            deductive_stmt = await crud.get_documents(
+                db=self.db,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                filter={"reasoning_level": "deductive"},
+                reverse=True
+            )
+            deductive_docs = (await self.db.execute(deductive_stmt)).scalars().all()[:self.deductive_facts]
+            
+            # Initialize context with retrieved facts
+            context = {
+                "abductive": [doc.content for doc in abductive_docs],
+                "inductive": [doc.content for doc in inductive_docs],
+                "deductive": [doc.content for doc in deductive_docs]
+            }
+            
+            logger.debug(
+                f"Retrieved facts - Abductive: {len(abductive_docs)}, "
+                f"Inductive: {len(inductive_docs)}, "
+                f"Deductive: {len(deductive_docs)}"
+            )
+            
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error retrieving facts from collection: {e}")
+            # Return empty context if retrieval fails
+            return {
+                "abductive": [],
+                "inductive": [],
+                "deductive": []
+            }
 
     async def save_facts(
         self,
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
-        message_id: str = None,
+        message_id: str | None = None,
     ) -> None:
         """Save facts to the collection.
 
