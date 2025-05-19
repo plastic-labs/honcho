@@ -18,10 +18,22 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 # Number of hash partitions to create
-NUM_PARTITIONS = 10
+NUM_PARTITIONS = 128
 
 def upgrade() -> None:
     schema = getenv("DATABASE_SCHEMA", "public")
+
+    # alter existing documents table to be embedding vector(768)
+    op.execute(f"""
+    ALTER TABLE {schema}.documents
+    ALTER COLUMN embedding TYPE vector(768) USING embedding::vector(768);
+    """)
+
+    # Reset sequence for documents table
+    op.execute(f"""
+    SELECT setval(pg_get_serial_sequence('{schema}.documents', 'id'), 
+                 COALESCE((SELECT MAX(id) FROM {schema}.documents), 0) + 1, false);
+    """)
 
     # 1. Create documents_temp table with minimal constraints
     op.execute(f"""
@@ -31,7 +43,7 @@ def upgrade() -> None:
         public_id TEXT NOT NULL,
         metadata JSONB NOT NULL DEFAULT '{{}}',
         content TEXT NOT NULL,
-        embedding vector(1536),
+        embedding vector(768),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         user_id TEXT NOT NULL,
         app_id TEXT NOT NULL,
@@ -189,6 +201,12 @@ def downgrade() -> None:
 
     # 3. Put the old table back in place and restore names
     op.execute(f'ALTER TABLE {schema}.documents_old RENAME TO documents;')
+
+    # Reset sequence for documents table
+    op.execute(f"""
+    SELECT setval(pg_get_serial_sequence('{schema}.documents', 'id'), 
+                 COALESCE((SELECT MAX(id) FROM {schema}.documents), 0) + 1, false);
+    """)
 
     # 4. copy any rows written *after* the upgrade back into the legacy
     op.execute(
