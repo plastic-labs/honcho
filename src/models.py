@@ -274,6 +274,21 @@ class Document(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        # HNSW index on embedding column
+        Index(
+            "idx_documents_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw", # HNSW index type
+            postgresql_with={"m": 16, "ef_construction": 64}, # HNSW parameters
+            postgresql_ops={"embedding": "vector_cosine_ops"}, # Cosine distance operator
+        ),
+        Index(
+            "idx_documents_query_documents_lookup",
+            "app_id",
+            "user_id",
+            "collection_id",
+            unique=False
+        )
     )
 
 
