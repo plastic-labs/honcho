@@ -3,6 +3,8 @@ import os
 import jwt
 from nanoid import generate as generate_nanoid
 from unittest.mock import patch, MagicMock, AsyncMock
+import asyncio
+from asyncio import AbstractEventLoop
 
 import pytest
 import pytest_asyncio
@@ -113,6 +115,15 @@ async def setup_test_database(db_url):
     return engine
 
 
+@pytest.fixture(scope="session")
+def event_loop(request):
+    """Create an instance of the default event loop for each test case."""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+    loop.close()
+
+
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
     create_test_database(TEST_DB_URL)
@@ -136,8 +147,11 @@ async def db_session(db_engine):
     """Create a database session for the scope of a single test function"""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with Session() as session:
-        yield session
-        await session.rollback()
+        try:
+            yield session
+        finally:
+            await session.rollback() # Keep rollback for test isolation
+            await session.close() # Ensure the session is closed
 
 
 @pytest.fixture(scope="function")
