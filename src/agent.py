@@ -224,8 +224,8 @@ async def chat(
     facts, tom_inference = await asyncio.gather(
         long_term_task, short_term_task
     )
-    logger.info(f"Retrieved {len(facts)} facts from long-term memory")
-    logger.info(f"TOM inference completed with {len(tom_inference)} characters")
+    logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
+    logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
 
     # Generate a fresh user representation
     logger.debug("Generating user representation")
@@ -241,7 +241,7 @@ async def chat(
             message_id=latest_message_id,
             with_inference=False,
         )
-    logger.info(f"User representation generated: {len(user_representation)} characters")
+    logger.debug(f"User representation generated: {len(user_representation)} characters")
 
     # Create a Dialectic chain with the fresh user representation
     chain = Dialectic(
@@ -251,7 +251,7 @@ async def chat(
     )
 
     generation_time = asyncio.get_event_loop().time() - start_time
-    logger.info(f"User representation generation completed in {generation_time:.2f}s")
+    logger.debug(f"User representation generation completed in {generation_time:.2f}s")
 
     langfuse_context.update_current_trace(
         session_id=session_id,
