@@ -1,6 +1,7 @@
 import logging
 import json
 from typing import Any
+import datetime
 
 import sentry_sdk
 from sentry_sdk.ai.monitoring import ai_track
@@ -41,10 +42,10 @@ Here's the new turn of conversation:
 
 Format your response as follows:
 <response>
-{
+{{
     "surprise": true,
     "levels": ["deductive", "inductive", "abductive"]
-}
+}}
 </response>
 Output your response only, no other text.
 """
@@ -66,7 +67,7 @@ Here's the conversation history:
 
 Here's the new turn of conversation:
 <new_turn>
-{new_turn}
+{{datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}} user: {new_turn}
 </new_turn>
 
 The other instance of you felt surprised on the following reasoning levels:
@@ -76,10 +77,10 @@ The other instance of you felt surprised on the following reasoning levels:
 
 Format your response with one dictionary per level:
 <response>
-{
-    "level": (reasoning level),
+{{
+    "level": "reasoning level",
     "facts": ["fact1", "fact2", ...]
-},
+}},
 </response>
 Feel free to think inside <think></think> tags before your response.
 """
@@ -100,8 +101,8 @@ class SurpriseReasoner:
         Returns a tuple of (surprise_info).
         """
 
-        system_prompt = SURPRISE_SYSTEM_PROMPT.format(context=context, history=history)
-        user_prompt = SURPRISE_USER_PROMPT.format(new_turn=new_turn)
+        system_prompt = SURPRISE_SYSTEM_PROMPT
+        user_prompt = SURPRISE_USER_PROMPT.format(context=context, history=history, new_turn=new_turn)
 
         client = ModelClient(provider=PROVIDER, model=MODEL)
 
@@ -135,13 +136,15 @@ class SurpriseReasoner:
             
             # Parse the JSON response
             surprise_info = json.loads(json_str)
+
             return surprise_info
             
         except (ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to parse surprise check response: {e}")
+            console.print(f"Failed to parse surprise check response: {e}")
             return {"surprise": False, "levels": []}
 
-    
+    @observe()
+    @ai_track("Reason About Surprises")
     async def reason_about_surprises(self, context, history, new_turn, surprise_info, message_id: str) -> dict[str, list[str]]:
         """
         Function that reasons about the surprise values found.
@@ -149,7 +152,7 @@ class SurpriseReasoner:
         """
 
         if not surprise_info["surprise"]:
-            logger.info("No surprises found")
+            console.print("No surprises found")
             return {}
 
         levels = surprise_info["levels"]
@@ -164,6 +167,8 @@ class SurpriseReasoner:
         client = ModelClient(provider=PROVIDER, model=MODEL)
 
         langfuse_context.update_current_observation(input=messages, model=MODEL)
+
+        console.print(f"REASONING ABOUT SURPRISES...")
         
         try:
             response = await client.generate(
@@ -173,42 +178,49 @@ class SurpriseReasoner:
                 temperature=1,
                 use_caching=True,
             )
+            console.print(response)
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            logger.error(f"Error generating reasoning about surprises: {e}")
+            console.print(f"Error generating reasoning about surprises: {e}")
             raise e
         
         # Parse the response to extract the reasoning
         try:
-            # parse the reasoning trace
-            reasoning_trace = response.split("<think>")[1].split("</think>")[0]
             # Find the JSON response between <response> tags
             response_start = response.find("<response>") + len("<response>")
             response_end = response.find("</response>")
             json_str = response[response_start:response_end].strip()
+            
+            # Wrap the sequence of objects in an array if it's not already
+            if not json_str.startswith('['):
+                json_str = '[' + json_str + ']'
+
+            console.print(f"JSON STRING: {json_str}")
+            
             reasoning_info = json.loads(json_str)
+            console.print(f"PARSED OUT REASONING INFO: {reasoning_info}")
 
             # If we have an embedding store, save the new facts
-            if self.embedding_store:
-                facts_to_save = []
-                for level, facts in reasoning_info.items():
-                    for fact in facts:
-                        facts_to_save.append({
-                            "content": fact,
-                            "metadata": {
-                                "reasoning_level": level,
-                                "message_id": message_id
-                            }
-                        })
-
+            if self.embedding_store and reasoning_info:
+                console.print("ENTERING FOR LOOP TO WRITE FACTS TO COLLECTION")
+                for reasoning in reasoning_info:
+                    level = reasoning["level"]
+                    facts = reasoning["facts"]
+                    # Save each fact with its metadata
+                    console.print(f"FACTS TO BE WRITTEN: {facts}")
+                    await self.embedding_store.save_facts(
+                        facts,
+                        message_id=message_id,
+                        level=level
+                    )
             return reasoning_info
         
         except Exception as e:
-            logger.error(f"Failed to parse reasoning about surprises: {e}")
+            console.print(f"Failed to parse reasoning about surprises: {e}")
             return {}
         
     
-    async def recursive_reason(self, context: dict, history: list, new_turn: str, message_id: str) -> dict:
+    async def recursive_reason(self, context: dict, history: str, new_turn: str, message_id: str) -> dict:
         """
         Main recursive reasoning function that checks for surprises
         and calls itself again if surprises are found.
@@ -224,6 +236,8 @@ class SurpriseReasoner:
         try:
             # Check for surprises in the current context
             surprise_info = await self.check_for_surprise(context, history, new_turn)
+
+            console.print(f"RESULT FROM CHECKING SURPRISE: {surprise_info}")
             
             # If no surprises found, return the current context
             if not surprise_info["surprise"]:
@@ -234,12 +248,24 @@ class SurpriseReasoner:
                 context, history, new_turn, surprise_info, message_id
             )
             
+            console.print(f"RESULT FROM REASONING ABOUT SURPRISE: {reasoning_info}")
+
             # Update the context with the new reasoning
             updated_context = {**context}
-            for level, facts in reasoning_info.items():
-                if level not in updated_context:
-                    updated_context[level] = []
+            console.print(f"COPIED LIST OF EXISTING FACTS: {updated_context}")
+            # Handle both single dict and list of dicts
+            reasoning_list = reasoning_info if isinstance(reasoning_info, list) else [reasoning_info]
+            for reasoning in reasoning_list:
+                console.print("ENTERED FOR LOOP OVER REASONING INFO")
+                assert isinstance(reasoning, dict)
+                level = reasoning["level"]
+                facts = reasoning["facts"]
+                console.print(f"LEVEL: {level}\n FACTS: {facts}")
+                # if level not in updated_context:
+                #     updated_context[level] = []
                 updated_context[level].extend(facts)
+                console.print(f"NEW FACTS APPENDED TO CONTEXT: {updated_context}")
+
 
             # Recursively check for more surprises with the updated context
             return await self.recursive_reason(updated_context, history, new_turn, message_id)
