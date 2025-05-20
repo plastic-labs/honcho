@@ -28,6 +28,7 @@ class ModelProvider(str, Enum):
     CEREBRAS = "cerebras"
     GROQ = "groq"
     GEMINI = "gemini"
+    OLLAMA = "ollama"
     # Add other providers as needed
 
 
@@ -39,6 +40,7 @@ DEFAULT_MODELS = {
     ModelProvider.CEREBRAS: "llama-3.3-70b",
     ModelProvider.GROQ: "llama-3.3-70b-versatile",
     ModelProvider.GEMINI: "gemini-2.0-flash-lite",
+    ModelProvider.OLLAMA: "llama3.1:8b"
 }
 
 OPENAI_COMPATIBLE_PROVIDERS = [
@@ -46,6 +48,7 @@ OPENAI_COMPATIBLE_PROVIDERS = [
     ModelProvider.OPENROUTER,
     ModelProvider.CEREBRAS,
     ModelProvider.GROQ,
+    ModelProvider.OLLAMA
 ]
 
 DEFAULT_TEMPERATURE = 0.0

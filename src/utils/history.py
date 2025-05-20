@@ -1,6 +1,7 @@
 import logging
 from enum import Enum
 from typing import Optional, Union, cast
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -389,5 +390,5 @@ def format_messages(messages: list[models.Message]) -> str:
     if len(messages) == 0:
         return ""
     return "\n".join(
-        [f"{'user' if msg.is_user else 'assistant'}: {msg.content}" for msg in messages]
+        [f"{msg.created_at.strftime('%Y-%m-%d %H:%M:%S')} {'user' if msg.is_user else 'assistant'}: {msg.content}" for msg in messages]
     )
