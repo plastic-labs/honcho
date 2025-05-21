@@ -37,34 +37,12 @@ def upgrade() -> None:
                 """
             )
         )
+        print(f"HNSW index idx_documents_embedding_hnsw created on {schema}.documents table")
     except Exception as e:
         print(f"Error creating HNSW index idx_documents_embedding_hnsw on {schema}.documents table: {e}")
         
-    print(f"HNSW index idx_documents_embedding_hnsw created on {schema}.documents table")
 
-    # Create B-tree index for filtering
-    print(f"Creating index idx_documents_query_documents_lookup on {schema}.documents table for (app_id, user_id, collection_id)")
-    try:
-        op.create_index(
-            'idx_documents_query_documents_lookup',
-            'documents',
-            ['app_id', 'user_id', 'collection_id'],
-            unique=False,
-            schema=schema
-        )
-    except Exception as e:
-        print(f"Error creating idx_documents_query_documents_lookup index on {schema}.documents table: {e}")
-        
-    print(f"Index idx_documents_query_documents_lookup created on {schema}.documents table")
-
-
-def downgrade() -> None:
-    schema = getenv("DATABASE_SCHEMA", "public")
-    
-    print(f"Dropping B-tree index idx_documents_query_documents_lookup from {schema}.documents table")
-    op.drop_index('idx_documents_query_documents_lookup', table_name='documents', schema=schema)
-    print(f"B-tree index idx_documents_query_documents_lookup dropped from {schema}.documents table")
-
+def downgrade() -> None:    
     print(f"Dropping HNSW index idx_documents_embedding_hnsw from {schema}.documents table")
     op.execute(text(f"DROP INDEX IF EXISTS {schema}.idx_documents_embedding_hnsw;"))
     print(f"HNSW index idx_documents_embedding_hnsw dropped from {schema}.documents table")

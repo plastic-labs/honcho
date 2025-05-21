@@ -282,13 +282,6 @@ class Document(Base):
             postgresql_with={"m": 16, "ef_construction": 64}, # HNSW parameters
             postgresql_ops={"embedding": "vector_cosine_ops"}, # Cosine distance operator
         ),
-        Index(
-            "idx_documents_query_documents_lookup",
-            "app_id",
-            "user_id",
-            "collection_id",
-            unique=False
-        )
     )
 
 
