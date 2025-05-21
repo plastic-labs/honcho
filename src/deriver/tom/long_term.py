@@ -9,8 +9,6 @@ from sentry_sdk.ai.monitoring import ai_track
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 
-from .embeddings import CollectionEmbeddingStore
-
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -29,7 +27,6 @@ MAX_FACT_DISTANCE = 0.85
 async def get_user_representation_long_term(
     chat_history: str,
     session_id: str,
-    embedding_store: CollectionEmbeddingStore,
     user_representation: str = "None",
     tom_inference: str = "None",
     facts: Optional[list[str]] = None,

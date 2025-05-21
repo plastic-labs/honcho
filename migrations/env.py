@@ -107,8 +107,12 @@ def run_migrations_online() -> None:
         connection.execute(
             text(f"GRANT ALL ON SCHEMA {target_metadata.schema} TO current_user")
         )
+        # Install pgvector extension if it doesn't exist
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         # Set and verify search_path
-        connection.execute(text(f"SET search_path TO {target_metadata.schema}, public"))
+        connection.execute(
+            text(f"SET search_path TO {target_metadata.schema}, public, extensions")
+        )
         connection.commit()
 
         context.configure(
