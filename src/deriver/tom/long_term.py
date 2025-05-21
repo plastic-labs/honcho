@@ -9,7 +9,6 @@ from sentry_sdk.ai.monitoring import ai_track
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
 
-
 # Configure logging
 logger = logging.getLogger(__name__)
 

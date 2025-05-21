@@ -221,9 +221,7 @@ async def chat(
     long_term_task = asyncio.create_task(fetch_long_term())
     short_term_task = asyncio.create_task(run_tom_inference(chat_history, session_id))
 
-    facts, tom_inference = await asyncio.gather(
-        long_term_task, short_term_task
-    )
+    facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
     logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
     logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
 
@@ -241,7 +239,9 @@ async def chat(
             message_id=latest_message_id,
             with_inference=False,
         )
-    logger.debug(f"User representation generated: {len(user_representation)} characters")
+    logger.debug(
+        f"User representation generated: {len(user_representation)} characters"
+    )
 
     # Create a Dialectic chain with the fresh user representation
     chain = Dialectic(
