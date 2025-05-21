@@ -177,35 +177,6 @@ async def chat(
 
     # Setup phase - create resources we'll need for all operations
 
-<<<<<<< HEAD
-    # 1. Create embedding store
-    collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
-
-    embedding_store = CollectionEmbeddingStore(
-        db=db,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection.public_id,  # type: ignore
-    )
-    logger.debug(
-        f"Created embedding store with collection_id: {collection.public_id if collection else None}"
-    )
-
-    stmt = (
-        select(models.Message)
-        .where(models.Message.app_id == app_id)
-        .where(models.Message.user_id == user_id)
-        .where(models.Message.session_id == session_id)
-        .where(models.Message.is_user)
-        .order_by(models.Message.id.desc())
-        .limit(1)
-    )
-
-    latest_messages = await db.execute(stmt)
-    latest_message = latest_messages.scalar_one_or_none()
-    latest_message_id = latest_message.public_id if latest_message else None
-    logger.debug(f"Latest user message ID: {latest_message_id}")
-=======
     # 1. Fetch latest user message & chat history
     async with tracked_db("chat.load_history") as db_history:
         stmt = (
@@ -221,7 +192,6 @@ async def chat(
         latest_message = latest_messages.scalar_one_or_none()
         latest_message_id = latest_message.public_id if latest_message else None
         logger.debug(f"Latest user message ID: {latest_message_id}")
->>>>>>> rajat/dev-780
 
         chat_history, _, _ = await history.get_summarized_history(
             db_history, session_id, summary_type=history.SummaryType.SHORT
