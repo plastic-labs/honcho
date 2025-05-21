@@ -1,12 +1,15 @@
-import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 import respx
 from httpx import Response, TimeoutException
 
-from src.deriver.tom.single_prompt import TOM_SYSTEM_PROMPT, USER_REPRESENTATION_SYSTEM_PROMPT
 from src.agent import QUERY_GENERATION_SYSTEM
+from src.deriver.tom.single_prompt import (
+    TOM_SYSTEM_PROMPT,
+    USER_REPRESENTATION_SYSTEM_PROMPT,
+)
+
 
 @pytest.fixture
 def mock_model_client():

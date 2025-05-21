@@ -114,16 +114,6 @@ async def setup_test_database(db_url):
             raise
     return engine
 
-
-@pytest.fixture(scope="session")
-def event_loop(request):
-    """Create an instance of the default event loop for each test case."""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    yield loop
-    loop.close()
-
-
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
     create_test_database(TEST_DB_URL)
