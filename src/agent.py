@@ -192,9 +192,10 @@ async def chat(
             collection = await crud.get_or_create_user_protected_collection(
                 db_embed, app_id, user_id
             )
-        facts = await get_long_term_facts(
-            final_query, app_id, user_id, collection.public_id
-        )
+            collection_id = (
+                collection.public_id
+            )  # Extract the ID while session is active
+        facts = await get_long_term_facts(final_query, app_id, user_id, collection_id)
         return facts
 
     long_term_task = asyncio.create_task(fetch_long_term())
@@ -283,16 +284,14 @@ async def get_long_term_facts(
     async def execute_query(i: int, search_query: str) -> list[str]:
         logger.debug(f"Starting query {i + 1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
-        async with tracked_db("chat.get_long_term_facts") as query_db:
-            query_embedding_store = CollectionEmbeddingStore(
-                db=query_db,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-            )
-            facts = await query_embedding_store.get_relevant_facts(
-                search_query, top_k=10, max_distance=0.85
-            )
+        query_embedding_store = CollectionEmbeddingStore(
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+        )
+        facts = await query_embedding_store.get_relevant_facts(
+            search_query, top_k=10, max_distance=0.85
+        )
         query_time = asyncio.get_event_loop().time() - query_start
         logger.debug(f"Query {i + 1} retrieved {len(facts)} facts in {query_time:.2f}s")
         return facts

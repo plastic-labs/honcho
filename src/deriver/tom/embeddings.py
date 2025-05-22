@@ -3,13 +3,13 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import crud, schemas
+from ...dependencies import tracked_db
 
 logger = logging.getLogger(__name__)
 
 
 class CollectionEmbeddingStore:
-    def __init__(self, db: AsyncSession, app_id: str, user_id: str, collection_id: str):
-        self.db = db
+    def __init__(self, app_id: str, user_id: str, collection_id: str):
         self.app_id = app_id
         self.user_id = user_id
         self.collection_id = collection_id
@@ -28,24 +28,25 @@ class CollectionEmbeddingStore:
             replace_duplicates: If True, replace old duplicates with new facts. If False, discard new duplicates
             similarity_threshold: Facts with similarity above this threshold are considered duplicates
         """
-        for fact in facts:
-            # Create document with duplicate checking
-            try:
-                metadata = {}
-                if message_id:
-                    metadata["message_id"] = message_id
-                await crud.create_document(
-                    self.db,
-                    document=schemas.DocumentCreate(content=fact, metadata=metadata),
-                    app_id=self.app_id,
-                    user_id=self.user_id,
-                    collection_id=self.collection_id,
-                    duplicate_threshold=1
-                    - similarity_threshold,  # Convert similarity to distance
-                )
-            except Exception as e:
-                logger.error(f"Error creating document: {e}")
-                continue
+        async with tracked_db("embedding_store.save_facts") as db:
+            for fact in facts:
+                # Create document with duplicate checking
+                try:
+                    metadata = {}
+                    if message_id:
+                        metadata["message_id"] = message_id
+                    await crud.create_document(
+                        db,
+                        document=schemas.DocumentCreate(content=fact, metadata=metadata),
+                        app_id=self.app_id,
+                        user_id=self.user_id,
+                        collection_id=self.collection_id,
+                        duplicate_threshold=1
+                        - similarity_threshold,  # Convert similarity to distance
+                    )
+                except Exception as e:
+                    logger.error(f"Error creating document: {e}")
+                    continue
 
     async def get_relevant_facts(
         self, query: str, top_k: int = 5, max_distance: float = 0.3
@@ -60,17 +61,18 @@ class CollectionEmbeddingStore:
         Returns:
             List of facts sorted by relevance
         """
-        documents = await crud.query_documents(
-            self.db,
-            app_id=self.app_id,
-            user_id=self.user_id,
-            collection_id=self.collection_id,
-            query=query,
-            max_distance=max_distance,
-            top_k=top_k,
-        )
+        async with tracked_db("embedding_store.get_relevant_facts") as db:
+            documents = await crud.query_documents(
+                db,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                query=query,
+                max_distance=max_distance,
+                top_k=top_k,
+            )
 
-        return [doc.content for doc in documents]
+            return [doc.content for doc in documents]
 
     async def remove_duplicates(
         self, facts: list[str], similarity_threshold: float = 0.85
@@ -86,29 +88,30 @@ class CollectionEmbeddingStore:
         """
         unique_facts = []
 
-        for fact in facts:
-            try:
-                # Check for duplicates using the crud function
-                duplicates = await crud.get_duplicate_documents(
-                    self.db,
-                    app_id=self.app_id,
-                    user_id=self.user_id,
-                    collection_id=self.collection_id,
-                    content=fact,
-                    similarity_threshold=similarity_threshold,
-                )
-
-                if not duplicates:
-                    # No duplicates found, add to unique facts
-                    unique_facts.append(fact)
-                else:
-                    # Log duplicate found
-                    logger.debug(
-                        f"Duplicate found: {duplicates[0].content}. Ignoring fact: {fact}"
+        async with tracked_db("embedding_store.remove_duplicates") as db:
+            for fact in facts:
+                try:
+                    # Check for duplicates using the crud function
+                    duplicates = await crud.get_duplicate_documents(
+                        db,
+                        app_id=self.app_id,
+                        user_id=self.user_id,
+                        collection_id=self.collection_id,
+                        content=fact,
+                        similarity_threshold=similarity_threshold,
                     )
-            except Exception as e:
-                logger.error(f"Error checking for duplicates: {e}")
-                # If there's an error, still include the fact to avoid losing information
-                unique_facts.append(fact)
+
+                    if not duplicates:
+                        # No duplicates found, add to unique facts
+                        unique_facts.append(fact)
+                    else:
+                        # Log duplicate found
+                        logger.debug(
+                            f"Duplicate found: {duplicates[0].content}. Ignoring fact: {fact}"
+                        )
+                except Exception as e:
+                    logger.error(f"Error checking for duplicates: {e}")
+                    # If there's an error, still include the fact to avoid losing information
+                    unique_facts.append(fact)
 
         return unique_facts

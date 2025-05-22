@@ -119,7 +119,6 @@ async def process_user_message(
         db=db, app_id=app_id, user_id=user_id
     )
     embedding_store = CollectionEmbeddingStore(
-        db=db,
         app_id=app_id,
         user_id=user_id,
         collection_id=collection.public_id,  # type: ignore
