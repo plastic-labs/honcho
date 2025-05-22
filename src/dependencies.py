@@ -1,4 +1,3 @@
-import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends
@@ -16,6 +15,7 @@ async def get_db():
     db: AsyncSession = SessionLocal()
     try:
         await db.execute(text(f"SET application_name = '{context}'"))
+        await db.commit()
         yield db
     except Exception:
         await db.rollback()
@@ -29,21 +29,26 @@ async def get_db():
 @asynccontextmanager
 async def tracked_db(operation_name=None):
     """Context manager for tracked database sessions"""
-    # Get request ID if available, or create operation-specific one
-    context = request_context.get()
+    # Generate a unique ID for this DB session
     token = None
 
-    if not context and operation_name:
-        context = f"task:{operation_name}:{str(uuid.uuid4())[:8]}"
-        token = request_context.set(context)
+    # Always prioritize the operation_name if provided
+    if operation_name:
+        app_name = f"task:{operation_name}"
+        # Only modify the context var if we're not in a request context
+        if not request_context.get():
+            token = request_context.set(app_name)
+    else:
+        # Fallback to request context if no operation name provided
+        context = request_context.get()
+        app_name = context if context else "task:unspecified"
 
     # Create session with tracking info
     db = SessionLocal()
 
     try:
-        await db.execute(
-            text(f"SET application_name = '{context or f'task:{operation_name}'}'")
-        )
+        await db.execute(text(f"SET application_name = '{app_name}'"))
+        await db.commit()
 
         yield db
         # Explicitly end transaction if still open
