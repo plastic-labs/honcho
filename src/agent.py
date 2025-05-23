@@ -43,23 +43,6 @@ QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused s
 load_dotenv()
 
 
-class AsyncSet:
-    def __init__(self):
-        self._set: set[str] = set()
-        self._lock = asyncio.Lock()
-
-    async def add(self, item: str):
-        async with self._lock:
-            self._set.add(item)
-
-    async def update(self, items: Iterable[str]):
-        async with self._lock:
-            self._set.update(items)
-
-    def get_set(self) -> set[str]:
-        return self._set.copy()
-
-
 class Dialectic:
     def __init__(self, agent_input: str, user_representation: str, chat_history: str):
         self.agent_input = agent_input
@@ -152,7 +135,6 @@ async def chat(
     user_id: str,
     session_id: str,
     queries: str | list[str],
-    db: AsyncSession,
     stream: bool = False,
 ) -> schemas.DialecticResponse | MessageStreamManager:
     """
@@ -178,69 +160,65 @@ async def chat(
 
     # Setup phase - create resources we'll need for all operations
 
-    # 1. Create embedding store
-    collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
+    # 1. Fetch latest user message & chat history
+    async with tracked_db("chat.load_history") as db_history:
+        stmt = (
+            select(models.Message)
+            .where(models.Message.app_id == app_id)
+            .where(models.Message.user_id == user_id)
+            .where(models.Message.session_id == session_id)
+            .where(models.Message.is_user)
+            .order_by(models.Message.id.desc())
+            .limit(1)
+        )
+        latest_messages = await db_history.execute(stmt)
+        latest_message = latest_messages.scalar_one_or_none()
+        latest_message_id = latest_message.public_id if latest_message else None
+        logger.debug(f"Latest user message ID: {latest_message_id}")
 
-    embedding_store = CollectionEmbeddingStore(
-        db=db,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection.public_id,  # type: ignore
-    )
-    logger.debug(
-        f"Created embedding store with collection_id: {collection.public_id if collection else None}"
-    )
+        chat_history, _, _ = await history.get_summarized_history(
+            db_history, session_id, summary_type=history.SummaryType.SHORT
+        )
+        if not chat_history:
+            logger.warning(f"No chat history found for session {session_id}")
+            chat_history = f"someone asked this about the user's message: {final_query}"
+        logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
+        message_count = len(chat_history.split("\n"))
+        logger.debug(f"Retrieved chat history: {message_count} messages")
 
-    stmt = (
-        select(models.Message)
-        .where(models.Message.app_id == app_id)
-        .where(models.Message.user_id == user_id)
-        .where(models.Message.session_id == session_id)
-        .where(models.Message.is_user)
-        .order_by(models.Message.id.desc())
-        .limit(1)
-    )
+    # Run short-term inference and long-term facts in parallel
+    async def fetch_long_term():
+        async with tracked_db("chat.get_collection") as db_embed:
+            collection = await crud.get_or_create_user_protected_collection(
+                db_embed, app_id, user_id
+            )
+            collection_id = (
+                collection.public_id
+            )  # Extract the ID while session is active
+        facts = await get_long_term_facts(final_query, app_id, user_id, collection_id)
+        return facts
 
-    latest_messages = await db.execute(stmt)
-    latest_message = latest_messages.scalar_one_or_none()
-    latest_message_id = latest_message.public_id if latest_message else None
-    logger.debug(f"Latest user message ID: {latest_message_id}")
+    long_term_task = asyncio.create_task(fetch_long_term())
+    short_term_task = asyncio.create_task(run_tom_inference(chat_history, session_id))
 
-    # Get chat history for the session
-    chat_history, _, _ = await history.get_summarized_history(
-        db, session_id, summary_type=history.SummaryType.SHORT
-    )
-    if not chat_history:
-        logger.warning(f"No chat history found for session {session_id}")
-        chat_history = f"someone asked this about the user's message: {final_query}"
-    logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
-    message_count = len(chat_history.split("\n"))
-    logger.debug(f"Retrieved chat history: {message_count} messages")
-
-    # Run both long-term and short-term context retrieval concurrently
-    logger.debug("Starting parallel tasks for context retrieval")
-    long_term_task = get_long_term_facts(final_query, embedding_store)
-    short_term_task = run_tom_inference(chat_history, session_id)
-
-    # Wait for both tasks to complete
     facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
     logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
     logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
 
     # Generate a fresh user representation
     logger.debug("Generating user representation")
-    user_representation = await generate_user_representation(
-        app_id=app_id,
-        user_id=user_id,
-        session_id=session_id,
-        chat_history=chat_history,
-        tom_inference=tom_inference,
-        facts=facts,
-        embedding_store=embedding_store,
-        db=db,
-        message_id=latest_message_id,
-        with_inference=False,
-    )
+    async with tracked_db("chat.generate_user_representation") as db_rep:
+        user_representation = await generate_user_representation(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            chat_history=chat_history,
+            tom_inference=tom_inference,
+            facts=facts,
+            db=db_rep,
+            message_id=latest_message_id,
+            with_inference=False,
+        )
     logger.debug(
         f"User representation generated: {len(user_representation)} characters"
     )
@@ -282,7 +260,7 @@ async def chat(
 
 
 async def get_long_term_facts(
-    query: str, embedding_store: CollectionEmbeddingStore
+    query: str, app_id: str, user_id: str, collection_id: str
 ) -> list[str]:
     """
     Generate queries based on the dialectic query and retrieve relevant facts.
@@ -306,7 +284,12 @@ async def get_long_term_facts(
     async def execute_query(i: int, search_query: str) -> list[str]:
         logger.debug(f"Starting query {i + 1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
-        facts = await embedding_store.get_relevant_facts(
+        query_embedding_store = CollectionEmbeddingStore(
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+        )
+        facts = await query_embedding_store.get_relevant_facts(
             search_query, top_k=10, max_distance=0.85
         )
         query_time = asyncio.get_event_loop().time() - query_start
@@ -430,7 +413,6 @@ async def generate_user_representation(
     chat_history: str,
     tom_inference: str,
     facts: list[str],
-    embedding_store: CollectionEmbeddingStore,
     db: AsyncSession,
     message_id: Optional[str] = None,
     with_inference: bool = False,
@@ -477,7 +459,6 @@ async def generate_user_representation(
             chat_history=chat_history,
             session_id=session_id,
             facts=facts,
-            embedding_store=embedding_store,
             user_representation=latest_representation,
             tom_inference=tom_inference,
         )
@@ -505,36 +486,32 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
         logger.debug(f"Saving representation to message_id: {message_id}")
         save_start = asyncio.get_event_loop().time()
         try:
-            async with tracked_db("agent.generate_user_representation") as save_db:
-                try:
-                    # First check if message exists
-                    message_check_stmt = select(models.Message).where(
-                        models.Message.public_id == message_id
-                    )
-                    message_check = await save_db.execute(message_check_stmt)
-                    message_exists = message_check.scalar_one_or_none() is not None
+            # First check if message exists
+            message_check_stmt = select(models.Message).where(
+                models.Message.public_id == message_id
+            )
+            message_check = await db.execute(message_check_stmt)
+            message_exists = message_check.scalar_one_or_none() is not None
 
-                    if not message_exists:
-                        message_id = None
-                    else:
-                        metamessage = models.Metamessage(
-                            app_id=app_id,
-                            user_id=user_id,
-                            session_id=session_id,
-                            message_id=message_id if message_id else None,
-                            label=USER_REPRESENTATION_METAMESSAGE_TYPE,
-                            content=representation,
-                            h_metadata={},
-                        )
-                        save_db.add(metamessage)
-                        await save_db.commit()
-                        save_time = asyncio.get_event_loop().time() - save_start
-                        logger.debug(f"Representation saved in {save_time:.2f}s")
-                except Exception as inner_e:
-                    logger.error(f"Error during save DB operation: {str(inner_e)}")
-                    await save_db.rollback()
+            if not message_exists:
+                message_id = None
+            else:
+                metamessage = models.Metamessage(
+                    app_id=app_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    message_id=message_id if message_id else None,
+                    label=USER_REPRESENTATION_METAMESSAGE_TYPE,
+                    content=representation,
+                    h_metadata={},
+                )
+                db.add(metamessage)
+                await db.commit()
+                save_time = asyncio.get_event_loop().time() - save_start
+                logger.debug(f"Representation saved in {save_time:.2f}s")
         except Exception as e:
-            logger.error(f"Error creating DB session: {str(e)}")
+            logger.error(f"Error during save DB operation: {str(e)}")
+            await db.rollback()
 
     total_time = asyncio.get_event_loop().time() - rep_start_time
     logger.debug(f"Total representation generation completed in {total_time:.2f}s")
