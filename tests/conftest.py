@@ -181,6 +181,7 @@ def auth_client(client, request, monkeypatch):
     """
     # Ensure USE_AUTH is always True for this fixture
     monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
 
     # Clear any existing Authorization header
     client.headers.pop("Authorization", None)

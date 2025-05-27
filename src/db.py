@@ -38,13 +38,7 @@ engine = create_async_engine(
     settings.DB.CONNECTION_URI,
     connect_args=connect_args,
     echo=settings.DB.SQL_DEBUG,
-    pool_pre_ping=settings.DB.POOL_PRE_PING,
-    pool_size=settings.DB.POOL_SIZE,
-    max_overflow=settings.DB.MAX_OVERFLOW,
-    pool_timeout=settings.DB.POOL_TIMEOUT,
-    pool_recycle=settings.DB.POOL_RECYCLE,
-    pool_use_lifo=settings.DB.POOL_USE_LIFO,
-    poolclass=pool_class,
+    **engine_kwargs,
 )
 
 SessionLocal = async_sessionmaker(

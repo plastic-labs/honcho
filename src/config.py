@@ -5,6 +5,7 @@ from typing import Annotated, Any, ClassVar, Optional
 import tomllib
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
+from pydantic_core.core_schema import FieldValidationInfo
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -97,7 +98,7 @@ class TomlSettings(BaseSettings):
         env_settings: PydanticBaseSettingsSource,
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
-    ):
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
         # Return sources in priority order (first is lowest priority)
         return (
             init_settings,
@@ -133,8 +134,17 @@ class DBSettings(TomlSettings):
 class AuthSettings(TomlSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_")
 
-    USE_AUTH: bool = True
+    USE_AUTH: bool = False
     JWT_SECRET: Optional[str] = None  # Must be set if USE_AUTH is true
+
+    @field_validator("JWT_SECRET")
+    @classmethod
+    def _require_jwt_secret(
+        cls, v: Optional[str], info: FieldValidationInfo
+    ) -> Optional[str]:
+        if info.data.get("USE_AUTH") and v is None:
+            raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
+        return v
 
 
 class SentrySettings(TomlSettings):
