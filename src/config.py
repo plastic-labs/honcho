@@ -5,7 +5,7 @@ from typing import Annotated, Any, ClassVar, Optional
 import tomllib
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
-from pydantic_core.core_schema import FieldValidationInfo
+from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -140,7 +140,7 @@ class AuthSettings(TomlSettings):
     @field_validator("JWT_SECRET")
     @classmethod
     def _require_jwt_secret(
-        cls, v: Optional[str], info: FieldValidationInfo
+        cls, v: Optional[str], info: ValidationInfo
     ) -> Optional[str]:
         if info.data.get("USE_AUTH") and v is None:
             raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
