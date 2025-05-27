@@ -64,7 +64,7 @@ class ModelClient:
 
     def __init__(
         self,
-        provider: ModelProvider = ModelProvider.ANTHROPIC,
+        provider: ModelProvider = ModelProvider.OPENAI, # patching default provider to openai for mocking with muk
         model: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,

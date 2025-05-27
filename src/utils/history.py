@@ -38,8 +38,8 @@ class SummaryType(Enum):
 
 
 # Default model settings for summary generation
-DEFAULT_PROVIDER = ModelProvider.GEMINI
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
+DEFAULT_PROVIDER = ModelProvider.OPENAI # patching to openai for mocking with muk
+DEFAULT_MODEL = "gpt-4o"
 
 
 async def get_session_summaries(

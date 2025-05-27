@@ -26,8 +26,8 @@ logger = logging.getLogger(__name__)
 
 USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
 
-DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
-DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
+DEF_DIALECTIC_PROVIDER = ModelProvider.OPENAI # patching to openai for mocking with muk
+DEF_DIALECTIC_MODEL = "gpt-4o" 
 
 DEF_QUERY_GENERATION_PROVIDER = ModelProvider.GROQ
 DEF_QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
