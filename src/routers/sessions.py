@@ -251,6 +251,31 @@ async def chat(
 
 
 @router.get(
+    "/{session_id}/deriver/status",
+    response_model=schemas.DeriverStatus,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
+async def get_deriver_status(
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    db=db,
+):
+    """Get the deriver status for a session"""
+    try:
+        return await crud.get_deriver_status(
+            db, app_id=app_id, user_id=user_id, session_id=session_id
+        )
+    except ResourceNotFoundException as e:
+        logger.warning(f"Failed to get deriver status for session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
+
+
+@router.get(
     "/{session_id}/clone",
     response_model=schemas.Session,
     dependencies=[

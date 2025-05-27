@@ -295,3 +295,27 @@ class MessageBatchCreate(BaseModel):
     """Schema for batch message creation with a max of 100 messages"""
 
     messages: list[MessageCreate] = Field(..., max_length=100)
+
+
+
+class DeriverStatus(BaseModel):
+    """Schema for deriver status response"""
+    
+    unprocessed_count: int = Field(description="Number of unprocessed messages in the queue")
+    processed_count: int = Field(description="Number of messages already processed")
+    total_count: int = Field(description="Total number of messages in the queue")
+    
+    @computed_field
+    @property
+    def is_complete(self) -> bool:
+        """Whether all messages have been processed"""
+        return self.unprocessed_count == 0
+    
+    @computed_field
+    @property
+    def progress_percentage(self) -> float:
+        """Processing progress as a percentage (0-100)"""
+        if self.total_count == 0:
+            return 100.0
+        return round((self.processed_count / self.total_count) * 100, 2)
+    
