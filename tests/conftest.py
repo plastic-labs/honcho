@@ -56,7 +56,7 @@ DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
 # Test API authorization
 USE_AUTH = settings.AUTH.USE_AUTH
-AUTH_JWT_SECRET = settings.AUTH.JWT_SECRET
+AUTH_JWT_SECRET = settings.AUTH.JWT_SECRET or "test-secret"
 
 
 def create_test_database(db_url):

@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any, ClassVar, Optional
 
 import tomllib
 from dotenv import load_dotenv
@@ -15,6 +15,8 @@ from pydantic_settings import (
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 
 def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
     """Load configuration from TOML file if it exists."""
@@ -24,7 +26,7 @@ def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
             with open(config_file, "rb") as f:
                 return tomllib.load(f)
         except (tomllib.TOMLDecodeError, OSError) as exc:
-            logging.warning("Failed to load %s: %s", config_path, exc)
+            logger.warning("Failed to load %s: %s", config_path, exc)
             return {}
     return {}
 
@@ -36,10 +38,10 @@ TOML_CONFIG = load_toml_config()
 class TomlConfigSettingsSource(PydanticBaseSettingsSource):
     """Custom settings source for loading from TOML file."""
 
-    def __init__(self, settings_cls: type[BaseSettings]):
+    def __init__(self, settings_cls: type[BaseSettings]) -> None:
         super().__init__(settings_cls)
 
-    SECTION_MAP: dict[str, str] = {
+    SECTION_MAP: ClassVar[dict[str, str]] = {
         "DB": "db",
         "AUTH": "auth",
         "SENTRY": "sentry",
@@ -90,11 +92,11 @@ class TomlSettings(BaseSettings):
     @classmethod
     def settings_customise_sources(
         cls,
-        settings_cls,
-        init_settings,
-        env_settings,
-        dotenv_settings,
-        file_secret_settings,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
     ):
         # Return sources in priority order (first is lowest priority)
         return (

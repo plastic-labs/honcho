@@ -365,9 +365,17 @@ async def generate_semantic_queries(query: str) -> list[str]:
     logger.debug("Calling LLM for query generation")
     llm_start = asyncio.get_event_loop().time()
 
+    try:
+        provider = ModelProvider(settings.LLM.QUERY_GENERATION_PROVIDER)
+    except ValueError as e:
+        logger.error(
+            f"Invalid query-generation provider '{settings.LLM.QUERY_GENERATION_PROVIDER}': {e}"
+        )
+        raise
+
     # Create a new model client
     client = ModelClient(
-        provider=ModelProvider(settings.LLM.QUERY_GENERATION_PROVIDER),
+        provider=provider,
         model=settings.LLM.QUERY_GENERATION_MODEL,
     )
 

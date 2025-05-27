@@ -195,7 +195,7 @@ class QueueManager:
                                 settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
                             )
                     except Exception as e:
-                        logger.exception("Error in polling loop: %s", str(e))
+                        logger.exception("Error in polling loop")
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
                         # Note: rollback is handled by tracked_db dependency

@@ -27,7 +27,7 @@ from src.routers import (
 from src.security import create_admin_jwt
 
 
-def get_log_level():
+def get_log_level() -> int:
     """
     Convert log level string from settings to logging module constant.
 
