@@ -4,6 +4,7 @@ from typing import Any, Optional
 
 import tomllib
 from dotenv import load_dotenv
+from pydantic.fields import Field
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -50,7 +51,8 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "": "app",  # For AppSettings with no prefix
     }
 
-    def get_field_value(self, field_name: str) -> tuple[Any, str, bool]:
+    def get_field_value(self, field: Field) -> tuple[Any, str, bool]:
+        field_name = field.name
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
         if prefix.endswith("_"):
@@ -118,6 +120,7 @@ class DBSettings(TomlSettings):
     POOL_RECYCLE: int = 300  # seconds
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
+    TRACING: bool = False
 
 
 class AuthSettings(TomlSettings):

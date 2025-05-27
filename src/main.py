@@ -174,6 +174,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.middleware("http")
 async def track_request(request: Request, call_next):
+    if not settings.DB.TRACING:
+        return await call_next(request)
     # Create a request ID that includes endpoint information
     endpoint = re.sub(r"/[A-Za-z0-9_-]{21}", "", request.url.path).replace("/", "_")
     request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"
