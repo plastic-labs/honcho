@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
+from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
 
 from src.config import settings
 

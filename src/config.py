@@ -1,10 +1,10 @@
 import logging
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 import tomllib
 from dotenv import load_dotenv
-from pydantic.fields import Field
+from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -115,10 +115,14 @@ class DBSettings(TomlSettings):
     SCHEMA: str = "public"
     POOL_CLASS: str = "default"
     POOL_PRE_PING: bool = True
-    POOL_SIZE: int = 10
-    MAX_OVERFLOW: int = 20
-    POOL_TIMEOUT: int = 30  # seconds
-    POOL_RECYCLE: int = 300  # seconds
+    POOL_SIZE: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
+    MAX_OVERFLOW: Annotated[int, Field(default=20, ge=0, le=1000)] = 20
+    POOL_TIMEOUT: Annotated[int, Field(default=30, gt=0, le=300)] = (
+        30  # seconds (max 5 minutes)
+    )
+    POOL_RECYCLE: Annotated[int, Field(default=300, gt=0, le=7200)] = (
+        300  # seconds (max 2 hours)
+    )
     POOL_USE_LIFO: bool = True
     SQL_DEBUG: bool = False
     TRACING: bool = False
@@ -136,8 +140,8 @@ class SentrySettings(TomlSettings):
 
     ENABLED: bool = False
     DSN: Optional[str] = None
-    TRACES_SAMPLE_RATE: float = 0.1
-    PROFILES_SAMPLE_RATE: float = 0.1
+    TRACES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
+    PROFILES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
 
 
 class OpenTelemetrySettings(TomlSettings):
@@ -148,8 +152,8 @@ class OpenTelemetrySettings(TomlSettings):
 class LLMSettings(TomlSettings):
     model_config = SettingsConfigDict(env_prefix="LLM_")
     # General LLM settings
-    DEFAULT_MAX_TOKENS: int = 1000
-    DEFAULT_TEMPERATURE: float = 0.0
+    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 1000
+    DEFAULT_TEMPERATURE: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)] = 0.0
 
     # Dialectic specific
     DIALECTIC_PROVIDER: str = "anthropic"
@@ -166,8 +170,8 @@ class LLMSettings(TomlSettings):
     SUMMARY_MODEL: str = (
         "gemini-2.0-flash-lite"  # Consider specific model version if needed
     )
-    SUMMARY_MAX_TOKENS_SHORT: int = 1000
-    SUMMARY_MAX_TOKENS_LONG: int = 2000
+    SUMMARY_MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10000)] = 1000
+    SUMMARY_MAX_TOKENS_LONG: Annotated[int, Field(default=2000, gt=0, le=20000)] = 2000
     # SUMMARY_SYSTEM_PROMPT_SHORT_FILE: Optional[str] = "prompts/summary_short_system.txt"
     # SUMMARY_SYSTEM_PROMPT_LONG_FILE: Optional[str] = "prompts/summary_long_system.txt"
 
@@ -175,10 +179,10 @@ class LLMSettings(TomlSettings):
 class AgentSettings(TomlSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_")
 
-    SEMANTIC_SEARCH_TOP_K: int = 10
-    SEMANTIC_SEARCH_MAX_DISTANCE: float = (
-        0.85  # Max distance for semantic search relevance
-    )
+    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
+    SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
+        float, Field(default=0.85, ge=0.0, le=1.0)
+    ] = 0.85  # Max distance for semantic search relevance
     TOM_INFERENCE_METHOD: str = "single_prompt"
     USER_REPRESENTATION_METAMESSAGE_TYPE: str = "honcho_user_representation"
 
@@ -186,9 +190,13 @@ class AgentSettings(TomlSettings):
 class DeriverSettings(TomlSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_")
 
-    WORKERS: int = 1
-    STALE_SESSION_TIMEOUT_MINUTES: int = 5
-    POLLING_SLEEP_INTERVAL_SECONDS: float = 1.0
+    WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
+    STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = (
+        5  # Max 24 hours
+    )
+    POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
+        float, Field(default=1.0, gt=0.0, le=60.0)
+    ] = 1.0
     TOM_METHOD: str = "single_prompt"
     USER_REPRESENTATION_METHOD: str = "long_term"
 
@@ -196,8 +204,8 @@ class DeriverSettings(TomlSettings):
 class HistorySettings(TomlSettings):
     model_config = SettingsConfigDict(env_prefix="HISTORY_")
 
-    MESSAGES_PER_SHORT_SUMMARY: int = 20
-    MESSAGES_PER_LONG_SUMMARY: int = 60
+    MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
+    MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
 
 class AppSettings(TomlSettings):
@@ -207,7 +215,7 @@ class AppSettings(TomlSettings):
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
     FASTAPI_HOST: str = "0.0.0.0"
-    FASTAPI_PORT: int = 8000
+    FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
 
     # Nested settings models
     DB: DBSettings = DBSettings()
@@ -218,6 +226,15 @@ class AppSettings(TomlSettings):
     AGENT: AgentSettings = AgentSettings()
     DERIVER: DeriverSettings = DeriverSettings()
     HISTORY: HistorySettings = HistorySettings()
+
+    @field_validator("LOG_LEVEL")
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        v_upper = v.upper()
+        if v_upper not in valid_levels:
+            raise ValueError(f"Invalid log level: {v}. Must be one of {valid_levels}")
+        return v_upper
 
 
 # Global settings instance
