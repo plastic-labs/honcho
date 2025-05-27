@@ -4,6 +4,7 @@ from typing import Optional
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
 
 from src.config import settings
 
@@ -15,6 +16,24 @@ request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     default=None,
 )
 
+engine_kwargs = {}
+
+pool_class = AsyncAdaptedQueuePool
+if settings.DB.POOL_CLASS == "null":
+    engine_kwargs["poolclass"] = NullPool
+else:
+    # Only add pool-related kwargs for pooled connections
+    engine_kwargs.update(
+        {
+            "pool_pre_ping": settings.DB.POOL_PRE_PING,
+            "pool_size": settings.DB.POOL_SIZE,
+            "max_overflow": settings.DB.MAX_OVERFLOW,
+            "pool_timeout": settings.DB.POOL_TIMEOUT,
+            "pool_recycle": settings.DB.POOL_RECYCLE,
+            "pool_use_lifo": settings.DB.POOL_USE_LIFO,
+        }
+    )
+
 engine = create_async_engine(
     settings.DB.CONNECTION_URI,
     connect_args=connect_args,
@@ -25,6 +44,7 @@ engine = create_async_engine(
     pool_timeout=settings.DB.POOL_TIMEOUT,
     pool_recycle=settings.DB.POOL_RECYCLE,
     pool_use_lifo=settings.DB.POOL_USE_LIFO,
+    poolclass=pool_class,
 )
 
 SessionLocal = async_sessionmaker(

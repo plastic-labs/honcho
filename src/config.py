@@ -113,6 +113,7 @@ class DBSettings(TomlSettings):
         "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
     )
     SCHEMA: str = "public"
+    POOL_CLASS: str = "default"
     POOL_PRE_PING: bool = True
     POOL_SIZE: int = 10
     MAX_OVERFLOW: int = 20
