@@ -300,21 +300,26 @@ async def get_session_context(
     app_id: str = Path(..., description="ID of the app"),
     user_id: str = Path(..., description="ID of the user"),
     session_id: str = Path(..., description="ID of the session"),
-    message_count: Optional[int] = Query(
+    count: Optional[int] = Query(
         None, description="Number of messages to return (max 60)", ge=1, le=60
     ),
+    summary_type: str = Query(
+        "short", description="Type of summary to use ('short' or 'long')"),
     db=db,
 ):
     """Get session context with latest summary and messages after that summary"""
     try:
-        messages, latest_summary = await history.get_messages_since_latest_summary(
-            db, session_id, summary_type=history.SummaryType.SHORT
+        summary_type_enum = (
+            history.SummaryType.LONG 
+            if summary_type.lower() == "long" 
+            else history.SummaryType.SHORT
         )
         
-        if message_count is not None:
-            messages = messages[:message_count]
-        else:
-            messages = messages[:60]
+        messages, latest_summary = await history.get_messages_since_latest_summary(
+            db, session_id, summary_type=summary_type_enum
+        )
+        
+        messages = messages[:count] if count is not None else messages[:60]
         
         return schemas.SessionContextResponse(
             summary=latest_summary,
