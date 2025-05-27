@@ -1,5 +1,4 @@
 import contextvars
-import os
 from typing import Optional
 
 from sqlalchemy import MetaData, create_engine, text

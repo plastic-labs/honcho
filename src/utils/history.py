@@ -5,8 +5,8 @@ from typing import Optional, Union, cast
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.utils.model_client import ModelClient, ModelProvider
 from src.config import settings
+from src.utils.model_client import ModelClient, ModelProvider
 
 from .. import models
 

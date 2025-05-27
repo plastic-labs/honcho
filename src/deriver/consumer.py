@@ -6,11 +6,12 @@ from langfuse.decorators import observe
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
+
 from .. import crud
 from ..utils import history
 from .tom.embeddings import CollectionEmbeddingStore
 from .tom.long_term import extract_facts_long_term
-from src.config import settings
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True

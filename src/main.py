@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 import uuid
 from contextlib import asynccontextmanager
@@ -12,6 +11,7 @@ from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
@@ -25,7 +25,6 @@ from src.routers import (
     users,
 )
 from src.security import create_admin_jwt
-from src.config import settings
 
 
 def get_log_level():

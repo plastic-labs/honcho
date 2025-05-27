@@ -1,6 +1,5 @@
 import datetime
 import logging
-import os
 from typing import Annotated, Optional
 
 import jwt
@@ -9,8 +8,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.dependencies import get_db
 from src.config import settings
+from src.dependencies import get_db
 
 from .exceptions import AuthenticationException
 

@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import Iterable
 from typing import Any, Optional
 
 import sentry_sdk

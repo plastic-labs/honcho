@@ -1,5 +1,4 @@
 import asyncio
-import os
 import signal
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
