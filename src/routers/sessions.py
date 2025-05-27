@@ -16,6 +16,7 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
+from src.utils import history
 
 logger = logging.getLogger(__name__)
 
@@ -283,4 +284,42 @@ async def clone_session(
         return cloned_session
     except ValueError as e:
         logger.warning(f"Failed to clone session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
+
+
+@router.get(
+    "/{session_id}/context",
+    response_model=schemas.SessionContextResponse,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
+async def get_session_context(
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    message_count: Optional[int] = Query(
+        None, description="Number of messages to return (max 60)", ge=1, le=60
+    ),
+    db=db,
+):
+    """Get session context with latest summary and messages after that summary"""
+    try:
+        messages, latest_summary = await history.get_messages_since_latest_summary(
+            db, session_id, summary_type=history.SummaryType.SHORT
+        )
+        
+        if message_count is not None:
+            messages = messages[:message_count]
+        else:
+            messages = messages[:60]
+        
+        return schemas.SessionContextResponse(
+            summary=latest_summary,
+            messages=messages
+        )
+    except Exception as e:
+        logger.warning(f"Failed to get session context for {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
