@@ -15,15 +15,6 @@ from .exceptions import AuthenticationException
 
 logger = logging.getLogger(__name__)
 
-USE_AUTH = settings.AUTH.USE_AUTH
-AUTH_JWT_SECRET = settings.AUTH.JWT_SECRET
-
-if USE_AUTH and not AUTH_JWT_SECRET:
-    print(
-        "\n    ERROR: No JWT secret provided. Set the AUTH_JWT_SECRET environment variable.\n"
-    )
-    exit(1)
-
 security = HTTPBearer(
     auto_error=False,
 )
@@ -81,9 +72,9 @@ def create_admin_jwt() -> str:
 def create_jwt(params: JWTParams) -> str:
     """Create a JWT token from the given parameters."""
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
-    if not AUTH_JWT_SECRET:
+    if not settings.AUTH.JWT_SECRET:
         raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
-    return jwt.encode(payload, AUTH_JWT_SECRET.encode("utf-8"), algorithm="HS256")
+    return jwt.encode(payload, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithm="HS256")
 
 
 async def verify_jwt(token: str) -> JWTParams:
@@ -91,10 +82,10 @@ async def verify_jwt(token: str) -> JWTParams:
 
     params = JWTParams()
     try:
-        if not AUTH_JWT_SECRET:
+        if not settings.AUTH.JWT_SECRET:
             raise ValueError("AUTH_JWT_SECRET is not set, cannot verify JWT.")
         decoded = jwt.decode(
-            token, AUTH_JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
+            token, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )
         if "t" in decoded:
             params.t = decoded["t"]
@@ -180,7 +171,7 @@ async def auth(
     collection_id: Optional[str] = None,
 ) -> JWTParams:
     """Authenticate the given JWT and return the decoded parameters."""
-    if not USE_AUTH:
+    if not settings.AUTH.USE_AUTH:
         return JWTParams(t="", ad=True)
     if not credentials or not credentials.credentials:
         logger.warning("No access token provided")

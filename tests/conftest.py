@@ -54,9 +54,8 @@ CONNECTION_URI = make_url(DB_URI)
 TEST_DB_URL = CONNECTION_URI.set(database="test_db")
 DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
-# Test API authorization
-USE_AUTH = settings.AUTH.USE_AUTH
-AUTH_JWT_SECRET = settings.AUTH.JWT_SECRET or "test-secret"
+# Test API authorization - no longer needed as module-level constants
+# We'll use settings.AUTH directly where needed
 
 
 def create_test_database(db_url):
@@ -157,7 +156,7 @@ async def client(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
-        if USE_AUTH:
+        if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
             c.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
         yield c
@@ -181,11 +180,7 @@ def auth_client(client, request, monkeypatch):
     Always ensures USE_AUTH is set to True.
     """
     # Ensure USE_AUTH is always True for this fixture
-    import src.routers.keys as keys_module
-    import src.security as security
-
-    monkeypatch.setattr(keys_module, "USE_AUTH", "true")
-    monkeypatch.setattr(security, "USE_AUTH", "true")
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
 
     # Clear any existing Authorization header
     client.headers.pop("Authorization", None)
