@@ -1551,3 +1551,56 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+########################################################
+# Queue methods
+########################################################
+
+async def get_deriver_status(
+    db: AsyncSession,
+    app_id: str,
+    user_id: str,
+    session_id: str,
+) -> schemas.DeriverStatus:
+    """
+    Get the deriver status for a session.
+    
+    Args:
+        db: Database session
+        app_id: Public ID of the app
+        user_id: Public ID of the user
+        session_id: Public ID of the session
+        
+    Returns:
+        DeriverStatus: Schema containing processing counts and status
+    """
+    # Get session internal ID from public_id
+    session = await get_session(db, app_id=app_id, session_id=session_id, user_id=user_id)
+    
+    # Count unprocessed messages
+    unprocessed_stmt = select(func.count()).select_from(models.QueueItem).where(
+        models.QueueItem.session_id == session.id,
+        models.QueueItem.processed == False
+    )
+    unprocessed_result = await db.execute(unprocessed_stmt)
+    unprocessed_count = unprocessed_result.scalar() or 0
+    
+    # Count processed messages
+    processed_stmt = select(func.count()).select_from(models.QueueItem).where(
+        models.QueueItem.session_id == session.id,
+        models.QueueItem.processed == True
+    )
+    processed_result = await db.execute(processed_stmt)
+    processed_count = processed_result.scalar() or 0
+    
+    # Calculate total
+    total_count = processed_count + unprocessed_count
+    
+    return schemas.DeriverStatus(
+        unprocessed_count=unprocessed_count,
+        processed_count=processed_count,
+        total_count=total_count,
+    )
+
+
