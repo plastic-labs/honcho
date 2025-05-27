@@ -21,6 +21,7 @@ from src.dependencies import get_db
 from src.exceptions import HonchoException
 from src.security import create_admin_jwt, create_jwt, JWTParams
 from src.main import app
+from src.config import settings
 
 
 # Create a custom handler that doesn't get closed prematurely
@@ -45,18 +46,17 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 # Test database URL
 # TODO use environment variable
-CONNECTION_URI = make_url(
-    os.getenv(
-        "CONNECTION_URI",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
-    )
+DB_URI = (
+    settings.DB.CONNECTION_URI
+    or "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 )
+CONNECTION_URI = make_url(DB_URI)
 TEST_DB_URL = CONNECTION_URI.set(database="test_db")
 DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
 # Test API authorization
-USE_AUTH = os.getenv("USE_AUTH", "False").lower() == "true"
-AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "test-secret")
+USE_AUTH = settings.AUTH.USE_AUTH
+AUTH_JWT_SECRET = settings.AUTH.JWT_SECRET
 
 
 def create_test_database(db_url):

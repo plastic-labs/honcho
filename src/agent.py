@@ -24,7 +24,9 @@ from src.utils.model_client import ModelClient, ModelProvider
 # Configure logging
 logger = logging.getLogger(__name__)
 
-USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
+USER_REPRESENTATION_METAMESSAGE_TYPE = (
+    settings.AGENT.USER_REPRESENTATION_METAMESSAGE_TYPE
+)
 
 QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
@@ -43,7 +45,7 @@ class Dialectic:
         self.chat_history = chat_history
         self.client = ModelClient(
             provider=ModelProvider(settings.LLM.DIALECTIC_PROVIDER),
-            model=settings.LLM.DIALECTIC_MODEL
+            model=settings.LLM.DIALECTIC_MODEL,
         )
         self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
 
@@ -74,7 +76,9 @@ class Dialectic:
             logger.debug("Calling model for generation")
             model_start = asyncio.get_event_loop().time()
             response = await self.client.generate(
-                messages=[message], system=self.system_prompt, max_tokens=settings.LLM.DEFAULT_MAX_TOKENS
+                messages=[message],
+                system=self.system_prompt,
+                max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
             )
             model_time = asyncio.get_event_loop().time() - model_start
             logger.debug(
@@ -112,7 +116,9 @@ class Dialectic:
             logger.debug("Calling model for streaming")
             model_start = asyncio.get_event_loop().time()
             stream = await self.client.stream(
-                messages=[message], system=self.system_prompt, max_tokens=settings.LLM.DEFAULT_MAX_TOKENS
+                messages=[message],
+                system=self.system_prompt,
+                max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
             )
 
             stream_setup_time = asyncio.get_event_loop().time() - model_start
@@ -284,7 +290,10 @@ async def get_long_term_facts(
             collection_id=collection_id,
         )
         facts = await query_embedding_store.get_relevant_facts(
-            search_query, top_k=10, max_distance=0.85
+            search_query,
+            top_k=settings.AGENT.SEMANTIC_SEARCH_TOP_K,
+            max_distance=settings.AGENT.SEMANTIC_SEARCH_MAX_DISTANCE,
+        )
         query_time = asyncio.get_event_loop().time() - query_start
         logger.debug(f"Query {i + 1} retrieved {len(facts)} facts in {query_time:.2f}s")
         return facts
@@ -324,7 +333,10 @@ async def run_tom_inference(chat_history: str, session_id: str) -> str:
 
     # Get chat history length to determine if this is a new conversation
     tom_inference_response = await get_tom_inference(
-        chat_history, session_id, method=settings.AGENT.TOM_INFERENCE_METHOD, user_representation=""
+        chat_history,
+        session_id,
+        method=settings.AGENT.TOM_INFERENCE_METHOD,
+        user_representation="",
     )
 
     # Extract the prediction from the response
@@ -357,7 +369,7 @@ async def generate_semantic_queries(query: str) -> list[str]:
     # Create a new model client
     client = ModelClient(
         provider=ModelProvider(settings.LLM.QUERY_GENERATION_PROVIDER),
-        model=settings.LLM.QUERY_GENERATION_MODEL
+        model=settings.LLM.QUERY_GENERATION_MODEL,
     )
 
     # Prepare the messages for Anthropic

@@ -199,7 +199,7 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
     # Create a model client
     client = ModelClient(
         provider=ModelProvider(settings.LLM.SUMMARY_PROVIDER),
-        model=settings.LLM.SUMMARY_MODEL
+        model=settings.LLM.SUMMARY_MODEL,
     )
 
     # Generate the summary

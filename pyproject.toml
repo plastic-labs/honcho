@@ -26,6 +26,7 @@ dependencies = [
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
     "pydantic-settings>=2.9.1",
+    "tomli>=2.0.0; python_version < '3.11'",
 ]
 [tool.uv]
 dev-dependencies = [
