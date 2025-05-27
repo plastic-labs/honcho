@@ -12,7 +12,8 @@ connect_args = {"prepare_threshold": None}
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "request_context", default=None
+    "request_context",
+    default=None,
 )
 
 engine = create_async_engine(

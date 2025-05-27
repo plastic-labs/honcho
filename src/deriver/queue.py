@@ -1,7 +1,7 @@
 import asyncio
 import os
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
 import sentry_sdk
@@ -12,10 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from src.config import settings
+
 from .. import models
 from ..dependencies import tracked_db
 from .consumer import process_item
-from src.config import settings
 
 logger = getLogger(__name__)
 
@@ -116,7 +117,7 @@ class QueueManager:
         """Get available sessions that aren't being processed"""
         # Clean up stale sessions
         stale_delta = timedelta(minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES)
-        five_minutes_ago = datetime.utcnow() - stale_delta
+        five_minutes_ago = datetime.now(timezone.utc) - stale_delta
         await db.execute(
             delete(models.ActiveQueueSession).where(
                 models.ActiveQueueSession.last_updated < five_minutes_ago
@@ -191,13 +192,17 @@ class QueueManager:
                                     )
                         else:
                             self.queue_empty_flag.set()
-                            await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+                            await asyncio.sleep(
+                                settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
+                            )
                     except Exception as e:
-                        logger.error(f"Error in polling loop: {str(e)}", exc_info=True)
+                        logger.exception("Error in polling loop: %s", str(e))
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
                         # Note: rollback is handled by tracked_db dependency
-                        await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
+                        await asyncio.sleep(
+                            settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
+                        )
         finally:
             logger.info("Polling loop stopped")
 

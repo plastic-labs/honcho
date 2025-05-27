@@ -1,5 +1,6 @@
+import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 import tomllib
 from dotenv import load_dotenv
@@ -14,15 +15,15 @@ from pydantic_settings import (
 load_dotenv()
 
 
-def load_toml_config(config_path: str = "config.toml") -> Dict[str, Any]:
+def load_toml_config(config_path: str = "config.toml") -> dict[str, Any]:
     """Load configuration from TOML file if it exists."""
     config_file = Path(config_path)
     if config_file.exists():
         try:
             with open(config_file, "rb") as f:
                 return tomllib.load(f)
-        except Exception as e:
-            print(f"Warning: Failed to load {config_path}: {e}")
+        except (tomllib.TOMLDecodeError, OSError) as exc:
+            logging.warning("Failed to load %s: %s", config_path, exc)
             return {}
     return {}
 
@@ -37,28 +38,26 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
     def __init__(self, settings_cls: type[BaseSettings]):
         super().__init__(settings_cls)
 
-    def get_field_value(
-        self, field_name: str, field_info: Any
-    ) -> Tuple[Any, str, bool]:
+    SECTION_MAP: dict[str, str] = {
+        "DB": "db",
+        "AUTH": "auth",
+        "SENTRY": "sentry",
+        "OPENTELEMETRY": "opentelemetry",
+        "LLM": "llm",
+        "AGENT": "agent",
+        "DERIVER": "deriver",
+        "HISTORY": "history",
+        "": "app",  # For AppSettings with no prefix
+    }
+
+    def get_field_value(self, field_name: str) -> tuple[Any, str, bool]:
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
         if prefix.endswith("_"):
             prefix = prefix[:-1]
 
         # Map prefixes to TOML sections
-        section_map = {
-            "DB": "db",
-            "AUTH": "auth",
-            "SENTRY": "sentry",
-            "OPENTELEMETRY": "opentelemetry",
-            "LLM": "llm",
-            "AGENT": "agent",
-            "DERIVER": "deriver",
-            "HISTORY": "history",
-            "": "app",  # For AppSettings with no prefix
-        }
-
-        section = section_map.get(prefix, prefix.lower())
+        section = self.SECTION_MAP.get(prefix, prefix.lower())
         toml_data = TOML_CONFIG.get(section, {})
 
         # Try different case variations
@@ -70,34 +69,17 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
 
         return field_value, field_name, False
 
-    def __call__(self) -> Dict[str, Any]:
+    def __call__(self) -> dict[str, Any]:
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
         if prefix.endswith("_"):
             prefix = prefix[:-1]
 
-        # Map prefixes to TOML sections
-        section_map = {
-            "DB": "db",
-            "AUTH": "auth",
-            "SENTRY": "sentry",
-            "OPENTELEMETRY": "opentelemetry",
-            "LLM": "llm",
-            "AGENT": "agent",
-            "DERIVER": "deriver",
-            "HISTORY": "history",
-            "": "app",  # For AppSettings with no prefix
-        }
-
-        section = section_map.get(prefix, prefix.lower())
+        section = self.SECTION_MAP.get(prefix, prefix.lower())
         toml_data = TOML_CONFIG.get(section, {})
 
         # Convert keys to uppercase to match field names
-        result = {}
-        for key, value in toml_data.items():
-            result[key.upper()] = value
-
-        return result
+        return {key.upper(): value for key, value in toml_data.items()}
 
 
 class TomlSettings(BaseSettings):

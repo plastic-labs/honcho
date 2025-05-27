@@ -21,6 +21,11 @@ Read the user documentation [here](https://docs.honcho.dev)
 
 - [Project Structure](#project-structure)
 - [Usage](#usage)
+- [Configuration](#configuration)
+  - [Using config.toml](#using-configtoml)
+  - [Using Environment Variables](#using-environment-variables)
+  - [Configuration Priority](#configuration-priority)
+  - [Example](#example)
 - [Architecture](#architecture)
   - [Storage](#storage)
   - [Insights](#insights)
@@ -54,6 +59,76 @@ team will reach out to onboard users.
 Additionally, Honcho can be self-hosted for testing and evaluation purposes. See
 [Contributing](./CONTRIBUTING.md) for more details on how to setup a local
 version of Honcho.
+
+## Configuration
+
+Honcho uses a flexible configuration system that supports both TOML files and environment variables. Configuration values are loaded in the following priority order (highest to lowest):
+
+1. Environment variables
+2. `.env` file (for local development)
+3. `config.toml` file
+4. Default values
+
+### Using config.toml
+
+Copy the example configuration file to get started:
+
+```bash
+cp config.toml.example config.toml
+```
+
+Then modify the values as needed. The TOML file is organized into sections:
+
+- `[app]` - Application-level settings (log level, host, port)
+- `[db]` - Database connection and pool settings
+- `[auth]` - Authentication configuration
+- `[llm]` - LLM provider and model settings
+- `[agent]` - Agent behavior settings
+- `[deriver]` - Background worker settings
+- `[history]` - Message history settings
+
+### Using Environment Variables
+
+All configuration values can be overridden using environment variables. The environment variable names follow this pattern:
+
+- `{SECTION}_{KEY}` for nested settings
+- Just `{KEY}` for app-level settings
+
+Examples:
+- `DB_CONNECTION_URI` - Database connection string
+- `AUTH_JWT_SECRET` - JWT secret key
+- `LLM_DIALECTIC_MODEL` - Dialectic LLM model
+- `LOG_LEVEL` - Application log level
+
+### Configuration Priority
+
+When a configuration value is set in multiple places, Honcho uses this priority:
+
+1. **Environment variables** - Always take precedence
+2. **.env file** - Loaded for local development
+3. **config.toml** - Base configuration
+4. **Default values** - Built-in defaults
+
+This allows you to:
+- Use `config.toml` for base configuration
+- Override specific values with environment variables in production
+- Use `.env` files for local development without modifying config.toml
+
+### Example
+
+If you have this in `config.toml`:
+```toml
+[db]
+CONNECTION_URI = "postgresql://localhost/honcho_dev"
+POOL_SIZE = 10
+```
+
+You can override just the connection URI in production:
+```bash
+export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+```
+
+The application will use the production connection URI while keeping the pool size from config.toml.
 
 ## Architecture
 
