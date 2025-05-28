@@ -5,6 +5,7 @@ from typing import Annotated, Any, ClassVar, Optional
 import tomllib
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
+from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import (
     BaseSettings,
@@ -54,8 +55,9 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "": "app",  # For AppSettings with no prefix
     }
 
-    def get_field_value(self, field: Field) -> tuple[Any, str, bool]:
-        field_name = field.name
+    def get_field_value(
+        self, field: FieldInfo, field_name: str
+    ) -> tuple[Any, str, bool]:
         # Get the env_prefix from the model config
         prefix = self.settings_cls.model_config.get("env_prefix", "")
         if prefix.endswith("_"):

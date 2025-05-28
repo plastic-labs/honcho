@@ -1,6 +1,7 @@
 # Honcho Overview
 
 ## What is Honcho?
+
 Honcho is an infrastructure layer for building AI agents with social cognition and theory of mind capabilities. Its primary purposes include:
 
 - Imbuing agents with a sense of identity
@@ -13,6 +14,10 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 ## Development Guide
 
 ### Commands
+
+For all commands related to python or python modules make sure you prefix
+the command with `uv run` to use the virtual environment
+
 - Setup: `uv sync`
 - Run server: `fastapi dev src/main.py`
 - Run tests: `pytest tests/`
@@ -21,6 +26,7 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 - Format code: `ruff format src/`
 
 ### Code Style
+
 - Follow isort conventions with absolute imports preferred
 - Use explicit type hints with SQLAlchemy mapped_column annotations
 - snake_case for variables/functions; PascalCase for classes
@@ -29,6 +35,7 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 - Docstrings: Use Google style docstrings
 
 ### Project Structure
+
 - FastAPI routes in src/routers/
 - SQLAlchemy ORM models in src/models.py with proper type annotations
 - Pydantic schemas in src/schemas.py for API validation
@@ -36,8 +43,10 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 - Use environment variables via python-dotenv (.env)
 
 ### Error Handling
+
 - Custom exceptions defined in src/exceptions.py
 - Use specific exception types (ResourceNotFoundException, ValidationException, etc.)
 - Proper logging with context instead of print statements
 - Global exception handlers defined in main.py
 - See docs/contributing/error-handling.mdx for details
+
