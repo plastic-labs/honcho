@@ -274,3 +274,12 @@ class MessageBatchCreate(BaseModel):
     """Schema for batch message creation with a max of 100 messages"""
 
     messages: list[MessageCreate] = Field(..., max_length=100)
+
+
+class SessionContextResponse(BaseModel):
+    """Schema for session context response with summary and messages"""
+
+    summary: Metamessage | None = None
+    messages: list[Message]
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)

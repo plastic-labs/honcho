@@ -16,6 +16,7 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
+from src.utils import history
 
 logger = logging.getLogger(__name__)
 
@@ -94,11 +95,11 @@ async def get_sessions(
     is_active_param = False  # Default to None, meaning no filter on is_active
 
     if options:
-        if hasattr(options, 'filter') and options.filter:
+        if hasattr(options, "filter") and options.filter:
             filter_param = options.filter
-            if filter_param == {}: # Explicitly check for empty dict
+            if filter_param == {}:  # Explicitly check for empty dict
                 filter_param = None
-        if hasattr(options, 'is_active'): # Check if is_active is present
+        if hasattr(options, "is_active"):  # Check if is_active is present
             is_active_param = options.is_active
 
     return await paginate(
@@ -217,7 +218,6 @@ async def chat(
         ..., description="Dialectic Endpoint Parameters"
     ),
 ):
-
     """Chat with the Dialectic API"""
     if not options.stream:
         return await agent.chat(
@@ -283,4 +283,50 @@ async def clone_session(
         return cloned_session
     except ValueError as e:
         logger.warning(f"Failed to clone session {session_id}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
+
+
+@router.get(
+    "{session_id}/context",
+    response_model=schemas.SessionContextResponse,
+    dependencies=[
+        Depends(
+            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+        )
+    ],
+)
+async def get_session_context(
+    app_id: str = Path(..., description="ID of the app"),
+    user_id: str = Path(..., description="ID of the user"),
+    session_id: str = Path(..., description="ID of the session"),
+    count: Optional[int] = Query(
+        None, description="Number of messages to return (max 60)", ge=1, le=60
+    ),
+    summary_type: str = Query(
+        "short", description="Type of summary to use ('short' or 'long')"
+    ),
+    db=db,
+):
+    """Get session context with latest summary and messages after that summary"""
+    try:
+        # First check if the session exists
+        await crud.get_session(
+            db, app_id=app_id, user_id=user_id, session_id=session_id
+        )
+
+        summary_type_enum = (
+            history.SummaryType.LONG
+            if summary_type.lower() == "long"
+            else history.SummaryType.SHORT
+        )
+
+        messages, latest_summary = await history.get_messages_since_latest_summary(
+            db, session_id, summary_type=summary_type_enum
+        )
+
+        messages = messages[:count] if count is not None else messages[:60]
+
+        return schemas.SessionContextResponse(summary=latest_summary, messages=messages)
+    except Exception as e:
+        logger.warning(f"Failed to get session context for {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
