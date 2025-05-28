@@ -63,7 +63,7 @@ currently underway. If interested fill out this
 team will reach out to onboard users.
 
 Additionally, Honcho can be self-hosted for testing and evaluation purposes. See
-the [Local Development](#local-development) section below for details on how to setup a local
+the [Local Development](#local-development) section below for details on how to set up a local
 version of Honcho.
 
 ## Local Development
@@ -71,8 +71,8 @@ version of Honcho.
 Below is a guide on setting up a local environment for running the Honcho
 Server.
 
-> This guide was made using a M1 Macbook Pro. For any compatibility issues
-> on different platforms please raise an Issue.
+> This guide was made using a M3 Macbook Pro. For any compatibility issues
+> on different platforms, please raise an Issue.
 
 ### Prerequisites and Dependencies
 
@@ -249,6 +249,7 @@ All configuration values can be overridden using environment variables. The envi
 - Just `{KEY}` for app-level settings
 
 Examples:
+
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
 - `LLM_DIALECTIC_MODEL` - Dialectic LLM model
@@ -264,6 +265,7 @@ When a configuration value is set in multiple places, Honcho uses this priority:
 4. **Default values** - Built-in defaults
 
 This allows you to:
+
 - Use `config.toml` for base configuration
 - Override specific values with environment variables in production
 - Use `.env` files for local development without modifying config.toml
@@ -271,6 +273,7 @@ This allows you to:
 ### Example
 
 If you have this in `config.toml`:
+
 ```toml
 [db]
 CONNECTION_URI = "postgresql://localhost/honcho_dev"
@@ -278,6 +281,7 @@ POOL_SIZE = 10
 ```
 
 You can override just the connection URI in production:
+
 ```bash
 export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
 ```

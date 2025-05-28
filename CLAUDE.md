@@ -15,7 +15,7 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 
 ### Commands
 
-For all commands related to python or python modules make sure you prefix
+For all commands related to Python or Python, modules make sure you prefix
 the command with `uv run` to use the virtual environment
 
 - Setup: `uv sync`
@@ -49,4 +49,3 @@ the command with `uv run` to use the virtual environment
 - Proper logging with context instead of print statements
 - Global exception handlers defined in main.py
 - See docs/contributing/error-handling.mdx for details
-

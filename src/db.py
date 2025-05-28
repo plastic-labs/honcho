@@ -4,7 +4,7 @@ from typing import Optional
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
-from sqlalchemy.pool import AsyncAdaptedQueuePool, NullPool
+from sqlalchemy.pool import NullPool
 
 from src.config import settings
 
@@ -18,7 +18,6 @@ request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
 
 engine_kwargs = {}
 
-pool_class = AsyncAdaptedQueuePool
 if settings.DB.POOL_CLASS == "null":
     engine_kwargs["poolclass"] = NullPool
 else:
