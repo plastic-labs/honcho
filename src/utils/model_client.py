@@ -13,12 +13,10 @@ from google import genai
 from google.genai import types as genai_types
 from langfuse.decorators import langfuse_context, observe
 
-# from openai import AsyncOpenAI
 from langfuse.openai import AsyncOpenAI
 
 # Load environment variables
 load_dotenv()
-
 
 # Supported model providers
 class ModelProvider(str, Enum):

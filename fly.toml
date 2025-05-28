@@ -1,6 +1,6 @@
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 
-app = 'honcho'
+app = 'honcho-patched-v1-test'
 primary_region = 'ewr'
 kill_signal = 'SIGINT'
 kill_timeout = '5s'

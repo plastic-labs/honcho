@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool
 
 load_dotenv()
 
@@ -17,12 +18,13 @@ engine = create_async_engine(
     os.environ["CONNECTION_URI"],
     connect_args=connect_args,
     echo=os.getenv("SQL_DEBUG", "false").lower() == "true",  # Only enable in debug mode
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=30,
-    pool_recycle=300,  # Recycle connections after 5 minutes
-    pool_use_lifo=True,  # Use last-in-first-out (LIFO) to prevent connection spread
+    poolclass=NullPool,
+    # pool_pre_ping=True,
+    # pool_size=10,
+    # max_overflow=20,
+    # pool_timeout=30,
+    # pool_recycle=300,  # Recycle connections after 5 minutes
+    # pool_use_lifo=True,  # Use last-in-first-out (LIFO) to prevent connection spread
 )
 
 SessionLocal = async_sessionmaker(

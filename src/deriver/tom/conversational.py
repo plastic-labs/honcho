@@ -1,17 +1,15 @@
 import os
 
 import sentry_sdk
-from anthropic import Anthropic
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
+from src.utils.model_client import ModelClient, ModelProvider
+
 # Place the code below at the beginning of your application to initialize the tracer
 
-# Initialize the Anthropic client
-anthropic = Anthropic(
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
-    max_retries=5,
-)
+# Initialize the unified model client to use OpenAI-compatible endpoint
+model_client = ModelClient(provider=ModelProvider.OPENAI)
 
 
 @ai_track("Tom Inference")
@@ -71,13 +69,13 @@ async def get_tom_inference_conversational(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
-        message = anthropic.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=1000,
-            temperature=0,
+        
+        response = await model_client.generate(
             messages=messages,
+            max_tokens=1000,
+            temperature=0
         )
-        return message.content[0].text
+        return response
 
 
 @ai_track("User Representation")
@@ -142,10 +140,10 @@ async def get_user_representation_conversational(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
-        message = anthropic.messages.create(
-            model="claude-3-5-sonnet-20240620",
-            max_tokens=1000,
-            temperature=0,
+        
+        response = await model_client.generate(
             messages=messages,
+            max_tokens=1000,
+            temperature=0
         )
-        return message.content[0].text
+        return response

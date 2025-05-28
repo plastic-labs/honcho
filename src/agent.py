@@ -49,7 +49,8 @@ class Dialectic:
         self.user_representation = user_representation
         self.chat_history = chat_history
         self.client = ModelClient(
-            provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
+            provider=DEF_DIALECTIC_PROVIDER, 
+            model=DEF_DIALECTIC_MODEL,
         )
         self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
 
@@ -76,11 +77,14 @@ class Dialectic:
             # Create a properly formatted message
             message: dict[str, Any] = {"role": "user", "content": prompt}
 
-            # Generate the response
+            # Generate the response with fallback
             logger.debug("Calling model for generation")
             model_start = asyncio.get_event_loop().time()
+                        
             response = await self.client.generate(
-                messages=[message], system=self.system_prompt, max_tokens=1000
+                messages=[message], 
+                system=self.system_prompt, 
+                max_tokens=1000,
             )
             model_time = asyncio.get_event_loop().time() - model_start
             logger.debug(

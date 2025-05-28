@@ -1,3 +1,5 @@
+import os
+
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Optional
@@ -19,7 +21,7 @@ from .exceptions import (
 
 load_dotenv(override=True)
 
-openai_client = AsyncOpenAI()
+openai_client = AsyncOpenAI(base_url=os.getenv("OPENAI_COMPATIBLE_BASE_URL"), api_key=os.getenv("OPENAI_COMPATIBLE_API_KEY"))
 
 logger = getLogger(__name__)
 
@@ -1346,7 +1348,7 @@ async def query_documents(
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using async client with await
-    response = await openai_client.embeddings.create(
+    response = await openai_client.embeddings.create( 
         model="text-embedding-3-small", input=query
     )
     embedding_query = response.data[0].embedding
@@ -1402,7 +1404,7 @@ async def create_document(
     )
 
     # Using async client with await
-    response = await openai_client.embeddings.create(
+    response = await openai_client.embeddings.create( 
         input=document.content, model="text-embedding-3-small"
     )
 
@@ -1460,7 +1462,7 @@ async def update_document(
     if document.content is not None:
         honcho_document.content = document.content
         # Using async client with await
-        response = await openai_client.embeddings.create(
+        response = await openai_client.embeddings.create( 
             input=document.content, model="text-embedding-3-small"
         )
         embedding = response.data[0].embedding
@@ -1531,7 +1533,7 @@ async def get_duplicate_documents(
     """
     # Get embedding for the content
     # Using async client with await
-    response = await openai_client.embeddings.create(
+    response = await openai_client.embeddings.create( 
         input=content, model="text-embedding-3-small"
     )
     embedding = response.data[0].embedding
