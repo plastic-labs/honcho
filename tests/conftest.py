@@ -117,6 +117,15 @@ async def db_engine():
     create_test_database(TEST_DB_URL)
     engine = await setup_test_database(TEST_DB_URL)
 
+    # Force the schema to 'public' for tests
+    # Save the original schema to restore later
+    original_schema = Base.metadata.schema
+    Base.metadata.schema = "public"
+    
+    # Update all table schemas to public
+    for table in Base.metadata.tables.values():
+        table.schema = "public"
+
     # Drop all tables first to ensure clean state
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -126,6 +135,11 @@ async def db_engine():
     yield engine
 
     await engine.dispose()
+
+    # Restore original schema
+    Base.metadata.schema = original_schema
+    for table in Base.metadata.tables.values():
+        table.schema = original_schema
 
     drop_database(TEST_DB_URL)
 
