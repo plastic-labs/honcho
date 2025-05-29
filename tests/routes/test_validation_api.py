@@ -373,63 +373,15 @@ def test_session_validations_api(client, sample_data):
 
 
 def test_agent_query_validations_api(client, sample_data, monkeypatch):
-    # Mock the functions in agent.py that are causing the database issues
-
-    # Create a mock collection with a public_id
-    class MockCollection:
-        def __init__(self):
-            self.public_id = "mock_collection_id"
-
-    # Mock collection retrieval/creation function
-    async def mock_get_or_create_collection(*args, **kwargs):
-        return MockCollection()
-
-    async def mock_chat_history(*args, **kwargs):
-        return "Mock chat history", [], []
-
-    async def mock_get_long_term_facts(*args, **kwargs):
-        return ["Mock fact 1", "Mock fact 2"]
-
-    async def mock_run_tom_inference(*args, **kwargs):
-        return "Mock TOM inference"
-
-    async def mock_generate_user_representation(*args, **kwargs):
-        return "Mock user representation"
-
-    # Mock the Dialectic.call method
-    async def mock_dialectic_call(self):
-        # Create a mock response that will work with line 300 in agent.py:
-        # return schemas.AgentChat(content=response[0]["text"])
-        return [{"text": "Mock response"}]
-
-    # Mock the Dialectic.stream method
-    def mock_dialectic_stream(self):
-        class MockStream:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                pass
-
-            @property
-            def text_stream(self):
-                yield "Mock streamed response"
-
-        return MockStream()
-
-    # Apply the monkeypatches
-    monkeypatch.setattr(
-        "src.crud.get_or_create_user_protected_collection",
-        mock_get_or_create_collection,
-    )
-    monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
-    monkeypatch.setattr("src.agent.get_long_term_facts", mock_get_long_term_facts)
-    monkeypatch.setattr("src.agent.run_tom_inference", mock_run_tom_inference)
-    monkeypatch.setattr(
-        "src.agent.generate_user_representation", mock_generate_user_representation
-    )
-    monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
-    monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
+    # Mock the entire agent.chat function to avoid database queries
+    from src import schemas
+    
+    async def mock_agent_chat(*args, **kwargs):
+        # Return a simple mock response
+        return schemas.DialecticResponse(content="Mock response")
+    
+    # Apply the monkeypatch to the agent.chat function
+    monkeypatch.setattr("src.agent.chat", mock_agent_chat)
 
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based

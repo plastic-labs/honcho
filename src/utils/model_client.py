@@ -16,6 +16,8 @@ from langfuse.decorators import langfuse_context, observe
 # from openai import AsyncOpenAI
 from langfuse.openai import AsyncOpenAI
 
+from src.config import settings
+
 # Load environment variables
 load_dotenv()
 
@@ -48,8 +50,8 @@ OPENAI_COMPATIBLE_PROVIDERS = [
     ModelProvider.GROQ,
 ]
 
-DEFAULT_TEMPERATURE = 0.0
-DEFAULT_MAX_TOKENS = 1000
+DEFAULT_TEMPERATURE: float = settings.LLM.DEFAULT_TEMPERATURE
+DEFAULT_MAX_TOKENS: int = settings.LLM.DEFAULT_MAX_TOKENS
 
 
 class Message(Protocol):
