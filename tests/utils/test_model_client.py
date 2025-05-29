@@ -202,7 +202,7 @@ async def test_generate_with_caching(mock_anthropic_client, mock_anthropic_respo
 
 
 @pytest.mark.asyncio
-async def test_model_client_caching():
+async def test_model_client_caching(mock_env):
     """Test that ModelClient properly caches instances with identical parameters."""
     # Test that identical parameters return the same instance
     client1 = ModelClient(provider=ModelProvider.ANTHROPIC)

@@ -62,7 +62,7 @@ class Message(Protocol):
 class ModelClient:
     """A client for interacting with various language model APIs."""
     
-    _instances: dict[tuple, 'ModelClient'] = {}
+    _instances: dict[tuple[ModelProvider, str, str | None, str | None], 'ModelClient'] = {}
 
     def __new__(
         cls,
@@ -141,22 +141,25 @@ class ModelClient:
         self._initialized = True
 
     @staticmethod
+    def _get_provider_defaults(provider: ModelProvider) -> tuple[str | None, str | None]:
+        """Get default API key and base URL for provider."""
+        if provider == ModelProvider.ANTHROPIC:
+            return os.getenv("ANTHROPIC_API_KEY"), None
+        elif provider in OPENAI_COMPATIBLE_PROVIDERS:
+            return os.getenv("OPENAI_COMPATIBLE_API_KEY"), os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+        elif provider == ModelProvider.GEMINI:
+            return os.getenv("GEMINI_API_KEY"), None
+        return None, None
+
+    @staticmethod
     def _get_default_api_key(provider: ModelProvider) -> Optional[str]:
         """Get default API key for provider."""
-        if provider == ModelProvider.ANTHROPIC:
-            return os.getenv("ANTHROPIC_API_KEY")
-        elif provider in OPENAI_COMPATIBLE_PROVIDERS:
-            return os.getenv("OPENAI_COMPATIBLE_API_KEY")
-        elif provider == ModelProvider.GEMINI:
-            return os.getenv("GEMINI_API_KEY")
-        return None
+        return ModelClient._get_provider_defaults(provider)[0]
     
     @staticmethod
     def _get_default_base_url(provider: ModelProvider) -> Optional[str]:
         """Get default base URL for provider."""
-        if provider in OPENAI_COMPATIBLE_PROVIDERS:
-            return os.getenv("OPENAI_COMPATIBLE_BASE_URL")
-        return None
+        return ModelClient._get_provider_defaults(provider)[1]
 
     @classmethod
     def test_only_clear_cache(cls) -> None:
