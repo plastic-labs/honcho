@@ -1,17 +1,19 @@
 import asyncio
+import datetime
 import json
 import logging
 import os
+import re
 from collections.abc import Iterable
-from typing import Any, Optional
+from typing import Any, AsyncGenerator, Optional
 
 import sentry_sdk
-from anthropic import MessageStreamManager
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from anthropic import MessageStreamManager
 
 from src import crud, models, schemas
 from src.dependencies import tracked_db
@@ -45,11 +47,95 @@ Example:
 load_dotenv()
 
 
+async def get_session_datetime(db: AsyncSession, session_id: str) -> str:
+    """
+    Extract datetime from session metadata if available, otherwise use current time.
+    
+    Args:
+        db: Database session
+        session_id: The session ID to get datetime for
+        
+    Returns:
+        Formatted datetime string in 'YYYY-MM-DD HH:MM:SS' format
+    """
+    # Get the session
+    stmt = select(models.Session).where(models.Session.public_id == session_id)
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    
+    if not session:
+        logger.warning(f"Session {session_id} not found, using current time")
+        return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Check if datetime is in session metadata
+    if session.h_metadata and 'datetime' in session.h_metadata:
+        try:
+            # Parse format like "1:14 pm on 25 May, 2023"
+            datetime_str = session.h_metadata['datetime']
+            
+            # Use regex to parse the format
+            pattern = r"(\d{1,2}):(\d{2})\s*(am|pm)\s*on\s*(\d{1,2})\s*(\w+),\s*(\d{4})"
+            match = re.match(pattern, datetime_str, re.IGNORECASE)
+            
+            if match:
+                hour, minute, ampm, day, month_name, year = match.groups()
+                
+                # Convert 12-hour to 24-hour format
+                hour = int(hour)
+                if ampm.lower() == 'pm' and hour != 12:
+                    hour += 12
+                elif ampm.lower() == 'am' and hour == 12:
+                    hour = 0
+                
+                # Convert month name to number
+                month_names = {
+                    'january': 1, 'february': 2, 'march': 3, 'april': 4,
+                    'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                    'september': 9, 'october': 10, 'november': 11, 'december': 12
+                }
+                month = month_names.get(month_name.lower())
+                
+                if month:
+                    parsed_dt = datetime.datetime(
+                        year=int(year),
+                        month=month,
+                        day=int(day),
+                        hour=hour,
+                        minute=int(minute),
+                        tzinfo=datetime.timezone.utc
+                    )
+                    return parsed_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.warning(f"Failed to parse datetime from session metadata for session {session_id}: {e}")
+    
+    # Fall back to session's created_at
+    return session.created_at.strftime('%Y-%m-%d %H:%M:%S')
+
+
+class AsyncSet:
+    def __init__(self):
+        self._set: set[str] = set()
+        self._lock = asyncio.Lock()
+
+    async def add(self, item: str):
+        async with self._lock:
+            self._set.add(item)
+
+    async def update(self, items: Iterable[str]):
+        async with self._lock:
+            self._set.update(items)
+
+    def get_set(self) -> set[str]:
+        return self._set.copy()
+
+
 class Dialectic:
-    def __init__(self, agent_input: str, user_representation: str, chat_history: str):
+    def __init__(self, agent_input: str, user_representation: str, chat_history: str, current_time: str | None = None):
         self.agent_input = agent_input
         self.user_representation = user_representation
         self.chat_history = chat_history
+        self.current_time = current_time or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
         self.client = ModelClient(
             provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
@@ -66,6 +152,12 @@ class Dialectic:
             )
             call_start = asyncio.get_event_loop().time()
 
+            # prompt = f"""
+            # <query>{self.agent_input}</query>
+            # <context>{self.user_representation}</context>
+            # <conversation_history>{self.chat_history}</conversation_history>
+            # <current_time>{self.current_time}</current_time>
+            # """
             prompt = f"""
             <query>{self.agent_input}</query>
             <context>{self.user_representation}</context>
@@ -104,10 +196,16 @@ class Dialectic:
             )
             stream_start = asyncio.get_event_loop().time()
 
+            # prompt = f"""
+            # <query>{self.agent_input}</query>
+            # <context>{self.user_representation}</context>
+            # <conversation_history>{self.chat_history}</conversation_history> 
+            # <current_time>{self.current_time}</current_time>
+            # """
             prompt = f"""
             <query>{self.agent_input}</query>
             <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history> 
+            <conversation_history>{self.chat_history}</conversation_history>
             """
             logger.debug(
                 f"Prompt constructed with context length: {len(self.user_representation)} chars"
@@ -224,33 +322,61 @@ async def get_facts(
 ) -> str:
     """
     Generate queries based on the dialectic query and retrieve relevant facts.
+    
+    Uses both DIA framework contextualized facts and semantic search for comprehensive results.
 
     Args:
         query: The user query
         embedding_store: The embedding store to search
 
     Returns:
-        String containing all retrieved facts joined by newlines, with timestamps
+        String containing all retrieved facts with their context, organized by reasoning level
     """
-    logger.debug(f"Starting fact retrieval for query: {query}")
+    logger.info("=== FACT RETRIEVAL START ===")
+    logger.info(f"ORIGINAL QUERY: {query}")
     fact_start_time = asyncio.get_event_loop().time()
 
-    # Generate multiple queries for the semantic search
-    logger.debug("Generating semantic queries")
+    # First, get contextualized facts from DIA framework
+    logger.info("RETRIEVING CONTEXTUALIZED FACTS from DIA framework...")
+    contextualized_facts = await embedding_store.get_contextualized_facts_for_dialectic()
+    
+    # Log contextualized facts by level
+    for level, facts in contextualized_facts.items():
+        logger.info(f"CONTEXTUALIZED {level.upper()}: {len(facts)} facts")
+        for i, fact in enumerate(facts[:3]):  # Show first 3
+            logger.info(f"  {i+1}. {fact[:100]}...")
+        if len(facts) > 3:
+            logger.info(f"  ... and {len(facts) - 3} more facts")
+    
+    # Generate multiple queries for additional semantic search
+    logger.info("GENERATING SEMANTIC QUERIES for additional facts...")
     search_queries = await generate_semantic_queries(query)
-    logger.debug(f"Generated {len(search_queries)} semantic queries: {search_queries}")
+    logger.info(f"GENERATED QUERIES: {search_queries}")
 
     # Create a list of coroutines, one for each query
     async def execute_query(i: int, search_query: str) -> list[tuple[str, str]]:
-        logger.debug(f"Starting query {i + 1}/{len(search_queries)}: {search_query}")
+        logger.info(f"EXECUTING SEMANTIC QUERY {i + 1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
         documents = await embedding_store.get_relevant_facts(
-            search_query, top_k=10, max_distance=0.85
+            search_query, top_k=5, max_distance=0.85  # Reduced from 10 since we have contextualized facts
         )
         query_time = asyncio.get_event_loop().time() - query_start
-        logger.debug(f"Query {i + 1} retrieved {len(documents)} facts in {query_time:.2f}s")
+        logger.info(f"QUERY {i + 1} RESULTS: {len(documents)} facts retrieved in {query_time:.2f}s")
+        
+        # Eagerly extract attributes to avoid DetachedInstanceError
+        document_data = []
+        for doc in documents:
+            # Access attributes while the object is still bound to the session
+            content = doc.content
+            created_at = doc.created_at
+            document_data.append((content, created_at))
+        
+        # Log the actual facts found using the extracted data
+        for j, (content, created_at) in enumerate(document_data):
+            logger.info(f"  {j+1}. [{created_at.strftime('%Y-%m-%d %H:%M:%S')}] {content}")
+        
         # Convert documents to tuples of (content, timestamp)
-        return [(doc.content, doc.created_at.strftime("%Y-%m-%d-%H:%M:%S")) for doc in documents]
+        return [(content, created_at.strftime("%Y-%m-%d-%H:%M:%S")) for content, created_at in document_data]
 
     # Execute all queries in parallel
     query_tasks = [
@@ -258,18 +384,48 @@ async def get_facts(
     ]
     all_facts_lists = await asyncio.gather(*query_tasks)
 
-    # Combine all facts into a single set to remove duplicates
-    retrieved_facts = set()
+    # Combine semantic search facts into a single set to remove duplicates
+    semantic_facts = set()
     for facts in all_facts_lists:
-        retrieved_facts.update(facts)
+        semantic_facts.update(facts)
 
-    # Join all facts into a single string with newlines, including timestamps
-    facts_string = "\n".join([f"[created {timestamp}]: {fact}" for fact, timestamp in retrieved_facts])
+    # Format the final response with structured sections
+    response_parts = []
+    
+    # Add contextualized facts organized by reasoning level
+    if any(contextualized_facts.values()):
+        response_parts.append("=== REASONING-BASED USER UNDERSTANDING ===")
+        
+        if contextualized_facts.get("abductive"):
+            response_parts.append("\n## ABDUCTIVE (High-level psychological insights):")
+            response_parts.extend(contextualized_facts["abductive"])
+        
+        if contextualized_facts.get("inductive"):
+            response_parts.append("\n## INDUCTIVE (Observed patterns and behaviors):")
+            response_parts.extend(contextualized_facts["inductive"])
+        
+        if contextualized_facts.get("deductive"):
+            response_parts.append("\n## DEDUCTIVE (Explicit facts and statements):")
+            response_parts.extend(contextualized_facts["deductive"])
+    
+    # Add additional semantic search results if any
+    if semantic_facts:
+        response_parts.append("\n=== ADDITIONAL RELEVANT FACTS ===")
+        semantic_facts_formatted = [f"[created {timestamp}]: {fact}" for fact, timestamp in semantic_facts]
+        response_parts.extend(semantic_facts_formatted)
+
+    facts_string = "\n".join(response_parts) if response_parts else "No relevant facts found."
 
     total_time = asyncio.get_event_loop().time() - fact_start_time
-    logger.debug(
-        f"Total fact retrieval completed in {total_time:.2f}s with {len(retrieved_facts)} unique facts"
-    )
+    total_contextualized = sum(len(facts) for facts in contextualized_facts.values())
+    
+    logger.info("=== FACT RETRIEVAL SUMMARY ===")
+    logger.info(f"TOTAL TIME: {total_time:.2f}s")
+    logger.info(f"CONTEXTUALIZED FACTS: {total_contextualized}")
+    logger.info(f"SEMANTIC SEARCH FACTS: {len(semantic_facts)}")
+    logger.info(f"FINAL FACTS STRING LENGTH: {len(facts_string)} chars")
+    logger.info("=== FACT RETRIEVAL END ===")
+    
     return facts_string
 
 
@@ -314,10 +470,11 @@ async def generate_semantic_queries(query: str) -> list[str]:
     Returns:
         A list of semantically relevant queries
     """
-    logger.debug(f"Generating semantic queries from: {query}")
+    logger.info("=== QUERY GENERATION START ===")
+    logger.info(f"INPUT QUERY: {query}")
     query_start = asyncio.get_event_loop().time()
 
-    logger.debug("Calling LLM for query generation")
+    logger.info("CALLING LLM for query generation...")
     llm_start = asyncio.get_event_loop().time()
 
     # Create a new model client
@@ -337,27 +494,31 @@ async def generate_semantic_queries(query: str) -> list[str]:
             use_caching=True,  # Likely not caching because the system prompt is under 1000 tokens
         )
         llm_time = asyncio.get_event_loop().time() - llm_start
-        logger.debug(f"LLM response received in {llm_time:.2f}s: {result[:100]}...")
+        logger.info(f"LLM RESPONSE received in {llm_time:.2f}s")
+        logger.info(f"RAW LLM RESPONSE: {result}")
 
         # Parse the JSON response to get a list of queries
         try:
             queries = json.loads(result)
             if not isinstance(queries, list):
                 # Fallback if response is not a valid list
-                logger.debug("LLM response not a list, using as single query")
+                logger.info("LLM response not a list, using as single query")
                 queries = [result]
         except json.JSONDecodeError:
             # Fallback if response is not valid JSON
-            logger.debug("Failed to parse JSON response, using raw response as query")
+            logger.info("Failed to parse JSON response, using raw response as query")
             queries = [query]  # Fall back to the original query
 
         # Ensure we always include the original query
         if query not in queries:
-            logger.debug("Adding original query to results")
+            logger.info("Adding original query to results")
             queries.append(query)
 
         total_time = asyncio.get_event_loop().time() - query_start
-        logger.debug(f"Generated {len(queries)} queries in {total_time:.2f}s")
+        logger.info(f"GENERATED {len(queries)} QUERIES in {total_time:.2f}s:")
+        for i, q in enumerate(queries, 1):
+            logger.info(f"  {i}. {q}")
+        logger.info("=== QUERY GENERATION END ===")
 
         return queries
     except Exception as e:
