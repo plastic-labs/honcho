@@ -101,13 +101,13 @@ class TomlSettings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Return sources in priority order (first is lowest priority)
+        # Return sources in priority order (first is highest priority)
         return (
-            init_settings,
-            TomlConfigSettingsSource(settings_cls),
-            dotenv_settings,
             env_settings,
-            file_secret_settings,
+            dotenv_settings,
+            TomlConfigSettingsSource(settings_cls),
+            # init_settings,
+            # file_secret_settings,
         )
 
 
