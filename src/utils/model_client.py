@@ -61,6 +61,33 @@ class Message(Protocol):
 
 class ModelClient:
     """A client for interacting with various language model APIs."""
+    
+    _instances: dict[tuple, 'ModelClient'] = {}
+
+    def __new__(
+        cls,
+        provider: ModelProvider = ModelProvider.ANTHROPIC,
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
+    ):
+        """
+        Create or return a cached ModelClient instance.
+        """
+        # Create a cache key from our ModelClient parameters
+        cache_key = (
+            provider,
+            model or DEFAULT_MODELS[provider],
+            api_key or cls._get_default_api_key(provider),
+            base_url or cls._get_default_base_url(provider),
+        )
+        
+        # Simple cache lookup - no locking needed in asyncio single-threaded context
+        if cache_key not in cls._instances:
+            instance = super().__new__(cls)
+            cls._instances[cache_key] = instance
+        
+        return cls._instances[cache_key]
 
     def __init__(
         self,
@@ -78,6 +105,10 @@ class ModelClient:
             api_key: The API key to use, or None to read from environment variables
             base_url: Custom base URL for the API endpoints (used for OpenRouter)
         """
+        # Only initialize once per instance (guard against re-initialization of cached instances)
+        if hasattr(self, '_initialized'):
+            return
+        
         self.provider = provider
         self.model = model or DEFAULT_MODELS[provider]
         self.base_url = base_url
@@ -105,6 +136,34 @@ class ModelClient:
             self.gemini_client = genai.Client(api_key=self.api_key)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
+        
+        # Mark as initialized to prevent re-initialization
+        self._initialized = True
+
+    @staticmethod
+    def _get_default_api_key(provider: ModelProvider) -> Optional[str]:
+        """Get default API key for provider."""
+        if provider == ModelProvider.ANTHROPIC:
+            return os.getenv("ANTHROPIC_API_KEY")
+        elif provider in OPENAI_COMPATIBLE_PROVIDERS:
+            return os.getenv("OPENAI_COMPATIBLE_API_KEY")
+        elif provider == ModelProvider.GEMINI:
+            return os.getenv("GEMINI_API_KEY")
+        return None
+    
+    @staticmethod
+    def _get_default_base_url(provider: ModelProvider) -> Optional[str]:
+        """Get default base URL for provider."""
+        if provider in OPENAI_COMPATIBLE_PROVIDERS:
+            return os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+        return None
+
+    @classmethod
+    def test_only_clear_cache(cls) -> None:
+        """
+        Clear all cached clients - intended for testing purposes only to clear state between tests.
+        """
+        cls._instances.clear()
 
     def create_message(self, role: str, content: str) -> dict[str, str]:
         """

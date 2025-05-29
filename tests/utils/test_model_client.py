@@ -12,6 +12,16 @@ from src.utils.model_client import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_model_client_cache():
+    """
+    Clear ModelClient cache before and after each test to ensure clean state.
+    """
+    ModelClient.test_only_clear_cache()
+    yield
+    ModelClient.test_only_clear_cache()
+
+
 @pytest.fixture
 def mock_env(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "mock-anthropic-api-key")
@@ -189,3 +199,34 @@ async def test_generate_with_caching(mock_anthropic_client, mock_anthropic_respo
     assert call_args["system"] == [
         {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
     ]
+
+
+@pytest.mark.asyncio
+async def test_model_client_caching():
+    """Test that ModelClient properly caches instances with identical parameters."""
+    # Test that identical parameters return the same instance
+    client1 = ModelClient(provider=ModelProvider.ANTHROPIC)
+    client2 = ModelClient(provider=ModelProvider.ANTHROPIC)
+    assert client1 is client2, "Same parameters should return identical instance"
+    
+    # Test that different providers return different instances
+    client3 = ModelClient(provider=ModelProvider.OPENAI)
+    assert client1 is not client3, "Different providers should return different instances"
+    
+    # Test that different models return different instances
+    client4 = ModelClient(provider=ModelProvider.ANTHROPIC, model="claude-3-opus")
+    assert client1 is not client4, "Different models should return different instances"
+    
+    # Test that explicit default model matches implicit default
+    client5 = ModelClient(provider=ModelProvider.ANTHROPIC, model="claude-3-7-sonnet-20250219")
+    assert client1 is client5, "Explicit default model should match implicit default"
+    
+    # Test that different API keys return different instances
+    client6 = ModelClient(provider=ModelProvider.ANTHROPIC, api_key="different-key")
+    assert client1 is not client6, "Different API keys should return different instances"
+    
+    # Verify initialization only happens once per cached instance
+    assert hasattr(client1, '_initialized'), "Client should be marked as initialized"
+    assert hasattr(client2, '_initialized'), "Cached client should also be marked as initialized"
+    assert client1.provider == ModelProvider.ANTHROPIC, "Client should have correct provider"
+    assert client2.provider == ModelProvider.ANTHROPIC, "Cached client should have correct provider"
