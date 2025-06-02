@@ -105,6 +105,8 @@ async def get_session_summaries(
         If only_latest is True: The most recent summary metamessage, or None if none exists
         If only_latest is False: A list of all summary metamessages for the session
     """
+    logger.debug(f"[get_session_summaries] Getting summaries for session_id: {session_id}, type: {summary_type.value}")
+    
     # Determine the metamessage type based on summary_type
     label = (
         SummaryType.SHORT.value
@@ -123,10 +125,14 @@ async def get_session_summaries(
         stmt = stmt.limit(1)
         result = await db.execute(stmt)
         # Always return a metamessage instance or None
-        return result.scalar_one_or_none()
+        summary = result.scalar_one_or_none()
+        logger.debug(f"[get_session_summaries] Found latest summary: {summary.id if summary else None}")
+        return summary
     else:
         result = await db.execute(stmt)
-        return list(result.scalars().all())
+        summaries = list(result.scalars().all())
+        logger.debug(f"[get_session_summaries] Found {len(summaries)} summaries")
+        return summaries
 
 
 async def get_messages_since_message(
@@ -143,6 +149,8 @@ async def get_messages_since_message(
     Returns:
         List of messages after the reference message or all messages if message_id is None
     """
+    logger.debug(f"[get_messages_since_message] Getting messages for session_id: {session_id}, since message_id: {message_id}")
+    
     # Base query for messages in this session
     query = (
         select(models.Message)
@@ -164,7 +172,15 @@ async def get_messages_since_message(
 
     # Execute query
     result = await db.execute(query)
-    return list(result.scalars().all())
+    messages = list(result.scalars().all())
+    
+    logger.debug(f"[get_messages_since_message] Found {len(messages)} messages for session_id: {session_id}")
+    if messages:
+        # Log first few messages to verify they belong to correct session
+        for i, msg in enumerate(messages[:3]):
+            logger.debug(f"[get_messages_since_message] Message {i}: session_id={msg.session_id}, is_user={msg.is_user}, content={msg.content[:30]}...")
+    
+    return messages
 
 
 async def create_summary(
@@ -339,10 +355,17 @@ async def get_summarized_history(
         - List of messages since the latest summary
         - The latest summary metamessage, or None if no summary exists
     """
+    logger.debug(f"[get_summarized_history] Getting history for session_id: {session_id}")
+    
     # Get session creation date for temporal context
     session_stmt = select(models.Session).where(models.Session.public_id == session_id)
     session_result = await db.execute(session_stmt)
     session = session_result.scalar_one_or_none()
+    
+    if session:
+        logger.debug(f"[get_summarized_history] Found session: {session.public_id}, created_at: {session.created_at}")
+    else:
+        logger.warning(f"[get_summarized_history] No session found for session_id: {session_id}")
     
     if session:
         # Try to get session date from metadata first
@@ -360,6 +383,11 @@ async def get_summarized_history(
     messages, latest_summary = await get_messages_since_latest_summary(
         db, session_id, summary_type
     )
+    
+    logger.debug(f"[get_summarized_history] Retrieved {len(messages)} messages for session_id: {session_id}")
+    if messages:
+        logger.debug(f"[get_summarized_history] First message session_id: {messages[0].session_id}, is_user: {messages[0].is_user}, content: {messages[0].content[:50]}...")
+        logger.debug(f"[get_summarized_history] Last message session_id: {messages[-1].session_id}, is_user: {messages[-1].is_user}, content: {messages[-1].content[:50]}...")
 
     # Format messages
     messages_text = format_messages(messages)

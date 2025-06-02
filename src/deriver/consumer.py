@@ -1,14 +1,13 @@
 import datetime
+import json
 import logging
 import os
-import re
-from typing import Optional
 
 import sentry_sdk
 from langfuse.decorators import observe
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .. import crud
+from .. import crud, schemas
 from ..utils import history
 from .fact_saver import get_fact_saver_queue, initialize_fact_saver, shutdown_fact_saver
 from .surprise_reasoner import SurpriseReasoner
@@ -16,13 +15,11 @@ from .tom.embeddings import CollectionEmbeddingStore
 
 # from .tom.long_term import extract_facts_long_term
 
-# Global configuration for datetime fallback behavior
-# Set to False for historical datasets, True for live conversations
-USE_CREATED_AT_FALLBACK = os.getenv("USE_CREATED_AT_FALLBACK", "false").lower() == "true"
+# Removed dataset-specific datetime configuration - now using real-time only
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-logger.info(f"Deriver datetime fallback: USE_CREATED_AT_FALLBACK={USE_CREATED_AT_FALLBACK}")
+logger.info("Deriver using real-time datetime")
 
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
@@ -39,92 +36,42 @@ USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term"
 # db.add(metamessage)
 
 
-def parse_dataset_datetime(datetime_str: str) -> Optional[str]:
-    """
-    Parse datetime from your dataset format like "1:56 pm on 8 May, 2023".
-    
-    Returns:
-        Formatted datetime string 'YYYY-MM-DD HH:MM:SS' or None if parsing fails
-    """
+def get_current_datetime() -> str:
+    """Get current datetime in UTC format."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+
+async def save_deriver_trace(db: AsyncSession, message_id: str, deriver_trace: dict):
+    """Save the deriver trace as a metamessage attached to the user message."""
     try:
-        pattern = r"(\d{1,2}):(\d{2})\s*(am|pm)\s*on\s*(\d{1,2})\s*(\w+),?\s*(\d{4})"
-        match = re.match(pattern, datetime_str, re.IGNORECASE)
+        # Convert trace to JSON string
+        trace_content = json.dumps(deriver_trace, indent=2)
         
-        if match:
-            hour, minute, ampm, day, month_name, year = match.groups()
-            
-            # Convert 12-hour to 24-hour format
-            hour = int(hour)
-            if ampm.lower() == 'pm' and hour != 12:
-                hour += 12
-            elif ampm.lower() == 'am' and hour == 12:
-                hour = 0
-            
-            # Convert month name to number
-            month_names = {
-                'january': 1, 'february': 2, 'march': 3, 'april': 4,
-                'may': 5, 'june': 6, 'july': 7, 'august': 8,
-                'september': 9, 'october': 10, 'november': 11, 'december': 12
-            }
-            month = month_names.get(month_name.lower())
-            
-            if month:
-                parsed_dt = datetime.datetime(
-                    year=int(year),
-                    month=month,
-                    day=int(day),
-                    hour=hour,
-                    minute=int(minute)
-                )
-                return parsed_dt.strftime('%Y-%m-%d %H:%M:%S')
-                
-    except (ValueError, TypeError, AttributeError) as e:
-        logger.debug(f"Failed to parse datetime '{datetime_str}': {e}")
-    
-    return None
+        # Create metamessage schema
+        metamessage_data = schemas.MetamessageCreate(
+            message_id=message_id,
+            label="deriver_trace",
+            content=trace_content,
+            metadata={"trace_version": "1.0", "timestamp": deriver_trace.get("timestamp")}
+        )
+        
+        # Save to database
+        await crud.create_metamessage(db, metamessage_data)
+        logger.info(f"Saved deriver trace for message {message_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to save deriver trace for message {message_id}: {e}")
+        # Don't raise - trace saving should not block reasoning process
 
 
 async def get_session_datetime(db: AsyncSession, session_id: str) -> str:
     """
-    Get datetime from session metadata (for your dataset) or fall back to session.created_at.
+    Get current datetime - simplified for real-time usage.
     
     Returns:
-        Formatted datetime string 'YYYY-MM-DD HH:MM:SS' or 'unknown'
+        Current datetime string 'YYYY-MM-DD HH:MM:SS'
     """
-    from sqlalchemy import select
-
-    from .. import models
-    
-    # Get the session
-    stmt = select(models.Session).where(models.Session.public_id == session_id)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    
-    if not session:
-        logger.warning(f"Session {session_id} not found")
-        return "unknown" if not USE_CREATED_AT_FALLBACK else datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    
-    logger.info(f"Session {session_id} metadata: {session.h_metadata}")
-    
-    # Try to extract datetime from session metadata
-    if session.h_metadata:
-        datetime_str = session.h_metadata.get('datetime') or session.h_metadata.get('session_date')
-        logger.info(f"Found datetime string: {datetime_str}")
-        
-        if datetime_str:
-            parsed_time = parse_dataset_datetime(datetime_str)
-            if parsed_time:
-                logger.info(f"Parsed session datetime: {parsed_time}")
-                return parsed_time
-    
-    # Fall back to session created_at or unknown based on global config
-    if USE_CREATED_AT_FALLBACK:
-        fallback_time = session.created_at.strftime('%Y-%m-%d %H:%M:%S')
-        logger.info(f"Using session created_at: {fallback_time}")
-        return fallback_time
-    else:
-        logger.info("No session datetime found, fallback disabled")
-        return "unknown"
+    return get_current_datetime()
 
 
 async def process_item(db: AsyncSession, payload: dict):
@@ -210,7 +157,7 @@ async def process_user_message(
         short_history_messages,
         latest_short_summary,
     ) = await history.get_summarized_history_before_message(
-        db, session_id, message_id, summary_type=history.SummaryType.SHORT, fallback_to_created_at=USE_CREATED_AT_FALLBACK
+        db, session_id, message_id, summary_type=history.SummaryType.SHORT, fallback_to_created_at=True
     )
     
     # Debug: Check if we just created a summary and messages are missing
@@ -256,7 +203,7 @@ async def process_user_message(
     
     # The unified approach naturally handles both reactive reasoning (responding to new turns)
     # and proactive reasoning (generating abductive hypotheses when needed)
-    await reasoner.recursive_reason(
+    final_facts, deriver_trace = await reasoner.recursive_reason_with_trace(
         context=initial_context,
         history=formatted_history,
         new_turn=content,
@@ -266,6 +213,9 @@ async def process_user_message(
     )
     
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
+    
+    # Save the deriver trace as a metamessage attached to the user message
+    await save_deriver_trace(db, message_id, deriver_trace)
     
     # Log queue stats for monitoring
     stats = fact_saver.get_stats()

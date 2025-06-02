@@ -216,13 +216,11 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
-    db=db,
 ):
 
     """Chat with the Dialectic API"""
     if not options.stream:
         return await agent.chat(
-            db=db,
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
@@ -233,7 +231,6 @@ async def chat(
         async def parse_stream():
             try:
                 stream = await agent.chat(
-                    db=db,
                     app_id=app_id,
                     user_id=user_id,
                     session_id=session_id,

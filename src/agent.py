@@ -3,17 +3,16 @@ import datetime
 import json
 import logging
 import os
-import re
 from collections.abc import Iterable
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
 
 import sentry_sdk
+from anthropic import MessageStreamManager
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from anthropic import MessageStreamManager
 
 from src import crud, models, schemas
 from src.dependencies import tracked_db
@@ -49,68 +48,16 @@ load_dotenv()
 
 async def get_session_datetime(db: AsyncSession, session_id: str) -> str:
     """
-    Extract datetime from session metadata if available, otherwise use current time.
+    Get current datetime - simplified for real-time usage.
     
     Args:
-        db: Database session
-        session_id: The session ID to get datetime for
+        db: Database session (unused, kept for compatibility)
+        session_id: The session ID (unused, kept for compatibility)
         
     Returns:
-        Formatted datetime string in 'YYYY-MM-DD HH:MM:SS' format
+        Current datetime string in 'YYYY-MM-DD HH:MM:SS' format
     """
-    # Get the session
-    stmt = select(models.Session).where(models.Session.public_id == session_id)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    
-    if not session:
-        logger.warning(f"Session {session_id} not found, using current time")
-        return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    
-    # Check if datetime is in session metadata
-    if session.h_metadata and 'datetime' in session.h_metadata:
-        try:
-            # Parse format like "1:14 pm on 25 May, 2023"
-            datetime_str = session.h_metadata['datetime']
-            
-            # Use regex to parse the format
-            pattern = r"(\d{1,2}):(\d{2})\s*(am|pm)\s*on\s*(\d{1,2})\s*(\w+),\s*(\d{4})"
-            match = re.match(pattern, datetime_str, re.IGNORECASE)
-            
-            if match:
-                hour, minute, ampm, day, month_name, year = match.groups()
-                
-                # Convert 12-hour to 24-hour format
-                hour = int(hour)
-                if ampm.lower() == 'pm' and hour != 12:
-                    hour += 12
-                elif ampm.lower() == 'am' and hour == 12:
-                    hour = 0
-                
-                # Convert month name to number
-                month_names = {
-                    'january': 1, 'february': 2, 'march': 3, 'april': 4,
-                    'may': 5, 'june': 6, 'july': 7, 'august': 8,
-                    'september': 9, 'october': 10, 'november': 11, 'december': 12
-                }
-                month = month_names.get(month_name.lower())
-                
-                if month:
-                    parsed_dt = datetime.datetime(
-                        year=int(year),
-                        month=month,
-                        day=int(day),
-                        hour=hour,
-                        minute=int(minute),
-                        tzinfo=datetime.timezone.utc
-                    )
-                    return parsed_dt.strftime('%Y-%m-%d %H:%M:%S')
-                    
-        except (ValueError, TypeError, AttributeError) as e:
-            logger.warning(f"Failed to parse datetime from session metadata for session {session_id}: {e}")
-    
-    # Fall back to session's created_at
-    return session.created_at.strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 
 class AsyncSet:
@@ -163,6 +110,7 @@ class Dialectic:
             <context>{self.user_representation}</context>
             <conversation_history>{self.chat_history}</conversation_history>
             """
+            logger.info("=== DIALECTIC PROMPT ===\n" + prompt + "\n=== END DIALECTIC PROMPT ===")
             logger.debug(
                 f"Prompt constructed with context length: {len(self.user_representation)} chars"
             )
@@ -207,6 +155,7 @@ class Dialectic:
             <context>{self.user_representation}</context>
             <conversation_history>{self.chat_history}</conversation_history>
             """
+            logger.info("=== DIALECTIC PROMPT (STREAM) ===\n" + prompt + "\n=== END DIALECTIC PROMPT ===")
             logger.debug(
                 f"Prompt constructed with context length: {len(self.user_representation)} chars"
             )
@@ -230,7 +179,6 @@ class Dialectic:
         
 @observe()
 async def chat(
-    db: AsyncSession,
     app_id: str,
     user_id: str,
     session_id: str,
@@ -254,31 +202,76 @@ async def chat(
 
     start_time = asyncio.get_event_loop().time()
 
-    # instantiate the collection we need to query over
-    collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
-    embedding_store = CollectionEmbeddingStore(
-        db=db,
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection.public_id,  # type: ignore
+    # Setup phase - create resources we'll need for all operations
+
+    # 1. Fetch latest user message & chat history
+    async with tracked_db("chat.load_history") as db_history:
+        stmt = (
+            select(models.Message)
+            .where(models.Message.app_id == app_id)
+            .where(models.Message.user_id == user_id)
+            .where(models.Message.session_id == session_id)
+            .where(models.Message.is_user)
+            .order_by(models.Message.id.desc())
+            .limit(1)
+        )
+        latest_messages = await db_history.execute(stmt)
+        latest_message = latest_messages.scalar_one_or_none()
+        latest_message_id = latest_message.public_id if latest_message else None
+        logger.debug(f"Latest user message ID: {latest_message_id}")
+
+        chat_history, _, _ = await history.get_summarized_history(
+            db_history, session_id, summary_type=history.SummaryType.SHORT
+        )
+        if not chat_history:
+            logger.warning(f"No chat history found for session {session_id}")
+            chat_history = f"someone asked this about the user's message: {final_query}"
+        logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
+        message_count = len(chat_history.split("\n"))
+        logger.debug(f"Retrieved chat history: {message_count} messages")
+
+    # Run short-term inference and long-term facts in parallel
+    async def fetch_long_term():
+        async with tracked_db("chat.get_collection") as db_embed:
+            collection = await crud.get_or_create_user_protected_collection(
+                db_embed, app_id, user_id
+            )
+            collection_id = (
+                collection.public_id
+            )  # Extract the ID while session is active
+        embedding_store = CollectionEmbeddingStore(
+            db=db_embed,
+            app_id=app_id,
+            user_id=user_id,
+            collection_id=collection_id,
+        )
+        facts = await get_long_term_facts(final_query, embedding_store)
+        return facts
+
+    long_term_task = asyncio.create_task(fetch_long_term())
+    short_term_task = asyncio.create_task(run_tom_inference(chat_history, session_id))
+
+    facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
+    logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
+    logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
+
+    # Generate a fresh user representation
+    logger.debug("Generating user representation")
+    async with tracked_db("chat.generate_user_representation") as db_rep:
+        user_representation = await generate_user_representation(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            chat_history=chat_history,
+            tom_inference=tom_inference,
+            facts=facts,
+            db=db_rep,
+            message_id=latest_message_id,
+            with_inference=False,
+        )
+    logger.debug(
+        f"User representation generated: {len(user_representation)} characters"
     )
-
-    # get immediate session history to contextualize query
-    stmt = (
-        select(models.Message)
-        .where(models.Message.app_id == app_id)
-        .where(models.Message.user_id == user_id)
-        .where(models.Message.session_id == session_id)
-        .order_by(models.Message.id.desc())
-        .limit(10)
-    )
-
-    latest_messages = await db.execute(stmt)
-    chat_history = history.format_messages(list(reversed(latest_messages.scalars().all())))
-
-    # retrieve facts (use user_representation variable name for compatibility)
-    user_representation = await get_facts(final_query, embedding_store)
-    logger.debug(f"User Representation: {user_representation}")
 
     # Create a Dialectic chain with the fresh user representation to synthesize into a response
     chain = Dialectic(
@@ -427,6 +420,35 @@ async def get_facts(
     logger.info("=== FACT RETRIEVAL END ===")
     
     return facts_string
+
+
+async def get_long_term_facts(
+    query: str, embedding_store: CollectionEmbeddingStore
+) -> list[str]:
+    """
+    Generate queries based on the dialectic query and retrieve relevant facts.
+    
+    Returns list of facts for compatibility with the tracked_db pattern.
+
+    Args:
+        query: The user query
+        embedding_store: The embedding store to search
+
+    Returns:
+        List of retrieved facts
+    """
+    logger.debug(f"Starting long-term fact retrieval for query: {query}")
+    
+    # Use the existing get_facts function but return as list for compatibility
+    facts_string = await get_facts(query, embedding_store)
+    
+    # Convert back to list format expected by generate_user_representation
+    if facts_string:
+        # Split by lines and filter out empty lines
+        facts_list = [line.strip() for line in facts_string.split('\n') if line.strip()]
+        return facts_list
+    else:
+        return []
 
 
 async def run_tom_inference(chat_history: str, session_id: str) -> str:
@@ -591,12 +613,14 @@ async def generate_user_representation(
         )
         logger.debug(f"Extracted representation: {len(representation)} characters")
     else:
+        # Join the facts list with newlines for proper formatting
+        facts_formatted = '\n'.join(facts) if facts else "No relevant facts found."
         representation = f"""
 PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
 {tom_inference}
 
 RELEVANT LONG-TERM FACTS ABOUT THE USER:
-{facts}
+{facts_formatted}
 """
     logger.debug(f"Representation: {representation}")
     # If message_id is provided, save the representation as a metamessage

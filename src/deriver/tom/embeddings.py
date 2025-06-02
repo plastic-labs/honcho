@@ -1,12 +1,12 @@
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import crud, schemas
+from ... import crud, models, schemas
 from ...dependencies import tracked_db
-from ... import crud, schemas, models
-from ...utils.history import get_session_summaries, SummaryType
+from ...utils.history import SummaryType, get_session_summaries
 from ..fact_saver import get_fact_saver_queue
 
 logger = logging.getLogger(__name__)
@@ -106,7 +106,10 @@ class CollectionEmbeddingStore:
                             'content': doc.content,
                             'session_context': doc.h_metadata.get("session_context", ""),
                             'summary_id': doc.h_metadata.get("summary_id", ""),
-                            'created_at': doc.created_at
+                            'created_at': doc.created_at,
+                            'last_accessed': doc.h_metadata.get("last_accessed"),
+                            'access_count': doc.h_metadata.get("access_count", 0),
+                            'accessed_sessions': doc.h_metadata.get("accessed_sessions", [])
                         }
                         context[level].append(fact_info)
                         seen_facts.add(normalized_content)
@@ -285,9 +288,12 @@ class CollectionEmbeddingStore:
                 
                 # Group facts by session summary to avoid redundancy
                 summary_groups = {}
-                facts_without_summary = []
+                docs_without_summary = []
                 
+                # Note: We skip metadata updates during retrieval to avoid concurrent session operations
+                # Access tracking will be handled through other paths when facts are saved/updated
                 for doc in docs:
+                    
                     session_context = doc.h_metadata.get("session_context", "")
                     summary_id = doc.h_metadata.get("summary_id", "")
                     
@@ -299,20 +305,21 @@ class CollectionEmbeddingStore:
                             }
                         summary_groups[summary_id]["facts"].append(doc.content)
                     else:
-                        facts_without_summary.append(doc.content)
+                        docs_without_summary.append(doc)
                 
                 # Format the output to avoid redundancy
                 formatted_facts = []
                 
                 # Add facts with session context (grouped to avoid repeating context)
-                for summary_id, group in summary_groups.items():
+                for _summary_id, group in summary_groups.items():
                     context_header = f"From session: {group['context'][:200]}..."
-                    facts_list = "\n".join([f"  • {fact}" for fact in group["facts"]])
+                    facts_list = "\n".join([f"  • {fact_content}" for fact_content in group["facts"]])
                     formatted_facts.append(f"{context_header}\n{facts_list}")
                 
-                # Add facts without session context
-                for fact in facts_without_summary:
-                    formatted_facts.append(f"• {fact}")
+                # Add facts without session context - include temporal metadata
+                for doc in docs_without_summary:
+                    temporal_info = self._format_temporal_metadata_for_dialectic(doc)
+                    formatted_facts.append(f"• {doc.content}{temporal_info}")
                 
                 context[level] = formatted_facts
             
@@ -371,6 +378,16 @@ class CollectionEmbeddingStore:
         
         for fact in facts:
             try:
+                # Check if similar fact already exists
+                existing_similar = await self._find_similar_fact(fact, similarity_threshold, level)
+                
+                if existing_similar:
+                    # Update existing fact metadata instead of creating duplicate
+                    await self._update_similar_fact_metadata(existing_similar, session_id, message_id)
+                    logger.debug(f"Updated existing similar fact: {fact[:50]}...")
+                    continue
+                
+                # No similar fact found, create new one
                 metadata = {}
                 if message_id:
                     metadata["message_id"] = message_id
@@ -404,6 +421,130 @@ class CollectionEmbeddingStore:
                 continue
         
         logger.info(f"Queued {len(facts)} facts for saving (level: {level})")
+
+    def _format_temporal_metadata_for_dialectic(self, doc: models.Document) -> str:
+        """
+        Format temporal metadata for dialectic fact display.
+        Shows both fact genesis and ongoing relevance patterns.
+        
+        Args:
+            doc: Document with temporal metadata
+            
+        Returns:
+            Formatted temporal context string
+        """
+        temporal_parts = []
+        
+        # Fact inception - when originally derived
+        if doc.created_at:
+            temporal_parts.append(f"derived {doc.created_at.isoformat()}")
+        
+        # Access frequency and session spread
+        access_count = doc.h_metadata.get('access_count', 0) if doc.h_metadata else 0
+        accessed_sessions = doc.h_metadata.get('accessed_sessions', []) if doc.h_metadata else []
+        
+        if access_count > 0:
+            if accessed_sessions:
+                session_count = len(accessed_sessions)
+                if session_count > 1:
+                    temporal_parts.append(f"accessed {access_count}x across {session_count} sessions")
+                else:
+                    temporal_parts.append(f"accessed {access_count}x in 1 session")
+            else:
+                temporal_parts.append(f"accessed {access_count}x")
+        
+        # Last accessed timestamp
+        last_accessed = doc.h_metadata.get('last_accessed') if doc.h_metadata else None
+        if last_accessed:
+            temporal_parts.append(f"last accessed {last_accessed}")
+        
+        if temporal_parts:
+            return f" [{', '.join(temporal_parts)}]"
+        else:
+            return ""
+
+    async def _update_fact_access_metadata(self, doc: models.Document) -> None:
+        """Update metadata to track when and how often facts are accessed."""
+        try:
+            
+            updated_metadata = doc.h_metadata.copy() if doc.h_metadata else {}
+            updated_metadata["last_accessed"] = datetime.now(timezone.utc).isoformat()
+            updated_metadata["access_count"] = updated_metadata.get("access_count", 0) + 1
+            
+            # Update the document with new metadata
+            document_update = schemas.DocumentUpdate(metadata=updated_metadata)
+            await crud.update_document(
+                self.db,
+                document_update,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                document_id=doc.public_id
+            )
+            
+        except Exception as e:
+            logger.warning(f"Failed to update access metadata for document {doc.public_id}: {e}")
+
+    async def _find_similar_fact(self, fact: str, similarity_threshold: float, level: str | None = None) -> models.Document | None:
+        """Find an existing fact that is semantically similar to the given fact."""
+        try:
+            filter_dict = {}
+            if level:
+                filter_dict["level"] = level
+            
+            # Query for similar facts using semantic search
+            documents = await crud.query_documents(
+                self.db,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                query=fact,
+                max_distance=1 - similarity_threshold,  # Convert similarity to distance
+                top_k=1,
+                filter=filter_dict
+            )
+            
+            # Return the most similar document if one exists
+            docs_list = list(documents)
+            return docs_list[0] if docs_list else None
+            
+        except Exception as e:
+            logger.warning(f"Error finding similar fact: {e}")
+            return None
+
+    async def _update_similar_fact_metadata(self, doc: models.Document, session_id: str | None = None, message_id: str | None = None) -> None:
+        """Update metadata of an existing similar fact to track recent access."""
+        try:
+            
+            updated_metadata = doc.h_metadata.copy() if doc.h_metadata else {}
+            updated_metadata["last_accessed"] = datetime.now(timezone.utc).isoformat()
+            updated_metadata["access_count"] = updated_metadata.get("access_count", 0) + 1
+            
+            # Add current session/message to accessed_sessions list
+            accessed_sessions = updated_metadata.get("accessed_sessions", [])
+            if session_id and session_id not in accessed_sessions:
+                accessed_sessions.append(session_id)
+                updated_metadata["accessed_sessions"] = accessed_sessions[-10:]  # Keep last 10 sessions
+            
+            # Track latest message that referenced this fact
+            if message_id:
+                updated_metadata["latest_message_id"] = message_id
+            
+            # Update the document
+            document_update = schemas.DocumentUpdate(metadata=updated_metadata)
+            await crud.update_document(
+                self.db,
+                document_update,
+                app_id=self.app_id,
+                user_id=self.user_id,
+                collection_id=self.collection_id,
+                document_id=doc.public_id
+            )
+            
+            logger.debug(f"Updated metadata for similar fact: {doc.content[:50]}...")
+            
+        except Exception as e:
+            logger.warning(f"Failed to update similar fact metadata for document {doc.public_id}: {e}")
 
     async def get_relevant_facts(
         self, query: str, top_k: int = 5, max_distance: float = 0.3
