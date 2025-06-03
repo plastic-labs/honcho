@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import signal
 from datetime import datetime, timedelta
@@ -16,9 +17,32 @@ from .. import models
 from ..dependencies import tracked_db
 from .consumer import process_item
 
-logger = getLogger(__name__)
-
 load_dotenv()
+
+
+def get_log_level(env_var="LOG_LEVEL", default="INFO"):
+    """
+    Convert log level string from environment variable to logging module constant.
+    """
+    log_level_str = os.getenv(env_var, default).upper()
+    log_levels = {
+        "CRITICAL": logging.CRITICAL,
+        "ERROR": logging.ERROR,
+        "WARNING": logging.WARNING,
+        "INFO": logging.INFO,
+        "DEBUG": logging.DEBUG,
+        "NOTSET": logging.NOTSET,
+    }
+    return log_levels.get(log_level_str, logging.INFO)
+
+
+# Configure logging for deriver process
+logging.basicConfig(
+    level=get_log_level(),
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+
+logger = getLogger(__name__)
 
 
 class QueueManager:

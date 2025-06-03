@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from anthropic import AsyncMessageStreamManager
+from anthropic import MessageStreamManager
 from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
@@ -91,14 +91,14 @@ async def get_sessions(
 ):
     """Get All Sessions for a User"""
     filter_param = None
-    is_active_param = False  # Default to None, meaning no filter on is_active
+    is_active_param = None  # Default to None, meaning no filter on is_active
 
     if options:
         if hasattr(options, 'filter') and options.filter:
             filter_param = options.filter
             if filter_param == {}: # Explicitly check for empty dict
                 filter_param = None
-        if hasattr(options, 'is_active'): # Check if is_active is present
+        if hasattr(options, 'is_active') and options.is_active is not None: # Check if is_active is present and not None
             is_active_param = options.is_active
 
     return await paginate(
@@ -237,10 +237,14 @@ async def chat(
                     queries=options.queries,
                     stream=True,
                 )
-                if type(stream) is AsyncMessageStreamManager:
-                    async with stream as stream_manager:
-                        async for text in stream_manager.text_stream:
+                # Type check and use appropriate streaming method
+                if isinstance(stream, MessageStreamManager):
+                    with stream as stream_manager:
+                        for text in stream_manager.text_stream:
                             yield text
+                else:
+                    # Fallback - this shouldn't happen in streaming mode
+                    yield str(stream)
             except Exception as e:
                 logger.error(f"Error in stream: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e)) from e

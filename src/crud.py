@@ -361,7 +361,7 @@ async def get_sessions(
     app_id: str,
     user_id: str,
     reverse: Optional[bool] = False,
-    is_active: Optional[bool] = False,
+    is_active: Optional[bool] = None,
     filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
@@ -370,8 +370,8 @@ async def get_sessions(
         .where(models.Session.user_id == user_id)
     )
 
-    if is_active:
-        stmt = stmt.where(models.Session.is_active.is_(True))
+    if is_active is not None:
+        stmt = stmt.where(models.Session.is_active.is_(is_active))
 
     if filter is not None:
         stmt = stmt.where(models.Session.h_metadata.contains(filter))
