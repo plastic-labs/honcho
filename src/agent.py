@@ -245,7 +245,7 @@ async def chat(
             user_id=user_id,
             collection_id=collection_id,
         )
-        facts = await get_long_term_facts(final_query, embedding_store)
+        facts = await get_long_term_observations(final_query, embedding_store)
         return facts
 
     long_term_task = asyncio.create_task(fetch_long_term())
@@ -310,39 +310,39 @@ async def chat(
     return schemas.DialecticResponse(content=response[0]["text"])
 
 
-async def get_facts(
+async def get_observations(
     query: str, embedding_store: CollectionEmbeddingStore
 ) -> str:
     """
-    Generate queries based on the dialectic query and retrieve relevant facts.
+    Generate queries based on the dialectic query and retrieve relevant observations.
     
-    Uses both DIA framework contextualized facts and semantic search for comprehensive results.
+    Uses both DIA framework contextualized observations and semantic search for comprehensive results.
 
     Args:
         query: The user query
         embedding_store: The embedding store to search
 
     Returns:
-        String containing all retrieved facts with their context, organized by reasoning level
+        String containing all retrieved observations with their context, organized by reasoning level
     """
-    logger.info("=== FACT RETRIEVAL START ===")
+    logger.info("=== OBSERVATION RETRIEVAL START ===")
     logger.info(f"ORIGINAL QUERY: {query}")
-    fact_start_time = asyncio.get_event_loop().time()
+    observation_start_time = asyncio.get_event_loop().time()
 
-    # First, get contextualized facts from DIA framework
-    logger.info("RETRIEVING CONTEXTUALIZED FACTS from DIA framework...")
-    contextualized_facts = await embedding_store.get_contextualized_facts_for_dialectic()
+    # First, get contextualized observations from DIA framework
+    logger.info("RETRIEVING CONTEXTUALIZED OBSERVATIONS from DIA framework...")
+    contextualized_observations = await embedding_store.get_contextualized_observations_for_dialectic()
     
-    # Log contextualized facts by level
-    for level, facts in contextualized_facts.items():
-        logger.info(f"CONTEXTUALIZED {level.upper()}: {len(facts)} facts")
-        for i, fact in enumerate(facts[:3]):  # Show first 3
-            logger.info(f"  {i+1}. {fact[:100]}...")
-        if len(facts) > 3:
-            logger.info(f"  ... and {len(facts) - 3} more facts")
+    # Log contextualized observations by level
+    for level, observations in contextualized_observations.items():
+        logger.info(f"CONTEXTUALIZED {level.upper()}: {len(observations)} observations")
+        for i, observation in enumerate(observations[:3]):  # Show first 3
+            logger.info(f"  {i+1}. {observation[:100]}...")
+        if len(observations) > 3:
+            logger.info(f"  ... and {len(observations) - 3} more observations")
     
     # Generate multiple queries for additional semantic search
-    logger.info("GENERATING SEMANTIC QUERIES for additional facts...")
+    logger.info("GENERATING SEMANTIC QUERIES for additional observations...")
     search_queries = await generate_semantic_queries(query)
     logger.info(f"GENERATED QUERIES: {search_queries}")
 
@@ -350,11 +350,11 @@ async def get_facts(
     async def execute_query(i: int, search_query: str) -> list[tuple[str, str]]:
         logger.info(f"EXECUTING SEMANTIC QUERY {i + 1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
-        documents = await embedding_store.get_relevant_facts(
-            search_query, top_k=5, max_distance=0.85  # Reduced from 10 since we have contextualized facts
+        documents = await embedding_store.get_relevant_observations(
+            search_query, top_k=5, max_distance=0.85  # Reduced from 10 since we have contextualized observations
         )
         query_time = asyncio.get_event_loop().time() - query_start
-        logger.info(f"QUERY {i + 1} RESULTS: {len(documents)} facts retrieved in {query_time:.2f}s")
+        logger.info(f"QUERY {i + 1} RESULTS: {len(documents)} observations retrieved in {query_time:.2f}s")
         
         # Eagerly extract attributes to avoid DetachedInstanceError
         document_data = []
@@ -364,7 +364,7 @@ async def get_facts(
             created_at = doc.created_at
             document_data.append((content, created_at))
         
-        # Log the actual facts found using the extracted data
+        # Log the actual observations found using the extracted data
         for j, (content, created_at) in enumerate(document_data):
             logger.info(f"  {j+1}. [{created_at.strftime('%Y-%m-%d %H:%M:%S')}] {content}")
         
@@ -375,78 +375,78 @@ async def get_facts(
     query_tasks = [
         execute_query(i, search_query) for i, search_query in enumerate(search_queries)
     ]
-    all_facts_lists = await asyncio.gather(*query_tasks)
+    all_observations_lists = await asyncio.gather(*query_tasks)
 
-    # Combine semantic search facts into a single set to remove duplicates
-    semantic_facts = set()
-    for facts in all_facts_lists:
-        semantic_facts.update(facts)
+    # Combine semantic search observations into a single set to remove duplicates
+    semantic_observations = set()
+    for observations in all_observations_lists:
+        semantic_observations.update(observations)
 
     # Format the final response with structured sections
     response_parts = []
     
-    # Add contextualized facts organized by reasoning level
-    if any(contextualized_facts.values()):
+    # Add contextualized observations organized by reasoning level
+    if any(contextualized_observations.values()):
         response_parts.append("=== REASONING-BASED USER UNDERSTANDING ===")
         
-        if contextualized_facts.get("abductive"):
+        if contextualized_observations.get("abductive"):
             response_parts.append("\n## ABDUCTIVE (High-level psychological insights):")
-            response_parts.extend(contextualized_facts["abductive"])
+            response_parts.extend(contextualized_observations["abductive"])
         
-        if contextualized_facts.get("inductive"):
+        if contextualized_observations.get("inductive"):
             response_parts.append("\n## INDUCTIVE (Observed patterns and behaviors):")
-            response_parts.extend(contextualized_facts["inductive"])
+            response_parts.extend(contextualized_observations["inductive"])
         
-        if contextualized_facts.get("deductive"):
-            response_parts.append("\n## DEDUCTIVE (Explicit facts and statements):")
-            response_parts.extend(contextualized_facts["deductive"])
+        if contextualized_observations.get("deductive"):
+            response_parts.append("\n## DEDUCTIVE (Explicit observations and statements):")
+            response_parts.extend(contextualized_observations["deductive"])
     
     # Add additional semantic search results if any
-    if semantic_facts:
-        response_parts.append("\n=== ADDITIONAL RELEVANT FACTS ===")
-        semantic_facts_formatted = [f"[created {timestamp}]: {fact}" for fact, timestamp in semantic_facts]
-        response_parts.extend(semantic_facts_formatted)
+    if semantic_observations:
+        response_parts.append("\n=== ADDITIONAL RELEVANT OBSERVATIONS ===")
+        semantic_observations_formatted = [f"[created {timestamp}]: {observation}" for observation, timestamp in semantic_observations]
+        response_parts.extend(semantic_observations_formatted)
 
-    facts_string = "\n".join(response_parts) if response_parts else "No relevant facts found."
+    observations_string = "\n".join(response_parts) if response_parts else "No relevant observations found."
 
-    total_time = asyncio.get_event_loop().time() - fact_start_time
-    total_contextualized = sum(len(facts) for facts in contextualized_facts.values())
+    total_time = asyncio.get_event_loop().time() - observation_start_time
+    total_contextualized = sum(len(observations) for observations in contextualized_observations.values())
     
-    logger.info("=== FACT RETRIEVAL SUMMARY ===")
+    logger.info("=== OBSERVATION RETRIEVAL SUMMARY ===")
     logger.info(f"TOTAL TIME: {total_time:.2f}s")
-    logger.info(f"CONTEXTUALIZED FACTS: {total_contextualized}")
-    logger.info(f"SEMANTIC SEARCH FACTS: {len(semantic_facts)}")
-    logger.info(f"FINAL FACTS STRING LENGTH: {len(facts_string)} chars")
-    logger.info("=== FACT RETRIEVAL END ===")
+    logger.info(f"CONTEXTUALIZED OBSERVATIONS: {total_contextualized}")
+    logger.info(f"SEMANTIC SEARCH OBSERVATIONS: {len(semantic_observations)}")
+    logger.info(f"FINAL OBSERVATIONS STRING LENGTH: {len(observations_string)} chars")
+    logger.info("=== OBSERVATION RETRIEVAL END ===")
     
-    return facts_string
+    return observations_string
 
 
-async def get_long_term_facts(
+async def get_long_term_observations(
     query: str, embedding_store: CollectionEmbeddingStore
 ) -> list[str]:
     """
-    Generate queries based on the dialectic query and retrieve relevant facts.
+    Generate queries based on the dialectic query and retrieve relevant observations.
     
-    Returns list of facts for compatibility with the tracked_db pattern.
+    Returns list of observations for compatibility with the tracked_db pattern.
 
     Args:
         query: The user query
         embedding_store: The embedding store to search
 
     Returns:
-        List of retrieved facts
+        List of retrieved observations
     """
-    logger.debug(f"Starting long-term fact retrieval for query: {query}")
+    logger.debug(f"Starting long-term observation retrieval for query: {query}")
     
-    # Use the existing get_facts function but return as list for compatibility
-    facts_string = await get_facts(query, embedding_store)
+    # Use the existing get_observations function but return as list for compatibility
+    observations_string = await get_observations(query, embedding_store)
     
     # Convert back to list format expected by generate_user_representation
-    if facts_string:
+    if observations_string:
         # Split by lines and filter out empty lines
-        facts_list = [line.strip() for line in facts_string.split('\n') if line.strip()]
-        return facts_list
+        observations_list = [line.strip() for line in observations_string.split('\n') if line.strip()]
+        return observations_list
     else:
         return []
 
@@ -660,3 +660,12 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
     total_time = asyncio.get_event_loop().time() - rep_start_time
     logger.debug(f"Total representation generation completed in {total_time:.2f}s")
     return representation
+
+# Backward compatibility aliases
+async def get_facts(query: str, embedding_store: CollectionEmbeddingStore) -> str:
+    """Backward compatibility alias for get_observations."""
+    return await get_observations(query, embedding_store)
+
+async def get_long_term_facts(query: str, embedding_store: CollectionEmbeddingStore) -> list[str]:
+    """Backward compatibility alias for get_long_term_observations."""
+    return await get_long_term_observations(query, embedding_store)

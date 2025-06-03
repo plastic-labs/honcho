@@ -1,4 +1,6 @@
 from nanoid import generate as generate_nanoid
+import pytest
+from unittest.mock import patch
 
 
 def test_app_validations_api(client):
@@ -387,8 +389,14 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
     async def mock_chat_history(*args, **kwargs):
         return "Mock chat history", [], []
 
-    async def mock_get_long_term_facts(*args, **kwargs):
-        return ["Mock fact 1", "Mock fact 2"]
+    async def mock_get_long_term_observations(query: str, embedding_store) -> list[str]:
+        """Mock function that returns sample observations for testing."""
+        return [
+            "User prefers Python programming",
+            "User lives in California",
+            "User works remotely",
+            "User enjoys hiking"
+        ]
 
     async def mock_run_tom_inference(*args, **kwargs):
         return "Mock TOM inference"
@@ -423,7 +431,7 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         mock_get_or_create_collection,
     )
     monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
-    monkeypatch.setattr("src.agent.get_facts", mock_get_long_term_facts)
+    monkeypatch.setattr("src.agent.get_facts", mock_get_long_term_observations)
     monkeypatch.setattr("src.agent.run_tom_inference", mock_run_tom_inference)
     monkeypatch.setattr(
         "src.agent.generate_user_representation", mock_generate_user_representation

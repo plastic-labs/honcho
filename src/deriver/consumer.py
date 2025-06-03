@@ -41,7 +41,7 @@ def get_current_datetime() -> str:
     return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
 
-async def save_deriver_trace(db: AsyncSession, message_id: str, deriver_trace: dict):
+async def save_deriver_trace(db: AsyncSession, message_id: str, deriver_trace: dict, app_id: str, user_id: str, session_id: str):
     """Save the deriver trace as a metamessage attached to the user message."""
     try:
         # Convert trace to JSON string
@@ -50,13 +50,14 @@ async def save_deriver_trace(db: AsyncSession, message_id: str, deriver_trace: d
         # Create metamessage schema
         metamessage_data = schemas.MetamessageCreate(
             message_id=message_id,
+            session_id=session_id,
             label="deriver_trace",
             content=trace_content,
             metadata={"trace_version": "1.0", "timestamp": deriver_trace.get("timestamp")}
         )
         
         # Save to database
-        await crud.create_metamessage(db, metamessage_data)
+        await crud.create_metamessage(db, user_id, metamessage_data, app_id)
         logger.info(f"Saved deriver trace for message {message_id}")
         
     except Exception as e:
@@ -181,16 +182,16 @@ async def process_user_message(
         collection_id=collection.public_id,  # type: ignore
     )
     
-    # Configure fact counts to keep context focused on most relevant information
+    # Configure observation counts to keep context focused on most relevant information
     # These values balance having enough context while avoiding information overload
-    embedding_store.set_fact_counts(
+    embedding_store.set_observation_counts(
         abductive=2,   # Keep only the most relevant high-level insights
         inductive=4,   # Limit behavioral patterns to the most relevant ones
-        deductive=6    # Allow more specific facts but keep them manageable
+        deductive=6    # Allow more specific observations but keep them manageable
     )
     
-    # Retrieve semantically relevant facts with session context for the current message
-    initial_context = await embedding_store.get_relevant_facts_for_reasoning_with_context(
+    # Retrieve semantically relevant observations with session context for the current message
+    initial_context = await embedding_store.get_relevant_observations_for_reasoning_with_context(
         current_message=content,
         conversation_context=formatted_history
     )
@@ -203,7 +204,7 @@ async def process_user_message(
     
     # The unified approach naturally handles both reactive reasoning (responding to new turns)
     # and proactive reasoning (generating abductive hypotheses when needed)
-    final_facts, deriver_trace = await reasoner.recursive_reason_with_trace(
+    final_observations, deriver_trace = await reasoner.recursive_reason_with_trace(
         context=initial_context,
         history=formatted_history,
         new_turn=content,
@@ -213,13 +214,14 @@ async def process_user_message(
     )
     
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
+    logger.info(f"Final observations:\n{json.dumps(final_observations, indent=2)}")
     
     # Save the deriver trace as a metamessage attached to the user message
-    await save_deriver_trace(db, message_id, deriver_trace)
+    await save_deriver_trace(db, message_id, deriver_trace, app_id, user_id, session_id)
     
     # Log queue stats for monitoring
     stats = fact_saver.get_stats()
-    logger.debug(f"Fact saver queue stats: {stats}")
+    logger.debug(f"Observation saver queue stats: {stats}")
     
     rsr_time = os.times()[4] - process_start
     logger.debug(f"Parallel reasoning completed in {rsr_time:.2f}s")
