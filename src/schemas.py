@@ -268,9 +268,28 @@ class Document(DocumentBase):
     )
 
 
+class FactWithSource(BaseModel):
+    """A retrieved fact along with a snippet of its source message."""
+
+    fact: str
+    message_id: str | None = None
+    message_content: str | None = None
+
+
+class ChatTrace(BaseModel):
+    """Debug payload returned when include_trace=True."""
+
+    queries: list[str]
+    facts: list[FactWithSource]
+    tom_inference: str
+    user_representation: str | None = None
+    latency_ms: float | None = None
+
+
 class DialecticOptions(BaseModel):
     queries: str | list[str]
     stream: bool = False
+    include_trace: bool = False
 
     @field_validator("queries")
     def validate_queries(cls, v):
@@ -286,9 +305,17 @@ class DialecticOptions(BaseModel):
                 raise ValueError("One or more queries too long")
         return v
 
+    @field_validator("include_trace")
+    def validate_stream_and_trace(cls, v, values):
+        # Ensure stream is False when include_trace is True
+        if v and values.get("stream", False):
+            raise ValueError("Streaming is not supported when include_trace=True")
+        return v
+
 
 class DialecticResponse(BaseModel):
     content: str
+    trace: ChatTrace | None = None
 
 
 class MessageBatchCreate(BaseModel):

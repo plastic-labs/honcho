@@ -219,12 +219,25 @@ async def chat(
 ):
 
     """Chat with the Dialectic API"""
+    if options.include_trace:
+        # Force non-streaming when trace requested
+        return await agent.chat(
+            app_id=app_id,
+            user_id=user_id,
+            session_id=session_id,
+            queries=options.queries,
+            stream=False,
+            include_trace=True,
+        )
+
     if not options.stream:
         return await agent.chat(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
             queries=options.queries,
+            stream=False,
+            include_trace=False,
         )
     else:
 
@@ -236,6 +249,7 @@ async def chat(
                     session_id=session_id,
                     queries=options.queries,
                     stream=True,
+                    include_trace=False,
                 )
                 if type(stream) is AsyncMessageStreamManager:
                     async with stream as stream_manager:

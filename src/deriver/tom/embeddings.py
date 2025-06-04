@@ -19,7 +19,7 @@ class CollectionEmbeddingStore:
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
-        message_id: str = None,
+        message_id: str | None = None,
     ) -> None:
         """Save facts to the collection.
 
@@ -50,7 +50,7 @@ class CollectionEmbeddingStore:
 
     async def get_relevant_facts(
         self, query: str, top_k: int = 5, max_distance: float = 0.3
-    ) -> list[str]:
+    ) -> list[schemas.Document]:
         """Retrieve the most relevant facts for a given query.
 
         Args:
@@ -62,7 +62,7 @@ class CollectionEmbeddingStore:
             List of facts sorted by relevance
         """
         async with tracked_db("embedding_store.get_relevant_facts") as db:
-            documents = await crud.query_documents(
+            documents_seq = await crud.query_documents(
                 db,
                 app_id=self.app_id,
                 user_id=self.user_id,
@@ -72,7 +72,12 @@ class CollectionEmbeddingStore:
                 top_k=top_k,
             )
 
-            return [doc.content for doc in documents]
+            # Convert ORM objects to Pydantic models while the session is still open
+            documents: list[schemas.Document] = [
+                schemas.Document.model_validate(doc) for doc in documents_seq
+            ]
+
+            return documents
 
     async def remove_duplicates(
         self, facts: list[str], similarity_threshold: float = 0.85

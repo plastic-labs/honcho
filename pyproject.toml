@@ -25,6 +25,9 @@ dependencies = [
     "langfuse>=2.57.1",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
+    "ipython>=8.18.1",
+    "asyncpg>=0.30.0",
+    "tqdm>=4.67.1",
 ]
 [tool.uv]
 dev-dependencies = [

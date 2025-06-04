@@ -51,7 +51,7 @@ class Dialectic:
         self.client = ModelClient(
             provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "No information available". If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead."""
 
     @ai_track("Dialectic Call")
     @observe()
@@ -136,6 +136,7 @@ async def chat(
     session_id: str,
     queries: str | list[str],
     stream: bool = False,
+    include_trace: bool = False,
 ) -> schemas.DialecticResponse | MessageStreamManager:
     """
     Chat with the Dialectic API using on-demand user representation generation.
@@ -195,26 +196,29 @@ async def chat(
             collection_id = (
                 collection.public_id
             )  # Extract the ID while session is active
-        facts = await get_long_term_facts(final_query, app_id, user_id, collection_id)
-        return facts
+        fact_docs = await get_long_term_facts(final_query, app_id, user_id, collection_id)
+        return fact_docs
 
     long_term_task = asyncio.create_task(fetch_long_term())
     short_term_task = asyncio.create_task(run_tom_inference(chat_history, session_id))
 
-    facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
-    logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
+    fact_docs, tom_inference = await asyncio.gather(long_term_task, short_term_task)
+    logger.debug(f"Facts docs: {fact_docs}")
+    logger.debug(f"Tom inference: {tom_inference}")
+    logger.debug(f"Retrieved {len(fact_docs)} facts from long-term memory")
     logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
 
     # Generate a fresh user representation
     logger.debug("Generating user representation")
     async with tracked_db("chat.generate_user_representation") as db_rep:
+        fact_strings = [doc.content for doc in fact_docs]
         user_representation = await generate_user_representation(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
             chat_history=chat_history,
             tom_inference=tom_inference,
-            facts=facts,
+            facts=fact_strings,
             db=db_rep,
             message_id=latest_message_id,
             with_inference=False,
@@ -256,12 +260,46 @@ async def chat(
     logger.debug(
         f"Dialectic response received in {query_time:.2f}s (total: {total_time:.2f}s)"
     )
-    return schemas.DialecticResponse(content=response[0]["text"])
+
+    trace_obj = None
+    if include_trace:
+        # Build FactWithSource list and fetch source messages in batch
+        message_ids = [doc.h_metadata.get("message_id") for doc in fact_docs if doc.h_metadata.get("message_id")]
+        message_contents: dict[str, str] = {}
+
+        if message_ids:
+            async with tracked_db("chat.load_source_messages") as db_src:
+                stmt = select(models.Message).where(models.Message.public_id.in_(message_ids))
+                result = await db_src.execute(stmt)
+                for msg in result.scalars().all():
+                    message_contents[msg.public_id] = msg.content
+
+        fact_items: list[schemas.FactWithSource] = []
+        for doc in fact_docs:
+            msg_id = doc.h_metadata.get("message_id")
+            msg_content = message_contents.get(msg_id) if isinstance(msg_id, str) else None
+            fact_items.append(
+                schemas.FactWithSource(
+                    fact=doc.content,
+                    message_id=msg_id if isinstance(msg_id, str) else None,
+                    message_content=msg_content,
+                )
+            )
+
+        trace_obj = schemas.ChatTrace(
+            queries=questions,
+            facts=fact_items,
+            tom_inference=tom_inference,
+            user_representation=user_representation,
+            latency_ms=total_time * 1000,
+        )
+
+    return schemas.DialecticResponse(content=response[0]["text"], trace=trace_obj)
 
 
 async def get_long_term_facts(
     query: str, app_id: str, user_id: str, collection_id: str
-) -> list[str]:
+) -> list[schemas.Document]:
     """
     Generate queries based on the dialectic query and retrieve relevant facts.
 
@@ -281,7 +319,7 @@ async def get_long_term_facts(
     logger.debug(f"Generated {len(search_queries)} semantic queries: {search_queries}")
 
     # Create a list of coroutines, one for each query
-    async def execute_query(i: int, search_query: str) -> list[str]:
+    async def execute_query(i: int, search_query: str) -> list[schemas.Document]:
         logger.debug(f"Starting query {i + 1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
         query_embedding_store = CollectionEmbeddingStore(
@@ -289,12 +327,12 @@ async def get_long_term_facts(
             user_id=user_id,
             collection_id=collection_id,
         )
-        facts = await query_embedding_store.get_relevant_facts(
+        docs = await query_embedding_store.get_relevant_facts(
             search_query, top_k=10, max_distance=0.85
         )
         query_time = asyncio.get_event_loop().time() - query_start
-        logger.debug(f"Query {i + 1} retrieved {len(facts)} facts in {query_time:.2f}s")
-        return facts
+        logger.debug(f"Query {i + 1} retrieved {len(docs)} facts in {query_time:.2f}s")
+        return docs
 
     # Execute all queries in parallel
     query_tasks = [
@@ -303,15 +341,16 @@ async def get_long_term_facts(
     all_facts_lists = await asyncio.gather(*query_tasks)
 
     # Combine all facts into a single set to remove duplicates
-    retrieved_facts = set()
-    for facts in all_facts_lists:
-        retrieved_facts.update(facts)
+    retrieved_docs: dict[str, schemas.Document] = {}
+    for docs in all_facts_lists:
+        for doc in docs:
+            retrieved_docs[doc.public_id] = doc  # deduplicate by document ID
 
     total_time = asyncio.get_event_loop().time() - fact_start_time
     logger.debug(
-        f"Total fact retrieval completed in {total_time:.2f}s with {len(retrieved_facts)} unique facts"
+        f"Total fact retrieval completed in {total_time:.2f}s with {len(retrieved_docs)} unique facts"
     )
-    return list(retrieved_facts)
+    return list(retrieved_docs.values())
 
 
 async def run_tom_inference(chat_history: str, session_id: str) -> str:
