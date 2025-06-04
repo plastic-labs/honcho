@@ -1,7 +1,7 @@
 import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, ValidationInfo
 
 
 class AppBase(BaseModel):
@@ -306,9 +306,13 @@ class DialecticOptions(BaseModel):
         return v
 
     @field_validator("include_trace")
-    def validate_stream_and_trace(cls, v, values):
-        # Ensure stream is False when include_trace is True
-        if v and values.get("stream", False):
+    def validate_stream_and_trace(cls, v, info: ValidationInfo):
+        """Disallow include_trace together with stream=True.
+
+        Pydantic v2 passes a ValidationInfo object rather than the old *values* dict.
+        We can access already-validated fields via ``info.data``.
+        """
+        if v and info.data.get("stream", False):
             raise ValueError("Streaming is not supported when include_trace=True")
         return v
 
