@@ -124,7 +124,7 @@ async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
         return honcho_app
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError creating app with name '{app.name}': {str(e)}")
+        logger.warning(f"IntegrityError creating app with name '{app.name}': {str(e)}")
         raise ConflictException(f"App with name '{app.name}' already exists") from e
 
 
@@ -158,7 +158,7 @@ async def update_app(
         return honcho_app
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError updating app {app_id}: {str(e)}")
+        logger.warning(f"IntegrityError updating app {app_id}: {str(e)}")
         raise ConflictException(
             "App update failed - unique constraint violation"
         ) from e
