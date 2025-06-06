@@ -150,7 +150,7 @@ async def create_short_summary(
         Return only the summary without any explanation or meta-commentary.
 
         <conversation>
-        {messages}
+        {format_messages(messages)}
         </conversation>
 
         <previous_summary>

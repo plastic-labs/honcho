@@ -1,6 +1,5 @@
 """End-to-end integration tests for the complete deriver workflow."""
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -9,7 +8,6 @@ import pytest_asyncio
 
 from src import models
 from src.deriver import consumer
-from src.deriver.queue import QueueManager
 
 
 class TestMessageToFactsWorkflow:
@@ -19,12 +17,10 @@ class TestMessageToFactsWorkflow:
     async def integration_setup(self, db_session, sample_data):
         """Setup complete integration test data."""
         test_app, test_user = sample_data
-        
+
         # Create a session
         session = models.Session(
-            user_id=test_user.public_id,
-            app_id=test_app.public_id,
-            metadata={}
+            user_id=test_user.public_id, app_id=test_app.public_id, metadata={}
         )
         db_session.add(session)
         await db_session.flush()
@@ -34,61 +30,63 @@ class TestMessageToFactsWorkflow:
             app_id=test_app.public_id,
             user_id=test_user.public_id,
             name=f"user_{test_user.public_id}",
-            metadata={"type": "user_facts"}
+            metadata={"type": "user_facts"},
         )
         db_session.add(collection)
         await db_session.flush()
 
         # Create user messages
         messages = []
-        for i, content in enumerate([
-            "Hi, I'm Sarah, a data scientist working remotely from Seattle",
-            "I've been using Python for machine learning for about 3 years",
-            "My current project involves building recommendation systems with PyTorch"
-        ]):
+        for i, content in enumerate(
+            [
+                "Hi, I'm Sarah, a data scientist working remotely from Seattle",
+                "I've been using Python for machine learning for about 3 years",
+                "My current project involves building recommendation systems with PyTorch",
+            ]
+        ):
             message = models.Message(
                 session_id=session.public_id,
                 is_user=True,
                 content=content,
                 metadata={},
                 user_id=test_user.public_id,
-                app_id=test_app.public_id
+                app_id=test_app.public_id,
             )
             db_session.add(message)
             messages.append(message)
-        
+
         await db_session.flush()
-        
+
         return test_app, test_user, session, collection, messages
 
     @pytest.mark.asyncio
-    async def test_complete_message_processing_workflow(self, db_session, integration_setup):
+    async def test_complete_message_processing_workflow(
+        self, db_session, integration_setup
+    ):
         """Test complete workflow: message → fact extraction → vector storage."""
         test_app, test_user, session, collection, messages = integration_setup
 
-        # Mock the fact extraction to return realistic facts
-        extracted_facts = [
-            "User name is Sarah",
-            "User is a data scientist", 
-            "User works remotely from Seattle",
-            "User has 3 years of Python experience",
-            "User specializes in machine learning",
-            "User is currently working on recommendation systems",
-            "User uses PyTorch for current project"
-        ]
-
         with (
-            patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
-            patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
-            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class
+            patch(
+                "src.deriver.consumer.history.get_summarized_history"
+            ) as mock_history,
+            patch(
+                "src.deriver.consumer.crud.get_or_create_user_protected_collection"
+            ) as mock_get_collection,
+            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
         ):
             # Setup mocks - extract_facts uses global mock from conftest.py
             mock_history.return_value = ("Previous conversation context", [], None)
             mock_get_collection.return_value = collection
-            
+
             # Mock embedding store - use facts from global mock
             mock_store = AsyncMock()
-            global_facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+            global_facts = [
+                "User is a software developer",
+                "User works remotely",
+                "User prefers coffee over tea",
+                "User uses Python and JavaScript",
+            ]
             mock_store.remove_duplicates.return_value = global_facts  # No duplicates
             mock_store.save_facts.return_value = None
             mock_store_class.return_value = mock_store
@@ -101,20 +99,20 @@ class TestMessageToFactsWorkflow:
                     test_user.public_id,
                     session.public_id,
                     message.public_id,
-                    db_session
+                    db_session,
                 )
 
             # Verify fact extraction worked (global mock handles this)
-            
+
             # Verify facts were saved for each message
             assert mock_store.save_facts.call_count == 3
-            
+
             # Verify the facts that would be saved
             all_saved_facts = []
             for call in mock_store.save_facts.call_args_list:
                 facts_arg = call[0][0]  # First positional argument
                 all_saved_facts.extend(facts_arg)
-            
+
             # Should have saved all extracted facts (4 facts from global mock * 3 messages)
             assert len(all_saved_facts) == 4 * 3
 
@@ -127,34 +125,34 @@ class TestMessageToFactsWorkflow:
         queue_items = []
         for message in messages:
             if message.is_user:
-                # Create queue item with the payload structure used in real system  
+                # Create queue item with the payload structure used in real system
                 payload = {
                     "message_id": message.public_id,
                     "is_user": message.is_user,
                     "content": message.content,
                     "app_id": test_app.public_id,
                     "user_id": test_user.public_id,
-                    "session_id": session.public_id
+                    "session_id": session.public_id,
                 }
-                
+
                 queue_item = models.QueueItem(
                     session_id=session.id,  # Use integer ID for queue
                     payload=payload,
-                    processed=False
+                    processed=False,
                 )
                 db_session.add(queue_item)
                 queue_items.append(queue_item)
-        
+
         await db_session.flush()
 
         # Mock the consumer processing functions
         with (
             patch("src.deriver.consumer.process_user_message") as mock_process_user,
             patch("src.deriver.consumer.process_ai_message") as mock_process_ai,
-            patch("src.deriver.consumer.summarize_if_needed") as mock_summarize
+            patch("src.deriver.consumer.summarize_if_needed") as mock_summarize,
         ):
             mock_process_user.return_value = None
-            mock_process_ai.return_value = None  
+            mock_process_ai.return_value = None
             mock_summarize.return_value = None
 
             # Process items through the consumer
@@ -170,14 +168,16 @@ class TestMessageToFactsWorkflow:
             for i, call in enumerate(mock_process_user.call_args_list):
                 args = call[0]
                 assert args[0] == messages[i].content  # content
-                assert args[1] == test_app.public_id    # app_id
-                assert args[2] == test_user.public_id   # user_id
-                assert args[3] == session.public_id     # session_id
-                assert args[4] == messages[i].public_id # message_id
-                assert args[5] == db_session           # db_session
+                assert args[1] == test_app.public_id  # app_id
+                assert args[2] == test_user.public_id  # user_id
+                assert args[3] == session.public_id  # session_id
+                assert args[4] == messages[i].public_id  # message_id
+                assert args[5] == db_session  # db_session
 
     @pytest.mark.asyncio
-    async def test_tom_inference_integration(self, db_session, integration_setup, mock_llm_responses):
+    async def test_tom_inference_integration(
+        self, db_session, integration_setup, mock_llm_responses
+    ):
         """Test integration of TOM inference with fact extraction workflow."""
         test_app, test_user, session, collection, messages = integration_setup
 
@@ -185,27 +185,36 @@ class TestMessageToFactsWorkflow:
         user_facts = [
             "User name is Sarah",
             "User is a data scientist",
-            "User works remotely"
+            "User works remotely",
         ]
 
         with (
             patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
             patch("src.deriver.tom.get_user_representation") as mock_user_rep,
-            patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
-            patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
-            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class
+            patch(
+                "src.deriver.consumer.history.get_summarized_history"
+            ) as mock_history,
+            patch(
+                "src.deriver.consumer.crud.get_or_create_user_protected_collection"
+            ) as mock_get_collection,
+            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
         ):
             # Setup TOM mocks
-            mock_tom_inference.return_value = mock_llm_responses['tom_single_prompt']
-            mock_user_rep.return_value = mock_llm_responses['tom_single_prompt']
-            
+            mock_tom_inference.return_value = mock_llm_responses["tom_single_prompt"]
+            mock_user_rep.return_value = mock_llm_responses["tom_single_prompt"]
+
             # Setup other mocks - extract_facts uses global mock from conftest.py
             mock_history.return_value = ("Chat history", [], None)
             mock_get_collection.return_value = collection
-            
+
             # Mock embedding store - use facts from global mock
             mock_store = AsyncMock()
-            global_facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+            global_facts = [
+                "User is a software developer",
+                "User works remotely",
+                "User prefers coffee over tea",
+                "User uses Python and JavaScript",
+            ]
             mock_store.remove_duplicates.return_value = global_facts
             mock_store.save_facts.return_value = None
             mock_store_class.return_value = mock_store
@@ -217,11 +226,13 @@ class TestMessageToFactsWorkflow:
                 test_user.public_id,
                 session.public_id,
                 messages[0].public_id,
-                db_session
+                db_session,
             )
 
             # Verify fact extraction and storage occurred
-            mock_store.save_facts.assert_called_once_with(global_facts, message_id=messages[0].public_id)
+            mock_store.save_facts.assert_called_once_with(
+                global_facts, message_id=messages[0].public_id
+            )
 
             # The TOM inference methods aren't called directly in consumer,
             # but we've verified the infrastructure is in place
@@ -234,11 +245,9 @@ class TestErrorRecoveryIntegration:
     async def error_test_setup(self, db_session, sample_data):
         """Setup data for error testing."""
         test_app, test_user = sample_data
-        
+
         session = models.Session(
-            user_id=test_user.public_id,
-            app_id=test_app.public_id,
-            metadata={}
+            user_id=test_user.public_id, app_id=test_app.public_id, metadata={}
         )
         db_session.add(session)
         await db_session.flush()
@@ -249,7 +258,7 @@ class TestErrorRecoveryIntegration:
             content="Test message for error scenarios",
             metadata={},
             user_id=test_user.public_id,
-            app_id=test_app.public_id
+            app_id=test_app.public_id,
         )
         db_session.add(message)
         await db_session.flush()
@@ -263,13 +272,17 @@ class TestErrorRecoveryIntegration:
 
         with (
             patch("src.deriver.consumer.extract_facts_long_term") as mock_extract,
-            patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
-            patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection
+            patch(
+                "src.deriver.consumer.history.get_summarized_history"
+            ) as mock_history,
+            patch(
+                "src.deriver.consumer.crud.get_or_create_user_protected_collection"
+            ) as mock_get_collection,
         ):
             # Mock fact extraction to fail
             mock_extract.side_effect = Exception("LLM API timeout")
             mock_history.return_value = ("", [], None)
-            
+
             # Mock collection to avoid that error
             mock_collection = MagicMock()
             mock_collection.public_id = str(uuid4())
@@ -283,35 +296,46 @@ class TestErrorRecoveryIntegration:
                     test_user.public_id,
                     session.public_id,
                     message.public_id,
-                    db_session
+                    db_session,
                 )
 
     @pytest.mark.asyncio
-    async def test_partial_fact_storage_error_recovery(self, db_session, error_test_setup):
+    async def test_partial_fact_storage_error_recovery(
+        self, db_session, error_test_setup
+    ):
         """Test recovery when some facts fail to store."""
         test_app, test_user, session, message = error_test_setup
 
         facts_to_extract = [
             "User likes programming",
-            "This fact will fail to store", 
-            "User works in tech"
+            "This fact will fail to store",
+            "User works in tech",
         ]
 
         with (
-            patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
-            patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
-            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class
+            patch(
+                "src.deriver.consumer.history.get_summarized_history"
+            ) as mock_history,
+            patch(
+                "src.deriver.consumer.crud.get_or_create_user_protected_collection"
+            ) as mock_get_collection,
+            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
         ):
             # extract_facts uses global mock from conftest.py
             mock_history.return_value = ("", [], None)
-            
+
             mock_collection = MagicMock()
             mock_collection.public_id = str(uuid4())
             mock_get_collection.return_value = mock_collection
-            
+
             # Mock embedding store where save_facts has partial failure
             mock_store = AsyncMock()
-            global_facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+            global_facts = [
+                "User is a software developer",
+                "User works remotely",
+                "User prefers coffee over tea",
+                "User uses Python and JavaScript",
+            ]
             mock_store.remove_duplicates.return_value = global_facts
             # save_facts method handles its own errors gracefully
             mock_store.save_facts.return_value = None
@@ -324,7 +348,7 @@ class TestErrorRecoveryIntegration:
                 test_user.public_id,
                 session.public_id,
                 message.public_id,
-                db_session
+                db_session,
             )
 
             # Verify the workflow completed
@@ -338,11 +362,9 @@ class TestSummaryIntegration:
     async def summary_test_setup(self, db_session, sample_data):
         """Setup data for summary testing."""
         test_app, test_user = sample_data
-        
+
         session = models.Session(
-            user_id=test_user.public_id,
-            app_id=test_app.public_id,
-            metadata={}
+            user_id=test_user.public_id, app_id=test_app.public_id, metadata={}
         )
         db_session.add(session)
         await db_session.flush()
@@ -363,30 +385,43 @@ class TestSummaryIntegration:
                 content=f"Message {i+1}: User discussing various topics",
                 metadata={},
                 user_id=test_user.public_id,
-                app_id=test_app.public_id
+                app_id=test_app.public_id,
             )
             db_session.add(message)
             messages.append(message)
-        
+
         await db_session.flush()
 
         with (
-            patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
-            patch("src.deriver.consumer.history.should_create_summary") as mock_should_create,
+            patch(
+                "src.deriver.consumer.history.get_summarized_history"
+            ) as mock_history,
+            patch(
+                "src.deriver.consumer.history.should_create_summary"
+            ) as mock_should_create,
             patch("src.deriver.consumer.history.create_summary") as mock_create_summary,
-            patch("src.deriver.consumer.history.save_summary_metamessage") as mock_save_summary,
-            patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
-            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class
+            patch(
+                "src.deriver.consumer.history.save_summary_metamessage"
+            ) as mock_save_summary,
+            patch(
+                "src.deriver.consumer.crud.get_or_create_user_protected_collection"
+            ) as mock_get_collection,
+            patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
         ):
             # Setup mocks - extract_facts uses global mock from conftest.py
             mock_history.return_value = ("Previous context", [], None)
-            
+
             mock_collection = MagicMock()
             mock_collection.public_id = str(uuid4())
             mock_get_collection.return_value = mock_collection
-            
+
             mock_store = AsyncMock()
-            global_facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+            global_facts = [
+                "User is a software developer",
+                "User works remotely",
+                "User prefers coffee over tea",
+                "User uses Python and JavaScript",
+            ]
             mock_store.remove_duplicates.return_value = global_facts
             mock_store.save_facts.return_value = None
             mock_store_class.return_value = mock_store
@@ -397,17 +432,20 @@ class TestSummaryIntegration:
             mock_save_summary.return_value = None
 
             # Process the last message (which should trigger summary check)
-            await consumer.process_item(db_session, {
-                "message_id": messages[-1].public_id,
-                "is_user": True,
-                "content": messages[-1].content,
-                "app_id": test_app.public_id,
-                "user_id": test_user.public_id,
-                "session_id": session.public_id
-            })
+            await consumer.process_item(
+                db_session,
+                {
+                    "message_id": messages[-1].public_id,
+                    "is_user": True,
+                    "content": messages[-1].content,
+                    "app_id": test_app.public_id,
+                    "user_id": test_user.public_id,
+                    "session_id": session.public_id,
+                },
+            )
 
             # Verify fact extraction occurred (using global mock)
-            
+
             # Verify summary generation was checked
             mock_should_create.assert_called()
 
@@ -424,18 +462,18 @@ class TestConcurrentProcessing:
     async def test_concurrent_message_processing(self, db_session, sample_data):
         """Test that multiple messages can be processed concurrently safely."""
         test_app, test_user = sample_data
-        
+
         # Create multiple sessions
         sessions = []
         for i in range(3):
             session = models.Session(
                 user_id=test_user.public_id,
                 app_id=test_app.public_id,
-                metadata={"session_num": i}
+                metadata={"session_num": i},
             )
             db_session.add(session)
             sessions.append(session)
-        
+
         await db_session.flush()
 
         # Create messages for each session
@@ -447,11 +485,11 @@ class TestConcurrentProcessing:
                 content=f"Session {i} message: User sharing information",
                 metadata={},
                 user_id=test_user.public_id,
-                app_id=test_app.public_id
+                app_id=test_app.public_id,
             )
             db_session.add(message)
             all_messages.append(message)
-        
+
         await db_session.flush()
 
         processed_count = 0
@@ -461,18 +499,23 @@ class TestConcurrentProcessing:
             processed_count += 1
             # Simulate some processing time
             import asyncio
+
             await asyncio.sleep(0.01)
 
         with (
-            patch("src.deriver.consumer.process_user_message", side_effect=mock_process_user_message),
+            patch(
+                "src.deriver.consumer.process_user_message",
+                side_effect=mock_process_user_message,
+            ),
             patch("src.deriver.consumer.process_ai_message") as mock_process_ai,
-            patch("src.deriver.consumer.summarize_if_needed") as mock_summarize
+            patch("src.deriver.consumer.summarize_if_needed") as mock_summarize,
         ):
             mock_process_ai.return_value = None
             mock_summarize.return_value = None
 
             # Process all messages concurrently
             import asyncio
+
             tasks = []
             for message in all_messages:
                 payload = {
@@ -481,11 +524,11 @@ class TestConcurrentProcessing:
                     "content": message.content,
                     "app_id": test_app.public_id,
                     "user_id": test_user.public_id,
-                    "session_id": session.public_id
+                    "session_id": session.public_id,
                 }
                 task = asyncio.create_task(consumer.process_item(db_session, payload))
                 tasks.append(task)
-            
+
             # Wait for all processing to complete
             await asyncio.gather(*tasks)
 
@@ -500,12 +543,12 @@ class TestFullSystemIntegration:
     async def test_realistic_user_conversation_workflow(self, db_session, sample_data):
         """Test a realistic user conversation workflow end-to-end."""
         test_app, test_user = sample_data
-        
+
         # Create session
         session = models.Session(
             user_id=test_user.public_id,
             app_id=test_app.public_id,
-            metadata={"conversation_type": "onboarding"}
+            metadata={"conversation_type": "onboarding"},
         )
         db_session.add(session)
         await db_session.flush()
@@ -513,12 +556,30 @@ class TestFullSystemIntegration:
         # Realistic conversation messages
         conversation = [
             ("user", "Hi! I'm Alex, a software engineer based in San Francisco."),
-            ("ai", "Hello Alex! It's nice to meet you. What kind of software engineering do you focus on?"),
-            ("user", "I mainly work on backend systems using Python and Go. Currently building microservices for a fintech company."),
-            ("ai", "That sounds interesting! Fintech is such a dynamic field. What's the most challenging part of your current project?"),
-            ("user", "The main challenge is handling high-frequency trading data while maintaining low latency. We're processing millions of transactions per second."),
-            ("ai", "That's impressive scale! Are you using any specific technologies for handling that throughput?"),
-            ("user", "Yes, we're using Kafka for streaming, Redis for caching, and PostgreSQL with read replicas. Also experimenting with some Rust components for ultra-low latency parts.")
+            (
+                "ai",
+                "Hello Alex! It's nice to meet you. What kind of software engineering do you focus on?",
+            ),
+            (
+                "user",
+                "I mainly work on backend systems using Python and Go. Currently building microservices for a fintech company.",
+            ),
+            (
+                "ai",
+                "That sounds interesting! Fintech is such a dynamic field. What's the most challenging part of your current project?",
+            ),
+            (
+                "user",
+                "The main challenge is handling high-frequency trading data while maintaining low latency. We're processing millions of transactions per second.",
+            ),
+            (
+                "ai",
+                "That's impressive scale! Are you using any specific technologies for handling that throughput?",
+            ),
+            (
+                "user",
+                "Yes, we're using Kafka for streaming, Redis for caching, and PostgreSQL with read replicas. Also experimenting with some Rust components for ultra-low latency parts.",
+            ),
         ]
 
         # Create all messages
@@ -530,18 +591,18 @@ class TestFullSystemIntegration:
                 content=content,
                 metadata={},
                 user_id=test_user.public_id,
-                app_id=test_app.public_id
+                app_id=test_app.public_id,
             )
             db_session.add(message)
             messages.append(message)
-        
+
         await db_session.flush()
 
         # Expected facts that would be extracted
         expected_facts = [
             "User name is Alex",
             "User is a software engineer",
-            "User is based in San Francisco", 
+            "User is based in San Francisco",
             "User works on backend systems",
             "User uses Python and Go",
             "User works at a fintech company",
@@ -549,9 +610,9 @@ class TestFullSystemIntegration:
             "User handles high-frequency trading data",
             "User processes millions of transactions per second",
             "User uses Kafka for streaming",
-            "User uses Redis for caching", 
+            "User uses Redis for caching",
             "User uses PostgreSQL with read replicas",
-            "User is experimenting with Rust components"
+            "User is experimenting with Rust components",
         ]
 
         # Track all extracted facts
@@ -561,45 +622,67 @@ class TestFullSystemIntegration:
             # Simulate realistic fact extraction based on content
             facts_list = []
             if "Alex" in chat_history and "software engineer" in chat_history:
-                facts_list = ["User name is Alex", "User is a software engineer", "User is based in San Francisco"]
+                facts_list = [
+                    "User name is Alex",
+                    "User is a software engineer",
+                    "User is based in San Francisco",
+                ]
             elif "Python and Go" in chat_history:
-                facts_list = ["User works on backend systems", "User uses Python and Go", "User works at a fintech company"]
+                facts_list = [
+                    "User works on backend systems",
+                    "User uses Python and Go",
+                    "User works at a fintech company",
+                ]
             elif "Kafka" in chat_history:
-                facts_list = ["User uses Kafka for streaming", "User uses Redis for caching", "User uses PostgreSQL"]
-            
+                facts_list = [
+                    "User uses Kafka for streaming",
+                    "User uses Redis for caching",
+                    "User uses PostgreSQL",
+                ]
+
             # Return object with .facts attribute like the real function
             result = MagicMock()
             result.facts = facts_list
             return result
 
         with (
-            patch("src.deriver.consumer.extract_facts_long_term", side_effect=mock_extract_facts),
-            patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
-            patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
+            patch(
+                "src.deriver.consumer.extract_facts_long_term",
+                side_effect=mock_extract_facts,
+            ),
+            patch(
+                "src.deriver.consumer.history.get_summarized_history"
+            ) as mock_history,
+            patch(
+                "src.deriver.consumer.crud.get_or_create_user_protected_collection"
+            ) as mock_get_collection,
             patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
-            patch("src.deriver.consumer.summarize_if_needed") as mock_summarize
+            patch("src.deriver.consumer.summarize_if_needed") as mock_summarize,
         ):
             mock_history.return_value = ("", [], None)
-            
+
             mock_collection = MagicMock()
             mock_collection.public_id = str(uuid4())
             mock_get_collection.return_value = mock_collection
-            
+
             # Track saved facts
             saved_facts = []
+
             def track_save_facts(facts, **kwargs):
                 saved_facts.extend(facts)
-            
+
             mock_store = AsyncMock()
-            mock_store.remove_duplicates.side_effect = lambda facts: facts  # No duplicates
+            mock_store.remove_duplicates.side_effect = (
+                lambda facts: facts
+            )  # No duplicates
             mock_store.save_facts.side_effect = track_save_facts
             mock_store_class.return_value = mock_store
-            
+
             mock_summarize.return_value = None
 
             # Process only user messages (as would happen in real system)
             user_messages = [msg for msg in messages if msg.is_user]
-            
+
             for message in user_messages:
                 await consumer.process_user_message(
                     message.content,
@@ -607,12 +690,12 @@ class TestFullSystemIntegration:
                     test_user.public_id,
                     session.public_id,
                     message.public_id,
-                    db_session
+                    db_session,
                 )
 
             # Verify facts were extracted and saved
             assert len(saved_facts) > 0
-            
+
             # Verify user-specific facts were captured
             saved_facts_str = " ".join(saved_facts)
             assert "Alex" in saved_facts_str

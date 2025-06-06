@@ -177,7 +177,6 @@ async def tom_inference(
         4. Do not make assumptions about demographics unless explicitly stated
         5. Focus on current mental state and immediate context
         6. Consider your own knowledge gaps and violations of expectations (what would surprise you)
-        7. Always wrap your prediction in <prediction> tags.
 
         OUTPUT FORMAT:
         current_state:

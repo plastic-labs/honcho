@@ -239,7 +239,7 @@ async def chat(
                     queries=options.queries,
                     stream=True,
                 )
-                if type(stream) is Stream:
+                if isinstance(stream, Stream):
                     async for chunk, _ in stream:
                         yield chunk.content
             except Exception as e:

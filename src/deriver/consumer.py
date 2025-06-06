@@ -109,7 +109,7 @@ async def process_user_message(
     logger.debug("Extracting facts from chat history")
     extract_start = os.times()[4]
     fact_extraction = await extract_facts_long_term(chat_history_str)
-    facts = fact_extraction.facts
+    facts: list[str] = fact_extraction.facts or []
     extract_time = os.times()[4] - extract_start
     console.print(f"Extracted Facts: {fact_extraction.facts}", style="bright_blue")
     logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")

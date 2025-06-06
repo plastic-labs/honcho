@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any, Optional
 from inspect import cleandoc as c
 
-import sentry_sdk
+
 from dotenv import load_dotenv
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
@@ -72,7 +72,7 @@ async def chat(
     stream: bool = False,
 ) -> llm.Stream | llm.CallResponse:
     """
-    Chat with the Dialectic API usingx on-demand user representation generation.
+    Chat with the Dialectic API using on-demand user representation generation.
 
     This function:
     1. Sets up resources needed (embedding store, latest message ID)
