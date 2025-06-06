@@ -1,7 +1,5 @@
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ... import crud, schemas
 from ...dependencies import tracked_db
 

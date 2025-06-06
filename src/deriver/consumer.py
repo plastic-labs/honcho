@@ -6,6 +6,8 @@ from langfuse.decorators import observe
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
+
 from .. import crud
 from ..utils import history
 from .tom.embeddings import CollectionEmbeddingStore
@@ -16,19 +18,8 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=False)
 
-TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
-USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
-
-
-# FIXME see if this is SAFE
-# async def add_metamessage(db, message_id, metamessage_type, content):
-# metamessage = models.Metamessage(
-#     message_id=message_id,
-#     metamessage_type=metamessage_type,
-#     content=content,
-#     h_metadata={},
-# )
-# db.add(metamessage)
+TOM_METHOD = settings.DERIVER.TOM_METHOD
+USER_REPRESENTATION_METHOD = settings.DERIVER.USER_REPRESENTATION_METHOD
 
 
 async def process_item(db: AsyncSession, payload: dict):

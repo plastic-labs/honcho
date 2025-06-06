@@ -13,6 +13,8 @@ from typing import Union
 import sqlalchemy as sa
 from alembic import op
 
+from src.config import settings
+
 # revision identifiers, used by Alembic.
 revision: str = "c3828084f472"
 down_revision: Union[str, None] = "a1b2c3d4e5f6"
@@ -21,7 +23,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = settings.DB.SCHEMA
 
     # Add new indexes
     op.create_index(
@@ -57,7 +59,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = settings.DB.SCHEMA
 
     # Remove new indexes
     op.drop_index("idx_users_app_lookup", table_name="users", schema=schema)

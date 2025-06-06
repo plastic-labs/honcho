@@ -2,13 +2,11 @@
 Utility functions for interacting with various language model APIs.
 """
 
-import os
 from enum import Enum
 from typing import Any, Optional, Protocol
 
 import sentry_sdk
 from anthropic import AsyncAnthropic
-from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
 from langfuse.decorators import langfuse_context, observe
@@ -16,8 +14,7 @@ from langfuse.decorators import langfuse_context, observe
 # from openai import AsyncOpenAI
 from langfuse.openai import AsyncOpenAI
 
-# Load environment variables
-load_dotenv()
+from src.config import settings
 
 
 # Supported model providers
@@ -48,8 +45,11 @@ OPENAI_COMPATIBLE_PROVIDERS = [
     ModelProvider.GROQ,
 ]
 
-DEFAULT_TEMPERATURE = 0.0
-DEFAULT_MAX_TOKENS = 1000
+DEFAULT_TEMPERATURE: float = settings.LLM.DEFAULT_TEMPERATURE
+DEFAULT_MAX_TOKENS: int = settings.LLM.DEFAULT_MAX_TOKENS
+
+# Default embedding model
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 class Message(Protocol):
@@ -86,20 +86,29 @@ class ModelClient:
 
         # Setup provider-specific clients
         if provider == ModelProvider.ANTHROPIC:
-            self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+            self.api_key = api_key or settings.LLM.ANTHROPIC_API_KEY
             if not self.api_key:
                 raise ValueError("Anthropic API key is required")
             self.client = AsyncAnthropic(api_key=self.api_key)
         elif provider in OPENAI_COMPATIBLE_PROVIDERS:
-            self.api_key = api_key or os.getenv("OPENAI_COMPATIBLE_API_KEY")
-            self.base_url = base_url or os.getenv("OPENAI_COMPATIBLE_BASE_URL")
+            # Use specific API key based on provider
+            if provider == ModelProvider.OPENAI:
+                self.api_key = api_key or settings.LLM.OPENAI_API_KEY
+            elif provider == ModelProvider.GROQ:
+                self.api_key = api_key or settings.LLM.GROQ_API_KEY
+            else:
+                self.api_key = api_key or settings.LLM.OPENAI_COMPATIBLE_API_KEY
+
+            self.base_url = base_url or settings.LLM.OPENAI_COMPATIBLE_BASE_URL
+
             if not self.api_key:
-                raise ValueError("OpenAI-compatible API key is required")
+                raise ValueError(f"{provider.value} API key is required")
+
             self.openai_client = AsyncOpenAI(
                 api_key=self.api_key, base_url=self.base_url
             )
         elif provider == ModelProvider.GEMINI:
-            self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+            self.api_key = api_key or settings.LLM.GEMINI_API_KEY
             if not self.api_key:
                 raise ValueError("Gemini API key is required")
             self.gemini_client = genai.Client(api_key=self.api_key)
@@ -539,3 +548,44 @@ class ModelClient:
             )
 
         return stream
+
+    @observe()
+    async def embed(
+        self,
+        text: str,
+        model: Optional[str] = None,
+    ) -> list[float]:
+        """
+        Generate embeddings for the given text.
+
+        Args:
+            text: The text to embed
+            model: The embedding model to use (optional, defaults to text-embedding-3-small)
+
+        Returns:
+            The embedding vector as a list of floats
+        """
+        # Currently only supports OpenAI-compatible providers for embeddings
+        if self.provider not in [ModelProvider.OPENAI, ModelProvider.OPENROUTER]:
+            raise ValueError(
+                f"Embeddings not supported for provider: {self.provider}. "
+                "Please use OpenAI or OpenRouter for embeddings."
+            )
+
+        if not self.openai_client:
+            raise ValueError("OpenAI client not initialized")
+
+        embedding_model = model or DEFAULT_EMBEDDING_MODEL
+
+        with sentry_sdk.start_transaction(
+            op="embedding-api", name=f"{self.provider} Embedding Call"
+        ):
+            langfuse_context.update_current_observation(
+                input=text, model=embedding_model
+            )
+
+            response = await self.openai_client.embeddings.create(
+                model=embedding_model, input=text
+            )
+
+            return response.data[0].embedding

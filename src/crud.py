@@ -2,8 +2,6 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Optional
 
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,14 +14,15 @@ from .exceptions import (
     ResourceNotFoundException,
     ValidationException,
 )
-
-load_dotenv(override=True)
-
-openai_client = AsyncOpenAI()
+from .utils.model_client import ModelClient, ModelProvider
 
 logger = getLogger(__name__)
 
 DEF_PROTECTED_COLLECTION_NAME = "honcho"
+
+# Create a ModelClient instance for embeddings
+# Using OpenAI provider for embeddings as it's the most common
+embedding_client = ModelClient(provider=ModelProvider.OPENAI)
 
 ########################################################
 # app methods
@@ -1345,11 +1344,8 @@ async def query_documents(
     max_distance: Optional[float] = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
-    # Using async client with await
-    response = await openai_client.embeddings.create(
-        model="text-embedding-3-small", input=query
-    )
-    embedding_query = response.data[0].embedding
+    # Using ModelClient for embeddings
+    embedding_query = await embedding_client.embed(query)
     stmt = (
         select(models.Document)
         .where(models.Document.app_id == app_id)
@@ -1401,12 +1397,8 @@ async def create_document(
         db, app_id=app_id, collection_id=collection_id, user_id=user_id
     )
 
-    # Using async client with await
-    response = await openai_client.embeddings.create(
-        input=document.content, model="text-embedding-3-small"
-    )
-
-    embedding = response.data[0].embedding
+    # Using ModelClient for embeddings
+    embedding = await embedding_client.embed(document.content)
 
     if duplicate_threshold is not None:
         # Check if there are duplicates within the threshold
@@ -1459,11 +1451,8 @@ async def update_document(
         raise ValueError("Session not found or does not belong to user")
     if document.content is not None:
         honcho_document.content = document.content
-        # Using async client with await
-        response = await openai_client.embeddings.create(
-            input=document.content, model="text-embedding-3-small"
-        )
-        embedding = response.data[0].embedding
+        # Using ModelClient for embeddings
+        embedding = await embedding_client.embed(document.content)
         honcho_document.embedding = embedding
         honcho_document.created_at = func.now()
 
@@ -1530,11 +1519,8 @@ async def get_duplicate_documents(
         List of documents that are similar to the provided content
     """
     # Get embedding for the content
-    # Using async client with await
-    response = await openai_client.embeddings.create(
-        input=content, model="text-embedding-3-small"
-    )
-    embedding = response.data[0].embedding
+    # Using ModelClient for embeddings
+    embedding = await embedding_client.embed(content)
 
     # Find documents with similar embeddings
     stmt = (

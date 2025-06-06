@@ -20,7 +20,7 @@ from sqlalchemy.sql import func
 
 from .db import Base
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class App(Base):
@@ -278,9 +278,11 @@ class Document(Base):
         Index(
             "idx_documents_embedding_hnsw",
             "embedding",
-            postgresql_using="hnsw", # HNSW index type
-            postgresql_with={"m": 16, "ef_construction": 64}, # HNSW parameters
-            postgresql_ops={"embedding": "vector_cosine_ops"}, # Cosine distance operator
+            postgresql_using="hnsw",  # HNSW index type
+            postgresql_with={"m": 16, "ef_construction": 64},  # HNSW parameters
+            postgresql_ops={
+                "embedding": "vector_cosine_ops"
+            },  # Cosine distance operator
         ),
     )
 

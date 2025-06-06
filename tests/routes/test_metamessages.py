@@ -432,9 +432,6 @@ async def test_create_metamessage_with_label_and_alias(client, db_session, sampl
     assert data_from_alias_input["app_id"] == str(test_app.public_id)
     # Key assertion: The output for the type/label field is consistent ("label") and has the correct value
     assert data_from_label_input["label"] == data_from_alias_input["label"]
-    assert (
-        data_from_label_input["metamessage_type"]
-        == data_from_alias_input["metamessage_type"]
-    )
+    assert data_from_label_input["metamessage_type"] == data_from_alias_input["metamessage_type"]
     assert data_from_label_input["label"] == data_from_label_input["metamessage_type"]
     assert data_from_alias_input["label"] == data_from_alias_input["metamessage_type"]
