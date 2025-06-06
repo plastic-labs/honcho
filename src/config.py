@@ -4,18 +4,20 @@ from typing import Annotated, Any, ClassVar, Optional
 
 import tomllib
 from dotenv import load_dotenv
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import (
     BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
-load_dotenv()
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
@@ -89,29 +91,32 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         return {key.upper(): value for key, value in toml_data.items()}
 
 
-class TomlSettings(BaseSettings):
-    """Base settings class that loads from TOML config first, then env vars."""
+class HonchoSettings(BaseSettings):
+    """Base class for all settings models in Honcho.
+
+    Defines the source precedence for loading settings.
+    """
 
     @classmethod
     def settings_customise_sources(
         cls,
         settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
-        env_settings: PydanticBaseSettingsSource,
-        dotenv_settings: PydanticBaseSettingsSource,
+        env_settings: EnvSettingsSource,
+        dotenv_settings: DotEnvSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
-        # Return sources in priority order (first is highest priority)
+        # Correct precedence: init > env > .env > toml > secrets > defaults
         return (
+            init_settings,
             env_settings,
             dotenv_settings,
             TomlConfigSettingsSource(settings_cls),
-            # init_settings,
-            # file_secret_settings,
+            file_secret_settings,
         )
 
 
-class DBSettings(TomlSettings):
+class DBSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DB_")
 
     CONNECTION_URI: str = (
@@ -133,23 +138,20 @@ class DBSettings(TomlSettings):
     TRACING: bool = False
 
 
-class AuthSettings(TomlSettings):
+class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_")
 
     USE_AUTH: bool = False
     JWT_SECRET: Optional[str] = None  # Must be set if USE_AUTH is true
 
-    @field_validator("JWT_SECRET")
-    @classmethod
-    def _require_jwt_secret(
-        cls, v: Optional[str], info: ValidationInfo
-    ) -> Optional[str]:
-        if info.data.get("USE_AUTH") and v is None:
+    @model_validator(mode="after")
+    def _require_jwt_secret(self) -> "AuthSettings":
+        if self.USE_AUTH and not self.JWT_SECRET:
             raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
-        return v
+        return self
 
 
-class SentrySettings(TomlSettings):
+class SentrySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SENTRY_")
 
     ENABLED: bool = False
@@ -158,31 +160,40 @@ class SentrySettings(TomlSettings):
     PROFILES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
 
 
-class OpenTelemetrySettings(TomlSettings):
+class OpenTelemetrySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="OPENTELEMETRY_")
     ENABLED: bool = False
 
 
-class LLMSettings(TomlSettings):
+class LLMSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="LLM_")
+
+    # API Keys for LLM providers
+    ANTHROPIC_API_KEY: Optional[str] = None
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_COMPATIBLE_API_KEY: Optional[str] = None
+    GEMINI_API_KEY: Optional[str] = None
+    GROQ_API_KEY: Optional[str] = None  # Added missing GROQ API key
+    OPENAI_COMPATIBLE_BASE_URL: Optional[str] = None
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 1000
     DEFAULT_TEMPERATURE: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)] = 0.0
 
     # Dialectic specific
     DIALECTIC_PROVIDER: str = "anthropic"
-    DIALECTIC_MODEL: str = "claude-3-7-sonnet-20250219"
+    DIALECTIC_MODEL: str = "claude-3-haiku-20240307"
     # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
 
     # Query Generation specific
     QUERY_GENERATION_PROVIDER: str = "groq"
-    QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
+    QUERY_GENERATION_MODEL: str = "llama3-8b-8192"
     # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
 
     # Summarization specific
     SUMMARY_PROVIDER: str = "gemini"
     SUMMARY_MODEL: str = (
-        "gemini-2.0-flash-lite"  # Consider specific model version if needed
+        "gemini-1.5-flash-latest"  # Consider specific model version if needed
     )
     SUMMARY_MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10000)] = 1000
     SUMMARY_MAX_TOKENS_LONG: Annotated[int, Field(default=2000, gt=0, le=20000)] = 2000
@@ -190,10 +201,10 @@ class LLMSettings(TomlSettings):
     # SUMMARY_SYSTEM_PROMPT_LONG_FILE: Optional[str] = "prompts/summary_long_system.txt"
 
 
-class AgentSettings(TomlSettings):
+class AgentSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_")
 
-    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=1000)] = 10
+    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
     SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
         float, Field(default=0.85, ge=0.0, le=1.0)
     ] = 0.85  # Max distance for semantic search relevance
@@ -201,7 +212,7 @@ class AgentSettings(TomlSettings):
     USER_REPRESENTATION_METAMESSAGE_TYPE: str = "honcho_user_representation"
 
 
-class DeriverSettings(TomlSettings):
+class DeriverSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_")
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
@@ -215,16 +226,18 @@ class DeriverSettings(TomlSettings):
     USER_REPRESENTATION_METHOD: str = "long_term"
 
 
-class HistorySettings(TomlSettings):
+class HistorySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="HISTORY_")
 
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
 
-class AppSettings(TomlSettings):
+class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
-    model_config = SettingsConfigDict(env_prefix="")
+    model_config = SettingsConfigDict(
+        env_prefix="", env_nested_delimiter="__"
+    )
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
@@ -232,24 +245,23 @@ class AppSettings(TomlSettings):
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
 
     # Nested settings models
-    DB: DBSettings = DBSettings()
-    AUTH: AuthSettings = AuthSettings()
-    SENTRY: SentrySettings = SentrySettings()
-    OPENTELEMETRY: OpenTelemetrySettings = OpenTelemetrySettings()
-    LLM: LLMSettings = LLMSettings()
-    AGENT: AgentSettings = AgentSettings()
-    DERIVER: DeriverSettings = DeriverSettings()
-    HISTORY: HistorySettings = HistorySettings()
+    DB: DBSettings = Field(default_factory=DBSettings)
+    AUTH: AuthSettings = Field(default_factory=AuthSettings)
+    SENTRY: SentrySettings = Field(default_factory=SentrySettings)
+    OPENTELEMETRY: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
+    LLM: LLMSettings = Field(default_factory=LLMSettings)
+    AGENT: AgentSettings = Field(default_factory=AgentSettings)
+    DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
+    HISTORY: HistorySettings = Field(default_factory=HistorySettings)
 
     @field_validator("LOG_LEVEL")
     @classmethod
     def validate_log_level(cls, v: str) -> str:
-        valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-        v_upper = v.upper()
-        if v_upper not in valid_levels:
-            raise ValueError(f"Invalid log level: {v}. Must be one of {valid_levels}")
-        return v_upper
+        log_level = v.upper()
+        if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
+            raise ValueError(f"Invalid log level: {v}")
+        return log_level
 
 
-# Global settings instance
-settings = AppSettings()
+# Create a single global instance of the settings
+settings: AppSettings = AppSettings()

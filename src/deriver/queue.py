@@ -19,7 +19,7 @@ from .consumer import process_item
 
 logger = getLogger(__name__)
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 class QueueManager:
