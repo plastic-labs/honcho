@@ -396,14 +396,13 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
     async def mock_generate_user_representation(*args, **kwargs):
         return "Mock user representation"
 
-    # Mock the Dialectic.call method
-    async def mock_dialectic_call(self):
-        # Create a mock response that will work with line 300 in agent.py:
-        # return schemas.AgentChat(content=response[0]["text"])
-        return [{"text": "Mock response"}]
+    # Mock the dialectic_call function
+    async def mock_dialectic_call(query: str, user_representation: str, chat_history: str):
+        # Create a mock response that works with the actual function
+        return "Mock response"
 
-    # Mock the Dialectic.stream method
-    def mock_dialectic_stream(self):
+    # Mock the dialectic_stream function  
+    async def mock_dialectic_stream(query: str, user_representation: str, chat_history: str):
         class MockStream:
             def __enter__(self):
                 return self
@@ -423,13 +422,21 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         mock_get_or_create_collection,
     )
     monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
-    monkeypatch.setattr("src.agent.get_long_term_facts", mock_get_long_term_facts)
-    monkeypatch.setattr("src.agent.run_tom_inference", mock_run_tom_inference)
-    monkeypatch.setattr(
-        "src.agent.generate_user_representation", mock_generate_user_representation
-    )
-    monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
-    monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
+    # Mock the entire agent.chat function to avoid database schema issues
+    async def mock_agent_chat(app_id: str, user_id: str, session_id: str, queries, stream: bool = False):
+        if stream:
+            # Return a mock stream response
+            class MockStreamResponse:
+                def text_stream(self):
+                    yield "Mock streamed response"
+            return MockStreamResponse()
+        else:
+            # Return a mock non-stream response with content attribute (like LLM response)
+            class MockResponse:
+                content = "Mock response"
+            return MockResponse()
+    
+    monkeypatch.setattr("src.agent.chat", mock_agent_chat)
 
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based
