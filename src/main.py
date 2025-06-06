@@ -79,6 +79,12 @@ if SENTRY_ENABLED:
 
         return event
 
+    # Sentry SDK's default behavior:
+    # - Captures INFO+ level logs as breadcrumbs
+    # - Captures ERROR+ level logs as Sentry events
+    # 
+    # For custom log levels, use the LoggingIntegration class:
+    # sentry_sdk.init(..., integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)])
     sentry_sdk.init(
         dsn=os.getenv("SENTRY_DSN"),
         traces_sample_rate=0.4,
