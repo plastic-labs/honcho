@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from anthropic import AsyncMessageStreamManager
+from mirascope.llm import Stream
 from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
@@ -94,11 +94,11 @@ async def get_sessions(
     is_active_param = False  # Default to None, meaning no filter on is_active
 
     if options:
-        if hasattr(options, 'filter') and options.filter:
+        if hasattr(options, "filter") and options.filter:
             filter_param = options.filter
-            if filter_param == {}: # Explicitly check for empty dict
+            if filter_param == {}:  # Explicitly check for empty dict
                 filter_param = None
-        if hasattr(options, 'is_active'): # Check if is_active is present
+        if hasattr(options, "is_active"):  # Check if is_active is present
             is_active_param = options.is_active
 
     return await paginate(
@@ -217,14 +217,16 @@ async def chat(
         ..., description="Dialectic Endpoint Parameters"
     ),
 ):
-
     """Chat with the Dialectic API"""
     if not options.stream:
-        return await agent.chat(
+        response = await agent.chat(
             app_id=app_id,
             user_id=user_id,
             session_id=session_id,
             queries=options.queries,
+        )
+        return schemas.DialecticResponse(
+            content=response.content,
         )
     else:
 
@@ -237,10 +239,9 @@ async def chat(
                     queries=options.queries,
                     stream=True,
                 )
-                if type(stream) is AsyncMessageStreamManager:
-                    async with stream as stream_manager:
-                        async for text in stream_manager.text_stream:
-                            yield text
+                if type(stream) is Stream:
+                    async for chunk, _ in stream:
+                        yield chunk.content
             except Exception as e:
                 logger.error(f"Error in stream: {str(e)}")
                 raise HTTPException(status_code=500, detail=str(e)) from e

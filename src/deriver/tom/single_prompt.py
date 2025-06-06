@@ -1,52 +1,27 @@
 import logging
-from typing import Any, Optional
+from typing import Optional
+from inspect import cleandoc as c
+from enum import Enum
+from pydantic import BaseModel
 
-import sentry_sdk
-from langfuse.decorators import langfuse_context, observe
-from sentry_sdk.ai.monitoring import ai_track
+from mirascope import llm
+from mirascope.integrations.langfuse import with_langfuse
 
-from src.utils.model_client import ModelClient, ModelProvider
 
 logger = logging.getLogger(__name__)
 
-DEF_PROVIDER = ModelProvider.GROQ
-DEF_MODEL = "llama-3.3-70b-versatile"
 
-TOM_SYSTEM_PROMPT = """You are a system for analyzing conversations to make evidence-based inferences about user mental states.
+# Enums for strongly typed fields
+class InfoType(str, Enum):
+    STYLE = "STYLE"
+    STATEMENT = "STATEMENT"
 
-REQUIREMENTS:
-1. Only make inferences that are directly supported by conversation evidence
-2. For each inference, cite the specific message that supports it
-3. Use uncertainty qualifiers (may, might, possibly) for speculative inferences
-4. Do not make assumptions about demographics unless explicitly stated
-5. Focus on current mental state and immediate context
-6. Consider your own knowledge gaps and violations of expectations (what would surprise you)
-7. Always wrap your prediction in <prediction> tags.
 
-OUTPUT FORMAT:
-<prediction>
-CURRENT STATE:
-- Immediate Context: User's current situation
-- Active Goals: What user is trying to achieve
-- Present Mood: Observable emotional state
+class CertaintyLevel(str, Enum):
+    LIKELY = "LIKELY"
+    POTENTIAL = "POTENTIAL"
+    SPECULATIVE = "SPECULATIVE"
 
-SUPPORTED OBSERVATIONS:
-- List only behaviors/preferences with direct evidence
-- Format: "OBSERVATION: [detail] (SOURCE: [exact message])"
-
-TENTATIVE INFERENCES:
-- List possible but uncertain interpretations
-- Format: "POSSIBLE: [interpretation] (BASIS: [supporting message])"
-
-KNOWLEDGE GAPS:
-- List important unknown information
-- Format: "UNKNOWN: [topic/question]"
-
-EXPECTATION VIOLATIONS:
-- Based on the above information, if the next message were to surprise you, what could it contain?
-- Format: "POTENTIAL SURPRISE: [possible content] [reason] [confidence level]"
-- Include 3-5 possible surprises
-</prediction>"""
 
 USER_REPRESENTATION_SYSTEM_PROMPT = """You are a system for maintaining factual user representations based on conversation history and theory of mind analysis.
 
@@ -101,98 +76,224 @@ UPDATES:
 </representation>"""
 
 
-@ai_track("Tom Inference")
-@observe()
+class CurrentState(BaseModel):
+    immediate_context: str
+    active_goals: str
+    present_mood: str
+
+
+class SupportedObservation(BaseModel):
+    detail: str
+    source: str
+
+
+class TentativeInference(BaseModel):
+    interpretation: str
+    basis: str
+
+
+class KnowledgeGap(BaseModel):
+    topic: str
+
+
+class ExpectationViolation(BaseModel):
+    possible_surprise: str
+    reason: str
+    confidence_level: float
+
+
+class TomInferenceOutput(BaseModel):
+    current_state: CurrentState
+    tentative_inferences: list[TentativeInference]
+    knowledge_gaps: list[KnowledgeGap]
+    expectation_violations: list[ExpectationViolation]
+
+
+# User Representation Output Models
+class SourcedInfo(BaseModel):
+    detail: str
+    source: str
+
+
+class UserCurrentState(BaseModel):
+    active_context: SourcedInfo
+    temporary_conditions: SourcedInfo
+    present_mood_activity: SourcedInfo
+
+
+class PersistentInfo(BaseModel):
+    detail: str
+    source: str
+    info_type: InfoType
+
+
+class TentativePattern(BaseModel):
+    pattern: str
+    source: str
+    certainty_level: CertaintyLevel
+
+
+class UserKnowledgeGap(BaseModel):
+    missing_info: str
+
+
+class UserExpectationViolation(BaseModel):
+    potential_surprise: str
+    reason: str
+    confidence_level: float
+
+
+class UpdateSection(BaseModel):
+    new_information: list[SourcedInfo]
+    changes: list[SourcedInfo]
+    removals: list[SourcedInfo]
+
+
+class UserRepresentationOutput(BaseModel):
+    current_state: UserCurrentState
+    persistent_information: list[PersistentInfo]
+    tentative_patterns: list[TentativePattern]
+    knowledge_gaps: list[UserKnowledgeGap]
+    expectation_violations: list[UserExpectationViolation]
+    updates: UpdateSection
+
+
+@with_langfuse()
+@llm.call(
+    provider="groq", model="llama-3.3-70b-versatile", response_model=TomInferenceOutput
+)
+async def tom_inference(
+    chat_history: str,
+    user_representation: Optional[str] = None,
+):
+    return c(
+        f"""
+        You are a system for analyzing conversations to make evidence-based inferences about user mental states.
+
+        REQUIREMENTS:
+        1. Only make inferences that are directly supported by conversation evidence
+        2. For each inference, cite the specific message that supports it
+        3. Use uncertainty qualifiers (may, might, possibly) for speculative inferences
+        4. Do not make assumptions about demographics unless explicitly stated
+        5. Focus on current mental state and immediate context
+        6. Consider your own knowledge gaps and violations of expectations (what would surprise you)
+        7. Always wrap your prediction in <prediction> tags.
+
+        OUTPUT FORMAT:
+        current_state:
+        - immediate_context: User's current situation
+        - active_goals: What user is trying to achieve  
+        - present_mood: Observable emotional state
+
+        tentative_inferences: list of objects with:
+        - interpretation: Possible but uncertain interpretation
+        - basis: Supporting message or evidence
+
+        knowledge_gaps: list of objects with:
+        - topic: Important unknown information or question
+
+        expectation_violations: list of objects with:
+        - possible_surprise: What content could surprise you in the next message
+        - reason: Why this would be surprising based on current information
+        - confidence_level: Float between 0.0 and 1.0 indicating confidence
+        - Include 3-5 possible surprises
+
+        <conversation>
+        {chat_history or "Not provided"}
+        </conversation>
+
+        <user_representation>
+        {user_representation or "Not provided"}
+        </user_representation>
+        """
+    )
+
+
 async def get_tom_inference_single_prompt(
     chat_history: str,
-    session_id: str,
     user_representation: Optional[str] = None,
-    **kwargs,
-) -> str:
-    with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
-        # Create a new model client
-        client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
-
-        # Prepare the messages
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "user",
-                "content": f"Please analyze this conversation and provide a prediction following the format above:\n{chat_history}",
-            }
-        ]
-
-        # Add existing user representation if available
-        if user_representation:
-            messages.append(
-                {
-                    "role": "user",
-                    "content": f"Consider this existing user representation for context, but focus on current state:\n{user_representation}",
-                }
-            )
-
-        langfuse_context.update_current_observation(input=messages, model=DEF_MODEL)
-
-        # Generate the response with caching enabled
-        try:
-            response = await client.generate(
-                messages=messages,
-                system=TOM_SYSTEM_PROMPT,
-                max_tokens=1000,
-                temperature=0,
-                use_caching=True,  # Enable caching for the system prompt
-            )
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.error(f"Error generating Tom inference: {e}")
-            raise e
-
-        return response
+):
+    inference = await tom_inference(chat_history, user_representation)
+    return inference.model_dump_json()
 
 
-@ai_track("User Representation")
-@observe()
-async def get_user_representation_single_prompt(
+@with_langfuse()
+@llm.call(
+    provider="groq",
+    model="llama-3.3-70b-versatile",
+    response_model=UserRepresentationOutput,
+)
+async def user_representation_inference(
     chat_history: str,
-    session_id: str,
     user_representation: Optional[str] = None,
     tom_inference: Optional[str] = None,
-    **kwargs,
-) -> str:
-    with sentry_sdk.start_transaction(
-        op="user-representation-inference", name="User Representation"
-    ):
-        # Create a new model client
-        client = ModelClient(provider=DEF_PROVIDER, model=DEF_MODEL)
+):
+    return c(
+        f"""
+        You are a system for maintaining factual user representations based on conversation history and theory of mind analysis.
 
-        # Build the context message
-        context_str = f"CONVERSATION:\n{chat_history}\n\n"
-        if tom_inference:
-            context_str += f"PREDICTION OF USER MENTAL STATE - MIGHT BE INCORRECT:\n{tom_inference}\n\n"
-        if user_representation:
-            context_str += f"EXISTING USER REPRESENTATION - INCOMPLETE, TO BE UPDATED:\n{user_representation}"
+        Your job is to update the existing user representation (if provided) with the new information from the conversation history and theory of mind analysis.
 
-        # Prepare the messages
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "user",
-                "content": f"Please analyze this information and provide an updated user representation:\n{context_str}",
-            }
-        ]
+        Copy over information as-is from the existing user representation. Add new information as needed. Only remove content from this section if new information contradicts it. This is especially important for Persistent Information and Tentative Patterns.
 
-        langfuse_context.update_current_observation(input=messages, model=DEF_MODEL)
+        REQUIREMENTS:
+        1. Distinguish between temporary states and persistent patterns
+        2. Only incorporate verified information into core profile
+        3. Track certainty levels for all information
+        4. Maintain areas of uncertainty explicitly
+        5. Update representation incrementally
 
-        # Generate the response with caching enabled
-        try:
-            response = await client.generate(
-                messages=messages,
-                system=USER_REPRESENTATION_SYSTEM_PROMPT,
-                max_tokens=1000,
-                temperature=0,
-                use_caching=True,  # Enable caching for the system prompt
-            )
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.error(f"Error generating user representation: {e}")
-            raise e
+        OUTPUT FORMAT:
+        current_state:
+        - active_context: object with "detail" (current situation/activity/location) and "source" (exact message)
+        - temporary_conditions: object with "detail" (immediate circumstances) and "source" (exact message)
+        - present_mood_activity: object with "detail" (what user is doing right now) and "source" (exact message)
 
-        return response
+        persistent_information: list of objects with:
+        - detail: The specific information or pattern
+        - source: Exact message that supports this
+        - info_type: Must be exactly "STYLE" for communication patterns or "STATEMENT" for explicit facts
+
+        tentative_patterns: list of objects with:
+        - pattern: The observed pattern
+        - source: Supporting evidence from specific message
+        - certainty_level: Must be exactly "LIKELY" (almost certain), "POTENTIAL" (possible), or "SPECULATIVE" (uncertain)
+
+        knowledge_gaps: list of objects with:
+        - missing_info: Key information that is missing or needs clarification
+
+        expectation_violations: list of objects with:
+        - potential_surprise: What could surprise you in the next message
+        - reason: Why this would be surprising based on current information
+        - confidence_level: Float between 0.0 and 1.0
+        - Include 3-5 possible surprises
+
+        updates:
+        - new_information: List of objects with "detail" (recent observation) and "source" (supporting message)
+        - changes: List of objects with "detail" (modified interpretation) and "source" (supporting message)
+        - removals: List of objects with "detail" (information no longer supported) and "source" (contradicting message)
+
+        <conversation>
+        {chat_history or "Not provided"}
+        </conversation>
+
+        <existing_user_representation>
+        {user_representation or "Not provided"}
+        </existing_user_representation>
+
+        <tom_analysis>
+        {tom_inference or "Not provided"}
+        </tom_analysis>
+        """
+    )
+
+
+async def get_user_representation_single_prompt(
+    chat_history: str,
+    user_representation: Optional[str] = None,
+    tom_inference: Optional[str] = None,
+):
+    representation = await user_representation_inference(
+        chat_history, user_representation, tom_inference
+    )
+    return representation.model_dump_json()
