@@ -1,6 +1,7 @@
 """Fixtures and test configuration for deriver tests."""
 
 import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -11,6 +12,10 @@ from nanoid import generate as generate_nanoid
 from src import models
 from src.deriver.queue import QueueManager
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
+
+# Set fake API keys for testing
+os.environ["GROQ_API_KEY"] = "fake-groq-key-for-testing"
+os.environ["ANTHROPIC_API_KEY"] = "fake-anthropic-key-for-testing"
 
 
 @pytest.fixture
@@ -54,32 +59,86 @@ def mock_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_model_clients(mock_llm_responses):
-    """Mock ModelClient instances for all TOM methods."""
+def mock_llm_calls(mock_llm_responses):
+    """Mock LLM calls for all TOM methods."""
     with (
-        patch("src.deriver.tom.single_prompt.ModelClient") as mock_single_prompt_client,
-        patch("src.deriver.tom.long_term.ModelClient") as mock_long_term_client,
-        patch("src.utils.model_client.ModelClient") as mock_utils_client,
+        patch("src.deriver.tom.single_prompt.tom_inference") as mock_tom_inference,
+        patch("src.deriver.tom.single_prompt.user_representation_inference") as mock_user_rep_inference,
+        patch("src.deriver.consumer.extract_facts_long_term") as mock_extract_facts_consumer,
+        patch("src.deriver.tom.long_term.extract_facts_long_term") as mock_extract_facts,
+        patch("src.deriver.tom.long_term.get_user_representation_long_term") as mock_long_term_user_rep,
+        patch("src.deriver.tom.conversational.anthropic") as mock_anthropic,
+        # Mock HTTP clients to prevent real API calls
+        patch("httpx.AsyncClient.send") as mock_httpx_send,
     ):
-        # Utils client for general use
-        mock_utils_instance = AsyncMock()
-        mock_utils_instance.generate.return_value = f"<facts>{mock_llm_responses['fact_extraction']}</facts>"
-        mock_utils_client.return_value = mock_utils_instance
+        # Mock Mirascope single prompt functions
+        mock_tom_response = MagicMock()
+        mock_tom_response.model_dump_json.return_value = mock_llm_responses['tom_single_prompt']
+        mock_tom_inference.return_value = mock_tom_response
 
-        # Single prompt TOM client
-        mock_single_prompt_instance = AsyncMock()
-        mock_single_prompt_instance.generate.return_value = mock_llm_responses['tom_single_prompt']
-        mock_single_prompt_client.return_value = mock_single_prompt_instance
+        mock_user_rep_response = MagicMock()
+        mock_user_rep_response.model_dump_json.return_value = mock_llm_responses['tom_single_prompt']
+        mock_user_rep_inference.return_value = mock_user_rep_response
 
-        # Long term TOM client
-        mock_long_term_instance = AsyncMock()
-        mock_long_term_instance.generate.return_value = f"<facts>{mock_llm_responses['fact_extraction']}</facts>"
-        mock_long_term_client.return_value = mock_long_term_instance
+        # Mock long term functions
+        mock_fact_extraction_response = AsyncMock()
+        mock_fact_extraction_response.facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+        mock_extract_facts.return_value = mock_fact_extraction_response
+        mock_extract_facts_consumer.return_value = mock_fact_extraction_response
+
+        mock_long_term_response = MagicMock()
+        mock_long_term_response.current_state = "Active: Working on project"
+        mock_long_term_response.tentative_patterns = ["User is focused", "User is technical"]
+        mock_long_term_response.knowledge_gaps = ["Personal background unclear"]
+        mock_long_term_response.expectation_violations = []
+        mock_long_term_response.updates = ["New: Focus on current project"]
+        mock_long_term_user_rep.return_value = mock_long_term_response
+
+        # Mock Anthropic client for conversational methods
+        mock_message = MagicMock()
+        mock_message.content = [MagicMock()]
+        mock_message.content[0].text = mock_llm_responses['tom_conversational']
+        mock_anthropic.messages.create.return_value = mock_message
+        
+        # Mock HTTP client to prevent real API calls with proper Groq format
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.headers = {"content-type": "application/json"}
+        mock_http_response.text = json.dumps({
+            "id": "test-id",
+            "object": "chat.completion",
+            "created": 1234567890,
+            "model": "llama-3.3-70b-versatile",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps({
+                        "current_state": "Active: Working on project",
+                        "tentative_patterns": ["User is focused", "User is technical"],
+                        "knowledge_gaps": ["Personal background unclear"],
+                        "expectation_violations": [],
+                        "updates": ["New: Focus on current project"]
+                    })
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
+        })
+        mock_http_response.json.return_value = json.loads(mock_http_response.text)
+        mock_http_response.raise_for_status.return_value = None
+        mock_httpx_send.return_value = mock_http_response
+        
 
         yield {
-            "utils": mock_utils_instance,
-            "single_prompt": mock_single_prompt_instance,
-            "long_term": mock_long_term_instance,
+            "tom_inference": mock_tom_inference,
+            "user_rep_inference": mock_user_rep_inference,
+            "extract_facts": mock_extract_facts,
+            "long_term_user_rep": mock_long_term_user_rep,
+            "anthropic": mock_anthropic,
+            # Additional keys for tom_modules tests
+            "single_prompt": MagicMock(generate=AsyncMock(return_value=mock_llm_responses['tom_single_prompt'])),
+            "long_term": MagicMock(generate=AsyncMock(return_value=mock_llm_responses['tom_single_prompt'])),
         }
 
 

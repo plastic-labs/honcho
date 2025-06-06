@@ -30,21 +30,16 @@ class TestPerformanceValidation:
         The team also experiments with newer frameworks like JAX for research prototypes.
         """
         
-        with patch("src.deriver.tom.long_term.ModelClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_instance.generate.return_value = '<facts>{"facts": ["User is Alex", "User works at Google", "User uses TensorFlow"]}</facts>'
-            mock_client.return_value = mock_instance
-            
-            # Extract facts and measure time
-            from src.deriver.tom.long_term import extract_facts_long_term
-            facts = await extract_facts_long_term(chat_history)
-            
-            extraction_time = time.time() - start_time
-            
-            # Verify performance meets requirements
-            assert extraction_time < performance_config["fact_extraction_time_limit"]
-            assert len(facts) > 0
-            print(f"✅ Fact extraction completed in {extraction_time:.3f}s")
+        # Extract facts and measure time - using global mocks from conftest.py
+        from src.deriver.tom.long_term import extract_facts_long_term
+        facts = await extract_facts_long_term(chat_history)
+        
+        extraction_time = time.time() - start_time
+        
+        # Verify performance meets requirements
+        assert extraction_time < performance_config["fact_extraction_time_limit"]
+        assert hasattr(facts, 'facts') and len(facts.facts) > 0
+        print(f"✅ Fact extraction completed in {extraction_time:.3f}s")
 
     @pytest.mark.asyncio
     async def test_embedding_operations_performance(self, sample_data, performance_config):
@@ -108,19 +103,18 @@ class TestPerformanceValidation:
         
         # Mock all the dependencies for speed
         with (
-            patch("src.deriver.consumer.extract_facts_long_term") as mock_extract,
             patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
             patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
             patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
             patch("src.deriver.consumer.summarize_if_needed") as mock_summarize
         ):
-            # Setup fast mocks
-            mock_extract.return_value = ["User fact"]
+            # Setup fast mocks - extract_facts uses global mock
             mock_history.return_value = ("", [], None)
             mock_get_collection.return_value = AsyncMock()
             
             mock_store = AsyncMock()
-            mock_store.remove_duplicates.return_value = ["User fact"]
+            global_facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+            mock_store.remove_duplicates.return_value = global_facts
             mock_store.save_facts.return_value = None
             mock_store_class.return_value = mock_store
             
@@ -161,19 +155,18 @@ class TestPerformanceValidation:
         message_count = 50
         
         with (
-            patch("src.deriver.consumer.extract_facts_long_term") as mock_extract,
             patch("src.deriver.consumer.history.get_summarized_history") as mock_history,
             patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
             patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_store_class,
             patch("src.deriver.consumer.summarize_if_needed") as mock_summarize
         ):
-            # Setup mocks
-            mock_extract.return_value = ["Fact"]
+            # Setup mocks - extract_facts uses global mock from conftest.py
             mock_history.return_value = ("", [], None)
             mock_get_collection.return_value = AsyncMock()
             
             mock_store = AsyncMock()
-            mock_store.remove_duplicates.return_value = ["Fact"]
+            global_facts = ["User is a software developer", "User works remotely", "User prefers coffee over tea", "User uses Python and JavaScript"]
+            mock_store.remove_duplicates.return_value = global_facts
             mock_store.save_facts.return_value = None
             mock_store_class.return_value = mock_store
             
@@ -200,7 +193,7 @@ class TestPerformanceValidation:
                 await asyncio.sleep(0.01)
             
             # Verify all processing completed successfully
-            assert mock_extract.call_count == message_count
+            assert mock_store.save_facts.call_count == message_count
             print(f"✅ Processed {message_count} messages in batches successfully")
 
     def test_configuration_performance_settings(self, performance_config):

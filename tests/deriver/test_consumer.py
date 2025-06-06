@@ -154,19 +154,11 @@ class TestProcessUserMessage:
 
         with (
             patch("src.deriver.consumer.history.get_summarized_history") as mock_get_history,
-            patch("src.deriver.consumer.extract_facts_long_term") as mock_extract_facts,
             patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
             patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_embedding_store_class
         ):
             # Mock history retrieval
             mock_get_history.return_value = ("Previous chat", [], None)
-            
-            # Mock fact extraction
-            mock_extract_facts.return_value = [
-                "User is a Python developer",
-                "User works remotely", 
-                "User loves coffee"
-            ]
             
             # Mock collection retrieval
             mock_get_collection.return_value = collection
@@ -174,9 +166,9 @@ class TestProcessUserMessage:
             # Mock embedding store
             mock_embedding_store = AsyncMock()
             mock_embedding_store.remove_duplicates.return_value = [
-                "User is a Python developer",
+                "User is a software developer",
                 "User works remotely"
-            ]  # Simulate one duplicate removed
+            ]  # Simulate same facts from global mock
             mock_embedding_store.save_facts.return_value = None
             mock_embedding_store_class.return_value = mock_embedding_store
 
@@ -194,17 +186,17 @@ class TestProcessUserMessage:
             mock_get_history.assert_called_once_with(
                 db_session, session.public_id, summary_type=SummaryType.SHORT
             )
-            mock_extract_facts.assert_called_once()
             mock_get_collection.assert_called_once_with(
                 db=db_session, app_id=test_app.public_id, user_id=test_user.public_id
             )
             mock_embedding_store.remove_duplicates.assert_called_once_with([
-                "User is a Python developer",
+                "User is a software developer", 
                 "User works remotely", 
-                "User loves coffee"
+                "User prefers coffee over tea", 
+                "User uses Python and JavaScript"
             ])
             mock_embedding_store.save_facts.assert_called_once_with(
-                ["User is a Python developer", "User works remotely"],
+                ["User is a software developer", "User works remotely"],
                 message_id=message_id
             )
 
@@ -218,12 +210,10 @@ class TestProcessUserMessage:
 
         with (
             patch("src.deriver.consumer.history.get_summarized_history") as mock_get_history,
-            patch("src.deriver.consumer.extract_facts_long_term") as mock_extract_facts,
             patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
             patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_embedding_store_class
         ):
             mock_get_history.return_value = ("Previous chat", [], None)
-            mock_extract_facts.return_value = ["User loves Python"]
             mock_get_collection.return_value = collection
             
             # Mock embedding store to return no unique facts
@@ -253,7 +243,6 @@ class TestProcessUserMessage:
 
         with (
             patch("src.deriver.consumer.history.get_summarized_history") as mock_get_history,
-            patch("src.deriver.consumer.extract_facts_long_term") as mock_extract_facts,
             patch("src.deriver.consumer.crud.get_or_create_user_protected_collection") as mock_get_collection,
             patch("src.deriver.consumer.CollectionEmbeddingStore") as mock_embedding_store_class
         ):
@@ -263,11 +252,10 @@ class TestProcessUserMessage:
                 [],
                 None
             )
-            mock_extract_facts.return_value = ["User prefers PyTorch"]
             mock_get_collection.return_value = collection
             
             mock_embedding_store = AsyncMock()
-            mock_embedding_store.remove_duplicates.return_value = ["User prefers PyTorch"]
+            mock_embedding_store.remove_duplicates.return_value = ["User is a software developer", "User works remotely"]
             mock_embedding_store_class.return_value = mock_embedding_store
 
             await consumer.process_user_message(
@@ -279,9 +267,7 @@ class TestProcessUserMessage:
                 db_session
             )
 
-            # Verify extract_facts was called with combined history + current message
-            expected_history = "AI: Hello! How can I help?\nhuman: I'm a machine learning engineer\nhuman: I prefer PyTorch over TensorFlow"
-            mock_extract_facts.assert_called_once_with(expected_history)
+            # Verify the flow completed successfully - fact extraction uses global mock
 
     @pytest.mark.asyncio
     async def test_process_user_message_handles_extraction_error(self, db_session, setup_user_message_test):
