@@ -17,9 +17,11 @@ from src.dependencies import tracked_db
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class ObservationTask:
     """Represents a single observation to be saved."""
+
     task_id: str
     content: str
     app_id: str
@@ -33,12 +35,10 @@ class ObservationTask:
         """Check if task has expired (default 5 minutes)."""
         return time.time() - self.created_at > timeout_seconds
 
-# Backward compatibility alias
-FactTask = ObservationTask
 
 class ObservationSaverQueue:
     """Asynchronous queue for saving observations with duplicate detection."""
-    
+
     def __init__(self, max_workers: int = 2, batch_size: int = 5):
         self.queue: asyncio.Queue[ObservationTask] = asyncio.Queue()
         self.max_workers = max_workers
@@ -51,7 +51,7 @@ class ObservationSaverQueue:
             "observations_duplicate": 0,
             "observations_error": 0,
             "batches_processed": 0,
-            "workers_active": 0
+            "workers_active": 0,
         }
         self._lock = asyncio.Lock()
 
@@ -59,51 +59,53 @@ class ObservationSaverQueue:
         """Start the background workers."""
         if self.is_running:
             return
-            
+
         self.is_running = True
-        logger.info(f"Starting observation saver with {self.max_workers} workers, batch size {self.batch_size}")
-        
+        logger.info(
+            f"Starting observation saver with {self.max_workers} workers, batch size {self.batch_size}"
+        )
+
         # Start worker tasks
         for i in range(self.max_workers):
             worker = asyncio.create_task(self._worker(f"worker-{i}"))
             self.workers.append(worker)
-            
+
         logger.info("Observation saver started successfully")
 
     async def stop(self):
         """Stop all workers and wait for completion."""
         if not self.is_running:
             return
-            
+
         logger.info("Stopping observation saver...")
         self.is_running = False
-        
+
         # Cancel all workers
         for worker in self.workers:
             worker.cancel()
-            
+
         # Wait for workers to finish
         await asyncio.gather(*self.workers, return_exceptions=True)
         self.workers.clear()
-        
+
         logger.info("Observation saver stopped")
 
     async def queue_observation(
-        self, 
-        content: str, 
-        app_id: str, 
-        user_id: str, 
+        self,
+        content: str,
+        app_id: str,
+        user_id: str,
         collection_id: str,
         metadata: dict,
         duplicate_threshold: float = 0.1,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
     ) -> str:
         """Queue an observation for asynchronous saving."""
         if not self.is_running:
             raise RuntimeError("ObservationSaverQueue is not running")
-            
+
         task_id = task_id or str(uuid.uuid4())
-        
+
         task = ObservationTask(
             task_id=task_id,
             content=content,
@@ -112,42 +114,37 @@ class ObservationSaverQueue:
             collection_id=collection_id,
             metadata=metadata,
             duplicate_threshold=duplicate_threshold,
-            created_at=time.time()
+            created_at=time.time(),
         )
-        
+
         await self.queue.put(task)
-        
+
         async with self._lock:
             self.stats["observations_queued"] += 1
-            
+
         logger.debug(f"Queued observation: {content[:50]}... (task_id: {task_id})")
         return task_id
-
-    # Backward compatibility alias
-    async def queue_fact(self, content: str, app_id: str, user_id: str, collection_id: str, metadata: dict, duplicate_threshold: float = 0.1, task_id: Optional[str] = None) -> str:
-        """Backward compatibility alias for queue_observation."""
-        return await self.queue_observation(content, app_id, user_id, collection_id, metadata, duplicate_threshold, task_id)
 
     async def _worker(self, worker_name: str):
         """Background worker that processes observation tasks."""
         logger.debug(f"Worker {worker_name} started")
-        
+
         async with self._lock:
             self.stats["workers_active"] += 1
-            
+
         try:
             while self.is_running:
                 try:
                     # Collect batch of tasks
                     batch: list[ObservationTask] = []
-                    
+
                     # Get first task (blocking)
                     try:
                         task = await asyncio.wait_for(self.queue.get(), timeout=1.0)
                         batch.append(task)
                     except asyncio.TimeoutError:
                         continue  # No tasks available, continue loop
-                    
+
                     # Collect additional tasks for batch (non-blocking)
                     while len(batch) < self.batch_size:
                         try:
@@ -155,15 +152,15 @@ class ObservationSaverQueue:
                             batch.append(task)
                         except asyncio.QueueEmpty:
                             break
-                    
+
                     # Process the batch
                     if batch:
                         await self._process_batch(batch, worker_name)
-                        
+
                 except Exception as e:
                     logger.error(f"Worker {worker_name} error: {e}")
                     await asyncio.sleep(1)  # Brief pause before retrying
-                    
+
         except asyncio.CancelledError:
             logger.debug(f"Worker {worker_name} cancelled")
         finally:
@@ -173,8 +170,10 @@ class ObservationSaverQueue:
 
     async def _process_batch(self, batch: list[ObservationTask], worker_name: str):
         """Process a batch of observation tasks."""
-        logger.debug(f"Worker {worker_name} processing batch of {len(batch)} observations")
-        
+        logger.debug(
+            f"Worker {worker_name} processing batch of {len(batch)} observations"
+        )
+
         async with tracked_db("observation_saver.process_batch") as db:
             for task in batch:
                 try:
@@ -184,7 +183,7 @@ class ObservationSaverQueue:
                         async with self._lock:
                             self.stats["observations_error"] += 1
                         continue
-                    
+
                     # Check for duplicates
                     duplicates = await crud.get_duplicate_documents(
                         db,
@@ -192,42 +191,48 @@ class ObservationSaverQueue:
                         user_id=task.user_id,
                         collection_id=task.collection_id,
                         content=task.content,
-                        similarity_threshold=1 - task.duplicate_threshold  # Convert to similarity
+                        similarity_threshold=1
+                        - task.duplicate_threshold,  # Convert to similarity
                     )
-                    
+
                     if duplicates:
-                        logger.debug(f"Duplicate observation found for task {task.task_id}, skipping")
+                        logger.debug(
+                            f"Duplicate observation found for task {task.task_id}, skipping"
+                        )
                         async with self._lock:
                             self.stats["observations_duplicate"] += 1
                         continue
-                    
+
                     # Create new observation
                     document = schemas.DocumentCreate(
-                        content=task.content,
-                        metadata=task.metadata
+                        content=task.content, metadata=task.metadata
                     )
-                    
+
                     await crud.create_document(
                         db,
                         document=document,
                         app_id=task.app_id,
                         user_id=task.user_id,
                         collection_id=task.collection_id,
-                        duplicate_threshold=task.duplicate_threshold
+                        duplicate_threshold=task.duplicate_threshold,
                     )
-                    
-                    logger.debug(f"Saved observation: {task.content[:50]}... (task_id: {task.task_id})")
+
+                    logger.debug(
+                        f"Saved observation: {task.content[:50]}... (task_id: {task.task_id})"
+                    )
                     async with self._lock:
                         self.stats["observations_saved"] += 1
-                        
+
                 except Exception as e:
-                    logger.error(f"Error processing observation task {task.task_id}: {e}")
+                    logger.error(
+                        f"Error processing observation task {task.task_id}: {e}"
+                    )
                     async with self._lock:
                         self.stats["observations_error"] += 1
-        
+
         async with self._lock:
             self.stats["batches_processed"] += 1
-            
+
         logger.debug(f"Worker {worker_name} completed batch")
 
     def get_stats(self) -> dict:
@@ -238,11 +243,13 @@ class ObservationSaverQueue:
         """Get current queue size."""
         return self.queue.qsize()
 
+
 # Backward compatibility alias
 FactSaverQueue = ObservationSaverQueue
 
 # Global instance
 _observation_saver_queue: Optional[ObservationSaverQueue] = None
+
 
 def get_observation_saver_queue() -> ObservationSaverQueue:
     """Get the global observation saver queue instance."""
@@ -251,10 +258,6 @@ def get_observation_saver_queue() -> ObservationSaverQueue:
         _observation_saver_queue = ObservationSaverQueue()
     return _observation_saver_queue
 
-# Backward compatibility alias
-def get_fact_saver_queue() -> ObservationSaverQueue:
-    """Backward compatibility alias for get_observation_saver_queue."""
-    return get_observation_saver_queue()
 
 async def initialize_observation_saver(db=None):
     """Initialize the global observation saver queue."""
@@ -263,10 +266,6 @@ async def initialize_observation_saver(db=None):
         await queue.start()
         logger.info("Global observation saver queue initialized")
 
-# Backward compatibility alias
-async def initialize_fact_saver(db=None):
-    """Backward compatibility alias for initialize_observation_saver."""
-    return await initialize_observation_saver(db)
 
 async def shutdown_observation_saver():
     """Shutdown the global observation saver queue."""
@@ -274,8 +273,3 @@ async def shutdown_observation_saver():
     if _observation_saver_queue and _observation_saver_queue.is_running:
         await _observation_saver_queue.stop()
         logger.info("Global observation saver queue shutdown")
-
-# Backward compatibility alias  
-async def shutdown_fact_saver():
-    """Backward compatibility alias for shutdown_observation_saver."""
-    return await shutdown_observation_saver()
