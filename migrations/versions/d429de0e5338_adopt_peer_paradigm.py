@@ -24,27 +24,33 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
 
-    # Rename tables if they exist
+    # 1. Rename tables: apps->workspaces and users->peers
     if inspector.has_table("apps"):
         op.rename_table('apps', 'workspaces')
     if inspector.has_table("users"):
         op.rename_table('users', 'peers')
 
-    # Alter columns in renamed tables
+    # 2. Rename columns: app_id->workspace_id and user_id->peer_id
     if column_exists('peers', 'app_id', inspector):
         op.alter_column('peers', 'app_id', new_column_name='workspace_id')
 
-    # Add workspace_id to sessions table
-    if not column_exists('sessions', 'workspace_id', inspector):
-        op.add_column('sessions', sa.Column('workspace_id', sa.TEXT(), nullable=True))
-    
-    # Data Migration: Populate sessions.workspace_id
     if column_exists('sessions', 'app_id', inspector):
-        op.execute("UPDATE sessions SET workspace_id = app_id")
+        op.alter_column('sessions', 'app_id', new_column_name='workspace_id')
 
-    op.alter_column('sessions', 'workspace_id', existing_type=sa.TEXT(), nullable=False)
+    if column_exists('messages', 'app_id', inspector):
+        op.alter_column('messages', 'app_id', new_column_name='workspace_id')
 
-    # Create session_peers table for many-to-many relationship
+    if column_exists('collections', 'app_id', inspector):
+        op.alter_column('collections', 'app_id', new_column_name='workspace_id')
+    if column_exists('collections', 'user_id', inspector):
+        op.alter_column('collections', 'user_id', new_column_name='peer_id')
+
+    if column_exists('documents', 'app_id', inspector):
+        op.alter_column('documents', 'app_id', new_column_name='workspace_id')
+    if column_exists('documents', 'user_id', inspector):
+        op.alter_column('documents', 'user_id', new_column_name='peer_id')
+    
+    # 3. Create session_peers table
     if not inspector.has_table('session_peers'):
         op.create_table('session_peers',
             sa.Column('session_public_id', sa.TEXT(), nullable=False),
@@ -54,7 +60,7 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint('session_public_id', 'peer_public_id')
         )
 
-    # --- Data Migration ---
+    # 4. Data Migration
     conn = op.get_bind()
 
     # Create an 'agent' peer for each workspace
@@ -70,11 +76,10 @@ def upgrade() -> None:
             ).bindparams(public_id=agent_peer_public_id, workspace_id=workspace_id)
         )
 
-    # Fetch existing sessions to migrate relationships
+    # Populate session_peers with both the original user and the new agent
     if column_exists('sessions', 'user_id', inspector) and column_exists('sessions', 'workspace_id', inspector):
         sessions = conn.execute(sa.text("SELECT public_id, user_id, workspace_id FROM sessions")).fetchall()
 
-        # Populate session_peers with both the original user and the new agent
         for session_data in sessions:
             session_id, user_id, workspace_id = session_data
             if user_id:
@@ -106,18 +111,23 @@ def upgrade() -> None:
               AND m.is_user = FALSE
         """)
 
-    # Finalize schema: add constraints, drop old columns
+    # 5. Clean up tables
+
+    # Alter and drop from messages table
     op.alter_column('messages', 'sender_id', existing_type=sa.TEXT(), nullable=False)
     op.alter_column('messages', 'session_id', existing_type=sa.TEXT(), nullable=True)
+    if column_exists('messages', 'user_id', inspector):
+        op.drop_column('messages', 'user_id')
+
+    if column_exists('messages', 'is_user', inspector):
+        op.drop_column('messages', 'is_user')
 
     if not fk_exists('messages', 'messages_sender_id_fkey', inspector):
         op.create_foreign_key('messages_sender_id_fkey', 'messages', 'peers', ['sender_id'], ['public_id'])
 
-    if column_exists('messages', 'is_user', inspector):
-        op.drop_column('messages', 'is_user')
-    
     if index_exists('messages', 'idx_messages_session_lookup', inspector):
         op.drop_index('idx_messages_session_lookup', table_name='messages')
+
     op.create_index('idx_messages_session_lookup', 'messages', ['session_id', 'id'], unique=False, postgresql_include=['public_id', 'created_at'])
 
     # Clean up sessions table
@@ -127,8 +137,6 @@ def upgrade() -> None:
         op.drop_constraint('sessions_app_id_fkey', 'sessions', type_='foreignkey')
     if column_exists('sessions', 'user_id', inspector):
         op.drop_column('sessions', 'user_id')
-    if column_exists('sessions', 'app_id', inspector):
-        op.drop_column('sessions', 'app_id')
 
     if not fk_exists('sessions', 'sessions_workspace_id_fkey', inspector):
         op.create_foreign_key('sessions_workspace_id_fkey', 'sessions', 'workspaces', ['workspace_id'], ['public_id'])
@@ -136,17 +144,6 @@ def upgrade() -> None:
     # Drop metamessages table
     if inspector.has_table('metamessages'):
         op.drop_table('metamessages')
-
-    # Update other tables
-    if column_exists('collections', 'user_id', inspector):
-        op.alter_column('collections', 'user_id', new_column_name='peer_id')
-    if column_exists('collections', 'app_id', inspector):
-        op.alter_column('collections', 'app_id', new_column_name='workspace_id')
-
-    if column_exists('documents', 'user_id', inspector):
-        op.alter_column('documents', 'user_id', new_column_name='peer_id')
-    if column_exists('documents', 'app_id', inspector):
-        op.alter_column('documents', 'app_id', new_column_name='workspace_id')
 
 
 def downgrade() -> None:
