@@ -661,14 +661,20 @@ async def create_message(
     if honcho_session is None:
         raise ValueError("Session not found or does not belong to user")
 
-    honcho_message = models.Message(
-        session_id=session_id,
-        is_user=message.is_user,
-        content=message.content,
-        h_metadata=message.metadata,
-        user_id=user_id,
-        app_id=app_id,
-    )
+    message_kwargs = {
+        "session_id": session_id,
+        "is_user": message.is_user,
+        "content": message.content,
+        "h_metadata": message.metadata,
+        "user_id": user_id,
+        "app_id": app_id,
+    }
+
+    # Allow manual override of created_at if provided
+    if message.created_at is not None:
+        message_kwargs["created_at"] = message.created_at
+
+    honcho_message = models.Message(**message_kwargs)
     db.add(honcho_message)
     await db.commit()
     # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
@@ -692,17 +698,19 @@ async def create_messages(
         raise ValueError("Session not found or does not belong to user")
 
     # Create list of message records
-    message_records = [
-        {
+    message_records: list[dict] = []
+    for m in messages:
+        record = {
             "session_id": session_id,
-            "is_user": message.is_user,
-            "content": message.content,
-            "h_metadata": message.metadata,
+            "is_user": m.is_user,
+            "content": m.content,
+            "h_metadata": m.metadata,
             "user_id": user_id,
             "app_id": app_id,
         }
-        for message in messages
-    ]
+        if m.created_at is not None:
+            record["created_at"] = m.created_at
+        message_records.append(record)
 
     # Bulk insert messages and return them in order
     stmt = insert(models.Message).returning(models.Message)
@@ -772,6 +780,9 @@ async def update_message(
         message.metadata is not None
     ):  # Need to explicitly be there won't make it empty by default
         honcho_message.h_metadata = message.metadata
+    # Allow updating created_at
+    if message.created_at is not None:
+        honcho_message.created_at = message.created_at
     await db.commit()
     # await db.refresh(honcho_message)
     return honcho_message
