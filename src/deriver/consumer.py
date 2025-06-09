@@ -11,6 +11,7 @@ from .. import crud, schemas
 from ..utils import history
 from .surprise_reasoner import SurpriseReasoner
 from .tom.embeddings import CollectionEmbeddingStore
+from ..utils.deriver import format_datetime_simple
 
 # from .tom.long_term import extract_facts_long_term
 
@@ -79,6 +80,7 @@ async def process_item(db: AsyncSession, payload: dict):
         payload["user_id"],
         payload["session_id"],
         payload["message_id"],
+        payload["created_at"],
         db,
     ]
     if payload["is_user"]:
@@ -106,6 +108,7 @@ async def process_ai_message(
     user_id: str,
     session_id: str,
     message_id: str,
+    message_datetime: str,
     db: AsyncSession,
 ):
     """
@@ -123,6 +126,7 @@ async def process_user_message(
     user_id: str,
     session_id: str,
     message_id: str,
+    message_datetime: str,
     db: AsyncSession,
 ):
     """
@@ -133,8 +137,9 @@ async def process_user_message(
     process_start = os.times()[4]  # Get current CPU time
     logger.debug(f"Starting fact extraction for user message: {message_id}")
 
-    # Get current datetime for timestamping new observations
-    current_datetime = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+    # Use message timestamp instead of wall-clock time for reasoning/fact dating
+    current_time = format_datetime_simple(message_datetime)
+    logger.info(f"Using message timestamp '{current_time}' for message {message_id}")
 
     # Create summary if needed BEFORE history retrieval to ensure consistent state
     await summarize_if_needed(db, app_id, session_id, user_id, message_id)
@@ -220,7 +225,7 @@ async def process_user_message(
         new_turn=content,
         message_id=message_id,
         session_id=session_id,
-        current_time=current_datetime,
+        current_time=current_time,
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
