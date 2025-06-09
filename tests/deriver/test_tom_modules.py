@@ -421,6 +421,10 @@ class TestLongTermMethods:
         self, mock_llm_calls, mock_llm_responses
     ):
         """Test basic fact extraction from chat history."""
+        chat_history = (
+            "User: I'm a software engineer at Google and I love hiking on weekends"
+        )
+
         # Use the global mock directly since the decorated function can't be called in tests
         result = mock_llm_calls["extract_facts"].return_value
 
@@ -431,6 +435,7 @@ class TestLongTermMethods:
     @pytest.mark.asyncio
     async def test_extract_facts_long_term_handles_json_error(self, mock_llm_calls):
         """Test that fact extraction handles JSON parsing errors gracefully."""
+        chat_history = "User: I like programming"
 
         # Use the global mock directly since the decorated function can't be called in tests
         result = mock_llm_calls["extract_facts"].return_value
@@ -453,6 +458,9 @@ class TestLongTermMethods:
     @pytest.mark.asyncio
     async def test_get_user_representation_long_term_basic(self, mock_llm_calls):
         """Test basic long term user representation."""
+        chat_history = "User: I'm starting a new job next week"
+        session_id = str(uuid4())
+        facts = ["User is a software engineer", "User is changing jobs"]
 
         # Use the global mock directly since the decorated function can't be called in tests
         result = mock_llm_calls["long_term_user_rep"].return_value
@@ -466,6 +474,11 @@ class TestLongTermMethods:
         self, mock_llm_calls
     ):
         """Test long term user representation with all optional inputs."""
+        chat_history = "User: I'm excited about the new project"
+        session_id = str(uuid4())
+        user_representation = "User is enthusiastic about work"
+        tom_inference = "User is feeling motivated"
+        facts = ["User works in tech", "User enjoys new challenges"]
 
         # Use the global mock directly since the decorated function can't be called in tests
         result = mock_llm_calls["long_term_user_rep"].return_value
@@ -480,6 +493,8 @@ class TestLongTermMethods:
     @pytest.mark.asyncio
     async def test_get_user_representation_long_term_empty_facts(self, mock_llm_calls):
         """Test long term user representation with empty facts list."""
+        chat_history = "User: Hello there"
+        session_id = str(uuid4())
 
         # Use the global mock directly since the decorated function can't be called in tests
         result = mock_llm_calls["long_term_user_rep"].return_value

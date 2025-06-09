@@ -3,11 +3,17 @@ import os
 import jwt
 from nanoid import generate as generate_nanoid
 from unittest.mock import patch, MagicMock, AsyncMock
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Patch CONNECTION_URI before any imports to use test database
 os.environ["CONNECTION_URI"] = os.getenv(
-    "TEST_CONNECTION_URI", 
-    "postgresql+psycopg://testuser:testpwd@127.0.0.1:5432/honcho"
+    "TEST_CONNECTION_URI",
+    os.getenv(
+        "CONNECTION_URI",
+        "postgresql+psycopg://testuser:testpwd@127.0.0.1:5432/honcho",
+    ),
 )
 
 import pytest
@@ -129,7 +135,7 @@ async def db_engine():
         drop_database(TEST_DB_URL)
     except Exception:
         pass  # Database might not exist
-    
+
     create_test_database(TEST_DB_URL)
     engine = await setup_test_database(TEST_DB_URL)
 
@@ -175,7 +181,7 @@ async def client(db_session, db_engine):
         expire_on_commit=False,
         bind=db_engine,
     )
-    
+
     with patch("src.db.SessionLocal", test_session_local):
         app.dependency_overrides[get_db] = override_get_db
         with TestClient(app) as c:
