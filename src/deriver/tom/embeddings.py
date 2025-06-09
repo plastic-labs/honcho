@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -235,6 +236,47 @@ class CollectionEmbeddingStore:
             # Fallback to recent observations if semantic search fails
             logger.warning("Falling back to recent observations retrieval")
             return await self.get_most_recent_observations()
+
+    async def get_relevant_observations_for_queries(
+        self, queries: list[str]
+    ) -> dict[str, list[str]]:
+        """Retrieve relevant observations for multiple queries using semantic search.
+
+        Args:
+            queries: List of query strings to search for
+
+        Returns:
+            Dictionary mapping each query to a list of relevant observations across all reasoning levels
+        """
+        try:
+            # Use asyncio.gather to run all queries concurrently
+            query_results_list = await asyncio.gather(
+                *[
+                    self.get_relevant_observations_for_reasoning(current_message=query)
+                    for query in queries
+                ]
+            )
+
+            # Build the result dictionary grouped by level
+            query_results = {}
+
+            # Initialize result structure with empty lists for each level
+            for level in ["explicit", "deductive", "inductive", "abductive"]:
+                query_results[level] = []
+
+            # Collect observations from all queries, grouped by level
+            for i, query in enumerate(queries):
+                relevant_context = query_results_list[i]
+
+                for level in ["explicit", "deductive", "inductive", "abductive"]:
+                    if level in relevant_context:
+                        query_results[level].extend(relevant_context[level])
+
+            return query_results
+
+        except Exception as e:
+            logger.error(f"Error retrieving relevant observations for queries: {e}")
+            return {query: [] for query in queries}
 
     async def get_most_recent_observations(self) -> dict[str, list[str]]:
         """Retrieve the most recent observations for each reasoning level.

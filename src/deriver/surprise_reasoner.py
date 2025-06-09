@@ -8,6 +8,7 @@ from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
 from src.agent import parse_xml_content
+from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils.model_client import ModelClient, ModelProvider
 from src.utils.deriver import (
     REASONING_LEVELS,
@@ -17,7 +18,7 @@ from src.utils.deriver import (
     format_context_for_prompt,
     format_context_for_trace,
     analyze_observation_changes,
-    find_new_observations
+    find_new_observations,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,11 @@ New conversation turn to analyze:
 {new_turn}
 </new_turn>
 
+Here are the results of the the last queries that were run (if any):
+<query_results>
+{query_results}
+</query_results>
+
 **YOUR CRITICAL MISSION:**
 Apply rigorous logical reasoning to analyze what we know about the user. ONLY make changes when evidence compels them.
 
@@ -170,14 +176,20 @@ Format your response as follows:
             "premises": ["..."]
         }}
     ]
+    queries: [
+        "Query to learn more about the user, to either confirm or inform future reasoning",
+        "Query to learn more about the user, to either confirm or inform future reasoning",
+        ...
+    ]
 }}
 </response>
 
 If evidence isn't compelling enough to warrant changes, return the SAME observations. Unnecessary changes degrade system quality.
 """
 
+
 class SurpriseReasoner:
-    def __init__(self, embedding_store=None):
+    def __init__(self, embedding_store: CollectionEmbeddingStore):
         self.max_recursion_depth = 3  # Reduced from 5 to prevent excessive recursion
         self.current_depth = 0
         self.embedding_store = embedding_store
@@ -185,31 +197,50 @@ class SurpriseReasoner:
         self.significance_threshold = 0.2  # 20% of observations must change
         # Trace capture for analysis
         self.trace = None
-    
-    def _init_trace(self, message_id: str, session_id: str | None, user_message: str, initial_context: dict):
+
+    def _init_trace(
+        self,
+        message_id: str,
+        session_id: str | None,
+        user_message: str,
+        initial_context: dict,
+    ):
         """Initialize trace capture for this reasoning session."""
         self.trace = {
             "message_id": message_id,
             "session_id": session_id or "unknown",
             "user_message": user_message,
             "timestamp": time.time(),
-            "initial_context": format_context_for_trace(initial_context, include_similarity_scores=True),
+            "initial_context": format_context_for_trace(
+                initial_context, include_similarity_scores=True
+            ),
             "reasoning_iterations": [],
             "final_observations": {},
             "saved_documents": {},
-            "summary": {}
+            "summary": {},
         }
-    
-    def _capture_iteration(self, depth: int, input_context: dict, raw_response: str, 
-                          output_observations: dict, changes_detected: dict, significance_score: float, 
-                          threshold_met: bool, continue_reasoning: bool, duration_ms: int):
+
+    def _capture_iteration(
+        self,
+        depth: int,
+        input_context: dict,
+        raw_response: str,
+        output_observations: dict,
+        changes_detected: dict,
+        significance_score: float,
+        threshold_met: bool,
+        continue_reasoning: bool,
+        duration_ms: int,
+    ):
         """Capture data for a single reasoning iteration."""
         if not self.trace:
             return
-            
+
         # Extract reasoning trace from <thinking> tags
-        reasoning_trace = parse_xml_content(raw_response, "thinking") or "No thinking content found"
-        
+        reasoning_trace = (
+            parse_xml_content(raw_response, "thinking") or "No thinking content found"
+        )
+
         iteration = {
             "depth": depth,
             "input_context": format_context_for_trace(input_context),
@@ -219,32 +250,40 @@ class SurpriseReasoner:
             "significance_score": significance_score,
             "threshold_met": threshold_met,
             "continue_reasoning": continue_reasoning,
-            "iteration_duration_ms": duration_ms
+            "iteration_duration_ms": duration_ms,
         }
-        
+
         self.trace["reasoning_iterations"].append(iteration)
-    
-    def _finalize_trace(self, final_observations: dict, convergence_reason: str, total_duration_ms: int):
+
+    def _finalize_trace(
+        self, final_observations: dict, convergence_reason: str, total_duration_ms: int
+    ):
         """Finalize the trace with summary information."""
         if not self.trace:
             return
-            
+
         self.trace["final_observations"] = final_observations
         self.trace["summary"] = {
             "total_iterations": len(self.trace["reasoning_iterations"]),
-            "max_depth_reached": max([it["depth"] for it in self.trace["reasoning_iterations"]], default=0),
-            "total_observations_added": sum([
-                len(it["changes_detected"].get(level, {}).get("added", []))
-                for it in self.trace["reasoning_iterations"]
-                for level in REASONING_LEVELS
-            ]),
-            "total_observations_modified": sum([
-                len(it["changes_detected"].get(level, {}).get("modified", []))
-                for it in self.trace["reasoning_iterations"]
-                for level in REASONING_LEVELS
-            ]),
+            "max_depth_reached": max(
+                [it["depth"] for it in self.trace["reasoning_iterations"]], default=0
+            ),
+            "total_observations_added": sum(
+                [
+                    len(it["changes_detected"].get(level, {}).get("added", []))
+                    for it in self.trace["reasoning_iterations"]
+                    for level in REASONING_LEVELS
+                ]
+            ),
+            "total_observations_modified": sum(
+                [
+                    len(it["changes_detected"].get(level, {}).get("modified", []))
+                    for it in self.trace["reasoning_iterations"]
+                    for level in REASONING_LEVELS
+                ]
+            ),
             "total_duration_ms": total_duration_ms,
-            "convergence_reason": convergence_reason
+            "convergence_reason": convergence_reason,
         }
 
     def _adjust_context_for_depth(self):
@@ -254,38 +293,51 @@ class SurpriseReasoner:
         """
         if not self.embedding_store:
             return
-            
+
         # Progressively reduce context size as depth increases
         depth_factor = max(0.4, 1.0 - (self.current_depth * 0.15))
-        
+
         # Calculate adjusted counts (minimum of 1 for each level)
         adjusted_abductive = max(1, int(2 * depth_factor))
-        adjusted_inductive = max(2, int(4 * depth_factor))  
+        adjusted_inductive = max(2, int(4 * depth_factor))
         adjusted_deductive = max(3, int(6 * depth_factor))
-        
-        logger.debug(f"Depth {self.current_depth}: Adjusting context to {adjusted_abductive}/{adjusted_inductive}/{adjusted_deductive} observations")
-        
+
+        logger.debug(
+            f"Depth {self.current_depth}: Adjusting context to {adjusted_abductive}/{adjusted_inductive}/{adjusted_deductive} observations"
+        )
+
         self.embedding_store.set_observation_counts(
             abductive=adjusted_abductive,
             inductive=adjusted_inductive,
-            deductive=adjusted_deductive
+            deductive=adjusted_deductive,
         )
 
     @observe()
     @ai_track("Derive New Insights")
-    async def derive_new_insights(self, context, history, new_turn, message_id: str, current_time: str) -> tuple[dict[str, list[str]], str]:
+    async def derive_new_insights(
+        self,
+        context,
+        history,
+        new_turn,
+        message_id: str,
+        current_time: str,
+        query_results: dict[str, list[str]],
+    ) -> tuple[dict[str, list[str]], str]:
         """
         Critically analyzes and revises understanding, returning final observation lists at each level.
         """
         system_prompt = REASONING_SYSTEM_PROMPT
         formatted_new_turn = format_new_turn_with_timestamp(new_turn, current_time)
         formatted_context = format_context_for_prompt(context)
-        logger.debug(f"CRITICAL ANALYSIS: current_time='{current_time}', formatted_new_turn='{formatted_new_turn}'")
+        logger.debug(
+            f"CRITICAL ANALYSIS: current_time='{current_time}', formatted_new_turn='{formatted_new_turn}'"
+        )
         user_prompt = REASONING_USER_PROMPT.format(
             current_time=current_time,
-            context=formatted_context, 
-            history=history, 
-            new_turn=formatted_new_turn
+            context=formatted_context,
+            history=history,
+            new_turn=formatted_new_turn,
+            query_results=query_results,
         )
 
         # Log prompts for debugging
@@ -319,63 +371,88 @@ class SurpriseReasoner:
         try:
             # Find and parse the JSON response between <response> tags
             try:
-                json_str = response[response.find("<response>")+10:response.find("</response>")].strip()
+                json_str = response[
+                    response.find("<response>") + 10 : response.find("</response>")
+                ].strip()
                 revised_observations = json.loads(json_str)
             except (ValueError, json.JSONDecodeError) as e:
                 logger.error(f"Failed to parse critical analysis response: {e}")
                 logger.error(f"Response: {response}")
                 return ensure_context_structure({}), response
-            
+
             # Ensure we have the expected structure
             final_observations = ensure_context_structure(revised_observations)
-            
+
             return final_observations, response
-            
+
         except (ValueError, json.JSONDecodeError) as e:
             logger.error(f"Failed to parse critical analysis response: {e}")
             return ensure_context_structure({}), response
 
-    async def recursive_reason_with_trace(self, context: dict, history: str, new_turn: str, message_id: str, session_id: str | None = None, current_time: str | None = None) -> tuple[dict, dict]:
+    async def recursive_reason_with_trace(
+        self,
+        context: dict,
+        history: str,
+        new_turn: str,
+        message_id: str,
+        session_id: str | None = None,
+        current_time: str | None = None,
+    ) -> tuple[dict, dict]:
         """
         Main entry point for recursive reasoning with full trace capture.
         Returns final observations and complete trace.
         """
         start_time = time.time()
-        
+
         # Initialize trace capture
         self._init_trace(message_id, session_id, new_turn, context)
-        
+
         # Reset depth counter
         self.current_depth = 0
-        
+
         try:
             # Run recursive reasoning
-            final_observations = await self.recursive_reason(context, history, new_turn, message_id, session_id, current_time)
-            
+            final_observations = await self.recursive_reason(
+                context, history, new_turn, message_id, session_id, current_time
+            )
+
             # Finalize trace
             total_duration_ms = int((time.time() - start_time) * 1000)
             convergence_reason = "completed"
-            self._finalize_trace(final_observations, convergence_reason, total_duration_ms)
-            
+            self._finalize_trace(
+                final_observations, convergence_reason, total_duration_ms
+            )
+
             # Ensure trace is not None before returning
             return final_observations, self.trace or {}
-            
+
         except Exception as e:
             # Finalize trace even on error
             total_duration_ms = int((time.time() - start_time) * 1000)
             convergence_reason = f"error: {str(e)}"
             self._finalize_trace({}, convergence_reason, total_duration_ms)
-            
+
             raise e
 
-    async def recursive_reason(self, context: dict, history: str, new_turn: str, message_id: str, session_id: str | None = None, current_time: str | None = None) -> dict:
+    async def recursive_reason(
+        self,
+        context: dict,
+        history: str,
+        new_turn: str,
+        message_id: str,
+        session_id: str | None = None,
+        current_time: str | None = None,
+        query_results: dict[str, list[str]] | None = None,
+    ) -> dict:
         """
         Main recursive reasoning function that critically analyzes and revises understanding.
         Continues recursion only if the LLM makes changes (is "surprised").
         """
         # Check if we've hit the maximum recursion depth
         if self.current_depth >= self.max_recursion_depth:
-            logger.warning(f"Maximum recursion depth reached.\nSession ID: {session_id}\nMessage ID: {message_id}")
+            logger.warning(
+                f"Maximum recursion depth reached.\nSession ID: {session_id}\nMessage ID: {message_id}"
+            )
             return context
 
         # Increment the recursion depth counter
@@ -383,23 +460,42 @@ class SurpriseReasoner:
 
         try:
             iteration_start = time.time()
-            
+
             # Perform critical analysis to get revised observation lists
-            revised_observations, raw_response = await self.derive_new_insights(context, history, new_turn, message_id, current_time)
+            revised_observations, raw_response = await self.derive_new_insights(
+                context, history, new_turn, message_id, current_time, query_results
+            )
+
+            new_queries = revised_observations.get("queries", [])
+            print("new_queries", new_queries)
+            query_results = {}
+            if new_queries:
+                logger.info(f"New queries: {new_queries}")
+
+                query_results = (
+                    await self.embedding_store.get_relevant_observations_for_queries(
+                        new_queries
+                    )
+                )
+                print("query_results", query_results)
 
             logger.debug(f"Critical analysis result: {revised_observations}")
-            
+
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
-            effective_threshold = self.significance_threshold * (1 + 0.5 * self.current_depth)
+            effective_threshold = self.significance_threshold * (
+                1 + 0.5 * self.current_depth
+            )
             if self.current_depth > 0:
-                logger.info(f"Depth {self.current_depth}: Using higher significance threshold: {effective_threshold:.1%}")
-            
+                logger.info(
+                    f"Depth {self.current_depth}: Using higher significance threshold: {effective_threshold:.1%}"
+                )
+
             # Use the unified change analysis function
             result = analyze_observation_changes(
                 context, revised_observations, effective_threshold, include_details=True
             )
-            
+
             # Unpack the result - it should be a tuple when include_details=True
             if isinstance(result, tuple) and len(result) == 3:
                 has_changes, changes_detected, significance_score = result
@@ -408,11 +504,13 @@ class SurpriseReasoner:
                 has_changes = False
                 changes_detected = {}
                 significance_score = 0.0
-                logger.error(f"Unexpected result from analyze_observation_changes: {result}")
-            
+                logger.error(
+                    f"Unexpected result from analyze_observation_changes: {result}"
+                )
+
             # Calculate iteration duration
             iteration_duration_ms = int((time.time() - iteration_start) * 1000)
-            
+
             # Capture this iteration in trace
             self._capture_iteration(
                 depth=self.current_depth,
@@ -423,89 +521,126 @@ class SurpriseReasoner:
                 significance_score=significance_score,
                 threshold_met=has_changes,
                 continue_reasoning=has_changes,
-                duration_ms=iteration_duration_ms
+                duration_ms=iteration_duration_ms,
             )
-            
+
             # If no changes were made, the LLM wasn't surprised - exit recursion
             if not has_changes:
                 if self.current_depth > 0:
-                    logger.info(f"No significant changes detected at depth {self.current_depth} - LLM stabilized. Exiting recursion.")
+                    logger.info(
+                        f"No significant changes detected at depth {self.current_depth} - LLM stabilized. Exiting recursion."
+                    )
                 else:
-                    logger.info("No changes detected - LLM was not surprised. Exiting recursion.")
+                    logger.info(
+                        "No changes detected - LLM was not surprised. Exiting recursion."
+                    )
                 return context
 
             logger.info("Changes detected - LLM was surprised. Continuing analysis.")
-            
+
             # Save only the NEW observations that weren't in the original context
-            await self._save_new_observations(context, revised_observations, message_id, session_id)
-            
+            await self._save_new_observations(
+                context, revised_observations, message_id, session_id
+            )
+
             # Pass the revised observations directly to the next iteration
             # The LLM has already curated the most relevant observations in revised_observations
-            logger.debug("Passing revised observations directly to next recursive iteration")
+            logger.debug(
+                "Passing revised observations directly to next recursive iteration"
+            )
             for level in REASONING_LEVELS:
                 level_observations = revised_observations.get(level, [])
-                logger.debug(f"Passing {level}: {len(level_observations)} revised observations to next iteration")
+                logger.debug(
+                    f"Passing {level}: {len(level_observations)} revised observations to next iteration"
+                )
 
             # Recursively analyze with the revised observations from the LLM
-            return await self.recursive_reason(revised_observations, history, new_turn, message_id, session_id, current_time)
+            return await self.recursive_reason(
+                revised_observations,
+                history,
+                new_turn,
+                message_id,
+                session_id,
+                current_time,
+                query_results=query_results,
+            )
 
         finally:
             # Decrement the recursion depth counter when we're done
             self.current_depth -= 1
 
-    async def _save_new_observations(self, original_context: dict, revised_observations: dict, message_id: str, session_id: str | None = None):
+    async def _save_new_observations(
+        self,
+        original_context: dict,
+        revised_observations: dict,
+        message_id: str,
+        session_id: str | None = None,
+    ):
         """Save only the observations that are new compared to the original context."""
         if not self.embedding_store:
             return
-        
+
         # Use the utility function to find new observations
-        new_observations_by_level = find_new_observations(original_context, revised_observations)
-        
+        new_observations_by_level = find_new_observations(
+            original_context, revised_observations
+        )
+
         for level, new_observations in new_observations_by_level.items():
             if new_observations:
-                logger.debug(f"Saving {len(new_observations)} new {level} observations: {new_observations}")
+                logger.debug(
+                    f"Saving {len(new_observations)} new {level} observations: {new_observations}"
+                )
                 await self._save_structured_observations(
                     new_observations,
                     message_id=message_id,
                     level=level,
-                    session_id=session_id
+                    session_id=session_id,
                 )
             else:
                 logger.debug(f"No new observations to save for {level} level")
 
-    async def _save_structured_observations(self, observations: list, message_id: str, level: str, session_id: str | None = None):
+    async def _save_structured_observations(
+        self,
+        observations: list,
+        message_id: str,
+        level: str,
+        session_id: str | None = None,
+    ):
         """Save observations with proper handling of structured data including premises."""
         if not self.embedding_store:
             return
-            
+
         for observation in observations:
-            if isinstance(observation, dict) and 'conclusion' in observation and 'premises' in observation:
+            if (
+                isinstance(observation, dict)
+                and "conclusion" in observation
+                and "premises" in observation
+            ):
                 # This is a structured observation with premises
-                conclusion = observation['conclusion']
-                premises = observation.get('premises', [])
-                
+                conclusion = observation["conclusion"]
+                premises = observation.get("premises", [])
+
                 # Save the conclusion with premises in metadata
                 await self.embedding_store.save_observations(
                     [conclusion],  # Only save the conclusion as content
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
-                    premises=premises  # Pass premises directly
+                    premises=premises,  # Pass premises directly
                 )
-                
-                logger.debug(f"Saved structured observation: conclusion='{conclusion}' with {len(premises)} premises in metadata")
-                        
+
+                logger.debug(
+                    f"Saved structured observation: conclusion='{conclusion}' with {len(premises)} premises in metadata"
+                )
+
             else:
                 # Simple observation (string or dict without structure)
                 observation_content = extract_observation_content(observation)
-                
+
                 # Save simple observations normally (no premises)
                 await self.embedding_store.save_observations(
                     [observation_content],
                     message_id=message_id,
                     level=level,
-                    session_id=session_id
+                    session_id=session_id,
                 )
-
-
-
