@@ -1,4 +1,6 @@
 from nanoid import generate as generate_nanoid
+import pytest
+from unittest.mock import patch
 
 
 def test_app_validations_api(client):
@@ -387,8 +389,14 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
     async def mock_chat_history(*args, **kwargs):
         return "Mock chat history", [], []
 
-    async def mock_get_long_term_facts(*args, **kwargs):
-        return ["Mock fact 1", "Mock fact 2"]
+    async def mock_get_long_term_observations(query: str, embedding_store) -> list[str]:
+        """Mock function that returns sample observations for testing."""
+        return [
+            "User prefers Python programming",
+            "User lives in California",
+            "User works remotely",
+            "User enjoys hiking",
+        ]
 
     async def mock_run_tom_inference(*args, **kwargs):
         return "Mock TOM inference"
@@ -397,12 +405,16 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         return "Mock user representation"
 
     # Mock the dialectic_call function
-    async def mock_dialectic_call(query: str, user_representation: str, chat_history: str):
+    async def mock_dialectic_call(
+        query: str, user_representation: str, chat_history: str
+    ):
         # Create a mock response that works with the actual function
         return "Mock response"
 
-    # Mock the dialectic_stream function  
-    async def mock_dialectic_stream(query: str, user_representation: str, chat_history: str):
+    # Mock the dialectic_stream function
+    async def mock_dialectic_stream(
+        query: str, user_representation: str, chat_history: str
+    ):
         class MockStream:
             def __enter__(self):
                 return self
@@ -422,20 +434,25 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         mock_get_or_create_collection,
     )
     monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
+
     # Mock the entire agent.chat function to avoid database schema issues
-    async def mock_agent_chat(app_id: str, user_id: str, session_id: str, queries, stream: bool = False):
+    async def mock_agent_chat(
+        app_id: str, user_id: str, session_id: str, queries, stream: bool = False
+    ):
         if stream:
             # Return a mock stream response
             class MockStreamResponse:
                 def text_stream(self):
                     yield "Mock streamed response"
+
             return MockStreamResponse()
         else:
             # Return a mock non-stream response with content attribute (like LLM response)
             class MockResponse:
                 content = "Mock response"
+
             return MockResponse()
-    
+
     monkeypatch.setattr("src.agent.chat", mock_agent_chat)
 
     test_app, test_user = sample_data

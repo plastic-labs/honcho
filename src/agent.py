@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -27,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
 
-
 load_dotenv()
 
 
@@ -41,7 +41,7 @@ def dialectic_prompt(query: str, user_representation: str, chat_history: str) ->
         2. a series of long-term facts about the user, and 
         3. their current conversation/interaction from the requesting application. 
 
-        Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None".
+        Your goal is to analyze this information and synthesize these insights that help applications personalize their responses. Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to synthesize the information based on three levels of reasoning: abduction, induction, and deduction. You might notice the context falling into these categories naturally, so feel free to start with the hypothesis (abduction), support it with observed patterns (induction), and solidify with explicit facts (deduction). If the context provided doesn't help address the query, write absolutely NOTHING but "No information available". If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead.
 
         <query>{query}</query>
         <context>{user_representation}</context>
@@ -72,18 +72,14 @@ async def chat(
     stream: bool = False,
 ) -> llm.Stream | llm.CallResponse:
     """
-    Chat with the Dialectic API using on-demand user representation generation.
+    Chat with the Dialectic API that builds on-demand user representations.
 
     This function:
-    1. Sets up resources needed (embedding store, latest message ID)
-    2. Runs two parallel processes:
-       - Retrieves long-term facts from the vector store based on the query
-       - Gets recent chat history and runs ToM inference
-    3. Combines both into a fresh user representation
-    4. Uses this representation to answer the query
-    5. Saves the representation for future use
+    1. Expands the query to retrieve facts from the vector store
+    2. Combines them to answer the query
     """
-    # Format the query string
+
+    # format the query string
     questions = [queries] if isinstance(queries, str) else queries
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
 
@@ -129,7 +125,13 @@ async def chat(
             collection_id = (
                 collection.public_id
             )  # Extract the ID while session is active
-        facts = await get_long_term_facts(final_query, app_id, user_id, collection_id)
+            embedding_store = CollectionEmbeddingStore(
+                db=db_embed,
+                app_id=app_id,
+                user_id=user_id,
+                collection_id=collection_id,
+            )
+            facts = await get_long_term_observations(final_query, embedding_store)
         return facts
 
     long_term_task = asyncio.create_task(fetch_long_term())
@@ -165,68 +167,181 @@ async def chat(
         response = await dialectic_stream(
             final_query, user_representation, chat_history
         )
+        return response
     else:
         logger.debug("Calling Dialectic with non-streaming")
         query_start_time = asyncio.get_event_loop().time()
         response = await dialectic_call(final_query, user_representation, chat_history)
         query_time = asyncio.get_event_loop().time() - query_start_time
         logger.debug(f"Dialectic response received in {query_time:.2f}s")
-    return response
+        return response
 
 
-async def get_long_term_facts(
-    query: str, app_id: str, user_id: str, collection_id: str
-) -> list[str]:
+async def get_observations(
+    query: str, embedding_store: CollectionEmbeddingStore
+) -> str:
     """
-    Generate queries based on the dialectic query and retrieve relevant facts.
+    Generate queries based on the dialectic query and retrieve relevant observations.
+
+    Uses both DIA framework contextualized observations and semantic search for comprehensive results.
 
     Args:
         query: The user query
         embedding_store: The embedding store to search
 
     Returns:
-        List of retrieved facts
+        String containing all retrieved observations with their context, organized by reasoning level
     """
-    logger.debug(f"Starting fact retrieval for query: {query}")
-    fact_start_time = asyncio.get_event_loop().time()
+    logger.info("=== OBSERVATION RETRIEVAL START ===")
+    logger.info(f"ORIGINAL QUERY: {query}")
+    observation_start_time = asyncio.get_event_loop().time()
 
-    # Generate multiple queries for the semantic search
-    logger.debug("Generating semantic queries")
+    # First, get contextualized observations from DIA framework
+    logger.info("RETRIEVING CONTEXTUALIZED OBSERVATIONS from DIA framework...")
+    contextualized_observations = (
+        await embedding_store.get_contextualized_observations_for_dialectic()
+    )
+
+    # Log contextualized observations by level
+    for level, observations in contextualized_observations.items():
+        logger.info(f"CONTEXTUALIZED {level.upper()}: {len(observations)} observations")
+        for i, observation in enumerate(observations[:3]):  # Show first 3
+            logger.info(f"  {i+1}. {observation[:100]}...")
+        if len(observations) > 3:
+            logger.info(f"  ... and {len(observations) - 3} more observations")
+
+    # Generate multiple queries for additional semantic search
+    logger.info("GENERATING SEMANTIC QUERIES for additional observations...")
     search_queries = await generate_semantic_queries(query)
-    logger.debug(f"Generated {len(search_queries)} semantic queries: {search_queries}")
+    logger.info(f"GENERATED QUERIES: {search_queries}")
 
     # Create a list of coroutines, one for each query
-    async def execute_query(i: int, search_query: str) -> list[str]:
-        logger.debug(f"Starting query {i + 1}/{len(search_queries)}: {search_query}")
-        query_start = asyncio.get_event_loop().time()
-        query_embedding_store = CollectionEmbeddingStore(
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
+    async def execute_query(i: int, search_query: str) -> list[tuple[str, str]]:
+        logger.info(
+            f"EXECUTING SEMANTIC QUERY {i + 1}/{len(search_queries)}: {search_query}"
         )
-        facts = await query_embedding_store.get_relevant_facts(
-            search_query, top_k=10, max_distance=0.85
+        query_start = asyncio.get_event_loop().time()
+        documents = await embedding_store.get_relevant_observations(
+            search_query,
+            top_k=5,
+            max_distance=0.85,  # Reduced from 10 since we have contextualized observations
         )
         query_time = asyncio.get_event_loop().time() - query_start
-        logger.debug(f"Query {i + 1} retrieved {len(facts)} facts in {query_time:.2f}s")
-        return facts
+        logger.info(
+            f"QUERY {i + 1} RESULTS: {len(documents)} observations retrieved in {query_time:.2f}s"
+        )
+
+        # Eagerly extract attributes to avoid DetachedInstanceError
+        document_data = []
+        for doc in documents:
+            # Access attributes while the object is still bound to the session
+            content = doc.content
+            created_at = doc.created_at
+            document_data.append((content, created_at))
+
+        # Log the actual observations found using the extracted data
+        for j, (content, created_at) in enumerate(document_data):
+            logger.info(
+                f"  {j+1}. [{created_at.strftime('%Y-%m-%d %H:%M:%S')}] {content}"
+            )
+
+        # Convert documents to tuples of (content, timestamp)
+        return [
+            (content, created_at.strftime("%Y-%m-%d-%H:%M:%S"))
+            for content, created_at in document_data
+        ]
 
     # Execute all queries in parallel
     query_tasks = [
         execute_query(i, search_query) for i, search_query in enumerate(search_queries)
     ]
-    all_facts_lists = await asyncio.gather(*query_tasks)
+    all_observations_lists = await asyncio.gather(*query_tasks)
 
-    # Combine all facts into a single set to remove duplicates
-    retrieved_facts = set()
-    for facts in all_facts_lists:
-        retrieved_facts.update(facts)
+    # Combine semantic search observations into a single set to remove duplicates
+    semantic_observations = set()
+    for observations in all_observations_lists:
+        semantic_observations.update(observations)
 
-    total_time = asyncio.get_event_loop().time() - fact_start_time
-    logger.debug(
-        f"Total fact retrieval completed in {total_time:.2f}s with {len(retrieved_facts)} unique facts"
+    # Format the final response with structured sections
+    response_parts = []
+
+    # Add contextualized observations organized by reasoning level
+    if any(contextualized_observations.values()):
+        response_parts.append("=== REASONING-BASED USER UNDERSTANDING ===")
+
+        if contextualized_observations.get("abductive"):
+            response_parts.append("\n## ABDUCTIVE (High-level psychological insights):")
+            response_parts.extend(contextualized_observations["abductive"])
+
+        if contextualized_observations.get("inductive"):
+            response_parts.append("\n## INDUCTIVE (Observed patterns and behaviors):")
+            response_parts.extend(contextualized_observations["inductive"])
+
+        if contextualized_observations.get("deductive"):
+            response_parts.append(
+                "\n## DEDUCTIVE (Explicit observations and statements):"
+            )
+            response_parts.extend(contextualized_observations["deductive"])
+
+    # Add additional semantic search results if any
+    if semantic_observations:
+        response_parts.append("\n=== ADDITIONAL RELEVANT OBSERVATIONS ===")
+        semantic_observations_formatted = [
+            f"[created {timestamp}]: {observation}"
+            for observation, timestamp in semantic_observations
+        ]
+        response_parts.extend(semantic_observations_formatted)
+
+    observations_string = (
+        "\n".join(response_parts)
+        if response_parts
+        else "No relevant observations found."
     )
-    return list(retrieved_facts)
+
+    total_time = asyncio.get_event_loop().time() - observation_start_time
+    total_contextualized = sum(
+        len(observations) for observations in contextualized_observations.values()
+    )
+
+    logger.info("=== OBSERVATION RETRIEVAL SUMMARY ===")
+    logger.info(f"TOTAL TIME: {total_time:.2f}s")
+    logger.info(f"CONTEXTUALIZED OBSERVATIONS: {total_contextualized}")
+    logger.info(f"SEMANTIC SEARCH OBSERVATIONS: {len(semantic_observations)}")
+    logger.info(f"FINAL OBSERVATIONS STRING LENGTH: {len(observations_string)} chars")
+    logger.info("=== OBSERVATION RETRIEVAL END ===")
+
+    return observations_string
+
+
+async def get_long_term_observations(
+    query: str, embedding_store: CollectionEmbeddingStore
+) -> list[str]:
+    """
+    Generate queries based on the dialectic query and retrieve relevant observations.
+
+    Returns list of observations for compatibility with the tracked_db pattern.
+
+    Args:
+        query: The user query
+        embedding_store: The embedding store to search
+
+    Returns:
+        List of retrieved observations
+    """
+    logger.debug(f"Starting long-term observation retrieval for query: {query}")
+
+    # Use the existing get_observations function but return as list for compatibility
+    observations_string = await get_observations(query, embedding_store)
+
+    # Convert back to list format expected by generate_user_representation
+    if observations_string:
+        # Split by lines and filter out empty lines
+        observations_list = [
+            line.strip() for line in observations_string.split("\n") if line.strip()
+        ]
+        return observations_list
+    else:
+        return []
 
 
 async def run_tom_inference(chat_history: str, session_id: str) -> str:
@@ -259,22 +374,28 @@ async def run_tom_inference(chat_history: str, session_id: str) -> str:
     return prediction
 
 
-@with_langfuse()
-@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=list[str])
-async def generate_semantic_queries(query: str):
+@prompt_template()
+def query_generation_prompt(query: str) -> str:
     return c(
         f"""
-        Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
-        Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
-        For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
-        
-        Format your response as a list of strings, with each string being a search query.
+        Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. To ground your generation, each query should focus on one of the following levels of reasoning: abductive, inductive, and deductive.
+
+        For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's observed eating patterns", "user's most recent meal", etc.
+            
+        Format your response as a JSON array of strings, with each string being a search query. 
+        Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
         Example:
-        ["some query about interests", "some query about personality", "some query about experiences"]
+        ["abductive query to retrieve hypotheses", "inductive query to retrieve observed patterns", "deductive query to retrieve explicit facts"]
 
         <query>{query}</query>
         """
     )
+
+
+@with_langfuse()
+@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=list[str])
+async def generate_semantic_queries(query: str):
+    return query_generation_prompt(query)
 
 
 async def generate_user_representation(
@@ -337,14 +458,18 @@ async def generate_user_representation(
         logger.debug(f"get_user_representation completed in {gen_time:.2f}s")
 
         # Extract the representation from the response
+        representation = user_representation_response
     else:
+        # Join the facts list with newlines for proper formatting
+        facts_formatted = "\n".join(facts) if facts else "No relevant facts found."
         representation = f"""
 PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
 {tom_inference}
 
 RELEVANT LONG-TERM FACTS ABOUT THE USER:
-{facts}
+{facts_formatted}
 """
+
     logger.debug(f"Representation: {representation}")
     # If message_id is provided, save the representation as a metamessage
     if not representation:
@@ -383,3 +508,16 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
     total_time = asyncio.get_event_loop().time() - rep_start_time
     logger.debug(f"Total representation generation completed in {total_time:.2f}s")
     return representation
+
+
+# Backward compatibility aliases
+async def get_facts(query: str, embedding_store: CollectionEmbeddingStore) -> str:
+    """Backward compatibility alias for get_observations."""
+    return await get_observations(query, embedding_store)
+
+
+async def get_long_term_facts(
+    query: str, embedding_store: CollectionEmbeddingStore
+) -> list[str]:
+    """Backward compatibility alias for get_long_term_observations."""
+    return await get_long_term_observations(query, embedding_store)
