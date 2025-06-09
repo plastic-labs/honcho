@@ -53,7 +53,7 @@ class QueueManager:
         self.queue_empty_flag = asyncio.Event()
 
         # Initialize from environment
-        self.workers = int(os.getenv("DERIVER_WORKERS", 1))
+        self.workers = int(os.getenv("DERIVER_WORKERS", 10))
         self.semaphore = asyncio.Semaphore(self.workers)
 
         # Initialize Sentry if enabled

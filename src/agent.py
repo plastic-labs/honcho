@@ -86,7 +86,7 @@ class Dialectic:
         self.client = ModelClient(
             provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained and 2) their current conversation/interaction from the requesting application. Your goal is to analyze this information and synthesize these insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to synthesize the information based on three levels of reasoning: abduction, induction, and deduction. You might notice the context falling into these categories naturally, so feel free to start with the hypothesis (abduction), support it with observed patterns (induction), and solidify with explicit facts (deduction). If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained and 2) their current conversation/interaction from the requesting application. Your goal is to analyze this information and synthesize these insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to synthesize the information based on three levels of reasoning: abduction, induction, and deduction. You might notice the context falling into these categories naturally, so feel free to start with the hypothesis (abduction), support it with observed patterns (induction), and solidify with explicit facts (deduction). If the context provided doesn't help address the query, write absolutely NOTHING but "No information available". If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead."""
 
     @ai_track("Dialectic Call")
     @observe()
@@ -239,13 +239,13 @@ async def chat(
             collection_id = (
                 collection.public_id
             )  # Extract the ID while session is active
-        embedding_store = CollectionEmbeddingStore(
-            db=db_embed,
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-        )
-        facts = await get_long_term_observations(final_query, embedding_store)
+            embedding_store = CollectionEmbeddingStore(
+                db=db_embed,
+                app_id=app_id,
+                user_id=user_id,
+                collection_id=collection_id,
+            )
+            facts = await get_long_term_observations(final_query, embedding_store)
         return facts
 
     long_term_task = asyncio.create_task(fetch_long_term())
