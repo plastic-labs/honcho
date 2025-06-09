@@ -273,27 +273,26 @@ async def chat(
     """
     Chat with the Dialectic API that builds on-demand user representations.
 
-    This function:
-    1. Gets working representation from deriver trace
-    2. Retrieves additional relevant context with premises
-    3. Synthesizes them to answer the query
+    Steps:
+    1. Get working representation from deriver trace
+    2. Retrieve additional relevant context via semantic search
+    3. (New) Append observations from latest deriver trace into that context
+    4. Call Dialectic to synthesize an answer
     """
 
-    # format the query string
+    # Consolidate the incoming queries into a single prompt
     questions = [queries] if isinstance(queries, str) else queries
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
 
     logger.debug(f"Received query: {final_query} for session {session_id}")
-    logger.debug("Starting dialectic processing")
-
     start_time = asyncio.get_event_loop().time()
 
-    # 1. Get working representation from deriver trace
+    # 1. Working representation (short-term) -----------------------------------
     async with tracked_db("chat.get_working_representation") as db:
         working_representation = await get_working_representation_from_trace(session_id, db)
-        logger.debug(f"Retrieved working representation: {len(working_representation)} characters")
+    logger.debug(f"Working representation length: {len(working_representation)}")
 
-    # 2. Get additional context with premises
+    # 2. Additional context (long-term semantic search) ------------------------
     async with tracked_db("chat.get_additional_context") as db:
         collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
         embedding_store = CollectionEmbeddingStore(
@@ -310,23 +309,19 @@ async def chat(
         )
         logger.debug(f"Retrieved additional context: {len(additional_context)} characters")
 
-    # 3. Call dialectic with enhanced context
-    generation_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(f"Dialectic setup completed in {generation_time:.2f}s")
+    # 3. Append latest deriver trace block (if any) ----------------------------
+    latest_trace_block = await get_latest_deriver_trace(session_id)
+    if latest_trace_block:
+        additional_context += "\n\n=== LATEST OBSERVATION TRACE ===\n" + latest_trace_block
+        logger.debug("Appended latest deriver trace to additional context")
 
-    # 4. Generate response
+    # 4. Dialectic call --------------------------------------------------------
     if stream:
-        logger.debug("Calling Dialectic with streaming")
-        response = await dialectic_stream(
-            final_query, working_representation, additional_context
-        )
-        return response
+        return await dialectic_stream(final_query, working_representation, additional_context)
     else:
-        logger.debug("Calling Dialectic with non-streaming")
-        query_start_time = asyncio.get_event_loop().time()
         response = await dialectic_call(final_query, working_representation, additional_context)
-        query_time = asyncio.get_event_loop().time() - query_start_time
-        logger.debug(f"Dialectic response received in {query_time:.2f}s")
+        elapsed = asyncio.get_event_loop().time() - start_time
+        logger.debug(f"Dialectic answered in {elapsed:.2f}s")
         return response
 
 
@@ -579,3 +574,90 @@ def _filter_current_session_observations(observations: list[tuple[str, str, dict
     
     return filtered
 
+
+async def get_long_term_facts(
+    query: str, embedding_store: CollectionEmbeddingStore
+) -> list[str]:
+    """Backward compatibility helper that returns long-term observations (facts)."""
+    results_str = await get_observations(query, embedding_store, include_premises=False)
+    return [results_str]
+
+# ---------------------------------------------------------------------------
+# Helper: retrieve latest deriver_trace metamessage for current session
+# ---------------------------------------------------------------------------
+
+
+async def get_latest_deriver_trace(session_id: str) -> str:
+    """Return a formatted observation block from the latest deriver_trace.
+
+    If no trace exists or parsing fails, returns an empty string.  The block is
+    capped to 25 lines and grouped by reasoning level.
+    """
+
+    latest_trace_block: str = ""
+    try:
+        async with tracked_db("chat.load_deriver_trace") as db_trace:
+            trace_stmt = (
+                select(models.Metamessage)
+                .where(models.Metamessage.session_id == session_id)
+                .where(models.Metamessage.label == "deriver_trace")
+                .order_by(models.Metamessage.id.desc())
+                .limit(1)
+            )
+            trace_res = await db_trace.execute(trace_stmt)
+            trace_mm = trace_res.scalar_one_or_none()
+
+            if not trace_mm:
+                return ""  # Nothing to do
+
+            import json
+            from collections import defaultdict
+
+            try:
+                trace_json = json.loads(trace_mm.content)
+                final_obs = trace_json.get("final_observations", {}) or {}
+
+                grouped: dict[str, list[str]] = defaultdict(list)
+                for level in ("explicit", "deductive", "inductive", "abductive"):
+                    for entry in final_obs.get(level, []) or []:
+                        if isinstance(entry, str):
+                            grouped[level].append(entry.strip())
+                        elif isinstance(entry, dict):
+                            conc = (entry.get("conclusion") or entry.get("content") or "").strip()
+                            if conc:
+                                grouped[level].append(conc)
+
+                if not any(grouped.values()):
+                    return ""
+
+                MAX_LINES = 25
+                parts: list[str] = []
+                level_titles = {
+                    "explicit": "EXPLICIT",
+                    "deductive": "DEDUCTIVE",
+                    "inductive": "INDUCTIVE",
+                    "abductive": "ABDUCTIVE",
+                }
+                line_counter = 0
+                for level in ("explicit", "deductive", "inductive", "abductive"):
+                    if grouped[level]:
+                        parts.append(f"{level_titles[level]}:")
+                        for line in grouped[level]:
+                            parts.append(f"  • {line}")
+                            line_counter += 1
+                            if line_counter >= MAX_LINES:
+                                break
+                    if line_counter >= MAX_LINES:
+                        break
+
+                latest_trace_block = "\n".join(parts)
+                logger.debug(
+                    f"Loaded {line_counter} observation lines from deriver_trace for session {session_id}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to parse deriver_trace metamessage: {e}")
+                latest_trace_block = ""
+    except Exception as e:
+        logger.error(f"Failed to load deriver_trace metamessage: {e}")
+
+    return latest_trace_block
