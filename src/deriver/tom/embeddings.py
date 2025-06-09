@@ -49,16 +49,6 @@ class CollectionEmbeddingStore:
         if deductive is not None:
             self.deductive_observations_count = deductive
 
-    # Backward compatibility alias
-    def set_fact_counts(
-        self,
-        abductive: int | None = None,
-        inductive: int | None = None,
-        deductive: int | None = None,
-    ):
-        """Backward compatibility alias for set_observation_counts."""
-        return self.set_observation_counts(abductive, inductive, deductive)
-
     async def get_relevant_observations_for_reasoning_with_context(
         self,
         current_message: str,
@@ -165,18 +155,6 @@ class CollectionEmbeddingStore:
                 ]
             return enhanced_context
 
-    # Backward compatibility alias
-    async def get_relevant_facts_for_reasoning_with_context(
-        self,
-        current_message: str,
-        conversation_context: str = "",
-        max_distance: float = 0.8,
-    ) -> dict[str, list[dict]]:
-        """Backward compatibility alias for get_relevant_observations_for_reasoning_with_context."""
-        return await self.get_relevant_observations_for_reasoning_with_context(
-            current_message, conversation_context, max_distance
-        )
-
     async def get_relevant_observations_for_reasoning(
         self,
         current_message: str,
@@ -257,18 +235,6 @@ class CollectionEmbeddingStore:
             # Fallback to recent observations if semantic search fails
             logger.warning("Falling back to recent observations retrieval")
             return await self.get_most_recent_observations()
-
-    # Backward compatibility alias
-    async def get_relevant_facts_for_reasoning(
-        self,
-        current_message: str,
-        conversation_context: str = "",
-        max_distance: float = 0.8,
-    ) -> dict[str, list[str]]:
-        """Backward compatibility alias for get_relevant_observations_for_reasoning."""
-        return await self.get_relevant_observations_for_reasoning(
-            current_message, conversation_context, max_distance
-        )
 
     async def get_most_recent_observations(self) -> dict[str, list[str]]:
         """Retrieve the most recent observations for each reasoning level.
@@ -531,21 +497,6 @@ class CollectionEmbeddingStore:
             f"Queued {len(observations)} observations for saving (level: {level})"
         )
 
-    # Backward compatibility alias
-    async def save_facts(
-        self,
-        facts: list[str],
-        similarity_threshold: float = 0.85,
-        message_id: str | None = None,
-        level: str | None = None,
-        session_id: str | None = None,
-        premises: list[str] | None = None,
-    ) -> None:
-        """Backward compatibility alias for save_observations."""
-        return await self.save_observations(
-            facts, similarity_threshold, message_id, level, session_id, premises
-        )
-
     def _format_temporal_metadata_for_dialectic(self, doc: models.Document) -> str:
         """
         Format temporal metadata for dialectic observation display.
@@ -656,15 +607,6 @@ class CollectionEmbeddingStore:
         except Exception as e:
             logger.warning(f"Error updating similar observation metadata: {e}")
 
-    # Backward compatibility alias
-    async def _update_similar_fact_metadata(
-        self, doc: models.Document, session_id: str | None, message_id: str | None
-    ):
-        """Backward compatibility alias for _update_similar_observation_metadata."""
-        return await self._update_similar_observation_metadata(
-            doc, session_id, message_id
-        )
-
     async def get_relevant_observations(
         self, query: str, top_k: int = 5, max_distance: float = 0.3
     ) -> list[models.Document]:
@@ -689,13 +631,6 @@ class CollectionEmbeddingStore:
         )
 
         return list(documents)
-
-    # Backward compatibility alias
-    async def get_relevant_facts(
-        self, query: str, top_k: int = 5, max_distance: float = 0.3
-    ) -> list[models.Document]:
-        """Backward compatibility alias for get_relevant_observations."""
-        return await self.get_relevant_observations(query, top_k, max_distance)
 
     async def remove_duplicates(
         self, observations: list[str], similarity_threshold: float = 0.85
