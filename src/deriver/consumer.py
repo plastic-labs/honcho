@@ -120,7 +120,8 @@ async def process_ai_message(
 
 
 @sentry_sdk.trace
-@observe()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed  
+# @observe()
 async def process_user_message(
     content: str,
     app_id: str,

@@ -4,7 +4,6 @@ from inspect import cleandoc as c
 
 from langfuse.decorators import observe
 from mirascope import llm, prompt_template
-from mirascope.integrations.langfuse import with_langfuse
 from sentry_sdk.ai.monitoring import ai_track
 
 from src.deriver.models import ObservationContext, ReasoningResponse
@@ -29,7 +28,8 @@ def reasoning_system_prompt() -> str:
 """
 
 
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="anthropic",
     model="claude-3-7-sonnet-20250219",
@@ -119,12 +119,14 @@ async def critical_analysis_call(
         **YOUR CRITICAL MISSION:**
         Apply rigorous logical reasoning to analyze what we know about the user. ONLY make changes when evidence compels them.
 
-        Work through each reasoning type systematically:
+        Work through each reasoning type systematically in your thinking process:
 
         1. **EXPLICIT OBSERVATIONS**:
-        - What facts are LITERALLY stated in the messages? When writing these premises, append "User said:" to the beginning.
+        - What facts are LITERALLY stated in the messages? Each observation should be a separate list item.
         - No inference, no reading between lines - only explicit statements
-        - Include only direct quotes or clear paraphrases, be sure to denote them as such.
+        - Format each as: "User said: [exact quote or clear paraphrase]"
+        - Return as a list of individual observations, not a single concatenated string
+        - Examples: ["User said: I am 25 years old", "User said: I work as a teacher"]
 
         2. **DEDUCTIVE OBSERVATIONS**:
         - Given the explicit facts as premises, what MUST be true?
@@ -148,7 +150,14 @@ async def critical_analysis_call(
 
         Remember: STABILITY is valuable. Only change what strong evidence demands.
 
-        Provide your analysis in a structured format with explicit observations as simple strings, and deductive/inductive/abductive observations as structured entries with conclusions and supporting premises.
+        Provide your analysis in a structured JSON format:
+        - "thinking": string (the thinking process of the LLM)
+        - "explicit": array of strings (each starting with "User said:")
+        - "deductive": array of objects with "conclusion" and "premises" fields
+        - "inductive": array of objects with "conclusion" and "premises" fields  
+        - "abductive": array of objects with "conclusion" and "premises" fields
+
+        CRITICAL: The "explicit" field must be an array of strings, not a single string.
         """
     )
 
@@ -189,6 +198,8 @@ class SurpriseReasoner:
         """Convert ObservationContext to ReasoningResponse for compatibility."""
         from src.deriver.models import StructuredObservation
 
+        thinking = context.thinking
+
         # Convert explicit observations (strings)
         explicit = [obs.content for obs in context.explicit]
 
@@ -218,6 +229,7 @@ class SurpriseReasoner:
             abductive.append(structured_obs)
 
         return ReasoningResponse(
+            thinking=thinking,
             explicit=explicit,
             deductive=deductive,
             inductive=inductive,
@@ -250,7 +262,7 @@ class SurpriseReasoner:
         self,
         depth: int,
         input_context: ReasoningResponse,
-        raw_response: str,
+        thinking: str,
         output_observations: dict,
         changes_detected: dict,
         significance_score: float,
@@ -262,13 +274,11 @@ class SurpriseReasoner:
         if not self.trace:
             return
 
-        # For mirascope responses, we don't need to parse XML tags
-        reasoning_trace = "Mirascope structured response - no thinking tags needed"
 
         iteration = {
             "depth": depth,
             "input_context": format_context_for_trace(input_context),
-            "reasoning_trace": reasoning_trace,
+            "thinking": thinking,
             "output_observations": output_observations,
             "changes_detected": changes_detected,
             "significance_score": significance_score,
@@ -474,16 +484,12 @@ class SurpriseReasoner:
             # Calculate iteration duration
             iteration_duration_ms = int((time.time() - iteration_start) * 1000)
 
-            # Create raw response string for trace compatibility
-            raw_response = (
-                f"Mirascope structured response: {reasoning_response.model_dump_json()}"
-            )
 
             # Capture this iteration in trace
             self._capture_iteration(
                 depth=self.current_depth,
                 input_context=context,
-                raw_response=raw_response,
+                thinking=reasoning_response.thinking,
                 output_observations=revised_observations,
                 changes_detected=changes_detected or {},  # Ensure it's always a dict
                 significance_score=significance_score,

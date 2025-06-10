@@ -156,7 +156,8 @@ class UserRepresentationOutput(BaseModel):
     updates: UpdateSection
 
 
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="groq", model="llama-3.3-70b-versatile", response_model=TomInferenceOutput
 )
@@ -214,7 +215,8 @@ async def get_tom_inference_single_prompt(
     return inference.model_dump_json()
 
 
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="groq",
     model="llama-3.3-70b-versatile",

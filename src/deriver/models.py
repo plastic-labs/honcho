@@ -63,6 +63,9 @@ class StructuredObservation(BaseModel):
 
 class ReasoningResponse(BaseModel):
     """Complete reasoning response with all observation types."""
+    thinking: str = Field(
+        description="The thinking process of the LLM"
+    )
     explicit: list[str] = Field(
         description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference",
         default_factory=list
@@ -83,6 +86,7 @@ class ReasoningResponse(BaseModel):
 
 class ObservationContext(BaseModel):
     """Type-safe context container."""
+    thinking: str = Field(default="")
     explicit: list[Observation] = Field(default_factory=list)
     deductive: list[Observation] = Field(default_factory=list)
     inductive: list[Observation] = Field(default_factory=list)
@@ -102,6 +106,9 @@ class ObservationContext(BaseModel):
     def from_reasoning_response(cls, response: ReasoningResponse, base_metadata: ObservationMetadata | None = None) -> 'ObservationContext':
         """Create ObservationContext from ReasoningResponse."""
         context = cls()
+
+        # Add thinking trace
+        context.thinking = response.thinking
         
         # Add explicit observations
         for explicit_content in response.explicit:
@@ -135,3 +142,10 @@ class ReasoningTrace(BaseModel):
     success: bool = False
     error_message: str | None = None
     processing_time: float = 0.0
+
+
+class SemanticQueries(BaseModel):
+    """Model for semantic query generation responses."""
+    queries: list[str] = Field(
+        description="List of semantic search queries to retrieve relevant observations"
+    )

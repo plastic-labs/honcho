@@ -1,7 +1,11 @@
 import datetime
 import logging
 import uuid
+<<<<<<< Updated upstream
 from datetime import datetime as dt
+=======
+from typing import cast
+>>>>>>> Stashed changes
 
 from typing import cast
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -163,12 +167,17 @@ class CollectionEmbeddingStore:
 
             # Convert simple context to ObservationContext
             context = ObservationContext()
-            for level_name, observations in simple_context.items():
+            for level_name, observations in simple_context:
                 if level_name in {"abductive", "inductive", "deductive"}:
                     level = ReasoningLevel(level_name)
                     for obs_content in observations:
                         observation = Observation(
+<<<<<<< Updated upstream
                             content=obs_content, created_at=dt.now()
+=======
+                            content=obs_content,
+                            created_at=datetime.datetime.now()
+>>>>>>> Stashed changes
                         )
                         context.add_observation(observation, level)
 
@@ -404,9 +413,15 @@ class CollectionEmbeddingStore:
                     models.Metamessage | None,
                     await get_session_summaries(
                         self.db, session_id, SummaryType.SHORT, only_latest=True
+<<<<<<< Updated upstream
                     ),
                 )
                 if latest_summary:
+=======
+                    )
+                )
+                if latest_summary:  # latest_summary is a single Metamessage or None
+>>>>>>> Stashed changes
                     summary_id = latest_summary.public_id
                     summary_content = latest_summary.content
             except Exception as e:

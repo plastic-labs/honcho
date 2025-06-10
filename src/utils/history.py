@@ -181,7 +181,8 @@ async def get_messages_since_message(
     return messages
 
 
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="google",
     model="gemini-2.0-flash-lite",
@@ -220,7 +221,8 @@ async def create_short_summary(
     )
 
 
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="google",
     model="gemini-2.0-flash-lite",

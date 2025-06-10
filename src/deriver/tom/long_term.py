@@ -25,7 +25,8 @@ class UserRepresentation(BaseModel):
 
 
 @ai_track("User Representation")
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="groq", model="llama-3.3-70b-versatile", response_model=UserRepresentation
 )
@@ -104,7 +105,8 @@ class FactExtraction(BaseModel):
 
 
 @ai_track("Fact Extraction")
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(
     provider="google", model="gemini-2.0-flash-lite", response_model=FactExtraction
 )

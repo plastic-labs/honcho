@@ -9,12 +9,12 @@ from mirascope.integrations.langfuse import with_langfuse
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from src import crud, models
 from src.dependencies import tracked_db
-from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
-from src.utils import parse_xml_content
+from src.deriver.models import SemanticQueries
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,6 +22,25 @@ logger = logging.getLogger(__name__)
 USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
 
 load_dotenv()
+
+# NOTE: Temporarily disabled @with_langfuse() decorators across multiple functions
+# due to compatibility issue between Mirascope 1.25.0 and Langfuse 2.60.8 where 
+# BaseMessageParam objects don't have a .get() method. The Langfuse integration
+# expects message_param to be a dict but it's a Pydantic model.
+# Error: AttributeError: 'BaseMessageParam' object has no attribute 'get'
+#
+# Additionally fixed ReasoningResponse validation error where explicit field
+# was expecting list[str] but receiving a single string from LLM.
+#
+# AFFECTED FUNCTIONS (all temporarily have @with_langfuse() commented out):
+# - src/agent.py: dialectic_call, dialectic_stream
+# - src/utils/history.py: create_short_summary, create_long_summary  
+# - src/deriver/surprise_reasoner.py: critical_analysis_call
+# - src/deriver/tom/long_term.py: get_user_representation_long_term, extract_facts_long_term
+# - src/deriver/tom/single_prompt.py: tom_inference, user_representation_inference
+# - src/deriver/consumer.py: process_user_message (@observe decorator)
+#
+# TODO: Re-enable all Langfuse decorators when compatibility issue is resolved
 
 
 @prompt_template()
@@ -203,14 +222,16 @@ def _format_observation_list(observations: list) -> list[str]:
 
 
 @ai_track("Dialectic Call")
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219")
 async def dialectic_call(query: str, working_representation: str, additional_context: str):
     return dialectic_prompt(query, working_representation, additional_context)
 
 
 @ai_track("Dialectic Stream")
-@with_langfuse()
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
 @llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219", stream=True)
 async def dialectic_stream(query: str, working_representation: str, additional_context: str):
     return dialectic_prompt(query, working_representation, additional_context)
@@ -263,7 +284,6 @@ async def chat(
     logger.debug(f"Dialectic setup completed in {generation_time:.2f}s")
 
     # 4. Generate response
-    logger.debug(f"Calling Dialectic with streaming={stream}")
     if stream:
         logger.debug("Calling Dialectic with streaming")
         response = await dialectic_stream(
@@ -299,7 +319,8 @@ async def get_observations(
     logger.debug(f"Starting observation retrieval for query: {query}")
     
     # Generate search queries and execute them in parallel
-    search_queries = await generate_semantic_queries(query)
+    search_queries_result = await generate_semantic_queries(query)
+    search_queries = search_queries_result.queries
     logger.debug(f"Generated {len(search_queries)} search queries")
     
     # Execute all queries in parallel
@@ -412,79 +433,88 @@ def _format_observations(observations: list[tuple[str, str, dict]], include_prem
     return "\n".join(parts)
 
 
-async def get_long_term_observations(
-    query: str, embedding_store: CollectionEmbeddingStore
-) -> list[str]:
-    """
-    Generate queries based on the dialectic query and retrieve relevant observations.
-
-    Returns list of observations for compatibility with the tracked_db pattern.
-
-    Args:
-        query: The user query
-        embedding_store: The embedding store to search
-
-    Returns:
-        List of retrieved observations
-    """
-    logger.debug(f"Starting long-term observation retrieval for query: {query}")
-
-    # Use the existing get_observations function but return as list for compatibility
-    observations_string = await get_observations(query, embedding_store)
-
-    # Convert back to list format expected by generate_user_representation
-    if observations_string:
-        # Split by lines and filter out empty lines
-        observations_list = [
-            line.strip() for line in observations_string.split("\n") if line.strip()
-        ]
-        return observations_list
-    else:
-        return []
-
-
-async def run_tom_inference(chat_history: str, session_id: str) -> str:
-    """
-    Run ToM inference on chat history.
-
-    Args:
-        chat_history: The chat history
-        session_id: The session ID
-
-    Returns:
-        The ToM inference
-    """
-    # Run ToM inference
-    logger.debug(f"Running ToM inference for session {session_id}")
-    tom_start_time = asyncio.get_event_loop().time()
-
-    # Get chat history length to determine if this is a new conversation
-    tom_inference_response = await get_tom_inference(
-        chat_history, session_id, method="single_prompt", user_representation=""
-    )
-
-    # Extract the prediction from the response
-    tom_time = asyncio.get_event_loop().time() - tom_start_time
-
-    logger.debug(f"ToM inference completed in {tom_time:.2f}s")
-    prediction = parse_xml_content(tom_inference_response, "prediction")
-    logger.debug(f"Prediction length: {len(prediction)} characters")
-
-    return prediction
-
 
 @prompt_template()
 def query_generation_prompt(query: str) -> str:
     return c(
         f"""
-        Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. To ground your generation, each query should focus on one of the following levels of reasoning: abductive, inductive, and deductive.
+        You are a query expansion agent, part of a social cognition system that helps AI applications understand their users. Your job is to take application queries about users and generate targeted search queries that will retrieve the most relevant observations from the user's global representation.
 
-        For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's observed eating patterns", "user's most recent meal", etc.
-            
-        Format your response as a JSON array of strings, with each string being a search query. 
-        Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
-        Example:
-        ["abductive query to retrieve hypotheses", "inductive query to retrieve observed patterns", "deductive query to retrieve explicit facts"]
+        ## UNDERSTANDING THE OBSERVATION SYSTEM
+
+        The global representation contains observations derived from natural conversation using four types of reasoning. Since these observations are stored as natural language derived from real dialogue, your semantic queries should match conversational patterns and use rich vocabulary to maximize similarity matches.
+
+        **Explicit Observations** (Highest Certainty)
+
+        - Direct facts literally stated by users ("I am 25 years old", "I work as a teacher")
+        - Semantic patterns: Demographic terms, role descriptions, stated preferences, personal declarations
+
+        **Deductive Observations** (Logical Certainty)
+
+        - Facts that MUST be true given explicit premises ("teaches 5th grade" → "works in elementary education")
+        - Semantic patterns: Professional implications, logical connections, role-based inferences
+
+        **Inductive Observations** (Pattern-Based)
+
+        - Generalizations from repeated evidence (mentions coding problems 5x → "likely works in tech")
+        - Semantic patterns: Behavioral descriptors, habit language, frequency terms, pattern recognition language
+
+        **Abductive Observations** (Explanatory Hypotheses)
+
+        - Best explanations for observed patterns (tech discussions + late messages + coffee → "possibly startup founder")
+        - Semantic patterns: Identity theories, lifestyle descriptors, motivational language, contextual explanations
+
+        ## QUERY EXPANSION STRATEGY FOR SEMANTIC SIMILARITY
+
+        **Your Goal**: Generate 3 complementary search queries optimized for semantic similarity matching that together will surface the most relevant observations to help answer the application's question.
+
+        **Semantic Similarity Optimization**:
+
+        1. **Analyze the Application Query**: What specific aspect of the user does the application want to understand?
+        2. **Think Conceptually**: What concepts, themes, and semantic fields relate to this question?
+        3. **Use Diverse Vocabulary**: Include synonyms, related terms, and different ways of expressing the same concepts
+        4. **Consider Natural Language Patterns**: Match how people actually talk about these topics in conversation
+        5. **Vary Semantic Scope**:
+            - One query with direct conceptual match and rich vocabulary
+            - One query targeting behavioral/pattern language around the topic
+            - One query for broader contextual semantic fields
+
+        ## SEMANTIC SEARCH QUERY CHARACTERISTICS
+
+        **Effective Semantic Queries Should**:
+
+        - **Rich Vocabulary**: Use multiple synonyms and related terms (e.g., "preferences choices likes dislikes tastes")
+        - **Natural Phrasing**: Match conversational language patterns since observations come from natural dialogue
+        - **Conceptual Breadth**: Include semantically related concepts that might appear in relevant observations
+        - **Behavioral Language**: Use action words and descriptive language that captures how behaviors are discussed
+        - **Contextual Terms**: Include situational and emotional language that provides semantic richness
+
+        **Example Semantic Transformation**: Application Query: "How does this user prefer to receive feedback?"
+
+        Generated Queries:
+
+        - "feedback preferences receiving criticism suggestions advice communication style likes dislikes" (direct + synonyms)
+        - "response reactions when criticized praised corrected defensive receptive patterns behavior" (behavioral patterns)
+        - "workplace professional relationships mentoring coaching interactions supervisory dynamics" (contextual semantic field)
+
+        **Vocabulary Expansion Techniques**:
+
+        - **Synonyms**: feedback/criticism/advice/suggestions/input/guidance
+        - **Related Actions**: receiving/getting/handling/processing/responding/reacting
+        - **Emotional Language**: sensitive/defensive/receptive/open/resistant/welcoming
+        - **Contextual Terms**: workplace/professional/personal/relationship/dynamic/interaction
+        - **Intensity Variations**: harsh/gentle/direct/subtle/constructive/blunt
+        - **Outcome Language**: improvement/growth/learning/development/change
+
+        **Remember**: Since observations come from natural conversations, use the vocabulary people actually use when discussing these topics, including casual language, emotional descriptors, and situational context.
+
+        ## OUTPUT FORMAT
+
+        Respond with exactly 3 search queries as a JSON object with a "queries" field containing an array of strings. Each query should target different aspects or reasoning levels to maximize retrieval coverage.
+
+        Format: `{{"queries": ["query1", "query2", "query3"]}}`
+
+        No markdown, no explanations, just the JSON object.
 
         <query>{query}</query>
         """
@@ -492,19 +522,7 @@ def query_generation_prompt(query: str) -> str:
 
 
 @with_langfuse()
-@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=list[str])
+@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
 async def generate_semantic_queries(query: str):
     return query_generation_prompt(query)
 
-
-# Backward compatibility aliases
-async def get_facts(query: str, embedding_store: CollectionEmbeddingStore) -> str:
-    """Backward compatibility alias for get_observations."""
-    return await get_observations(query, embedding_store)
-
-
-async def get_long_term_facts(
-    query: str, embedding_store: CollectionEmbeddingStore
-) -> list[str]:
-    """Backward compatibility alias for get_long_term_observations."""
-    return await get_long_term_observations(query, embedding_store)
