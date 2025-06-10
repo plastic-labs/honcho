@@ -34,7 +34,7 @@ DEF_QUERY_GENERATION_PROVIDER = ModelProvider.GROQ
 DEF_QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
 
 QUERY_GENERATION_SYSTEM = """
-Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. To ground your generation, each query should focus on one of the following levels of reasoning: abductive, inductive, and deductive.
+Given this query about a user, generate 4 focused search queries that would help retrieve relevant facts about the user. To ground your generation, each query should focus on one of the following levels: abductive, inductive, deductive, and explicit observations.
 
 For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's observed eating patterns", "user's most recent meal", etc.
     
@@ -46,18 +46,91 @@ Example:
 load_dotenv()
 
 
-async def get_session_datetime(db: AsyncSession, session_id: str) -> str:
-    """
-    Get current datetime - simplified for real-time usage.
+async def get_working_representation_from_trace(session_id: str, db: AsyncSession) -> str:
+    """Extract working representation from most recent deriver trace in session."""
+    logger.debug(f"Searching for deriver trace in session: {session_id}")
     
-    Args:
-        db: Database session (unused, kept for compatibility)
-        session_id: The session ID (unused, kept for compatibility)
+    stmt = (
+        select(models.Metamessage)
+        .where(models.Metamessage.session_id == session_id)
+        .where(models.Metamessage.label == "deriver_trace")
+        .order_by(models.Metamessage.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    trace_metamessage = result.scalar_one_or_none()
+    
+    if not trace_metamessage:
+        logger.warning(f"No deriver trace found for session: {session_id}")
+        # Let's also check what metamessages exist for this session
+        debug_stmt = (
+            select(models.Metamessage.label, models.Metamessage.created_at)
+            .where(models.Metamessage.session_id == session_id)
+            .order_by(models.Metamessage.created_at.desc())
+            .limit(10)
+        )
+        debug_result = await db.execute(debug_stmt)
+        existing_metamessages = debug_result.fetchall()
+        logger.debug(f"Existing metamessages in session {session_id}: {[(label, created_at) for label, created_at in existing_metamessages]}")
+        return ""
+    
+    logger.debug(f"Found deriver trace created at: {trace_metamessage.created_at}")
+    
+    try:
+        trace_data = json.loads(trace_metamessage.content)
+        logger.debug(f"Successfully parsed trace data. Keys: {list(trace_data.keys())}")
         
-    Returns:
-        Current datetime string in 'YYYY-MM-DD HH:MM:SS' format
-    """
-    return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        final_observations = trace_data.get("final_observations", {})
+        logger.debug(f"Final observations keys: {list(final_observations.keys()) if final_observations else 'None'}")
+        
+        if not final_observations:
+            logger.warning(f"No final_observations found in trace data. Available keys: {list(trace_data.keys())}")
+            return ""
+        
+        # Format as structured text with normalized observations
+        formatted_sections = []
+        for level in ['explicit', 'deductive', 'inductive', 'abductive']:
+            observations = final_observations.get(level, [])
+            logger.debug(f"Level {level}: {len(observations)} observations")
+            
+            if observations:
+                level_name = level.upper()
+                formatted_sections.append(f"{level_name} OBSERVATIONS:")
+                for obs in observations:
+                    # Normalize observation format
+                    if isinstance(obs, dict):
+                        # Handle structured observations with conclusion/premises
+                        if 'conclusion' in obs and 'premises' in obs:
+                            conclusion = obs['conclusion']
+                            premises = obs.get('premises', [])
+                            if premises:
+                                premises_text = ", ".join(premises)
+                                formatted_sections.append(f"- {conclusion} (based on: {premises_text})")
+                            else:
+                                formatted_sections.append(f"- {conclusion}")
+                        else:
+                            # Handle other dict formats - just convert to string
+                            formatted_sections.append(f"- {str(obs)}")
+                    else:
+                        # Handle simple string observations
+                        formatted_sections.append(f"- {obs}")
+                formatted_sections.append("")
+        
+        result = "\n".join(formatted_sections) if formatted_sections else ""
+        logger.debug(f"Formatted working representation length: {len(result)} characters")
+        
+        if not result:
+            logger.warning(f"Working representation is empty after formatting. Original final_observations: {final_observations}")
+        
+        return result
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON in deriver trace: {e}")
+        logger.debug(f"Raw content (first 500 chars): {trace_metamessage.content[:500]}")
+        return ""
+    except Exception as e:
+        logger.error(f"Error processing deriver trace: {e}")
+        return ""
 
 
 class AsyncSet:
@@ -78,15 +151,14 @@ class AsyncSet:
 
 
 class Dialectic:
-    def __init__(self, agent_input: str, user_representation: str, chat_history: str, current_time: str | None = None):
+    def __init__(self, agent_input: str, working_representation: str, additional_context: str):
         self.agent_input = agent_input
-        self.user_representation = user_representation
-        self.chat_history = chat_history
-        self.current_time = current_time or datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+        self.working_representation = working_representation
+        self.additional_context = additional_context
         self.client = ModelClient(
             provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained and 2) their current conversation/interaction from the requesting application. Your goal is to analyze this information and synthesize these insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to synthesize the information based on three levels of reasoning: abduction, induction, and deduction. You might notice the context falling into these categories naturally, so feel free to start with the hypothesis (abduction), support it with observed patterns (induction), and solidify with explicit facts (deduction). If the context provided doesn't help address the query, write absolutely NOTHING but "No information available". If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead."""
+        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. You'll receive: 1) working_representation: current understanding from recent conversation analysis, and 2) additional_context: relevant historical observations. Your goal is to synthesize these insights to help applications personalize their responses to the query. Please respond in a brief, matter-of-fact, and appropriate manner. You are encouraged to synthesize the information based on three levels of reasoning: abduction, induction, and deduction. You might notice the context falling into these categories naturally, so feel free to start with the hypothesis (abduction), support it with observed patterns (induction), and solidify with explicit facts (deduction). If the context provided doesn't help address the query, write absolutely NOTHING but "No information available". If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead."""
 
     @ai_track("Dialectic Call")
     @observe()
@@ -99,20 +171,14 @@ class Dialectic:
             )
             call_start = asyncio.get_event_loop().time()
 
-            # prompt = f"""
-            # <query>{self.agent_input}</query>
-            # <context>{self.user_representation}</context>
-            # <conversation_history>{self.chat_history}</conversation_history>
-            # <current_time>{self.current_time}</current_time>
-            # """
             prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history>
-            """
+<query>{self.agent_input}</query>
+<working_representation>{self.working_representation}</working_representation>
+<additional_context>{self.additional_context}</additional_context>
+"""
             logger.info("=== DIALECTIC PROMPT ===\n" + prompt + "\n=== END DIALECTIC PROMPT ===")
             logger.debug(
-                f"Prompt constructed with context length: {len(self.user_representation)} chars"
+                f"Prompt constructed with working representation length: {len(self.working_representation)} chars, additional context length: {len(self.additional_context)} chars"
             )
 
             # Create a properly formatted message
@@ -144,21 +210,12 @@ class Dialectic:
             )
             stream_start = asyncio.get_event_loop().time()
 
-            # prompt = f"""
-            # <query>{self.agent_input}</query>
-            # <context>{self.user_representation}</context>
-            # <conversation_history>{self.chat_history}</conversation_history> 
-            # <current_time>{self.current_time}</current_time>
-            # """
             prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history>
-            """
+<query>{self.agent_input}</query>
+<working_representation>{self.working_representation}</working_representation>
+<global_context>{self.additional_context}</global_context>
+"""
             logger.info("=== DIALECTIC PROMPT (STREAM) ===\n" + prompt + "\n=== END DIALECTIC PROMPT ===")
-            logger.debug(
-                f"Prompt constructed with context length: {len(self.user_representation)} chars"
-            )
 
             # Create a properly formatted message
             message: dict[str, Any] = {"role": "user", "content": prompt}
@@ -189,8 +246,9 @@ async def chat(
     Chat with the Dialectic API that builds on-demand user representations.
 
     This function:
-    1. Expands the query to retrieve facts from the vector store
-    2. Combines them to answer the query
+    1. Gets working representation from deriver trace
+    2. Retrieves additional relevant context with premises
+    3. Synthesizes them to answer the query
     """
 
     # format the query string
@@ -198,90 +256,36 @@ async def chat(
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
 
     logger.debug(f"Received query: {final_query} for session {session_id}")
-    logger.debug("Starting on-demand user representation generation")
+    logger.debug("Starting dialectic processing")
 
     start_time = asyncio.get_event_loop().time()
 
-    # Setup phase - create resources we'll need for all operations
+    # 1. Get working representation from deriver trace
+    async with tracked_db("chat.get_working_representation") as db:
+        working_representation = await get_working_representation_from_trace(session_id, db)
+        logger.debug(f"Retrieved working representation: {len(working_representation)} characters")
 
-    # 1. Fetch latest user message & chat history
-    async with tracked_db("chat.load_history") as db_history:
-        stmt = (
-            select(models.Message)
-            .where(models.Message.app_id == app_id)
-            .where(models.Message.user_id == user_id)
-            .where(models.Message.session_id == session_id)
-            .where(models.Message.is_user)
-            .order_by(models.Message.id.desc())
-            .limit(1)
-        )
-        latest_messages = await db_history.execute(stmt)
-        latest_message = latest_messages.scalar_one_or_none()
-        latest_message_id = latest_message.public_id if latest_message else None
-        logger.debug(f"Latest user message ID: {latest_message_id}")
-
-        chat_history, _, _ = await history.get_summarized_history(
-            db_history, session_id, summary_type=history.SummaryType.SHORT
-        )
-        if not chat_history:
-            logger.warning(f"No chat history found for session {session_id}")
-            chat_history = f"someone asked this about the user's message: {final_query}"
-        logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
-        message_count = len(chat_history.split("\n"))
-        logger.debug(f"Retrieved chat history: {message_count} messages")
-
-    # Run short-term inference and long-term facts in parallel
-    async def fetch_long_term():
-        async with tracked_db("chat.get_collection") as db_embed:
-            collection = await crud.get_or_create_user_protected_collection(
-                db_embed, app_id, user_id
-            )
-            collection_id = (
-                collection.public_id
-            )  # Extract the ID while session is active
-            embedding_store = CollectionEmbeddingStore(
-                db=db_embed,
-                app_id=app_id,
-                user_id=user_id,
-                collection_id=collection_id,
-            )
-            facts = await get_long_term_observations(final_query, embedding_store)
-        return facts
-
-    long_term_task = asyncio.create_task(fetch_long_term())
-    short_term_task = asyncio.create_task(run_tom_inference(chat_history, session_id))
-
-    facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
-    logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
-    logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
-
-    # Generate a fresh user representation
-    logger.debug("Generating user representation")
-    async with tracked_db("chat.generate_user_representation") as db_rep:
-        user_representation = await generate_user_representation(
+    # 2. Get additional context with premises
+    async with tracked_db("chat.get_additional_context") as db:
+        collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
+        embedding_store = CollectionEmbeddingStore(
+            db=db,
             app_id=app_id,
             user_id=user_id,
-            session_id=session_id,
-            chat_history=chat_history,
-            tom_inference=tom_inference,
-            facts=facts,
-            db=db_rep,
-            message_id=latest_message_id,
-            with_inference=False,
+            collection_id=collection.public_id,
         )
-    logger.debug(
-        f"User representation generated: {len(user_representation)} characters"
-    )
+        additional_context = await get_observations(final_query, embedding_store, include_premises=True)
+        logger.debug(f"Retrieved additional context: {len(additional_context)} characters")
 
-    # Create a Dialectic chain with the fresh user representation to synthesize into a response
+    # 3. Create simplified Dialectic
     chain = Dialectic(
         agent_input=final_query,
-        user_representation=user_representation,
-        chat_history=chat_history,
+        working_representation=working_representation,
+        additional_context=additional_context,
     )
 
     generation_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(f"User representation generation completed in {generation_time:.2f}s")
+    logger.debug(f"Dialectic setup completed in {generation_time:.2f}s")
 
     langfuse_context.update_current_trace(
         session_id=session_id,
@@ -290,7 +294,7 @@ async def chat(
         metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
     )
 
-    # Use streaming or non-streaming response based on the request
+    # 4. Generate response
     logger.debug(f"Calling Dialectic with streaming={stream}")
     query_start_time = asyncio.get_event_loop().time()
     if stream:
@@ -311,47 +315,37 @@ async def chat(
 
 
 async def get_observations(
-    query: str, embedding_store: CollectionEmbeddingStore
+    query: str, embedding_store: CollectionEmbeddingStore, include_premises: bool = False
 ) -> str:
     """
     Generate queries based on the dialectic query and retrieve relevant observations.
     
-    Uses both DIA framework contextualized observations and semantic search for comprehensive results.
+    Uses semantic search to find additional relevant historical context beyond 
+    what's already in the working representation.
 
     Args:
         query: The user query
         embedding_store: The embedding store to search
+        include_premises: Whether to include premises from document metadata
 
     Returns:
-        String containing all retrieved observations with their context, organized by reasoning level
+        String containing additional relevant observations from semantic search
     """
     logger.info("=== OBSERVATION RETRIEVAL START ===")
     logger.info(f"ORIGINAL QUERY: {query}")
     observation_start_time = asyncio.get_event_loop().time()
 
-    # First, get contextualized observations from DIA framework
-    logger.info("RETRIEVING CONTEXTUALIZED OBSERVATIONS from DIA framework...")
-    contextualized_observations = await embedding_store.get_contextualized_observations_for_dialectic()
-    
-    # Log contextualized observations by level
-    for level, observations in contextualized_observations.items():
-        logger.info(f"CONTEXTUALIZED {level.upper()}: {len(observations)} observations")
-        for i, observation in enumerate(observations[:3]):  # Show first 3
-            logger.info(f"  {i+1}. {observation[:100]}...")
-        if len(observations) > 3:
-            logger.info(f"  ... and {len(observations) - 3} more observations")
-    
-    # Generate multiple queries for additional semantic search
-    logger.info("GENERATING SEMANTIC QUERIES for additional observations...")
+    # Generate multiple queries for semantic search
+    logger.info("GENERATING SEMANTIC QUERIES for additional context...")
     search_queries = await generate_semantic_queries(query)
     logger.info(f"GENERATED QUERIES: {search_queries}")
 
     # Create a list of coroutines, one for each query
-    async def execute_query(i: int, search_query: str) -> list[tuple[str, str]]:
+    async def execute_query(i: int, search_query: str) -> list[tuple[str, str, dict]]:
         logger.info(f"EXECUTING SEMANTIC QUERY {i + 1}/{len(search_queries)}: {search_query}")
         query_start = asyncio.get_event_loop().time()
         documents = await embedding_store.get_relevant_observations(
-            search_query, top_k=5, max_distance=0.85  # Reduced from 10 since we have contextualized observations
+            search_query, top_k=10, max_distance=0.85  # Increased top_k since we don't have contextualized observations
         )
         query_time = asyncio.get_event_loop().time() - query_start
         logger.info(f"QUERY {i + 1} RESULTS: {len(documents)} observations retrieved in {query_time:.2f}s")
@@ -362,14 +356,15 @@ async def get_observations(
             # Access attributes while the object is still bound to the session
             content = doc.content
             created_at = doc.created_at
-            document_data.append((content, created_at))
+            metadata = doc.h_metadata or {}
+            document_data.append((content, created_at, metadata))
         
         # Log the actual observations found using the extracted data
-        for j, (content, created_at) in enumerate(document_data):
+        for j, (content, created_at, metadata) in enumerate(document_data):
             logger.info(f"  {j+1}. [{created_at.strftime('%Y-%m-%d %H:%M:%S')}] {content}")
         
-        # Convert documents to tuples of (content, timestamp)
-        return [(content, created_at.strftime("%Y-%m-%d-%H:%M:%S")) for content, created_at in document_data]
+        # Convert documents to tuples of (content, timestamp, metadata)
+        return [(content, created_at.strftime("%Y-%m-%d-%H:%M:%S"), metadata) for content, created_at, metadata in document_data]
 
     # Execute all queries in parallel
     query_tasks = [
@@ -377,44 +372,71 @@ async def get_observations(
     ]
     all_observations_lists = await asyncio.gather(*query_tasks)
 
-    # Combine semantic search observations into a single set to remove duplicates
-    semantic_observations = set()
+    # Combine semantic search observations and deduplicate manually
+    # (can't use set() because tuples contain dicts which are unhashable)
+    semantic_observations = []
+    seen_content = set()
+    
     for observations in all_observations_lists:
-        semantic_observations.update(observations)
+        for observation_tuple in observations:
+            content, timestamp, metadata = observation_tuple
+            # Use content as the deduplication key
+            if content not in seen_content:
+                semantic_observations.append(observation_tuple)
+                seen_content.add(content)
 
-    # Format the final response with structured sections
+    # Format the final response with just additional context
     response_parts = []
     
-    # Add contextualized observations organized by reasoning level
-    if any(contextualized_observations.values()):
-        response_parts.append("=== REASONING-BASED USER UNDERSTANDING ===")
-        
-        if contextualized_observations.get("abductive"):
-            response_parts.append("\n## ABDUCTIVE (High-level psychological insights):")
-            response_parts.extend(contextualized_observations["abductive"])
-        
-        if contextualized_observations.get("inductive"):
-            response_parts.append("\n## INDUCTIVE (Observed patterns and behaviors):")
-            response_parts.extend(contextualized_observations["inductive"])
-        
-        if contextualized_observations.get("deductive"):
-            response_parts.append("\n## DEDUCTIVE (Explicit observations and statements):")
-            response_parts.extend(contextualized_observations["deductive"])
-    
-    # Add additional semantic search results if any
     if semantic_observations:
-        response_parts.append("\n=== ADDITIONAL RELEVANT OBSERVATIONS ===")
-        semantic_observations_formatted = [f"[created {timestamp}]: {observation}" for observation, timestamp in semantic_observations]
-        response_parts.extend(semantic_observations_formatted)
+        # Group observations by level and date
+        grouped_observations = {}
+        
+        for observation, timestamp, metadata in semantic_observations:
+            # Extract level from metadata, default to 'unknown' if not present
+            level = metadata.get('level', 'unknown')
+            
+            # Convert timestamp to just date (YYYY-MM-DD)
+            date = timestamp.split('-')[0] + '-' + timestamp.split('-')[1] + '-' + timestamp.split('-')[2]
+            
+            # Initialize nested structure if needed
+            if level not in grouped_observations:
+                grouped_observations[level] = {}
+            if date not in grouped_observations[level]:
+                grouped_observations[level][date] = []
+            
+            # Format observation with premises if needed
+            if include_premises and metadata.get('premises'):
+                premises = metadata['premises']
+                premises_text = ", ".join(premises)
+                formatted_observation = f"{observation} (based on: {premises_text})"
+            else:
+                formatted_observation = observation
+            
+            grouped_observations[level][date].append(formatted_observation)
+        
+        # Format output by level and date
+        for level in sorted(grouped_observations.keys()):
+            if level != 'unknown':
+                response_parts.append(f"\n{level.upper()} OBSERVATIONS:")
+            else:
+                response_parts.append(f"\nOBSERVATIONS:")
+            
+            for date in sorted(grouped_observations[level].keys(), reverse=True):  # Most recent dates first
+                observations_for_date = grouped_observations[level][date]
+                if len(observations_for_date) == 1:
+                    response_parts.append(f"[{date}]: {observations_for_date[0]}")
+                else:
+                    response_parts.append(f"[{date}]:")
+                    for obs in observations_for_date:
+                        response_parts.append(f"  - {obs}")
 
-    observations_string = "\n".join(response_parts) if response_parts else "No relevant observations found."
+    observations_string = "\n".join(response_parts) if response_parts else "No additional relevant context found."
 
     total_time = asyncio.get_event_loop().time() - observation_start_time
-    total_contextualized = sum(len(observations) for observations in contextualized_observations.values())
     
     logger.info("=== OBSERVATION RETRIEVAL SUMMARY ===")
     logger.info(f"TOTAL TIME: {total_time:.2f}s")
-    logger.info(f"CONTEXTUALIZED OBSERVATIONS: {total_contextualized}")
     logger.info(f"SEMANTIC SEARCH OBSERVATIONS: {len(semantic_observations)}")
     logger.info(f"FINAL OBSERVATIONS STRING LENGTH: {len(observations_string)} chars")
     logger.info("=== OBSERVATION RETRIEVAL END ===")
@@ -546,120 +568,6 @@ async def generate_semantic_queries(query: str) -> list[str]:
     except Exception as e:
         logger.error(f"Error during API call: {str(e)}")
         raise
-
-
-async def generate_user_representation(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    chat_history: str,
-    tom_inference: str,
-    facts: list[str],
-    db: AsyncSession,
-    message_id: Optional[str] = None,
-    with_inference: bool = False,
-) -> str:
-    """
-    Generate a user representation by combining long-term facts and short-term context.
-    Optionally save it as a metamessage if message_id is provided.
-    Only uses existing representations from the same session for continuity.
-
-    Returns:
-        The generated user representation.
-    """
-    logger.debug("Starting user representation generation")
-    rep_start_time = asyncio.get_event_loop().time()
-
-    if with_inference:
-        # Fetch the latest user representation from the same session
-        logger.debug(f"Fetching latest representation for session {session_id}")
-        latest_representation_stmt = (
-            select(models.Metamessage)
-            .where(
-                models.Metamessage.session_id == session_id
-            )  # only from the same session
-            .where(models.Metamessage.label == USER_REPRESENTATION_METAMESSAGE_TYPE)
-            .order_by(models.Metamessage.id.desc())
-            .limit(1)
-        )
-        result = await db.execute(latest_representation_stmt)
-        latest_representation_obj = result.scalar_one_or_none()
-        latest_representation = (
-            latest_representation_obj.content
-            if latest_representation_obj
-            else "No user representation available."
-        )
-        logger.debug(
-            f"Found previous representation: {len(latest_representation)} characters"
-        )
-        logger.debug(f"Using {len(facts)} facts for representation")
-
-        # Generate the new user representation
-        logger.debug("Calling get_user_representation")
-        gen_start_time = asyncio.get_event_loop().time()
-        user_representation_response = await get_user_representation_long_term(
-            chat_history=chat_history,
-            session_id=session_id,
-            facts=facts,
-            user_representation=latest_representation,
-            tom_inference=tom_inference,
-        )
-        gen_time = asyncio.get_event_loop().time() - gen_start_time
-        logger.debug(f"get_user_representation completed in {gen_time:.2f}s")
-
-        # Extract the representation from the response
-        representation = parse_xml_content(
-            user_representation_response, "representation"
-        )
-        logger.debug(f"Extracted representation: {len(representation)} characters")
-    else:
-        # Join the facts list with newlines for proper formatting
-        facts_formatted = '\n'.join(facts) if facts else "No relevant facts found."
-        representation = f"""
-PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
-{tom_inference}
-
-RELEVANT LONG-TERM FACTS ABOUT THE USER:
-{facts_formatted}
-"""
-    logger.debug(f"Representation: {representation}")
-    # If message_id is provided, save the representation as a metamessage
-    if not representation:
-        logger.debug("Empty representation, skipping save")
-    else:
-        logger.debug(f"Saving representation to message_id: {message_id}")
-        save_start = asyncio.get_event_loop().time()
-        try:
-            # First check if message exists
-            message_check_stmt = select(models.Message).where(
-                models.Message.public_id == message_id
-            )
-            message_check = await db.execute(message_check_stmt)
-            message_exists = message_check.scalar_one_or_none() is not None
-
-            if not message_exists:
-                message_id = None
-            else:
-                metamessage = models.Metamessage(
-                    app_id=app_id,
-                    user_id=user_id,
-                    session_id=session_id,
-                    message_id=message_id if message_id else None,
-                    label=USER_REPRESENTATION_METAMESSAGE_TYPE,
-                    content=representation,
-                    h_metadata={},
-                )
-                db.add(metamessage)
-                await db.commit()
-                save_time = asyncio.get_event_loop().time() - save_start
-                logger.debug(f"Representation saved in {save_time:.2f}s")
-        except Exception as e:
-            logger.error(f"Error during save DB operation: {str(e)}")
-            await db.rollback()
-
-    total_time = asyncio.get_event_loop().time() - rep_start_time
-    logger.debug(f"Total representation generation completed in {total_time:.2f}s")
-    return representation
 
 # Backward compatibility aliases
 async def get_facts(query: str, embedding_store: CollectionEmbeddingStore) -> str:
