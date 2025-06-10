@@ -18,10 +18,10 @@ router = APIRouter(
 )
 
 
-@router.get("", response_model=schemas.Workspace)
-async def get_workspace(
-    workspace_id: Optional[str] = Query(
-        None, description="Workspace ID to retrieve. If not provided, uses JWT token"
+@router.post("", response_model=schemas.Workspace)
+async def get_or_create_workspace(
+    workspace: schemas.WorkspaceCreate = Body(
+        ..., description="Workspace creation parameters"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
     db=db,
@@ -33,17 +33,16 @@ async def get_workspace(
     Otherwise, it uses the workspace_id from the JWT token.
     """
     # If workspace_id provided in query, check if it matches jwt or user is admin
-    if workspace_id:
-        if not jwt_params.ad and jwt_params.ap != workspace_id:
+    if workspace.name:
+        if not jwt_params.ad and jwt_params.ap != workspace.name:
             raise AuthenticationException("Unauthorized access to resource")
-        target_workspace_id = workspace_id
     else:
         # Use workspace_id from JWT
         if not jwt_params.ap:
             raise AuthenticationException("Workspace ID not found in query parameter or JWT")
-        target_workspace_id = jwt_params.ap
+        workspace.name = jwt_params.ap
 
-    return await crud.get_workspace(db, workspace_id=target_workspace_id)
+    return await crud.get_or_create_workspace(db, workspace=workspace)
 
 
 @router.post(
@@ -76,56 +75,10 @@ async def get_all_workspaces(
     )
 
 
-@router.get(
-    "/name/{name}",
-    response_model=schemas.Workspace,
-    dependencies=[Depends(require_auth(admin=True))],
-)
-async def get_workspace_by_name(
-    name: str = Path(..., description="Name of the workspace to retrieve"),
-    db=db,
-):
-    """Get a Workspace by Name"""
-    # ResourceNotFoundException will be caught by global handler if workspace not found
-    workspace = await crud.get_workspace_by_name(db, name=name)
-    return workspace
-
-
-@router.post(
-    "", response_model=schemas.Workspace, dependencies=[Depends(require_auth(admin=True))]
-)
-async def create_workspace(
-    workspace: schemas.WorkspaceCreate = Body(..., description="Workspace creation parameters"),
-    db=db,
-):
-    """Create a new Workspace"""
-    honcho_workspace = await crud.create_workspace(db, workspace=workspace)
-    return honcho_workspace
-
-
-@router.get(
-    "/get_or_create/{name}",
-    response_model=schemas.Workspace,
-    dependencies=[Depends(require_auth(admin=True))],
-)
-async def get_or_create_workspace(
-    name: str = Path(..., description="Name of the workspace to get or create"),
-    db=db,
-):
-    """Get or Create a Workspace"""
-    try:
-        workspace = await crud.get_workspace_by_name(db=db, name=name)
-        return workspace
-    except ResourceNotFoundException:
-        # Workspace doesn't exist, create it
-        workspace = await create_workspace(db=db, workspace=schemas.WorkspaceCreate(name=name))
-        return workspace
-
-
 @router.put(
     "/{workspace_id}",
     response_model=schemas.Workspace,
-    dependencies=[Depends(require_auth(app_id="workspace_id"))],
+    dependencies=[Depends(require_auth(workspace_id="workspace_id"))],
 )
 async def update_workspace(
     workspace_id: str = Path(..., description="ID of the workspace to update"),
@@ -134,5 +87,5 @@ async def update_workspace(
 ):
     """Update a Workspace"""
     # ResourceNotFoundException will be caught by global handler if workspace not found
-    honcho_workspace = await crud.update_workspace(db, workspace_id=workspace_id, workspace=workspace)
+    honcho_workspace = await crud.update_workspace(db, workspace_name=workspace_id, workspace=workspace)
     return honcho_workspace

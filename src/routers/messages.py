@@ -275,15 +275,15 @@ async def get_messages(
 
 @router.get("/{message_id}", response_model=schemas.Message)
 async def get_message(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to retrieve"),
     db=db,
 ):
     """Get a Message by ID"""
     honcho_message = await crud.get_message(
-        db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
+        db, workspace_name=workspace_id, session_name=session_id, peer_name=peer_id, message_id=message_id
     )
     if honcho_message is None:
         logger.warning(f"Message {message_id} not found in session {session_id}")
@@ -293,8 +293,8 @@ async def get_message(
 
 @router.put("/{message_id}", response_model=schemas.Message)
 async def update_message(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    app_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to update"),
     message: schemas.MessageUpdate = Body(
@@ -307,9 +307,9 @@ async def update_message(
         updated_message = await crud.update_message(
             db,
             message=message,
-            app_id=app_id,
-            user_id=user_id,
-            session_id=session_id,
+            workspace_name=app_id,
+            peer_name=peer_id,
+            session_name=session_id,
             message_id=message_id,
         )
         logger.info(f"Message {message_id} updated successfully")
