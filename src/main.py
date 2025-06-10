@@ -15,14 +15,11 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
-    apps,
-    collections,
-    documents,
     keys,
     messages,
-    metamessages,
+    peers,
     sessions,
-    users,
+    workspaces,
 )
 from src.security import create_admin_jwt
 
@@ -138,13 +135,10 @@ router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
 
 add_pagination(app)
 
-app.include_router(apps.router, prefix="/v1")
-app.include_router(users.router, prefix="/v1")
+app.include_router(workspaces.router, prefix="/v1")
+app.include_router(peers.router, prefix="/v1")
 app.include_router(sessions.router, prefix="/v1")
 app.include_router(messages.router, prefix="/v1")
-app.include_router(metamessages.router, prefix="/v1")
-app.include_router(collections.router, prefix="/v1")
-app.include_router(documents.router, prefix="/v1")
 app.include_router(keys.router, prefix="/v1")
 
 
