@@ -16,11 +16,11 @@ from src.security import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/apps/{app_id}/users/{user_id}/sessions/{session_id}/messages",
+    prefix="/workspaces/{workspace_id}/sessions/{session_id}/messages",
     tags=["messages"],
     dependencies=[
         Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )

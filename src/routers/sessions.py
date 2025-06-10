@@ -20,67 +20,53 @@ from src.security import JWTParams, require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/apps/{app_id}/users/{user_id}/sessions",
+    prefix="/workspaces/{workspace_id}/sessions",
     tags=["sessions"],
 )
 
 
 @router.get(
-    "",
+    "/{session_id}",
     response_model=schemas.Session,
 )
 async def get_session(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
-    session_id: Optional[str] = Query(
-        None, description="Session ID to retrieve. If not provided, uses JWT token"
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    peer_id: Optional[str] = Query(
+        None, description="Peer ID to verify access. If not provided, uses JWT token"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
     db=db,
 ):
     """
-    Get a specific session for a user.
+    Get a specific session in a workspace.
 
-    If session_id is provided as a query parameter, it uses that (must match JWT session_id).
-    Otherwise, it uses the session_id from the JWT token.
+    If peer_id is provided as a query parameter, it verifies the peer is in the session.
+    Otherwise, it uses the peer_id from the JWT token for verification.
     """
     # Verify JWT has access to the requested resource
     if not jwt_params.ad:
-        if jwt_params.ap is not None and jwt_params.ap != app_id:
+        if jwt_params.ap is not None and jwt_params.ap != workspace_id:
             raise AuthenticationException("Unauthorized access to resource")
-        if jwt_params.us is not None and jwt_params.us != user_id:
+        if peer_id and jwt_params.us is not None and jwt_params.us != peer_id:
             raise AuthenticationException("Unauthorized access to resource")
-    # If session_id provided in query, check if it matches jwt or user is admin
-    if session_id:
-        if (
-            not jwt_params.ad
-            and jwt_params.se is not None
-            and jwt_params.se != session_id
-        ):
-            raise AuthenticationException("Unauthorized access to resource")
-        target_session_id = session_id
-    else:
-        # Use session_id from JWT
-        if not jwt_params.se:
-            raise AuthenticationException(
-                "Session ID not found in query parameter or JWT"
-            )
-        target_session_id = jwt_params.se
+
+    # Use peer_id from JWT if not provided in query
+    target_peer_id = peer_id or jwt_params.us
 
     # Let crud function handle the ResourceNotFoundException
     return await crud.get_session(
-        db, app_id=app_id, session_id=target_session_id, user_id=user_id
+        db, workspace_id=workspace_id, session_id=session_id, peer_id=target_peer_id
     )
 
 
 @router.post(
     "/list",
     response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id"))],
 )
 async def get_sessions(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     options: Optional[schemas.SessionGet] = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
@@ -89,9 +75,9 @@ async def get_sessions(
     ),
     db=db,
 ):
-    """Get All Sessions for a User"""
+    """Get All Sessions in a Workspace"""
     filter_param = None
-    is_active_param = False  # Default to None, meaning no filter on is_active
+    is_active_param = False  # Default from schema
 
     if options:
         if hasattr(options, 'filter') and options.filter:
@@ -104,8 +90,7 @@ async def get_sessions(
     return await paginate(
         db,
         await crud.get_sessions(
-            app_id=app_id,
-            user_id=user_id,
+            workspace_id=workspace_id,
             reverse=reverse,
             is_active=is_active_param,
             filter=filter_param,
@@ -116,22 +101,24 @@ async def get_sessions(
 @router.post(
     "",
     response_model=schemas.Session,
-    dependencies=[Depends(require_auth(app_id="app_id", user_id="user_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id"))],
 )
 async def create_session(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session: schemas.SessionCreate = Body(
         ..., description="Session creation parameters"
     ),
+    peer_ids: Optional[list[str]] = Body(
+        None, description="List of peer IDs to add to the session"
+    ),
     db=db,
 ):
-    """Create a Session for a User"""
+    """Create a Session in a Workspace"""
     try:
         session_obj = await crud.create_session(
-            db, app_id=app_id, user_id=user_id, session=session
+            db, workspace_id=workspace_id, session=session, peer_ids=peer_ids
         )
-        logger.info(f"Session created successfully for user {user_id}")
+        logger.info(f"Session created successfully in workspace {workspace_id}")
         return session_obj
     except ValueError as e:
         logger.warning(f"Failed to create session: {str(e)}")
@@ -143,23 +130,25 @@ async def create_session(
     response_model=schemas.Session,
     dependencies=[
         Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )
 async def update_session(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to update"),
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
+    ),
+    peer_id: Optional[str] = Query(
+        None, description="Peer ID to verify access"
     ),
     db=db,
 ):
     """Update the metadata of a Session"""
     try:
         updated_session = await crud.update_session(
-            db, app_id=app_id, user_id=user_id, session_id=session_id, session=session
+            db, workspace_id=workspace_id, session_id=session_id, session=session, peer_id=peer_id
         )
         logger.info(f"Session {session_id} updated successfully")
         return updated_session
@@ -172,20 +161,19 @@ async def update_session(
     "/{session_id}",
     dependencies=[
         Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )
 async def delete_session(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to delete"),
     db=db,
 ):
     """Delete a session by marking it as inactive"""
     try:
         await crud.delete_session(
-            db, app_id=app_id, user_id=user_id, session_id=session_id
+            db, workspace_id=workspace_id, session_id=session_id
         )
         logger.info(f"Session {session_id} deleted successfully")
         return {"message": "Session deleted successfully"}
@@ -194,6 +182,8 @@ async def delete_session(
         raise ResourceNotFoundException("Session not found") from e
 
 
+# TODO: Update chat endpoint to work with new workspace/peer paradigm
+# This endpoint needs significant rework for multi-peer sessions
 @router.post(
     "/{session_id}/chat",
     response_model=schemas.DialecticResponse,
@@ -205,24 +195,25 @@ async def delete_session(
     },
     dependencies=[
         Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )
 async def chat(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
+    peer_id: str = Query(..., description="ID of the peer making the request"),
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
 ):
 
     """Chat with the Dialectic API"""
+    # TODO: Update agent.chat to work with workspace_id/peer_id instead of app_id/user_id
     if not options.stream:
         return await agent.chat(
-            app_id=app_id,
-            user_id=user_id,
+            app_id=workspace_id,  # Temporary mapping
+            user_id=peer_id,      # Temporary mapping
             session_id=session_id,
             queries=options.queries,
         )
@@ -231,8 +222,8 @@ async def chat(
         async def parse_stream():
             try:
                 stream = await agent.chat(
-                    app_id=app_id,
-                    user_id=user_id,
+                    app_id=workspace_id,  # Temporary mapping
+                    user_id=peer_id,      # Temporary mapping
                     session_id=session_id,
                     queries=options.queries,
                     stream=True,
@@ -250,34 +241,33 @@ async def chat(
         )
 
 
+# TODO: Implement clone_session endpoint for new workspace/peer paradigm
+# Need to update clone_session CRUD method first
 @router.get(
     "/{session_id}/clone",
     response_model=schemas.Session,
     dependencies=[
         Depends(
-            require_auth(app_id="app_id", user_id="user_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )
 async def clone_session(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to clone"),
     db=db,
     message_id: Optional[str] = Query(
         None, description="Message ID to cut off the clone at"
     ),
-    deep_copy: bool = Query(False, description="Whether to deep copy metamessages"),
 ):
     """Clone a session, optionally up to a specific message"""
     try:
+        # TODO: Update crud.clone_session to work with new paradigm
         cloned_session = await crud.clone_session(
             db,
-            app_id=app_id,
-            user_id=user_id,
+            workspace_id=workspace_id,
             original_session_id=session_id,
             cutoff_message_id=message_id,
-            deep_copy=deep_copy,
         )
         logger.info(f"Session {session_id} cloned successfully")
         return cloned_session
