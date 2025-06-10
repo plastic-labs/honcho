@@ -41,6 +41,7 @@ async def process_item(db: AsyncSession, payload: dict):
         payload["user_id"],
         payload["session_id"],
         payload["message_id"],
+        payload.get("created_at"),
         db,
     ]
     if payload["is_user"]:
@@ -68,6 +69,7 @@ async def process_ai_message(
     user_id: str,
     session_id: str,
     message_id: str,
+    created_at: str | None,
     db: AsyncSession,
 ):
     """
@@ -84,6 +86,7 @@ async def process_user_message(
     user_id: str,
     session_id: str,
     message_id: str,
+    created_at: str | None,
     db: AsyncSession,
 ):
     """
@@ -137,7 +140,7 @@ async def process_user_message(
     if unique_facts:
         logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
         save_start = os.times()[4]
-        await embedding_store.save_facts(unique_facts, message_id=message_id)
+        await embedding_store.save_facts(unique_facts, message_id=message_id, created_at=created_at)
         save_time = os.times()[4] - save_start
         logger.debug(f"Facts saved in {save_time:.2f}s")
     else:

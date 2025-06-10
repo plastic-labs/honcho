@@ -19,7 +19,8 @@ class CollectionEmbeddingStore:
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
-        message_id: str = None,
+        message_id: str | None = None,
+        created_at: str | None = None,
     ) -> None:
         """Save facts to the collection.
 
@@ -32,9 +33,11 @@ class CollectionEmbeddingStore:
             for fact in facts:
                 # Create document with duplicate checking
                 try:
-                    metadata = {}
+                    metadata: dict = {}
                     if message_id:
                         metadata["message_id"] = message_id
+                    if created_at:
+                        metadata["created_at"] = created_at
                     await crud.create_document(
                         db,
                         document=schemas.DocumentCreate(content=fact, metadata=metadata),
@@ -72,7 +75,34 @@ class CollectionEmbeddingStore:
                 top_k=top_k,
             )
 
-            return [doc.content for doc in documents]
+            formatted_facts: list[str] = []
+            for doc in documents:
+                prefix = ""
+                # Prefer explicit metadata timestamp if available
+                ts: str | None = None
+                if isinstance(doc.h_metadata, dict):
+                    ts = doc.h_metadata.get("created_at")  # type: ignore[index]
+                # Fallback to document.created_at column
+                if not ts and getattr(doc, "created_at", None):
+                    ts = doc.created_at.isoformat()  # type: ignore[attr-defined]
+
+                if ts:
+                    try:
+                        from datetime import datetime
+
+                        dt = (
+                            datetime.fromisoformat(ts)
+                            if "T" in ts or "+" in ts or "-" in ts
+                            else datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+                        )
+                        prefix = dt.strftime("%b %-d %Y") + ": "
+                    except Exception:
+                        # If parsing fails just skip the prefix
+                        prefix = ""
+
+                formatted_facts.append(f"{prefix}{doc.content}")
+
+            return formatted_facts
 
     async def remove_duplicates(
         self, facts: list[str], similarity_threshold: float = 0.85

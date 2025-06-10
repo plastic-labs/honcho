@@ -73,6 +73,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     is_user: bool
     metadata: dict = {}
+    created_at: datetime.datetime | None = None
 
 
 class MessageGet(MessageBase):
@@ -81,6 +82,7 @@ class MessageGet(MessageBase):
 
 class MessageUpdate(MessageBase):
     metadata: dict
+    created_at: datetime.datetime | None = None
 
 
 class Message(MessageBase):

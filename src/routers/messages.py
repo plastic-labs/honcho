@@ -175,6 +175,7 @@ async def create_message_for_session(
             "is_user": honcho_message.is_user,
             "content": honcho_message.content,
             "metadata": honcho_message.h_metadata,
+            "created_at": honcho_message.created_at.isoformat(),
         }
 
         # Queue message for background processing
@@ -220,6 +221,7 @@ async def create_batch_messages_for_session(
                 "is_user": message.is_user,
                 "content": message.content,
                 "metadata": message.h_metadata,
+                "created_at": message.created_at.isoformat(),
             }
             for message in created_messages
         ]

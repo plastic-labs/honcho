@@ -661,7 +661,7 @@ async def create_message(
     if honcho_session is None:
         raise ValueError("Session not found or does not belong to user")
 
-    honcho_message = models.Message(
+    honcho_message_kwargs = dict(
         session_id=session_id,
         is_user=message.is_user,
         content=message.content,
@@ -669,6 +669,11 @@ async def create_message(
         user_id=user_id,
         app_id=app_id,
     )
+    # Allow manual override of created_at if provided
+    if getattr(message, "created_at", None):
+        honcho_message_kwargs["created_at"] = message.created_at
+
+    honcho_message = models.Message(**honcho_message_kwargs)
     db.add(honcho_message)
     await db.commit()
     # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
@@ -692,17 +697,19 @@ async def create_messages(
         raise ValueError("Session not found or does not belong to user")
 
     # Create list of message records
-    message_records = [
-        {
+    message_records = []
+    for _msg in messages:
+        rec = {
             "session_id": session_id,
-            "is_user": message.is_user,
-            "content": message.content,
-            "h_metadata": message.metadata,
+            "is_user": _msg.is_user,
+            "content": _msg.content,
+            "h_metadata": _msg.metadata,
             "user_id": user_id,
             "app_id": app_id,
         }
-        for message in messages
-    ]
+        if getattr(_msg, "created_at", None):
+            rec["created_at"] = _msg.created_at
+        message_records.append(rec)
 
     # Bulk insert messages and return them in order
     stmt = insert(models.Message).returning(models.Message)
