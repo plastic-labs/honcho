@@ -40,11 +40,6 @@ USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term"
 # db.add(metamessage)
 
 
-def get_current_datetime() -> str:
-    """Get current datetime in UTC format."""
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
 async def save_deriver_trace(
     db: AsyncSession,
     message_id: str,
@@ -77,16 +72,6 @@ async def save_deriver_trace(
     except Exception as e:
         logger.error(f"Failed to save deriver trace for message {message_id}: {e}")
         # Don't raise - trace saving should not block reasoning process
-
-
-async def get_session_datetime(db: AsyncSession, session_id: str) -> str:
-    """
-    Get current datetime - simplified for real-time usage.
-
-    Returns:
-        Current datetime string 'YYYY-MM-DD HH:MM:SS'
-    """
-    return get_current_datetime()
 
 
 async def process_item(db: AsyncSession, payload: dict):
@@ -157,11 +142,8 @@ async def process_user_message(
     if not observation_saver.is_running:
         await initialize_observation_saver(db)
 
-    # Get session datetime for the "new turn" timestamp (matches your dataset)
-    session_datetime = await get_session_datetime(db, session_id)
-    logger.info(
-        f"Session datetime result: '{session_datetime}' for session {session_id}"
-    )
+    # Get current datetime for timestamping new observations
+    current_datetime = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
     # Create summary if needed BEFORE history retrieval to ensure consistent state
     await summarize_if_needed(db, app_id, session_id, user_id, message_id)
@@ -246,7 +228,7 @@ async def process_user_message(
         new_turn=content,
         message_id=message_id,
         session_id=session_id,
-        current_time=session_datetime,
+        current_time=current_datetime,
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")

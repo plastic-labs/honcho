@@ -1,6 +1,7 @@
 from nanoid import generate as generate_nanoid
 import pytest
 from unittest.mock import patch
+from contextlib import asynccontextmanager
 
 
 def test_app_validations_api(client):
@@ -386,34 +387,47 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
     async def mock_get_or_create_collection(*args, **kwargs):
         return MockCollection()
 
-    async def mock_chat_history(*args, **kwargs):
-        return "Mock chat history", [], []
+    async def mock_get_working_representation_from_trace(*args, **kwargs):
+        """Mock function that returns working representation from deriver trace."""
+        return """EXPLICIT OBSERVATIONS:
+- User prefers Python programming
+- User lives in California
 
-    async def mock_get_long_term_observations(query: str, embedding_store) -> list[str]:
-        """Mock function that returns sample observations for testing."""
-        return [
-            "User prefers Python programming",
-            "User lives in California",
-            "User works remotely",
-            "User enjoys hiking",
-        ]
+DEDUCTIVE OBSERVATIONS:
+- User works remotely
+- User enjoys hiking
 
-    async def mock_run_tom_inference(*args, **kwargs):
-        return "Mock TOM inference"
+INDUCTIVE OBSERVATIONS:
+- User tends to ask technical questions
+- User is active in the morning"""
 
-    async def mock_generate_user_representation(*args, **kwargs):
-        return "Mock user representation"
+    async def mock_get_observations(*args, **kwargs):
+        """Mock function that returns additional context observations."""
+        return """=== REASONING-BASED USER UNDERSTANDING ===
+
+## ABDUCTIVE (High-level psychological insights):
+User appears to be a technical professional interested in continuous learning
+
+## INDUCTIVE (Observed patterns and behaviors):
+User frequently asks follow-up questions to understand complex topics
+User prefers detailed explanations over brief answers
+
+## DEDUCTIVE (Explicit observations and statements):
+User has stated they work in software development
+User mentioned working from home"""
 
     # Mock the dialectic_call function
     async def mock_dialectic_call(
-        query: str, user_representation: str, chat_history: str
+        query: str, working_representation: str, additional_context: str
     ):
-        # Create a mock response that works with the actual function
-        return "Mock response"
+        # Create a mock response that works with mirascope
+        class MockResponse:
+            content = "Mock response"
+        return MockResponse()
 
     # Mock the dialectic_stream function
     async def mock_dialectic_stream(
-        query: str, user_representation: str, chat_history: str
+        query: str, working_representation: str, additional_context: str
     ):
         class MockStream:
             def __enter__(self):
@@ -433,27 +447,19 @@ def test_agent_query_validations_api(client, sample_data, monkeypatch):
         "src.crud.get_or_create_user_protected_collection",
         mock_get_or_create_collection,
     )
-    monkeypatch.setattr("src.utils.history.get_summarized_history", mock_chat_history)
-
-    # Mock the entire agent.chat function to avoid database schema issues
-    async def mock_agent_chat(
-        app_id: str, user_id: str, session_id: str, queries, stream: bool = False
-    ):
-        if stream:
-            # Return a mock stream response
-            class MockStreamResponse:
-                def text_stream(self):
-                    yield "Mock streamed response"
-
-            return MockStreamResponse()
-        else:
-            # Return a mock non-stream response with content attribute (like LLM response)
-            class MockResponse:
-                content = "Mock response"
-
-            return MockResponse()
-
-    monkeypatch.setattr("src.agent.chat", mock_agent_chat)
+    # Mock tracked_db context manager to avoid database connections
+    @asynccontextmanager
+    async def mock_tracked_db(*args, **kwargs):
+        # Return a mock db session that doesn't connect to the real database
+        class MockDB:
+            pass
+        yield MockDB()
+    
+    monkeypatch.setattr("src.agent.tracked_db", mock_tracked_db)
+    monkeypatch.setattr("src.agent.get_working_representation_from_trace", mock_get_working_representation_from_trace)
+    monkeypatch.setattr("src.agent.get_observations", mock_get_observations)
+    monkeypatch.setattr("src.agent.dialectic_call", mock_dialectic_call)
+    monkeypatch.setattr("src.agent.dialectic_stream", mock_dialectic_stream)
 
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based

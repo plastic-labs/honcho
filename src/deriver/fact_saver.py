@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 from src import crud, schemas
 from src.dependencies import tracked_db
+from src.utils import update_document_access_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -195,9 +196,19 @@ class ObservationSaverQueue:
                     )
 
                     if duplicates:
-                        logger.debug(
-                            f"Duplicate observation found for task {task.task_id}, skipping"
+                        # Update access metadata for the duplicate document
+                        duplicate_doc = duplicates[0]  # Get the most similar duplicate
+                        session_id = task.metadata.get("session_id") if task.metadata else None
+                        await update_document_access_metadata(
+                            db,
+                            duplicate_doc,
+                            task.app_id,
+                            task.user_id,
+                            task.collection_id,
+                            session_id=session_id
                         )
+                        
+                        logger.debug(f"Duplicate observation found for task {task.task_id}, updated access metadata")
                         async with self._lock:
                             self.stats["observations_duplicate"] += 1
                         continue
