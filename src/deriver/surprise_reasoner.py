@@ -99,7 +99,7 @@ New conversation turn to analyze:
 {new_turn}
 </new_turn>
 
-Here are the results of the the last queries that were run (if any):
+Here are the results of the last queries that were run (if any):
 <query_results>
 {query_results}
 </query_results>
