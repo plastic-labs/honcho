@@ -6,8 +6,11 @@ from typing import Optional, Union, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from inspect import cleandoc as c
 
-from src.utils.model_client import ModelClient, ModelProvider
+from mirascope import llm
+from mirascope.integrations.langfuse import with_langfuse
+
 
 from .. import models
 
@@ -79,11 +82,6 @@ MESSAGES_PER_LONG_SUMMARY = 60  # How often to create long summaries
 class SummaryType(Enum):
     SHORT = "honcho_chat_summary_short"
     LONG = "honcho_chat_summary_long"
-
-
-# Default model settings for summary generation
-DEFAULT_PROVIDER = ModelProvider.GEMINI
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
 
 
 async def get_session_summaries(
@@ -183,99 +181,93 @@ async def get_messages_since_message(
     return messages
 
 
+@with_langfuse()
+@llm.call(
+    provider="google",
+    model="gemini-2.0-flash-lite",
+    call_params={"max_tokens": 1000},
+)
+async def create_short_summary(
+    messages: list[models.Message],
+    previous_summary: Optional[str] = None,
+):
+    return c(
+        f"""
+        You are a system that summarizes parts of a conversation to create a concise and accurate summary.
+        Focus on capturing:
+        1. Key facts and information shared
+        2. User preferences, opinions, and questions
+        3. Important context and requests
+        4. Core topics discussed
+        5. User's apparent emotional state
+
+        It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
+
+        Provide a concise, factual summary that captures the essence of the conversation.
+        Your summary should be detailed enough to serve as context for future messages,
+        but brief enough to be helpful.
+
+        Return only the summary without any explanation or meta-commentary.
+
+        <conversation>
+        {format_messages(messages)}
+        </conversation>
+
+        <previous_summary>
+        {previous_summary}
+        </previous_summary>
+        """
+    )
+
+
+@with_langfuse()
+@llm.call(
+    provider="google",
+    model="gemini-2.0-flash-lite",
+    call_params={"max_tokens": 2000},
+)
+async def create_long_summary(
+    messages: list[models.Message],
+    previous_summary: Optional[str] = None,
+):
+    return c(
+        f"""
+        You are a system that creates comprehensive summaries of conversations.
+        Focus on capturing:
+        1. Key facts and information shared
+        2. User preferences, opinions, and questions
+        3. Important context and requests
+        4. Core topics discussed in detail
+        5. User's apparent emotional state and personality traits
+        6. Important themes and patterns across the conversation
+
+        It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
+
+        Provide a thorough and detailed summary that captures the essence of the conversation.
+        Your summary should serve as a comprehensive record of the important information in this conversation.
+
+        Return only the summary without any explanation or meta-commentary.
+
+        <conversation>
+        {format_messages(messages)}
+        </conversation>
+
+        <previous_summary>  
+        {previous_summary}
+        </previous_summary>
+        """
+    )
+
+
 async def create_summary(
     messages: list[models.Message],
     previous_summary: Optional[str] = None,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> str:
-    """
-    Generate a summary of the provided messages using an LLM.
-
-    Args:
-        messages: List of messages to summarize
-        previous_summary: Optional previous summary to provide context
-        summary_type: Type of summary to create ("short" or "long")
-
-    Returns:
-        A summary of the conversation
-    """
-    # Combine messages into a conversation format
-    conversation = "\n".join(
-        [
-            f"{'human' if msg.is_user else 'assistant'}: {msg.content}"
-            for msg in messages
-        ]
-    )
-
-    # Adjust system prompt based on summary type
-    if summary_type == SummaryType.LONG:
-        system_prompt = """You are a system that creates comprehensive summaries of conversations.
-Focus on capturing:
-1. Key facts and information shared
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed in detail
-5. User's apparent emotional state and personality traits
-6. Important themes and patterns across the conversation
-
-It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
-
-Provide a thorough and detailed summary that captures the essence of the conversation.
-Your summary should serve as a comprehensive record of the important information in this conversation.
-
-Return only the summary without any explanation or meta-commentary."""
-    else:  # short summary
-        system_prompt = """You are a system that summarizes parts of a conversation to create a concise and accurate summary.
-Focus on capturing:
-1. Key facts and information shared
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed
-5. User's apparent emotional state
-
-It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
-
-Provide a concise, factual summary that captures the essence of the conversation.
-Your summary should be detailed enough to serve as context for future messages,
-but brief enough to be helpful.
-
-Return only the summary without any explanation or meta-commentary."""
-
-    # Include previous summary if available
-    if previous_summary:
-        user_prompt = f"""Here is a previous summary of the conversation:
-{previous_summary}
-Now please summarize these additional messages, incorporating the context from the previous summary.
-
-Your summary should summarize the entire conversation in a self-contained way, such that someone could read it and understand the entire conversation.
-{conversation}
-Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} summary that captures both the previous context and the new information."""
-    else:
-        user_prompt = f"""Please summarize the following conversation segment:
-{conversation}
-Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} summary that captures the key points and context."""
-
-    # Create a model client
-    client = ModelClient(provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL)
-
-    # Generate the summary
-    llm_messages = [{"role": "user", "content": user_prompt}]
-
-    try:
-        summary = await client.generate(
-            messages=llm_messages,
-            system=system_prompt,
-            max_tokens=1000
-            if summary_type == SummaryType.SHORT
-            else 2000,  # Allow longer responses for long summaries
-            temperature=0.0,
-            use_caching=True,
-        )
-        return summary
-    except Exception as e:
-        logger.error(f"Error generating summary: {str(e)}")
-        # Fallback to a basic summary in case of error
-        return f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+):
+    if summary_type == SummaryType.SHORT:
+        return await create_short_summary(messages, previous_summary)
+    elif summary_type == SummaryType.LONG:
+        return await create_long_summary(messages, previous_summary)
 
 
 async def save_summary_metamessage(

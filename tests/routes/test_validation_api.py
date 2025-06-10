@@ -416,14 +416,19 @@ User prefers detailed explanations over brief answers
 User has stated they work in software development
 User mentioned working from home"""
 
-    # Mock the Dialectic.call method
-    async def mock_dialectic_call(self):
-        # Create a mock response that will work with line 310 in agent.py:
-        # return schemas.DialecticResponse(content=response[0]["text"])
-        return [{"text": "Mock response"}]
+    # Mock the dialectic_call function
+    async def mock_dialectic_call(
+        query: str, working_representation: str, additional_context: str
+    ):
+        # Create a mock response that works with mirascope
+        class MockResponse:
+            content = "Mock response"
+        return MockResponse()
 
-    # Mock the Dialectic.stream method
-    def mock_dialectic_stream(self):
+    # Mock the dialectic_stream function
+    async def mock_dialectic_stream(
+        query: str, working_representation: str, additional_context: str
+    ):
         class MockStream:
             def __enter__(self):
                 return self
@@ -442,7 +447,6 @@ User mentioned working from home"""
         "src.crud.get_or_create_user_protected_collection",
         mock_get_or_create_collection,
     )
-    
     # Mock tracked_db context manager to avoid database connections
     @asynccontextmanager
     async def mock_tracked_db(*args, **kwargs):
@@ -454,8 +458,8 @@ User mentioned working from home"""
     monkeypatch.setattr("src.agent.tracked_db", mock_tracked_db)
     monkeypatch.setattr("src.agent.get_working_representation_from_trace", mock_get_working_representation_from_trace)
     monkeypatch.setattr("src.agent.get_observations", mock_get_observations)
-    monkeypatch.setattr("src.agent.Dialectic.call", mock_dialectic_call)
-    monkeypatch.setattr("src.agent.Dialectic.stream", mock_dialectic_stream)
+    monkeypatch.setattr("src.agent.dialectic_call", mock_dialectic_call)
+    monkeypatch.setattr("src.agent.dialectic_stream", mock_dialectic_stream)
 
     test_app, test_user = sample_data
     # Create a session first since agent queries are likely session-based

@@ -10,7 +10,6 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass
-from typing import Optional
 
 from src import crud, schemas
 from src.dependencies import tracked_db
@@ -99,7 +98,7 @@ class ObservationSaverQueue:
         collection_id: str,
         metadata: dict,
         duplicate_threshold: float = 0.1,
-        task_id: Optional[str] = None,
+        task_id: str | None = None,
     ) -> str:
         """Queue an observation for asynchronous saving."""
         if not self.is_running:
@@ -259,7 +258,7 @@ class ObservationSaverQueue:
 FactSaverQueue = ObservationSaverQueue
 
 # Global instance
-_observation_saver_queue: Optional[ObservationSaverQueue] = None
+_observation_saver_queue: ObservationSaverQueue | None = None
 
 
 def get_observation_saver_queue() -> ObservationSaverQueue:

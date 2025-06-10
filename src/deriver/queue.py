@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 import signal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 
 import sentry_sdk
@@ -138,7 +138,7 @@ class QueueManager:
     async def get_available_sessions(self, db: AsyncSession):
         """Get available sessions that aren't being processed"""
         # Clean up stale sessions
-        five_minutes_ago = datetime.utcnow() - timedelta(minutes=5)
+        five_minutes_ago = datetime.now(timezone.utc) - timedelta(minutes=5)
         await db.execute(
             delete(models.ActiveQueueSession).where(
                 models.ActiveQueueSession.last_updated < five_minutes_ago
