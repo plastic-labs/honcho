@@ -1,15 +1,16 @@
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import crud, models, schemas
+from src.utils import update_document_access_metadata
+from src.utils.deriver import format_datetime_simple
+
+from ... import crud, models
 from ...dependencies import tracked_db
 from ...utils.history import SummaryType, get_session_summaries
 from ..fact_saver import get_observation_saver_queue
-from src.utils.deriver import format_datetime_simple
 
 logger = logging.getLogger(__name__)
 
@@ -619,35 +620,15 @@ class CollectionEmbeddingStore:
         self, doc: models.Document, session_id: str | None, message_id: str | None
     ):
         """Update metadata for an existing similar observation."""
-        try:
-            # Update the document's metadata with new access information
-            updated_metadata = doc.h_metadata.copy() if doc.h_metadata else {}
-
-            # Increment access count
-            updated_metadata["access_count"] = (
-                updated_metadata.get("access_count", 0) + 1
-            )
-            updated_metadata["last_accessed"] = datetime.now(timezone.utc).isoformat()
-
-            # Track accessed sessions
-            accessed_sessions = updated_metadata.get("accessed_sessions", [])
-            if session_id and session_id not in accessed_sessions:
-                accessed_sessions.append(session_id)
-                updated_metadata["accessed_sessions"] = accessed_sessions
-
-            # Update the document
-            document_update = schemas.DocumentUpdate(metadata=updated_metadata)
-            await crud.update_document(
-                self.db,
-                document=document_update,
-                app_id=self.app_id,
-                user_id=self.user_id,
-                collection_id=self.collection_id,
-                document_id=doc.public_id,
-            )
-
-        except Exception as e:
-            logger.warning(f"Error updating similar observation metadata: {e}")
+        await update_document_access_metadata(
+            self.db,
+            doc,
+            self.app_id,
+            self.user_id,
+            self.collection_id,
+            session_id=session_id,
+            message_id=message_id
+        )
 
     async def get_relevant_observations(
         self, query: str, top_k: int = 5, max_distance: float = 0.3
