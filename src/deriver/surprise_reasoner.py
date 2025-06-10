@@ -467,7 +467,7 @@ class SurpriseReasoner:
             )
 
             new_queries = revised_observations.get("queries", [])
-            print("new_queries", new_queries)
+            logger.debug(f"new_queries: {new_queries}")
             query_results = {}
             if new_queries:
                 logger.info(f"New queries: {new_queries}")
