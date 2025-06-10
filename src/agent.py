@@ -345,7 +345,7 @@ def _deduplicate_observations(all_results: list[list[tuple[str, str, dict]]]) ->
 
 
 def _format_observations(observations: list[tuple[str, str, dict]], include_premises: bool) -> str:
-    """Format observations grouped by level and date."""
+    """Format observations grouped by level and date, including access metadata."""
     grouped = {}
     
     for content, timestamp, metadata in observations:
@@ -358,11 +358,39 @@ def _format_observations(observations: list[tuple[str, str, dict]], include_prem
         if date_str not in grouped[level]:
             grouped[level][date_str] = []
         
-        # Add premises if requested and available
+        # Build formatted content with premises and access metadata
         formatted_content = content
+        
+        # Add premises if requested and available
         if include_premises and metadata.get('premises'):
             premises_text = ", ".join(metadata['premises'])
             formatted_content = f"{content} (based on: {premises_text})"
+        
+        # Add access metadata if available
+        access_parts = []
+        access_count = metadata.get('access_count', 0)
+        last_accessed = metadata.get('last_accessed')
+        
+        if access_count > 0:
+            access_parts.append(f"accessed {access_count}x")
+        
+        if last_accessed:
+            # Format the last_accessed datetime for display
+            try:
+                from datetime import datetime
+                if isinstance(last_accessed, str):
+                    # Parse ISO format datetime string
+                    dt = datetime.fromisoformat(last_accessed.replace('Z', '+00:00'))
+                    formatted_last_accessed = dt.strftime("%Y-%m-%d %H:%M")
+                    access_parts.append(f"last accessed {formatted_last_accessed}")
+            except (ValueError, AttributeError):
+                # If parsing fails, just show the raw value
+                access_parts.append(f"last accessed {last_accessed}")
+        
+        # Append access metadata to the formatted content
+        if access_parts:
+            access_info = ", ".join(access_parts)
+            formatted_content = f"{formatted_content} [{access_info}]"
         
         grouped[level][date_str].append(formatted_content)
     
