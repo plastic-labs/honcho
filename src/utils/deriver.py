@@ -6,8 +6,6 @@ and handling temporal metadata for the reasoning system.
 """
 from typing import Dict, List, Any
 import logging
-import json
-import time
 from datetime import datetime
 
 REASONING_LEVELS = ['explicit', 'deductive', 'inductive', 'abductive']

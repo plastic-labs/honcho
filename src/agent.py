@@ -48,8 +48,31 @@ load_dotenv()
 
 async def get_working_representation_from_trace(session_id: str, db: AsyncSession) -> str:
     """Extract working representation from most recent deriver trace in session."""
-    logger.debug(f"Searching for deriver trace in session: {session_id}")
+    trace_metamessage = await _get_latest_deriver_trace(session_id, db)
+    if not trace_metamessage:
+        logger.warning(f"No deriver trace found for session: {session_id}")
+        return ""
     
+    try:
+        trace_data = json.loads(trace_metamessage.content)
+        final_observations = trace_data.get("final_observations", {})
+        
+        if not final_observations:
+            logger.warning(f"No final_observations found in trace data. Available keys: {list(trace_data.keys())}")
+            return ""
+        
+        return _format_observations_by_level(final_observations)
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON in deriver trace: {e}")
+        return ""
+    except Exception as e:
+        logger.error(f"Error processing deriver trace: {e}")
+        return ""
+
+
+async def _get_latest_deriver_trace(session_id: str, db: AsyncSession) -> Optional[models.Metamessage]:
+    """Get the most recent deriver trace metamessage for a session."""
     stmt = (
         select(models.Metamessage)
         .where(models.Metamessage.session_id == session_id)
@@ -58,79 +81,40 @@ async def get_working_representation_from_trace(session_id: str, db: AsyncSessio
         .limit(1)
     )
     result = await db.execute(stmt)
-    trace_metamessage = result.scalar_one_or_none()
+    return result.scalar_one_or_none()
+
+
+def _format_observations_by_level(final_observations: dict) -> str:
+    """Format final observations into structured text by level."""
+    formatted_sections = []
     
-    if not trace_metamessage:
-        logger.warning(f"No deriver trace found for session: {session_id}")
-        # Let's also check what metamessages exist for this session
-        debug_stmt = (
-            select(models.Metamessage.label, models.Metamessage.created_at)
-            .where(models.Metamessage.session_id == session_id)
-            .order_by(models.Metamessage.created_at.desc())
-            .limit(10)
-        )
-        debug_result = await db.execute(debug_stmt)
-        existing_metamessages = debug_result.fetchall()
-        logger.debug(f"Existing metamessages in session {session_id}: {[(label, created_at) for label, created_at in existing_metamessages]}")
-        return ""
+    for level in ['explicit', 'deductive', 'inductive', 'abductive']:
+        observations = final_observations.get(level, [])
+        if observations:
+            formatted_sections.append(f"{level.upper()} OBSERVATIONS:")
+            formatted_sections.extend(_format_observation_list(observations))
+            formatted_sections.append("")
     
-    logger.debug(f"Found deriver trace created at: {trace_metamessage.created_at}")
-    
-    try:
-        trace_data = json.loads(trace_metamessage.content)
-        logger.debug(f"Successfully parsed trace data. Keys: {list(trace_data.keys())}")
-        
-        final_observations = trace_data.get("final_observations", {})
-        logger.debug(f"Final observations keys: {list(final_observations.keys()) if final_observations else 'None'}")
-        
-        if not final_observations:
-            logger.warning(f"No final_observations found in trace data. Available keys: {list(trace_data.keys())}")
-            return ""
-        
-        # Format as structured text with normalized observations
-        formatted_sections = []
-        for level in ['explicit', 'deductive', 'inductive', 'abductive']:
-            observations = final_observations.get(level, [])
-            logger.debug(f"Level {level}: {len(observations)} observations")
-            
-            if observations:
-                level_name = level.upper()
-                formatted_sections.append(f"{level_name} OBSERVATIONS:")
-                for obs in observations:
-                    # Normalize observation format
-                    if isinstance(obs, dict):
-                        # Handle structured observations with conclusion/premises
-                        if 'conclusion' in obs and 'premises' in obs:
-                            conclusion = obs['conclusion']
-                            premises = obs.get('premises', [])
-                            if premises:
-                                premises_text = ", ".join(premises)
-                                formatted_sections.append(f"- {conclusion} (based on: {premises_text})")
-                            else:
-                                formatted_sections.append(f"- {conclusion}")
-                        else:
-                            # Handle other dict formats - just convert to string
-                            formatted_sections.append(f"- {str(obs)}")
-                    else:
-                        # Handle simple string observations
-                        formatted_sections.append(f"- {obs}")
-                formatted_sections.append("")
-        
-        result = "\n".join(formatted_sections) if formatted_sections else ""
-        logger.debug(f"Formatted working representation length: {len(result)} characters")
-        
-        if not result:
-            logger.warning(f"Working representation is empty after formatting. Original final_observations: {final_observations}")
-        
-        return result
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse JSON in deriver trace: {e}")
-        logger.debug(f"Raw content (first 500 chars): {trace_metamessage.content[:500]}")
-        return ""
-    except Exception as e:
-        logger.error(f"Error processing deriver trace: {e}")
-        return ""
+    return "\n".join(formatted_sections) if formatted_sections else ""
+
+
+def _format_observation_list(observations: list) -> list[str]:
+    """Format a list of observations into consistent string format."""
+    formatted = []
+    for obs in observations:
+        if isinstance(obs, dict) and 'conclusion' in obs:
+            # Handle structured observations with conclusion/premises
+            conclusion = obs['conclusion']
+            premises = obs.get('premises', [])
+            if premises:
+                premises_text = ", ".join(premises)
+                formatted.append(f"- {conclusion} (based on: {premises_text})")
+            else:
+                formatted.append(f"- {conclusion}")
+        else:
+            # Handle other formats (dict or string)
+            formatted.append(f"- {str(obs)}")
+    return formatted
 
 
 class AsyncSet:
@@ -158,7 +142,102 @@ class Dialectic:
         self.client = ModelClient(
             provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
         )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. You'll receive: 1) working_representation: current understanding from recent conversation analysis, and 2) additional_context: relevant historical observations. Your goal is to synthesize these insights to help applications personalize their responses to the query. Please respond in a brief, matter-of-fact, and appropriate manner. You are encouraged to synthesize the information based on three levels of reasoning: abduction, induction, and deduction. You might notice the context falling into these categories naturally, so feel free to start with the hypothesis (abduction), support it with observed patterns (induction), and solidify with explicit facts (deduction). If the context provided doesn't help address the query, write absolutely NOTHING but "No information available". If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead."""
+        self.system_prompt = """You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant observations into coherent, actionable insights that directly and explicitly address what the application needs to know.
+
+## INPUT STRUCTURE
+
+You receive three key inputs:
+
+**Query**: The specific question or request from the application about this user 
+**Working Representation**: Current session observations from recent conversation analysis  
+**Global Context**: Historical observations from the user's global representation
+
+Each observation contains:
+
+- **Conclusion**: The derived insight
+- **Premises**: Supporting evidence/reasoning
+- **Type**: Explicit observations or observations concluded via Deductive, Inductive, or Abductive reasoning
+- **Access Counter**: How many times this observation has been confirmed (higher = more reliable)
+- **Timestamp**: When this was observed (recent = more immediately relevant)
+
+## REASONING TYPE HIERARCHY
+
+**Explicit Observations** (Highest Certainty)
+
+- Direct facts stated by the user
+- Treat as foundational truth
+- Weight: High reliability regardless of counter
+
+**Deductive Observations** (Logical Certainty)
+
+- Conclusions that MUST be true given premises
+- Scaffold these as building blocks for synthesis
+- Weight: High confidence, especially with high counters
+
+**Inductive Observations** (Pattern-Based)
+
+- Generalizations from repeated evidence
+- Strength increases significantly with higher counters
+- Weight: Counter-dependent reliability
+
+**Abductive Observations** (Explanatory Hypotheses)
+
+- Best explanations for observed patterns
+- Most valuable for narrative synthesis
+- Weight: Moderate confidence, enhanced by supporting evidence
+
+## SYNTHESIS APPROACH
+
+**Query-Driven Context Synthesis**: Start by understanding what the application is asking, then surface and synthesize the most relevant context to answer that specific question.
+
+**Think like human social cognition**: When someone asks a human about a mutual friend, their mind automatically surfaces relevant memories, feelings, and insights about that person related to the question. Replicate this process by:
+
+1. **Query Analysis**: Understand what the application specifically wants to know about the user
+2. **Relevance Filtering**: Identify observations that directly or indirectly relate to the query
+3. **Pattern Recognition**: Find recurring themes across relevant observation types
+4. **Narrative Construction**: Build a plausible, coherent answer that synthesizes relevant context
+5. **Confidence Weighting**: Use access counters and timestamps to gauge reliability of your synthesis
+
+## RESPONSE FRAMEWORK
+
+**For each query, synthesize context to directly answer what the application is asking**:
+
+- **Query-First**: Always start by understanding the specific question (e.g., "What are this user's communication preferences?" vs "What motivates this user professionally?")
+- **Relevant Evidence**: Select observations that relate to the query topic
+- **Synthesis Pattern**: Build from your best explanatory hypothesis → support with observed patterns → anchor with explicit facts
+- **Contextual Narrative**: Create a coherent answer that weaves together relevant context
+- **Natural Response**: Reply in conversational language as if briefing the application about this user
+
+**Example Query Types**:
+
+- Preference-based: "How does this user like to receive feedback?"
+- Behavioral: "What time of day is this user most productive?"
+- Motivational: "What drives this user's decision-making?"
+- Contextual: "Is this user currently dealing with any stressors?"
+- Explicit: "What is the user's birthday?"
+
+**Quality Indicators**:
+
+- High access counters = more reliable patterns
+- Recent timestamps = current relevance
+- Consistent cross-type observations = stronger confidence
+- Rich premise connections = deeper understanding
+
+## OUTPUT GUIDELINES
+
+- **Query-Specific**: Answer the application's specific question, not general information about the user
+- **Conversational Synthesis**: Respond as if explaining this user to a colleague who needs to interact with them
+- **Evidence-Based**: Ground your response in the observations provided, weighted by reliability indicators
+- **Coherent Narrative**: Synthesize rather than list - create understanding that flows naturally
+- **Appropriate Scope**: Match the specificity and scope of the query
+
+**CRITICAL: No Relevant Context Handling**
+
+- If the context provided doesn't help address the query, write absolutely NOTHING but "No information available"
+- If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead
+
+**Remember**: Applications are asking targeted questions about users to personalize their interactions. Your job is to surface and synthesize the most relevant context to help them do that effectively. When you lack relevant context, be explicit about it.
+"""
 
     @ai_track("Dialectic Call")
     @observe()
@@ -174,7 +253,7 @@ class Dialectic:
             prompt = f"""
 <query>{self.agent_input}</query>
 <working_representation>{self.working_representation}</working_representation>
-<additional_context>{self.additional_context}</additional_context>
+<global_context>{self.additional_context}</global_context>
 """
             logger.info("=== DIALECTIC PROMPT ===\n" + prompt + "\n=== END DIALECTIC PROMPT ===")
             logger.debug(
@@ -331,117 +410,92 @@ async def get_observations(
     Returns:
         String containing additional relevant observations from semantic search
     """
-    logger.info("=== OBSERVATION RETRIEVAL START ===")
-    logger.info(f"ORIGINAL QUERY: {query}")
-    observation_start_time = asyncio.get_event_loop().time()
-
-    # Generate multiple queries for semantic search
-    logger.info("GENERATING SEMANTIC QUERIES for additional context...")
+    logger.debug(f"Starting observation retrieval for query: {query}")
+    
+    # Generate search queries and execute them in parallel
     search_queries = await generate_semantic_queries(query)
-    logger.info(f"GENERATED QUERIES: {search_queries}")
-
-    # Create a list of coroutines, one for each query
-    async def execute_query(i: int, search_query: str) -> list[tuple[str, str, dict]]:
-        logger.info(f"EXECUTING SEMANTIC QUERY {i + 1}/{len(search_queries)}: {search_query}")
-        query_start = asyncio.get_event_loop().time()
-        documents = await embedding_store.get_relevant_observations(
-            search_query, top_k=10, max_distance=0.85  # Increased top_k since we don't have contextualized observations
-        )
-        query_time = asyncio.get_event_loop().time() - query_start
-        logger.info(f"QUERY {i + 1} RESULTS: {len(documents)} observations retrieved in {query_time:.2f}s")
-        
-        # Eagerly extract attributes to avoid DetachedInstanceError
-        document_data = []
-        for doc in documents:
-            # Access attributes while the object is still bound to the session
-            content = doc.content
-            created_at = doc.created_at
-            metadata = doc.h_metadata or {}
-            document_data.append((content, created_at, metadata))
-        
-        # Log the actual observations found using the extracted data
-        for j, (content, created_at, metadata) in enumerate(document_data):
-            logger.info(f"  {j+1}. [{created_at.strftime('%Y-%m-%d %H:%M:%S')}] {content}")
-        
-        # Convert documents to tuples of (content, timestamp, metadata)
-        return [(content, created_at.strftime("%Y-%m-%d-%H:%M:%S"), metadata) for content, created_at, metadata in document_data]
-
+    logger.debug(f"Generated {len(search_queries)} search queries")
+    
     # Execute all queries in parallel
-    query_tasks = [
-        execute_query(i, search_query) for i, search_query in enumerate(search_queries)
-    ]
-    all_observations_lists = await asyncio.gather(*query_tasks)
+    tasks = [_execute_single_query(q, embedding_store) for q in search_queries]
+    all_results = await asyncio.gather(*tasks)
+    
+    # Combine and deduplicate results
+    unique_observations = _deduplicate_observations(all_results)
+    logger.debug(f"Retrieved {len(unique_observations)} unique observations")
+    
+    # Format observations
+    if not unique_observations:
+        return "No additional relevant context found."
+    
+    return _format_observations(unique_observations, include_premises)
 
-    # Combine semantic search observations and deduplicate manually
-    # (can't use set() because tuples contain dicts which are unhashable)
-    semantic_observations = []
+
+async def _execute_single_query(query: str, embedding_store: CollectionEmbeddingStore) -> list[tuple[str, str, dict]]:
+    """Execute a single semantic search query and return formatted results."""
+    documents = await embedding_store.get_relevant_observations(
+        query, top_k=10, max_distance=0.85
+    )
+    
+    # Extract data to avoid DetachedInstanceError
+    return [
+        (doc.content, doc.created_at.strftime("%Y-%m-%d-%H:%M:%S"), doc.h_metadata or {})
+        for doc in documents
+    ]
+
+
+def _deduplicate_observations(all_results: list[list[tuple[str, str, dict]]]) -> list[tuple[str, str, dict]]:
+    """Deduplicate observations based on content."""
+    unique_observations = []
     seen_content = set()
     
-    for observations in all_observations_lists:
-        for observation_tuple in observations:
-            content, timestamp, metadata = observation_tuple
-            # Use content as the deduplication key
+    for results in all_results:
+        for content, timestamp, metadata in results:
             if content not in seen_content:
-                semantic_observations.append(observation_tuple)
+                unique_observations.append((content, timestamp, metadata))
                 seen_content.add(content)
-
-    # Format the final response with just additional context
-    response_parts = []
     
-    if semantic_observations:
-        # Group observations by level and date
-        grouped_observations = {}
+    return unique_observations
+
+
+def _format_observations(observations: list[tuple[str, str, dict]], include_premises: bool) -> str:
+    """Format observations grouped by level and date."""
+    grouped = {}
+    
+    for content, timestamp, metadata in observations:
+        level = metadata.get('level', 'unknown')
+        date = timestamp.split('-')[0:3]  # Extract YYYY-MM-DD
+        date_str = '-'.join(date)
         
-        for observation, timestamp, metadata in semantic_observations:
-            # Extract level from metadata, default to 'unknown' if not present
-            level = metadata.get('level', 'unknown')
-            
-            # Convert timestamp to just date (YYYY-MM-DD)
-            date = timestamp.split('-')[0] + '-' + timestamp.split('-')[1] + '-' + timestamp.split('-')[2]
-            
-            # Initialize nested structure if needed
-            if level not in grouped_observations:
-                grouped_observations[level] = {}
-            if date not in grouped_observations[level]:
-                grouped_observations[level][date] = []
-            
-            # Format observation with premises if needed
-            if include_premises and metadata.get('premises'):
-                premises = metadata['premises']
-                premises_text = ", ".join(premises)
-                formatted_observation = f"{observation} (based on: {premises_text})"
-            else:
-                formatted_observation = observation
-            
-            grouped_observations[level][date].append(formatted_observation)
+        if level not in grouped:
+            grouped[level] = {}
+        if date_str not in grouped[level]:
+            grouped[level][date_str] = []
         
-        # Format output by level and date
-        for level in sorted(grouped_observations.keys()):
-            if level != 'unknown':
-                response_parts.append(f"\n{level.upper()} OBSERVATIONS:")
+        # Add premises if requested and available
+        formatted_content = content
+        if include_premises and metadata.get('premises'):
+            premises_text = ", ".join(metadata['premises'])
+            formatted_content = f"{content} (based on: {premises_text})"
+        
+        grouped[level][date_str].append(formatted_content)
+    
+    # Build output
+    parts = []
+    for level in sorted(grouped.keys()):
+        header = f"\n{level.upper()} OBSERVATIONS:" if level != 'unknown' else "\nOBSERVATIONS:"
+        parts.append(header)
+        
+        for date in sorted(grouped[level].keys(), reverse=True):
+            observations_for_date = grouped[level][date]
+            if len(observations_for_date) == 1:
+                parts.append(f"[{date}]: {observations_for_date[0]}")
             else:
-                response_parts.append(f"\nOBSERVATIONS:")
-            
-            for date in sorted(grouped_observations[level].keys(), reverse=True):  # Most recent dates first
-                observations_for_date = grouped_observations[level][date]
-                if len(observations_for_date) == 1:
-                    response_parts.append(f"[{date}]: {observations_for_date[0]}")
-                else:
-                    response_parts.append(f"[{date}]:")
-                    for obs in observations_for_date:
-                        response_parts.append(f"  - {obs}")
-
-    observations_string = "\n".join(response_parts) if response_parts else "No additional relevant context found."
-
-    total_time = asyncio.get_event_loop().time() - observation_start_time
+                parts.append(f"[{date}]:")
+                for obs in observations_for_date:
+                    parts.append(f"  - {obs}")
     
-    logger.info("=== OBSERVATION RETRIEVAL SUMMARY ===")
-    logger.info(f"TOTAL TIME: {total_time:.2f}s")
-    logger.info(f"SEMANTIC SEARCH OBSERVATIONS: {len(semantic_observations)}")
-    logger.info(f"FINAL OBSERVATIONS STRING LENGTH: {len(observations_string)} chars")
-    logger.info("=== OBSERVATION RETRIEVAL END ===")
-    
-    return observations_string
+    return "\n".join(parts)
 
 
 async def get_long_term_observations(
@@ -514,60 +568,44 @@ async def generate_semantic_queries(query: str) -> list[str]:
     Returns:
         A list of semantically relevant queries
     """
-    logger.info("=== QUERY GENERATION START ===")
-    logger.info(f"INPUT QUERY: {query}")
-    query_start = asyncio.get_event_loop().time()
-
-    logger.info("CALLING LLM for query generation...")
-    llm_start = asyncio.get_event_loop().time()
+    logger.debug(f"Generating semantic queries for: {query}")
 
     # Create a new model client
     client = ModelClient(
         provider=DEF_QUERY_GENERATION_PROVIDER, model=DEF_QUERY_GENERATION_MODEL
     )
 
-    # Prepare the messages for Anthropic
+    # Prepare the messages
     messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
 
-    # Generate the response
     try:
+        # Generate the response
         result = await client.generate(
             messages=messages,
             system=QUERY_GENERATION_SYSTEM,
             max_tokens=1000,
-            use_caching=True,  # Likely not caching because the system prompt is under 1000 tokens
+            use_caching=True,
         )
-        llm_time = asyncio.get_event_loop().time() - llm_start
-        logger.info(f"LLM RESPONSE received in {llm_time:.2f}s")
-        logger.info(f"RAW LLM RESPONSE: {result}")
-
-        # Parse the JSON response to get a list of queries
+        
+        # Parse the JSON response
         try:
             queries = json.loads(result)
             if not isinstance(queries, list):
-                # Fallback if response is not a valid list
-                logger.info("LLM response not a list, using as single query")
                 queries = [result]
         except json.JSONDecodeError:
-            # Fallback if response is not valid JSON
-            logger.info("Failed to parse JSON response, using raw response as query")
-            queries = [query]  # Fall back to the original query
+            logger.warning("Failed to parse JSON response, using original query")
+            queries = [query]
 
         # Ensure we always include the original query
         if query not in queries:
-            logger.info("Adding original query to results")
             queries.append(query)
 
-        total_time = asyncio.get_event_loop().time() - query_start
-        logger.info(f"GENERATED {len(queries)} QUERIES in {total_time:.2f}s:")
-        for i, q in enumerate(queries, 1):
-            logger.info(f"  {i}. {q}")
-        logger.info("=== QUERY GENERATION END ===")
-
+        logger.debug(f"Generated {len(queries)} semantic queries")
         return queries
+        
     except Exception as e:
-        logger.error(f"Error during API call: {str(e)}")
-        raise
+        logger.error(f"Error during query generation: {str(e)}")
+        return [query]  # Fallback to original query
 
 # Backward compatibility aliases
 async def get_facts(query: str, embedding_store: CollectionEmbeddingStore) -> str:
