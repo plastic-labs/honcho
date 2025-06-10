@@ -4,25 +4,25 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 
-class AppBase(BaseModel):
+class WorkspaceBase(BaseModel):
     pass
 
 
-class AppCreate(AppBase):
+class WorkspaceCreate(WorkspaceBase):
     name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
-class AppGet(AppBase):
+class WorkspaceGet(WorkspaceBase):
     filter: dict | None = None
 
 
-class AppUpdate(AppBase):
+class WorkspaceUpdate(WorkspaceBase):
     name: str | None = None
     metadata: dict | None = None
 
 
-class App(AppBase):
+class Workspace(WorkspaceBase):
     public_id: str = Field(serialization_alias='id')
     name: str
     h_metadata: dict = Field(default={}, serialization_alias='metadata')
@@ -34,28 +34,28 @@ class App(AppBase):
     )
 
 
-class UserBase(BaseModel):
+class PeerBase(BaseModel):
     pass
 
 
-class UserCreate(UserBase):
+class PeerCreate(PeerBase):
     name: Annotated[str, Field(min_length=1, max_length=100)]
     metadata: dict = {}
 
 
-class UserGet(UserBase):
+class PeerGet(PeerBase):
     filter: dict | None = None
 
 
-class UserUpdate(UserBase):
+class PeerUpdate(PeerBase):
     name: str | None = None
     metadata: dict | None = None
 
 
-class User(UserBase):
+class Peer(PeerBase):
     public_id: str = Field(serialization_alias='id')
     name: str
-    app_id: str
+    workspace_id: str
     created_at: datetime.datetime
     h_metadata: dict = Field(default={}, serialization_alias='metadata')
 
@@ -71,7 +71,7 @@ class MessageBase(BaseModel):
 
 class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
-    is_user: bool
+    sender_id: str
     metadata: dict = {}
 
 
@@ -86,12 +86,11 @@ class MessageUpdate(MessageBase):
 class Message(MessageBase):
     public_id: str = Field(serialization_alias='id')
     content: str
-    is_user: bool
-    session_id: str
+    sender_id: str
+    session_id: str | None
     h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
-    app_id: str
-    user_id: str
+    workspace_id: str
 
     model_config = ConfigDict(
         from_attributes=True,
@@ -119,8 +118,7 @@ class SessionUpdate(SessionBase):
 class Session(SessionBase):
     public_id: str = Field(serialization_alias='id')
     is_active: bool
-    user_id: str
-    app_id: str
+    workspace_id: str
     h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
 
@@ -130,59 +128,6 @@ class Session(SessionBase):
     )
 
 
-class MetamessageBase(BaseModel):
-    pass
-
-
-class MetamessageCreate(MetamessageBase):
-    label: Annotated[str, Field(min_length=1, max_length=50, alias='metamessage_type')]
-    content: Annotated[str, Field(min_length=0, max_length=50000)]
-    session_id: str | None = None
-    message_id: str | None = None
-    metadata: dict = {}
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class MetamessageGet(MetamessageBase):
-    label: str | None = Field(default=None, alias='metamessage_type')
-    session_id: str | None = None
-    message_id: str | None = None
-    filter: dict | None = None
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class MetamessageUpdate(MetamessageBase):
-    session_id: str | None = None
-    message_id: str | None = None
-    label: str | None = Field(default=None, alias='metamessage_type')
-    metadata: dict | None = None
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
-class Metamessage(MetamessageBase):
-    public_id: str = Field(serialization_alias='id')
-    label: str
-    content: str
-    user_id: str
-    app_id: str
-    session_id: str | None
-    message_id: str | None
-    h_metadata: dict = Field(default={}, serialization_alias='metadata')
-    created_at: datetime.datetime
-
-    # Included for backwards compatibility with the old metamessage_type field
-    @computed_field
-    @property
-    def metamessage_type(self) -> str:
-        return self.label
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
-    )
 
 
 class CollectionBase(BaseModel):
@@ -218,8 +163,8 @@ class CollectionUpdate(CollectionBase):
 class Collection(CollectionBase):
     public_id: str = Field(serialization_alias='id')
     name: str
-    user_id: str
-    app_id: str
+    peer_id: str
+    workspace_id: str
     h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
 
@@ -259,8 +204,8 @@ class Document(DocumentBase):
     h_metadata: dict = Field(default={}, serialization_alias='metadata')
     created_at: datetime.datetime
     collection_id: str
-    app_id: str
-    user_id: str
+    workspace_id: str
+    peer_id: str
 
     model_config = ConfigDict(
         from_attributes=True,
