@@ -5,6 +5,7 @@ from inspect import cleandoc as c
 from langfuse.decorators import observe
 from mirascope import llm, prompt_template
 from sentry_sdk.ai.monitoring import ai_track
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.deriver.models import ObservationContext, ReasoningResponse
 from src.utils.deriver import (
@@ -373,6 +374,7 @@ class SurpriseReasoner:
 
     async def recursive_reason_with_trace(
         self,
+        db: AsyncSession,
         context: ReasoningResponse,
         history: str,
         new_turn: str,
@@ -395,7 +397,7 @@ class SurpriseReasoner:
         try:
             # Run recursive reasoning
             final_observations = await self.recursive_reason(
-                context, history, new_turn, message_id, session_id, current_time
+                db, context, history, new_turn, message_id, session_id, current_time
             )
 
             # Finalize trace
@@ -420,6 +422,7 @@ class SurpriseReasoner:
 
     async def recursive_reason(
         self,
+        db: AsyncSession,
         context: ReasoningResponse,
         history: str,
         new_turn: str,
@@ -514,7 +517,7 @@ class SurpriseReasoner:
 
             # Save only the NEW observations that weren't in the original context
             await self._save_new_observations(
-                context, reasoning_response, message_id, session_id
+                db, context, reasoning_response, message_id, session_id
             )
 
             # Pass the revised observations directly to the next iteration
@@ -530,6 +533,7 @@ class SurpriseReasoner:
 
             # Recursively analyze with the revised observations from the LLM
             return await self.recursive_reason(
+                db,
                 reasoning_response,
                 history,
                 new_turn,
@@ -544,6 +548,7 @@ class SurpriseReasoner:
 
     async def _save_new_observations(
         self,
+        db: AsyncSession,
         original_context: ReasoningResponse,
         revised_observations: ReasoningResponse,
         message_id: str,
@@ -564,6 +569,7 @@ class SurpriseReasoner:
                     f"Saving {len(new_observations)} new {level} observations: {new_observations}"
                 )
                 await self._save_structured_observations(
+                    db,
                     new_observations,
                     message_id=message_id,
                     level=level,
@@ -574,6 +580,7 @@ class SurpriseReasoner:
 
     async def _save_structured_observations(
         self,
+        db: AsyncSession,
         observations: list,
         message_id: str,
         level: str,
@@ -595,6 +602,7 @@ class SurpriseReasoner:
 
                 # Save the conclusion with premises in metadata
                 await self.embedding_store.save_observations(
+                    db,
                     [conclusion],  # Only save the conclusion as content
                     message_id=message_id,
                     level=level,
@@ -612,6 +620,7 @@ class SurpriseReasoner:
 
                 # Save simple observations normally (no premises)
                 await self.embedding_store.save_observations(
+                    db,
                     [observation_content],
                     message_id=message_id,
                     level=level,

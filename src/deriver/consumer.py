@@ -9,11 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud, schemas
 from ..utils import history
-from .fact_saver import (
-    get_observation_saver_queue,
-    initialize_observation_saver,
-    shutdown_observation_saver,
-)
 from .surprise_reasoner import SurpriseReasoner
 from .tom.embeddings import CollectionEmbeddingStore
 
@@ -138,11 +133,6 @@ async def process_user_message(
     process_start = os.times()[4]  # Get current CPU time
     logger.debug(f"Starting fact extraction for user message: {message_id}")
 
-    # Initialize fact saver queue if not already running
-    observation_saver = get_observation_saver_queue()
-    if not observation_saver.is_running:
-        await initialize_observation_saver(db)
-
     # Get current datetime for timestamping new observations
     current_datetime = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
@@ -224,6 +214,7 @@ async def process_user_message(
     # The unified approach naturally handles both reactive reasoning (responding to new turns)
     # and proactive reasoning (generating abductive hypotheses when needed)
     final_observations, deriver_trace = await reasoner.recursive_reason_with_trace(
+        db=db,
         context=initial_reasoning_context,
         history=formatted_history,
         new_turn=content,
@@ -241,16 +232,12 @@ async def process_user_message(
     await save_deriver_trace(db, message_id, deriver_trace, app_id, user_id, session_id)
 
     # Log queue stats for monitoring
-    stats = observation_saver.get_stats()
-    logger.debug(f"Observation saver queue stats: {stats}")
-
     rsr_time = os.times()[4] - process_start
     logger.debug(f"Parallel reasoning completed in {rsr_time:.2f}s")
 
 
 async def cleanup_deriver():
     """Cleanup function to gracefully shutdown deriver components."""
-    await shutdown_observation_saver()
     logger.info("Deriver cleanup completed")
 
 

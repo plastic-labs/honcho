@@ -1,18 +1,15 @@
 import datetime
 import logging
-import uuid
 from typing import cast
 
-from typing import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.utils import update_document_access_metadata
 from src.utils.deriver import format_datetime_simple
 
-from ... import crud, models
+from ... import crud, models, schemas
 from ...dependencies import tracked_db
 from ...utils.history import SummaryType, get_session_summaries
-from ..fact_saver import get_observation_saver_queue
 from ..models import (
     Observation,
     ObservationContext,
@@ -379,6 +376,7 @@ class CollectionEmbeddingStore:
 
     async def save_observations(
         self,
+        db: AsyncSession,
         observations: list[str],
         similarity_threshold: float = 0.85,
         message_id: str | None = None,
@@ -389,6 +387,7 @@ class CollectionEmbeddingStore:
         """Save observations to the collection with summary linking.
 
         Args:
+            db: Database session to use for saving
             observations: List of observations to save
             similarity_threshold: Observations with similarity above this threshold are considered duplicates
             message_id: Message ID to associate with the observations
@@ -404,7 +403,7 @@ class CollectionEmbeddingStore:
                 latest_summary = cast(
                     models.Metamessage | None,
                     await get_session_summaries(
-                        self.db, session_id, SummaryType.SHORT, only_latest=True
+                        db, session_id, SummaryType.SHORT, only_latest=True
                     )
                 )
                 if latest_summary:  # latest_summary is a single Metamessage or None
@@ -415,9 +414,9 @@ class CollectionEmbeddingStore:
                     f"Could not retrieve latest summary for session {session_id}: {e}"
                 )
 
-        # Queue observations for asynchronous saving to avoid transaction conflicts
-        observation_saver = get_observation_saver_queue()
-
+        # Save observations directly (we're already in background processing context)
+        saved_count = 0
+        
         for observation in observations:
             try:
                 # Check if similar observation already exists
@@ -453,27 +452,26 @@ class CollectionEmbeddingStore:
                 if premises:
                     metadata["premises"] = premises
 
-                # Generate unique task ID for tracking
-                task_id = f"{level}_{message_id}_{uuid.uuid4().hex[:8]}"
-
-                # Queue the observation for saving
-                await observation_saver.queue_observation(
-                    content=observation,
+                # Save the observation directly
+                document = schemas.DocumentCreate(content=observation, metadata=metadata)
+                await crud.create_document(
+                    db,
+                    document=document,
                     app_id=self.app_id,
                     user_id=self.user_id,
                     collection_id=self.collection_id,
-                    metadata=metadata,
                     duplicate_threshold=1 - similarity_threshold,
-                    task_id=task_id,
                 )
-                logger.debug(f"Queued observation for saving: {observation[:50]}...")
+                
+                saved_count += 1
+                logger.debug(f"Saved observation: {observation[:50]}...")
 
             except Exception as e:
-                logger.error(f"Error queuing observation '{observation[:50]}...': {e}")
+                logger.error(f"Error saving observation '{observation[:50]}...': {e}")
                 continue
 
         logger.info(
-            f"Queued {len(observations)} observations for saving (level: {level})"
+            f"Saved {saved_count} observations directly (level: {level})"
         )
 
     def _format_temporal_metadata_for_dialectic(self, doc: models.Document) -> str:
