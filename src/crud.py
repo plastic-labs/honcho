@@ -14,7 +14,6 @@ from . import models, schemas
 from .exceptions import (
     ConflictException,
     ResourceNotFoundException,
-    ValidationException,
 )
 
 load_dotenv(override=True)
@@ -26,294 +25,262 @@ logger = getLogger(__name__)
 DEF_PROTECTED_COLLECTION_NAME = "honcho"
 
 ########################################################
-# app methods
+# workspace methods
 ########################################################
 
 
-async def get_app(db: AsyncSession, app_id: str) -> models.App:
+async def get_or_create_workspace(
+    db: AsyncSession, workspace: schemas.WorkspaceCreate
+) -> models.Workspace:
     """
-    Get an app by its ID.
+    Get an existing workspace or create a new one if it doesn't exist.
 
     Args:
         db: Database session
-        app_id: Public ID of the app
+        workspace: Workspace creation schema
 
     Returns:
-        The app if found
+        The workspace if found or created
 
     Raises:
-        ResourceNotFoundException: If the app does not exist
+        ConflictException: If there's an integrity error when creating the workspace
     """
-    stmt = select(models.App).where(models.App.public_id == app_id)
+    # Try to get the existing workspace
+    stmt = select(models.Workspace).where(models.Workspace.name == workspace.name)
     result = await db.execute(stmt)
-    app = result.scalar_one_or_none()
-    if app is None:
-        logger.warning(f"App with ID {app_id} not found")
-        raise ResourceNotFoundException(f"App with ID {app_id} not found")
-    return app
+    existing_workspace = result.scalar_one_or_none()
+    
+    if existing_workspace is not None:
+        # Workspace already exists
+        logger.debug(f"Found existing workspace: {workspace.name}")
+        return existing_workspace
+    
+    # Workspace doesn't exist, create a new one
+    try:
+        honcho_workspace = models.Workspace(
+            name=workspace.name,
+            h_metadata=workspace.metadata,
+        )
+        db.add(honcho_workspace)
+        await db.commit()
+        logger.info(f"Workspace created successfully: {workspace.name}")
+        return honcho_workspace
+    except IntegrityError as e:
+        await db.rollback()
+        logger.error(f"IntegrityError creating workspace with name '{workspace.name}': {str(e)}")
+        raise ConflictException(f"Workspace with name '{workspace.name}' already exists") from e
 
 
-async def get_all_apps(
+async def get_all_workspaces(
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     """
-    Get all apps.
+    Get all workspaces.
 
     Args:
         db: Database session
-        reverse: Whether to reverse the order of the apps
-        filter: Filter the apps by a dictionary of metadata
+        reverse: Whether to reverse the order of the workspaces
+        filter: Filter the workspaces by a dictionary of metadata
     """
-    stmt = select(models.App)
+    stmt = select(models.Workspace)
     if reverse:
-        stmt = stmt.order_by(models.App.id.desc())
+        stmt = stmt.order_by(models.Workspace.id.desc())
     else:
-        stmt = stmt.order_by(models.App.id)
+        stmt = stmt.order_by(models.Workspace.id)
     if filter is not None:
-        stmt = stmt.where(models.App.h_metadata.contains(filter))
+        stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
     return stmt
 
 
-async def get_app_by_name(db: AsyncSession, name: str) -> models.App:
+async def update_workspace(
+    db: AsyncSession, workspace_name: str, workspace: schemas.WorkspaceUpdate
+) -> models.Workspace:
     """
-    Get an app by its name.
+    Update a workspace.
 
     Args:
         db: Database session
-        name: Name of the app
+        workspace_name: Name of the workspace
+        workspace: Workspace update schema
 
     Returns:
-        The app if found
+        The updated workspace
 
     Raises:
-        ResourceNotFoundException: If the app does not exist
-    """
-    stmt = select(models.App).where(models.App.name == name)
-    result = await db.execute(stmt)
-    app = result.scalar_one_or_none()
-    if app is None:
-        logger.warning(f"App with name '{name}' not found")
-        raise ResourceNotFoundException(f"App with name '{name}' not found")
-    return app
-
-
-# def get_apps(db: AsyncSession) -> Sequence[models.App]:
-#     return db.query(models.App).all()
-
-
-async def create_app(db: AsyncSession, app: schemas.AppCreate) -> models.App:
-    """
-    Create a new app.
-
-    Args:
-        db: Database session
-        app: App creation schema
-
-    Returns:
-        The created app
-
-    Raises:
-        ConflictException: If an app with the same name already exists
+        ResourceNotFoundException: If the workspace does not exist
     """
     try:
-        honcho_app = models.App(name=app.name, h_metadata=app.metadata)
-        db.add(honcho_app)
-        await db.commit()
-        logger.info(f"App created successfully: {app.name}")
-        return honcho_app
-    except IntegrityError as e:
-        await db.rollback()
-        logger.error(f"IntegrityError creating app with name '{app.name}': {str(e)}")
-        raise ConflictException(f"App with name '{app.name}' already exists") from e
+        honcho_workspace = await get_or_create_workspace(
+            db, 
+            schemas.WorkspaceCreate(
+                name=workspace_name,
+                metadata=workspace.metadata or {}  # Provide empty dict if metadata is None
+            )
+        )
 
-
-async def update_app(
-    db: AsyncSession, app_id: str, app: schemas.AppUpdate
-) -> models.App:
-    """
-    Update an app.
-
-    Args:
-        db: Database session
-        app_id: Public ID of the app
-        app: App update schema
-
-    Returns:
-        The updated app
-
-    Raises:
-        ResourceNotFoundException: If the app does not exist
-    """
-    try:
-        honcho_app = await get_app(db, app_id)
-
-        if app.name is not None:
-            honcho_app.name = app.name
-        if app.metadata is not None:
-            honcho_app.h_metadata = app.metadata
+        if workspace.metadata is not None:
+            honcho_workspace.h_metadata = workspace.metadata
 
         await db.commit()
-        logger.info(f"App with ID {app_id} updated successfully")
-        return honcho_app
+        logger.info(f"Workspace with id {honcho_workspace.id} updated successfully")
+        return honcho_workspace
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError updating app {app_id}: {str(e)}")
+        logger.error(f"IntegrityError updating workspace {honcho_workspace.id}: {str(e)}")
         raise ConflictException(
-            "App update failed - unique constraint violation"
+            "Workspace update failed - unique constraint violation"
         ) from e
 
 
 ########################################################
-# user methods
+# peer methods
 ########################################################
 
 
-async def create_user(
-    db: AsyncSession, app_id: str, user: schemas.UserCreate
-) -> models.User:
+async def get_or_create_peer(
+    db: AsyncSession, workspace_name: str, peer: schemas.PeerCreate
+) -> models.Peer:
     """
-    Create a new user.
+    Get an existing peer or create a new one if it doesn't exist.
 
     Args:
         db: Database session
-        app_id: Public ID of the app
-        user: User creation schema
+        workspace_name: Name of the workspace
+        peer: Peer creation schema
 
     Returns:
-        The created user
+        The peer if found or created
 
     Raises:
-        ConflictException: If a user with the same name already exists in this app
+        ConflictException: If there's an integrity error when creating the peer
     """
+    # Try to get the existing peer
+    stmt = (
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == peer.name)
+    )
+    result = await db.execute(stmt)
+    existing_peer = result.scalar_one_or_none()
+    
+    if existing_peer is not None:
+        # Peer already exists
+        logger.debug(f"Found existing peer: {peer.name} for workspace {workspace_name}")
+        return existing_peer
+    
+    # Peer doesn't exist, create a new one
     try:
-        honcho_user = models.User(
-            app_id=app_id,
-            name=user.name,
-            h_metadata=user.metadata,
+        honcho_peer = models.Peer(
+            workspace_name=workspace_name,
+            name=peer.name,
+            h_metadata=peer.metadata,
         )
-        db.add(honcho_user)
+        db.add(honcho_peer)
         await db.commit()
-        logger.info(f"User created successfully: {user.name} for app {app_id}")
-        return honcho_user
+        logger.debug(f"Peer created successfully: {peer.name} for workspace {workspace_name}")
+        return honcho_peer
     except IntegrityError as e:
         await db.rollback()
-        logger.warning(f"Failed to create user - integrity error: {str(e)}")
-        raise ConflictException("User with this name already exists") from e
+        logger.warning(f"Failed to create peer - integrity error: {str(e)}")
+        raise ConflictException("Peer with this name already exists") from e
 
 
-async def get_user(db: AsyncSession, app_id: str, user_id: str) -> models.User:
-    """
-    Get a user by app ID and user ID.
-
-    Args:
-        db: Database session
-        app_id: Public ID of the app
-        user_id: Public ID of the user
-
-    Returns:
-        The user if found
-
-    Raises:
-        ResourceNotFoundException: If the user does not exist
-    """
-    stmt = (
-        select(models.User)
-        .where(models.User.app_id == app_id)
-        .where(models.User.public_id == user_id)
-    )
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-    if user is None:
-        logger.warning(f"User with ID '{user_id}' not found in app {app_id}")
-        raise ResourceNotFoundException(f"User with ID '{user_id}' not found")
-    return user
-
-
-async def get_user_by_name(db: AsyncSession, app_id: str, name: str) -> models.User:
-    """
-    Get a user by app ID and name.
-
-    Args:
-        db: Database session
-        app_id: Public ID of the app
-        name: Name of the user
-
-    Returns:
-        The user if found
-
-    Raises:
-        ResourceNotFoundException: If the user does not exist
-    """
-    stmt = (
-        select(models.User)
-        .where(models.User.app_id == app_id)
-        .where(models.User.name == name)
-    )
-    result = await db.execute(stmt)
-    user = result.scalar_one_or_none()
-    if user is None:
-        logger.warning(f"User with name '{name}' not found in app {app_id}")
-        raise ResourceNotFoundException(f"User with name '{name}' not found")
-    return user
-
-
-async def get_users(
-    app_id: str,
+async def get_peers(
+    workspace_name: str,
     reverse: bool = False,
     filter: Optional[dict] = None,
 ) -> Select:
-    stmt = select(models.User).where(models.User.app_id == app_id)
+    stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
     if filter is not None:
-        stmt = stmt.where(models.User.h_metadata.contains(filter))
+        stmt = stmt.where(models.Peer.h_metadata.contains(filter))
 
     if reverse:
-        stmt = stmt.order_by(models.User.id.desc())
+        stmt = stmt.order_by(models.Peer.id.desc())
     else:
-        stmt = stmt.order_by(models.User.id)
+        stmt = stmt.order_by(models.Peer.id)
 
     return stmt
 
 
-async def update_user(
-    db: AsyncSession, app_id: str, user_id: str, user: schemas.UserUpdate
-) -> models.User:
+async def update_peer(
+    db: AsyncSession, workspace_name: str, peer_name: str, peer: schemas.PeerUpdate
+) -> models.Peer:
     """
-    Update a user.
+    Update a peer.
 
     Args:
         db: Database session
-        app_id: Public ID of the app
-        user_id: Public ID of the user
-        user: User update schema
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        peer: Peer update schema
 
     Returns:
-        The updated user
+        The updated peer
 
     Raises:
-        ResourceNotFoundException: If the user does not exist
+        ResourceNotFoundException: If the peer does not exist
         ValidationException: If the update data is invalid
         ConflictException: If the update violates a unique constraint
     """
     try:
-        # get_user will raise ResourceNotFoundException if not found
-        honcho_user = await get_user(db, app_id, user_id)
+        # get_peer will raise ResourceNotFoundException if not found
+        honcho_peer = await get_or_create_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
 
-        if user.name is not None:
-            honcho_user.name = user.name
-        if user.metadata is not None:
-            honcho_user.h_metadata = user.metadata
+        if peer.metadata is not None:
+            honcho_peer.h_metadata = peer.metadata
 
         await db.commit()
-        logger.info(f"User {user_id} updated successfully")
-        return honcho_user
+        logger.info(f"Peer {peer_name} updated successfully")
+        return honcho_peer
     except IntegrityError as e:
         await db.rollback()
-        logger.warning(f"User update failed due to integrity error: {str(e)}")
+        logger.warning(f"Peer update failed due to integrity error: {str(e)}")
         raise ConflictException(
-            "User update failed - unique constraint violation"
+            "Peer update failed - unique constraint violation"
         ) from e
+
+
+async def get_peer_sessions(
+    workspace_name: str,
+    peer_name: str,
+    reverse: bool = False,
+    is_active: Optional[bool] = None,
+    filter: Optional[dict] = None,
+) -> Select:
+    """
+    Get all sessions for a peer through the session_peers relationship.
+
+    Args:
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        reverse: Whether to reverse the order of the sessions
+        is_active: Filter by active status (True/False/None for all)
+        filter: Filter sessions by metadata
+
+    Returns:
+        SQLAlchemy Select statement
+    """
+    stmt = (
+        select(models.Session)
+        .join(models.SessionPeer, models.Session.name == models.SessionPeer.session_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.Session.workspace_name == workspace_name)
+    )
+
+    if is_active is not None:
+        stmt = stmt.where(models.Session.is_active == is_active)
+
+    if filter is not None:
+        stmt = stmt.where(models.Session.h_metadata.contains(filter))
+
+    if reverse:
+        stmt = stmt.order_by(models.Session.id.desc())
+    else:
+        stmt = stmt.order_by(models.Session.id)
+
+    return stmt
 
 
 ########################################################
@@ -321,53 +288,18 @@ async def update_user(
 ########################################################
 
 
-async def get_session(
-    db: AsyncSession,
-    app_id: str,
-    session_id: str,
-    user_id: Optional[str] = None,
-) -> models.Session:
-    """
-    Get a session by ID for a specific user and app.
-
-    Args:
-        db: Database session
-        app_id: Public ID of the app
-        session_id: Public ID of the session
-        user_id: Optional public ID of the user
-
-    Returns:
-        The session if found
-
-    Raises:
-        ResourceNotFoundException: If the session does not exist or doesn't belong to the user
-    """
-    stmt = (
-        select(models.Session)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.public_id == session_id)
-    )
-    if user_id is not None:
-        stmt = stmt.where(models.Session.user_id == user_id)
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-    if session is None:
-        logger.warning(f"Session with ID '{session_id}' not found for user {user_id}")
-        raise ResourceNotFoundException("Session not found or does not belong to user")
-    return session
-
-
 async def get_sessions(
-    app_id: str,
-    user_id: str,
+    workspace_name: str,
     reverse: Optional[bool] = False,
     is_active: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
+    """
+    Get all sessions in a workspace.
+    """
     stmt = (
         select(models.Session)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.user_id == user_id)
+        .where(models.Session.workspace_name == workspace_name)
     )
 
     if is_active:
@@ -384,52 +316,77 @@ async def get_sessions(
     return stmt
 
 
-async def create_session(
+async def get_or_create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
-    app_id: str,
-    user_id: str,
+    workspace_name: str,
 ) -> models.Session:
     """
-    Create a new session for a user.
+    Get or create a session in a workspace with specified peers.
+    If the session already exists, the peers are added to the session.
 
     Args:
         db: Database session
         session: Session creation schema
-        app_id: ID of the app
-        user_id: ID of the user
+        workspace_name: Name of the workspace
+        peer_names: List of peer names to add to the session
 
     Returns:
         The created session
 
     Raises:
-        ResourceNotFoundException: If the user does not exist
+        ResourceNotFoundException: If any peer does not exist
     """
     try:
-        # This will raise ResourceNotFoundException if user not found
-        await get_user(db, app_id=app_id, user_id=user_id)
-
-        honcho_session = models.Session(
-            user_id=user_id,
-            app_id=app_id,
-            h_metadata=session.metadata,
+        stmt = (
+            select(models.Session)
+            .where(models.Session.workspace_name == workspace_name)
+            .where(models.Session.name == session.name)
         )
-        db.add(honcho_session)
+
+        result = await db.execute(stmt)
+
+        honcho_session = result.scalar_one_or_none()
+        peer_names: set[str] = session.peer_names or set()
+
+        # Check if session already exists
+        if honcho_session is None:
+            # Create honcho session
+
+            honcho_session = models.Session(
+                workspace_name=workspace_name,
+                name=session.name,
+                h_metadata=session.metadata,
+            )
+            db.add(honcho_session)
+
+        # Get or create all peers if provided
+        if peer_names: # TODO: Add bulk get_or_create for peers
+            for peer_name in peer_names:
+                await get_or_create_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+
+        # add peers to session
+        for peer_name in peer_names:
+            session_peer = models.SessionPeer(
+                session_name=session.name,
+                peer_name=peer_name
+            ) # TODO: Add crud#add_peers_to_session
+            db.add(session_peer)
+
         await db.commit()
-        logger.info(f"Session created successfully for user {user_id}")
-        return honcho_session
+        logger.info(f"Session {session.name} updated successfully in workspace {workspace_name} with {len(peer_names)} peers")
+        return honcho_session        
     except Exception as e:
         await db.rollback()
-        logger.error(f"Error creating session for user {user_id}: {str(e)}")
+        logger.error(f"Error creating session in workspace {workspace_name}: {str(e)}")
         raise
 
 
 async def update_session(
     db: AsyncSession,
     session: schemas.SessionUpdate,
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    session_name: str,
 ) -> models.Session:
     """
     Update a session.
@@ -437,22 +394,18 @@ async def update_session(
     Args:
         db: Database session
         session: Session update schema
-        app_id: ID of the app
-        user_id: ID of the user
-        session_id: ID of the session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
 
     Returns:
         The updated session
 
     Raises:
-        ResourceNotFoundException: If the session does not exist or doesn't belong to the user
+        ResourceNotFoundException: If the session does not exist or peer is not in session
     """
-    honcho_session = await get_session(
-        db, app_id=app_id, session_id=session_id, user_id=user_id
+    honcho_session = await get_or_create_session(
+        db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
     )
-    if honcho_session is None:
-        logger.warning(f"Session {session_id} not found for user {user_id}")
-        raise ResourceNotFoundException("Session not found or does not belong to user")
 
     if (
         session.metadata is not None
@@ -460,54 +413,50 @@ async def update_session(
         honcho_session.h_metadata = session.metadata
 
     await db.commit()
-    logger.info(f"Session {session_id} updated successfully")
+    logger.info(f"Session {session_name} updated successfully")
     return honcho_session
 
 
 async def delete_session(
-    db: AsyncSession, app_id: str, user_id: str, session_id: str
+    db: AsyncSession, workspace_name: str, session_name: str
 ) -> bool:
     """
     Mark a session as inactive (soft delete).
 
     Args:
         db: Database session
-        app_id: ID of the app
-        user_id: ID of the user
-        session_id: ID of the session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
 
     Returns:
         True if the session was deleted successfully
 
     Raises:
-        ResourceNotFoundException: If the session does not exist or doesn't belong to the user
+        ResourceNotFoundException: If the session does not exist
     """
     stmt = (
         select(models.Session)
-        .where(models.Session.public_id == session_id)
-        .where(models.Session.user_id == user_id)
-        .where(models.Session.app_id == app_id)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
     )
     result = await db.execute(stmt)
     honcho_session = result.scalar_one_or_none()
 
     if honcho_session is None:
-        logger.warning(f"Session {session_id} not found for user {user_id}")
-        raise ResourceNotFoundException("Session not found or does not belong to user")
+        logger.warning(f"Session {session_name} not found in workspace {workspace_name}")
+        raise ResourceNotFoundException("Session not found")
 
     honcho_session.is_active = False
     await db.commit()
-    logger.info(f"Session {session_id} marked as inactive")
+    logger.info(f"Session {session_name} marked as inactive")
     return True
 
 
 async def clone_session(
     db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    original_session_id: str,
+    workspace_name: str,
+    original_session_name: str,
     cutoff_message_id: Optional[str] = None,
-    deep_copy: bool = True,
 ) -> models.Session:
     """
     Clone a session and its messages. If cutoff_message_id is provided,
@@ -515,9 +464,8 @@ async def clone_session(
 
     Args:
         db: SQLAlchemy session
-        app_id: ID of the app the target session is in
-        user_id: ID of the user the target session belongs to
-        original_session_id: ID of the session to clone
+        workspace_name: Name of the workspace the target session is in
+        original_session_name: Name of the session to clone
         cutoff_message_id: Optional ID of the last message to include in the clone
 
     Returns:
@@ -526,20 +474,20 @@ async def clone_session(
     # Get the original session
     stmt = (
         select(models.Session)
-        .where(models.Session.app_id == app_id)
-        .where(models.Session.user_id == user_id)
-        .where(models.Session.public_id == original_session_id)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == original_session_name)
     )
-    original_session = await db.scalar(stmt)
-    if not original_session:
-        raise ValueError("Original session not found")
+    result = await db.execute(stmt)
+    original_session = result.scalar_one_or_none()
+    if original_session is None:
+        raise ResourceNotFoundException("Original session not found")
 
     # If cutoff_message_id is provided, verify it belongs to the session
     cutoff_message = None
     if cutoff_message_id is not None:
         stmt = select(models.Message).where(
             models.Message.public_id == cutoff_message_id,
-            models.Message.session_id == original_session_id,
+            models.Message.session_name == original_session_name,
         )
         cutoff_message = await db.scalar(stmt)
         if not cutoff_message:
@@ -549,8 +497,7 @@ async def clone_session(
 
     # Create new session
     new_session = models.Session(
-        user_id=original_session.user_id,
-        app_id=original_session.app_id,
+        workspace_name=workspace_name,
         h_metadata=original_session.h_metadata,
     )
     db.add(new_session)
@@ -558,7 +505,7 @@ async def clone_session(
 
     # Build query for messages to clone
     stmt = select(models.Message).where(
-        models.Message.session_id == original_session_id
+        models.Message.session_name == original_session_name
     )
     if cutoff_message_id is not None and cutoff_message is not None:
         stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
@@ -574,72 +521,30 @@ async def clone_session(
     # Prepare bulk insert data
     new_messages = [
         {
-            "session_id": new_session.public_id,
+            "session_name": new_session.name,
             "content": message.content,
-            "is_user": message.is_user,
             "h_metadata": message.h_metadata,
-            "app_id": original_session.app_id,
-            "user_id": original_session.user_id,
+            "workspace_name": workspace_name,
+            "peer_name": message.peer_name
         }
         for message in messages_to_clone
     ]
 
-    stmt = insert(models.Message).returning(models.Message.public_id)
-    result = await db.execute(stmt, new_messages)
-    new_message_ids = result.scalars().all()
+    insert_stmt = insert(models.Message).returning(models.Message)
+    result = await db.execute(insert_stmt, new_messages)
 
-    # Create mapping of old to new message IDs
-    message_id_map = dict(
-        zip([message.public_id for message in messages_to_clone], new_message_ids)
-    )
-
-    # Handle metamessages if deep copy is requested
-    if deep_copy:
-        # Fetch all metamessages tied to the session in a single query
-        stmt = (
-            select(models.Metamessage)
-            .where(models.Metamessage.session_id == original_session_id)
-            .order_by(models.Metamessage.id)  # Explicit ordering by id
-        )
-        if cutoff_message_id is not None and cutoff_message is not None:
-            # Only get metamessages related to messages we're cloning
-            message_ids = [message.public_id for message in messages_to_clone]
-            stmt = stmt.where(
-                (models.Metamessage.message_id.is_(None))
-                | (models.Metamessage.message_id.in_(message_ids))
-            )
-
-        metamessages_result = await db.scalars(stmt)
-        metamessages = metamessages_result.all()
-
-        if metamessages:
-            # Prepare bulk insert data for metamessages
-            new_metamessages = []
-
-            for meta in metamessages:
-                # Base metamessage data
-                meta_data = {
-                    "user_id": meta.user_id,  # Preserve original user
-                    "session_id": new_session.public_id,
-                    "label": meta.label,
-                    "content": meta.content,
-                    "h_metadata": meta.h_metadata,
-                    "app_id": original_session.app_id,
-                }
-
-                # If the metamessage was tied to a message, tie it to the corresponding new message
-                if meta.message_id is not None and meta.message_id in message_id_map:
-                    meta_data["message_id"] = message_id_map[meta.message_id]
-
-                new_metamessages.append(meta_data)
-
-            # Bulk insert metamessages using modern insert syntax
-            if new_metamessages:
-                stmt = insert(models.Metamessage)
-                await db.execute(stmt, new_metamessages)
+    # Clone peers from original session to new session
+    stmt = select(models.SessionPeer).where(models.SessionPeer.session_name == original_session_name)
+    result = await db.execute(stmt)
+    session_peers = result.scalars().all()
+    for session_peer in session_peers:
+        new_session_peer = models.SessionPeer(
+            session_name=new_session.name,
+            peer_name=session_peer.peer_name)
+        db.add(new_session_peer)
 
     await db.commit()
-
+    logger.info(f"Session {original_session_name} cloned successfully")
     return new_session
 
 
@@ -651,23 +556,19 @@ async def clone_session(
 async def create_message(
     db: AsyncSession,
     message: schemas.MessageCreate,
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    session_name: str,
 ) -> models.Message:
-    honcho_session = await get_session(
-        db, app_id=app_id, session_id=session_id, user_id=user_id
+    honcho_session = await get_or_create_session(
+        db, schemas.SessionCreate(name=session_name, peer_names=set(message.peer_name)), workspace_name=workspace_name
     )
-    if honcho_session is None:
-        raise ValueError("Session not found or does not belong to user")
 
     honcho_message = models.Message(
-        session_id=session_id,
-        is_user=message.is_user,
+        session_name=honcho_session.name,
+        peer_name=message.peer_name,
         content=message.content,
         h_metadata=message.metadata,
-        user_id=user_id,
-        app_id=app_id,
+        workspace_name=workspace_name,
     )
     db.add(honcho_message)
     await db.commit()
@@ -679,27 +580,24 @@ async def create_message(
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    session_name: str,
 ) -> list[models.Message]:
     """Bulk create messages for a session while maintaining order"""
-    # Verify session exists and belongs to user
-    honcho_session = await get_session(
-        db, app_id=app_id, session_id=session_id, user_id=user_id
+    # Verify session exists
+    peer_names = set([message.peer_name for message in messages])
+    honcho_session = await get_or_create_session(
+        db, schemas.SessionCreate(name=session_name, peer_names=peer_names), workspace_name=workspace_name
     )
-    if honcho_session is None:
-        raise ValueError("Session not found or does not belong to user")
 
     # Create list of message records
     message_records = [
         {
-            "session_id": session_id,
-            "is_user": message.is_user,
+            "session_name": honcho_session.name,
+            "peer_name": message.peer_name,
             "content": message.content,
             "h_metadata": message.metadata,
-            "user_id": user_id,
-            "app_id": app_id,
+            "workspace_name": workspace_name,
         }
         for message in messages
     ]
@@ -713,17 +611,17 @@ async def create_messages(
 
 
 async def get_messages(
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     stmt = (
         select(models.Message)
-        .where(models.Message.app_id == app_id)
-        .where(models.Message.user_id == user_id)
-        .where(models.Message.session_id == session_id)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.peer_name == peer_name)
+        .where(models.Message.session_name == session_name)
     )
 
     if filter is not None:
@@ -739,16 +637,16 @@ async def get_messages(
 
 async def get_message(
     db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str,
     message_id: str,
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
-        .where(models.Message.app_id == app_id)
-        .where(models.Message.user_id == user_id)
-        .where(models.Message.session_id == session_id)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.peer_name == peer_name)
+        .where(models.Message.session_name == session_name)
         .where(models.Message.public_id == message_id)
     )
     result = await db.execute(stmt)
@@ -758,13 +656,13 @@ async def get_message(
 async def update_message(
     db: AsyncSession,
     message: schemas.MessageUpdate,
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str,
     message_id: str,
 ) -> bool:
     honcho_message = await get_message(
-        db, app_id=app_id, session_id=session_id, user_id=user_id, message_id=message_id
+        db, workspace_name=workspace_name, peer_name=peer_name, session_name=session_name, message_id=message_id
     )
     if honcho_message is None:
         raise ValueError("Message not found or does not belong to user")
@@ -778,233 +676,23 @@ async def update_message(
 
 
 ########################################################
-# metamessage methods
-########################################################
-
-
-async def create_metamessage(
-    db: AsyncSession,
-    user_id: str,
-    metamessage: schemas.MetamessageCreate,
-    app_id: str,
-):
-    # Validate user exists
-    user = await get_user(db, app_id=app_id, user_id=user_id)
-    if user is None:
-        raise ResourceNotFoundException(f"User with ID '{user_id}' not found")
-
-    # Initialize metamessage data
-    metamessage_data = {
-        "user_id": user_id,
-        "app_id": app_id,
-        "label": metamessage.label,
-        "content": metamessage.content,
-        "h_metadata": metamessage.metadata,
-    }
-
-    # Validate session_id if provided
-    if metamessage.session_id is not None:
-        session = await get_session(
-            db,
-            app_id=app_id,
-            user_id=user_id,
-            session_id=metamessage.session_id,
-        )
-        if session is None:
-            raise ResourceNotFoundException(
-                "Session not found or does not belong to user"
-            )
-        metamessage_data["session_id"] = metamessage.session_id
-
-        # Validate message_id if provided
-        if metamessage.message_id is not None:
-            message = await get_message(
-                db,
-                app_id=app_id,
-                session_id=metamessage.session_id,
-                user_id=user_id,
-                message_id=metamessage.message_id,
-            )
-            if message is None:
-                raise ResourceNotFoundException(
-                    "Message not found or does not belong to session"
-                )
-            metamessage_data["message_id"] = metamessage.message_id
-    elif metamessage.message_id is not None:
-        # If message_id provided but no session_id, that's an error
-        raise ValidationException("Cannot specify message_id without session_id")
-
-    # Create metamessage
-    honcho_metamessage = models.Metamessage(**metamessage_data)
-    db.add(honcho_metamessage)
-    await db.commit()
-    return honcho_metamessage
-
-
-async def get_metamessages(
-    app_id: str,
-    user_id: str,
-    session_id: Optional[str] = None,
-    message_id: Optional[str] = None,
-    label: Optional[str] = None,
-    filter: Optional[dict] = None,
-    reverse: Optional[bool] = False,
-) -> Select:
-    # Base query starts with metamessage and user relationship
-    stmt = (
-        select(models.Metamessage)
-        .where(models.Metamessage.app_id == app_id)
-        .where(models.Metamessage.user_id == user_id)
-    )
-
-    # If session_id is provided, filter by it
-    if session_id is not None:
-        stmt = stmt.where(models.Metamessage.session_id == session_id)
-
-    # If message_id is provided, filter by it
-    if message_id is not None:
-        stmt = stmt.where(models.Metamessage.message_id == message_id)
-
-    # Filter by label if provided
-    if label is not None:
-        stmt = stmt.where(models.Metamessage.label == label)
-
-    # Apply metadata filter if provided
-    if filter is not None:
-        stmt = stmt.where(models.Metamessage.h_metadata.contains(filter))
-
-    # Apply sort order
-    if reverse:
-        stmt = stmt.order_by(models.Metamessage.id.desc())
-    else:
-        stmt = stmt.order_by(models.Metamessage.id)
-
-    return stmt
-
-
-async def get_metamessage(
-    db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    metamessage_id: str,
-    session_id: Optional[str] = None,
-    message_id: Optional[str] = None,
-) -> Optional[models.Metamessage]:
-    # Base query for metamessage by ID
-    stmt = (
-        select(models.Metamessage)
-        .where(models.Metamessage.app_id == app_id)
-        .where(models.Metamessage.user_id == user_id)
-        .where(models.Metamessage.public_id == metamessage_id)
-    )
-
-    # Add optional filters
-    if session_id is not None:
-        stmt = stmt.where(models.Metamessage.session_id == session_id)
-    if message_id is not None:
-        stmt = stmt.where(models.Metamessage.message_id == message_id)
-
-    result = await db.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def update_metamessage(
-    db: AsyncSession,
-    metamessage: schemas.MetamessageUpdate,
-    app_id: str,
-    user_id: str,
-    metamessage_id: str,
-) -> bool:
-    # First retrieve the metamessage
-    metamessage_obj = await get_metamessage(
-        db, app_id=app_id, user_id=user_id, metamessage_id=metamessage_id
-    )
-    if metamessage_obj is None:
-        raise ResourceNotFoundException(
-            f"Metamessage with ID {metamessage_id} not found"
-        )
-
-    # Validate the consistency of relationships if they're being changed
-    # If we're setting message_id, we must have a session_id
-    if metamessage.message_id is not None and metamessage.session_id is None:
-        # If updating message_id but not session_id, use the existing session_id
-        metamessage.session_id = metamessage_obj.session_id
-        if metamessage.session_id is None:
-            raise ValidationException("Cannot specify message_id without session_id")
-
-    # If we're updating session_id and message_id, validate they belong together
-    if metamessage.session_id is not None and metamessage.message_id is not None:
-        message = await get_message(
-            db,
-            app_id=app_id,
-            session_id=metamessage.session_id,
-            user_id=user_id,
-            message_id=metamessage.message_id,
-        )
-        if message is None:
-            raise ResourceNotFoundException(
-                "Message not found or doesn't belong to session"
-            )
-
-    # Update fields
-    if metamessage.session_id is not None:
-        metamessage_obj.session_id = metamessage.session_id
-
-    if metamessage.message_id is not None:
-        metamessage_obj.message_id = metamessage.message_id
-
-    if metamessage.metadata is not None:
-        metamessage_obj.h_metadata = metamessage.metadata
-
-    if metamessage.label is not None:
-        metamessage_obj.label = metamessage.label
-
-    await db.commit()
-    return metamessage_obj
-
-
-########################################################
 # collection methods
 ########################################################
 
 # Should be very similar to the session methods
 
 
-async def get_collections(
-    app_id: str,
-    user_id: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
-    """Get a distinct list of the names of collections associated with a user"""
-    stmt = (
-        select(models.Collection)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
-    )
-
-    if filter is not None:
-        stmt = stmt.where(models.Collection.h_metadata.contains(filter))
-
-    if reverse:
-        stmt = stmt.order_by(models.Collection.id.desc())
-    else:
-        stmt = stmt.order_by(models.Collection.id)
-
-    return stmt
-
-
-async def get_collection_by_id(
-    db: AsyncSession, app_id: str, user_id: str, collection_id: str
+async def get_collection(
+    db: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
 ) -> models.Collection:
     """
-    Get a collection by ID for a specific user and app.
+    Get a collection by name for a specific peer and workspace.
 
     Args:
         db: Database session
-        app_id: Public ID of the app
-        user_id: Public ID of the user
-        collection_id: Public ID of the collection
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        collection_name: Name of the collection
 
     Returns:
         The collection if found
@@ -1014,332 +702,51 @@ async def get_collection_by_id(
     """
     stmt = (
         select(models.Collection)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
-        .where(models.Collection.public_id == collection_id)
+        .where(models.Collection.workspace_name == workspace_name)
+        .where(models.Collection.peer_name == peer_name)
+        .where(models.Collection.name == collection_name)
     )
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
         logger.warning(
-            f"Collection with ID '{collection_id}' not found for user {user_id}"
+            f"Collection with name '{collection_name}' not found for peer {peer_name}"
         )
         raise ResourceNotFoundException(
-            "Collection not found or does not belong to user"
+            "Collection not found or does not belong to peer"
         )
     return collection
 
 
-async def get_collection_by_name(
-    db: AsyncSession, app_id: str, user_id: str, name: str
-) -> models.Collection:
-    """
-    Get a collection by name for a specific user and app.
-
-    Args:
-        db: Database session
-        app_id: Public ID of the app
-        user_id: Public ID of the user
-        name: Name of the collection
-
-    Returns:
-        The collection if found
-
-    Raises:
-        ResourceNotFoundException: If the collection does not exist
-    """
-    stmt = (
-        select(models.Collection)
-        .where(models.Collection.app_id == app_id)
-        .where(models.Collection.user_id == user_id)
-        .where(models.Collection.name == name)
-    )
-    result = await db.execute(stmt)
-    collection = result.scalar_one_or_none()
-    if collection is None:
-        logger.warning(f"Collection with name '{name}' not found for user {user_id}")
-        raise ResourceNotFoundException(f"Collection with name '{name}' not found")
-    return collection
-
-
-async def create_collection(
+async def get_or_create_peer_protected_collection(
     db: AsyncSession,
-    collection: schemas.CollectionCreate,
-    app_id: str,
-    user_id: str,
-) -> models.Collection:
-    """
-    Create a new collection for a user.
-
-    Args:
-        db: Database session
-        collection: Collection creation schema
-        app_id: ID of the app
-        user_id: ID of the user
-
-    Returns:
-        The created collection
-
-    Raises:
-        ConflictException: If a collection with the same name already exists for this user
-        ValidationException: If the collection configuration is invalid
-        ResourceNotFoundException: If the user does not exist
-    """
-    try:
-        # This will raise ResourceNotFoundException if user not found
-        await get_user(db, app_id=app_id, user_id=user_id)
-
-        # Check for reserved names
-        if collection.name == "honcho":
-            logger.warning(
-                f"Attempted to create collection with reserved name 'honcho' for user {user_id}"
-            )
-            raise ValidationException(
-                "Invalid collection configuration - 'honcho' is a reserved name"
-            )
-
-        honcho_collection = models.Collection(
-            user_id=user_id,
-            app_id=app_id,
-            name=collection.name,
-            h_metadata=collection.metadata,
-        )
-        db.add(honcho_collection)
-        await db.commit()
-        logger.info(
-            f"Collection '{collection.name}' created successfully for user {user_id}"
-        )
-        return honcho_collection
-    except IntegrityError as e:
-        await db.rollback()
-        logger.warning(f"Failed to create collection - integrity error: {str(e)}")
-        raise ConflictException(
-            f"Collection with name '{collection.name}' already exists"
-        ) from e
-
-
-async def create_user_protected_collection(
-    db: AsyncSession,
-    app_id: str,
-    user_id: str,
-) -> models.Collection:
-    honcho_collection = models.Collection(
-        user_id=user_id,
-        app_id=app_id,
-        name=DEF_PROTECTED_COLLECTION_NAME,
-    )
-    try:
-        # This will raise ResourceNotFoundException if user not found
-        await get_user(db, app_id=app_id, user_id=user_id)
-
-        db.add(honcho_collection)
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        raise ValueError("Collection already exists") from None
-    return honcho_collection
-
-
-async def get_or_create_user_protected_collection(
-    db: AsyncSession,
-    app_id: str,
-    user_id: str,
+    workspace_name: str,
+    peer_name: str,
 ) -> models.Collection:
     try:
-        honcho_collection = await get_collection_by_name(
-            db, app_id, user_id, DEF_PROTECTED_COLLECTION_NAME
+        honcho_collection = await get_collection(
+            db, workspace_name, peer_name, DEF_PROTECTED_COLLECTION_NAME
         )
         return honcho_collection
     except ResourceNotFoundException:
-        honcho_collection = await create_user_protected_collection(db, app_id, user_id)
-        return honcho_collection
-
-
-async def update_collection(
-    db: AsyncSession,
-    collection: schemas.CollectionUpdate,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-) -> models.Collection:
-    """
-    Update a collection.
-
-    Args:
-        db: Database session
-        collection: Collection update schema
-        app_id: ID of the app
-        user_id: ID of the user
-        collection_id: ID of the collection
-
-    Returns:
-        The updated collection
-
-    Raises:
-        ResourceNotFoundException: If the collection does not exist
-        ValidationException: If the update data is invalid
-        ConflictException: If the update violates a unique constraint
-    """
-    try:
-        # Validate input
-        if collection.name is None and collection.metadata is None:
-            logger.warning(
-                f"Collection update attempted with no fields provided for collection {collection_id}"
-            )
-            raise ValidationException(
-                "Invalid collection configuration - at least one field must be provided"
-            )
-
-        # This will raise ResourceNotFoundException if not found
-        honcho_collection = await get_collection_by_id(
-            db, app_id=app_id, user_id=user_id, collection_id=collection_id
+        honcho_collection = models.Collection(
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+            name=DEF_PROTECTED_COLLECTION_NAME,
         )
-
-        # Check for reserved names if name is being updated
-        if collection.name == "honcho":
-            logger.warning(
-                f"Attempted to rename collection to reserved name 'honcho' for user {user_id}"
-            )
-            raise ValidationException(
-                "Invalid collection configuration - 'honcho' is a reserved name"
-            )
-
-        if collection.metadata is not None:
-            honcho_collection.h_metadata = collection.metadata
-
-        if collection.name is not None:
-            honcho_collection.name = collection.name
-
+        db.add(honcho_collection)
         await db.commit()
-        logger.info(f"Collection {collection_id} updated successfully")
         return honcho_collection
-    except IntegrityError as e:
-        await db.rollback()
-        logger.warning(f"Collection update failed due to integrity error: {str(e)}")
-        raise ConflictException("Collection update failed - name already in use") from e
-
-
-async def delete_collection(
-    db: AsyncSession, app_id: str, user_id: str, collection_id: str
-) -> bool:
-    """
-    Delete a Collection and all documents associated with it. Takes advantage of
-    the orm cascade feature.
-
-    Args:
-        db: Database session
-        app_id: ID of the app
-        user_id: ID of the user
-        collection_id: ID of the collection
-
-    Returns:
-        True if the collection was deleted successfully
-
-    Raises:
-        ResourceNotFoundException: If the collection does not exist
-    """
-    try:
-        # This will raise ResourceNotFoundException if not found
-        honcho_collection = await get_collection_by_id(
-            db, app_id=app_id, user_id=user_id, collection_id=collection_id
-        )
-
-        if honcho_collection.name == "honcho":
-            logger.warning(
-                f"Attempted to delete collection with reserved name 'honcho' for user {user_id}"
-            )
-            raise ValidationException(
-                "Invalid collection configuration - 'honcho' is a reserved name"
-            )
-
-        await db.delete(honcho_collection)
-        await db.commit()
-        logger.info(f"Collection {collection_id} deleted successfully")
-        return True
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error deleting collection {collection_id}: {str(e)}")
-        raise
-
 
 ########################################################
 # document methods
 ########################################################
 
-# Should be similar to the messages methods outside of query
-
-
-async def get_documents(
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
-    stmt = (
-        select(models.Document)
-        .where(models.Document.app_id == app_id)
-        .where(models.Document.user_id == user_id)
-        .where(models.Document.collection_id == collection_id)
-    )
-
-    if filter is not None:
-        stmt = stmt.where(models.Document.h_metadata.contains(filter))
-
-    if reverse:
-        stmt = stmt.order_by(models.Document.id.desc())
-    else:
-        stmt = stmt.order_by(models.Document.id)
-
-    return stmt
-
-
-async def get_document(
-    db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document_id: str,
-) -> models.Document:
-    """
-    Get a document by ID.
-
-    Args:
-        db: Database session
-        app_id: Public ID of the app
-        user_id: Public ID of the user
-        collection_id: Public ID of the collection
-        document_id: Public ID of the document
-
-    Returns:
-        The document if found
-
-    Raises:
-        ResourceNotFoundException: If the document does not exist
-    """
-    stmt = (
-        select(models.Document)
-        .where(models.Document.app_id == app_id)
-        .where(models.Document.user_id == user_id)
-        .where(models.Document.collection_id == collection_id)
-        .where(models.Document.public_id == document_id)
-    )
-
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-    if document is None:
-        logger.warning(
-            f"Document with ID '{document_id}' not found in collection {collection_id}"
-        )
-        raise ResourceNotFoundException(f"Document with ID '{document_id}' not found")
-    return document
-
-
 async def query_documents(
     db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
     query: str,
     filter: Optional[dict] = None,
     max_distance: Optional[float] = None,
@@ -1352,9 +759,9 @@ async def query_documents(
     embedding_query = response.data[0].embedding
     stmt = (
         select(models.Document)
-        .where(models.Document.app_id == app_id)
-        .where(models.Document.user_id == user_id)
-        .where(models.Document.collection_id == collection_id)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.peer_name == peer_name)
+        .where(models.Document.collection_name == collection_name)
         # .limit(top_k)
     )
     if max_distance is not None:
@@ -1373,9 +780,9 @@ async def query_documents(
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
     duplicate_threshold: Optional[float] = None,
 ) -> models.Document:
     """
@@ -1384,9 +791,9 @@ async def create_document(
     Args:
         db: Database session
         document: Document creation schema
-        app_id: ID of the app
-        user_id: ID of the user
-        collection_id: ID of the collection
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        collection_name: Name of the collection
 
     Returns:
         The created document
@@ -1397,8 +804,8 @@ async def create_document(
     """
 
     # This will raise ResourceNotFoundException if collection not found
-    await get_collection_by_id(
-        db, app_id=app_id, collection_id=collection_id, user_id=user_id
+    await get_collection(
+        db, workspace_name=workspace_name, peer_name=peer_name, collection_name=collection_name
     )
 
     # Using async client with await
@@ -1412,7 +819,7 @@ async def create_document(
         # Check if there are duplicates within the threshold
         stmt = (
             select(models.Document)
-            .where(models.Document.collection_id == collection_id)
+            .where(models.Document.collection_name == collection_name)
             .where(
                 models.Document.embedding.cosine_distance(embedding)
                 < duplicate_threshold
@@ -1427,9 +834,9 @@ async def create_document(
             return duplicate
 
     honcho_document = models.Document(
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection_id,
+        workspace_name=workspace_name,
+        peer_name=peer_name,
+        collection_name=collection_name,
         content=document.content,
         h_metadata=document.metadata,
         embedding=embedding,
@@ -1440,79 +847,11 @@ async def create_document(
     return honcho_document
 
 
-async def update_document(
-    db: AsyncSession,
-    document: schemas.DocumentUpdate,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document_id: str,
-) -> bool:
-    honcho_document = await get_document(
-        db,
-        app_id=app_id,
-        collection_id=collection_id,
-        user_id=user_id,
-        document_id=document_id,
-    )
-    if honcho_document is None:
-        raise ValueError("Session not found or does not belong to user")
-    if document.content is not None:
-        honcho_document.content = document.content
-        # Using async client with await
-        response = await openai_client.embeddings.create(
-            input=document.content, model="text-embedding-3-small"
-        )
-        embedding = response.data[0].embedding
-        honcho_document.embedding = embedding
-        honcho_document.created_at = func.now()
-
-    if document.metadata is not None:
-        honcho_document.h_metadata = document.metadata
-    await db.commit()
-    return honcho_document
-
-
-async def delete_document(
-    db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
-    document_id: str,
-) -> bool:
-    honcho_collection = await get_collection_by_id(
-        db, app_id=app_id, collection_id=collection_id, user_id=user_id
-    )
-    if honcho_collection is None:
-        raise ResourceNotFoundException("Collection or Document not found")
-    if honcho_collection.name == "honcho":
-        logger.warning(
-            f"Attempted to delete collection with reserved name 'honcho' for user {user_id}"
-        )
-        raise ValidationException(
-            "Cannot delete collection with reserved name 'honcho'"
-        )
-    stmt = (
-        select(models.Document)
-        .where(models.Document.app_id == app_id)
-        .where(models.Document.user_id == user_id)
-        .where(models.Document.collection_id == collection_id)
-        .where(models.Document.public_id == document_id)
-    )
-    result = await db.execute(stmt)
-    document = result.scalar_one_or_none()
-    if document is None:
-        return False
-    await db.delete(document)
-    await db.commit()
-    return True
-
-
 async def get_duplicate_documents(
     db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    collection_id: str,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
     content: str,
     similarity_threshold: float = 0.85,
 ) -> list[models.Document]:
@@ -1520,9 +859,9 @@ async def get_duplicate_documents(
 
     Args:
         db: Database session
-        app_id: Application ID
-        user_id: User ID
-        collection_id: Collection ID
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        collection_name: Name of the collection
         content: Document content to check for duplicates
         similarity_threshold: Similarity threshold (0-1) for considering documents as duplicates
 
@@ -1539,9 +878,9 @@ async def get_duplicate_documents(
     # Find documents with similar embeddings
     stmt = (
         select(models.Document)
-        .where(models.Document.app_id == app_id)
-        .where(models.Document.user_id == user_id)
-        .where(models.Document.collection_id == collection_id)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.peer_name == peer_name)
+        .where(models.Document.collection_name == collection_name)
         .where(
             models.Document.embedding.cosine_distance(embedding)
             < (1 - similarity_threshold)

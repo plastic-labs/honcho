@@ -24,11 +24,8 @@ load_dotenv()
 
 class Workspace(Base):
     __tablename__ = "workspaces"
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
-    )
-    public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
+    id: Mapped[str] = mapped_column(
+        TEXT, default=generate_nanoid, primary_key=True
     )
     name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     peers = relationship("Peer", back_populates="workspace")
@@ -46,84 +43,77 @@ class Workspace(Base):
 
 class SessionPeer(Base):
     __tablename__ = "session_peers"
-    session_public_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("sessions.public_id"), primary_key=True
+    session_name: Mapped[str] = mapped_column(
+        TEXT, ForeignKey("sessions.name"), primary_key=True
     )
-    peer_public_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("peers.public_id"), primary_key=True
+    peer_name: Mapped[str] = mapped_column(
+        TEXT, ForeignKey("peers.name"), primary_key=True
     )
 
 
 class Peer(Base):
     __tablename__ = "peers"
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
-    )
-    public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
+    id: Mapped[str] = mapped_column(
+        TEXT, default=generate_nanoid, primary_key=True
     )
     name: Mapped[str] = mapped_column(TEXT, index=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    workspace_id: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.public_id"), index=True
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
     )
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship("Session", secondary="session_peers", back_populates="peers")
     collections = relationship("Collection", back_populates="peer")
 
     __table_args__ = (
-        UniqueConstraint("name", "workspace_id", name="unique_name_workspace_peer"),
-        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        UniqueConstraint("name", "workspace_name", name="unique_name_workspace_peer"),
+        CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(name) <= 512", name="name_length"),
-        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
-        Index("idx_peers_workspace_lookup", "workspace_id", "public_id"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        Index("idx_peers_workspace_lookup", "workspace_name", "id"),
     )
 
     def __repr__(self) -> str:
-        return f"Peer(id={self.id}, workspace_id={self.workspace_id}, public_id={self.public_id} created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Session(Base):
     __tablename__ = "sessions"
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
+    id: Mapped[str] = mapped_column(
+        TEXT, primary_key=True, default=generate_nanoid
     )
-    public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
-    )
+    name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
     messages = relationship("Message", back_populates="session")
-    workspace_id: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.public_id"), index=True
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
     )
     peers = relationship("Peer", secondary="session_peers", back_populates="sessions")
 
     __table_args__ = (
-        CheckConstraint("length(public_id) = 21", name="public_id_length"),
-        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("length(id) = 21", name="id_length"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
     )
 
     def __repr__(self) -> str:
-        return f"Session(id={self.id}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"Session(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
 class Message(Base):
     __tablename__ = "messages"
     id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
+        BigInteger, Identity(), primary_key=True, autoincrement=True
     )
-    public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
-    )
-    session_id: Mapped[str | None] = mapped_column(
-        ForeignKey("sessions.public_id"), index=True
+    public_id: Mapped[str] = mapped_column(TEXT, index=True, unique=True, default=generate_nanoid)
+    session_name: Mapped[str | None] = mapped_column(
+        ForeignKey("sessions.name"), index=True
     )
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
@@ -132,35 +122,32 @@ class Message(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     session = relationship("Session", back_populates="messages")
-    sender_id: Mapped[str] = mapped_column(ForeignKey("peers.public_id"), index=True)
-    workspace_id: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.public_id"), index=True
+    peer_name: Mapped[str] = mapped_column(ForeignKey("peers.name"), index=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
     )
 
     __table_args__ = (
-        CheckConstraint("length(public_id) = 21", name="public_id_length"),
-        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("length(id) = 21", name="id_length"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         Index(
             "idx_messages_session_lookup",
-            "session_id",
+            "session_name",
             "id",
-            postgresql_include=["public_id", "created_at"],
+            postgresql_include=["id", "created_at"],
         ),
     )
 
     def __repr__(self) -> str:
-        return f"Message(id={self.id}, session_id={self.session_id}, content={self.content[10:]})"
+        return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content[10:]})"
 
 
 class Collection(Base):
     __tablename__ = "collections"
 
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
-    )
-    public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
+    id: Mapped[str] = mapped_column(
+        TEXT, default=generate_nanoid, primary_key=True
     )
     name: Mapped[str] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -171,28 +158,25 @@ class Collection(Base):
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
     peer = relationship("Peer", back_populates="collections")
-    peer_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("peers.public_id"), index=True
+    peer_name: Mapped[str] = mapped_column(
+        TEXT, ForeignKey("peers.name"), index=True
     )
-    workspace_id: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.public_id"), index=True
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
     )
 
     __table_args__ = (
-        UniqueConstraint("name", "peer_id", name="unique_name_collection_peer"),
-        CheckConstraint("length(public_id) = 21", name="public_id_length"),
-        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        UniqueConstraint("name", "peer_name", name="unique_name_collection_peer"),
+        CheckConstraint("length(id) = 21", name="id_length"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         CheckConstraint("length(name) <= 512", name="name_length"),
     )
 
 
 class Document(Base):
     __tablename__ = "documents"
-    id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, index=True, autoincrement=True
-    )
-    public_id: Mapped[str] = mapped_column(
-        TEXT, index=True, unique=True, default=generate_nanoid
+    id: Mapped[str] = mapped_column(
+        TEXT, default=generate_nanoid, primary_key=True
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     content: Mapped[str] = mapped_column(TEXT)
@@ -201,19 +185,19 @@ class Document(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
 
-    collection_id: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("collections.public_id"), index=True
+    collection_name: Mapped[str] = mapped_column(
+        TEXT, ForeignKey("collections.name"), index=True
     )
-    peer_id: Mapped[str] = mapped_column(ForeignKey("peers.public_id"), index=True)
-    workspace_id: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.public_id"), index=True
+    peer_name: Mapped[str] = mapped_column(ForeignKey("peers.name"), index=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
     )
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
-        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
-        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         # HNSW index on embedding column
         Index(
             "idx_documents_embedding_hnsw",
