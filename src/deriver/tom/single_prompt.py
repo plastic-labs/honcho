@@ -1,12 +1,10 @@
 import logging
-from typing import Optional
-from inspect import cleandoc as c
 from enum import Enum
-from pydantic import BaseModel
+from inspect import cleandoc as c
 
 from mirascope import llm
 from mirascope.integrations.langfuse import with_langfuse
-
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +162,7 @@ class UserRepresentationOutput(BaseModel):
 )
 async def tom_inference(
     chat_history: str,
-    user_representation: Optional[str] = None,
+    user_representation: str | None = None,
 ):
     return c(
         f"""
@@ -210,7 +208,7 @@ async def tom_inference(
 
 async def get_tom_inference_single_prompt(
     chat_history: str,
-    user_representation: Optional[str] = None,
+    user_representation: str | None = None,
 ):
     inference = await tom_inference(chat_history, user_representation)
     return inference.model_dump_json()
@@ -224,8 +222,8 @@ async def get_tom_inference_single_prompt(
 )
 async def user_representation_inference(
     chat_history: str,
-    user_representation: Optional[str] = None,
-    tom_inference: Optional[str] = None,
+    user_representation: str | None = None,
+    tom_inference: str | None = None,
 ):
     return c(
         f"""
@@ -289,8 +287,8 @@ async def user_representation_inference(
 
 async def get_user_representation_single_prompt(
     chat_history: str,
-    user_representation: Optional[str] = None,
-    tom_inference: Optional[str] = None,
+    user_representation: str | None = None,
+    tom_inference: str | None = None,
 ):
     representation = await user_representation_inference(
         chat_history, user_representation, tom_inference

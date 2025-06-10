@@ -1,12 +1,10 @@
 import logging
-from typing import Optional
-from pydantic import BaseModel
-
-from sentry_sdk.ai.monitoring import ai_track
+from inspect import cleandoc as c
 
 from mirascope import llm
 from mirascope.integrations.langfuse import with_langfuse
-from inspect import cleandoc as c
+from pydantic import BaseModel
+from sentry_sdk.ai.monitoring import ai_track
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -36,7 +34,7 @@ async def get_user_representation_long_term(
     session_id: str,
     user_representation: str = "None",
     tom_inference: str = "None",
-    facts: Optional[list[str]] = None,
+    facts: list[str] | None = None,
 ):
     return c(
         f"""

@@ -233,10 +233,15 @@ async def process_user_message(
         "REASONING: Running unified insight derivation across all reasoning levels"
     )
 
+    # Convert ObservationContext to ReasoningResponse for compatibility
+    initial_reasoning_context = reasoner._observation_context_to_reasoning_response(
+        initial_context
+    )
+
     # The unified approach naturally handles both reactive reasoning (responding to new turns)
     # and proactive reasoning (generating abductive hypotheses when needed)
     final_observations, deriver_trace = await reasoner.recursive_reason_with_trace(
-        context=initial_context,
+        context=initial_reasoning_context,
         history=formatted_history,
         new_turn=content,
         message_id=message_id,
@@ -245,7 +250,9 @@ async def process_user_message(
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
-    logger.info(f"Final observations:\n{json.dumps(final_observations, indent=2)}")
+    logger.info(
+        f"Final observations:\n{json.dumps(final_observations.model_dump(), indent=2)}"
+    )
 
     # Save the deriver trace as a metamessage attached to the user message
     await save_deriver_trace(db, message_id, deriver_trace, app_id, user_id, session_id)
@@ -309,11 +316,12 @@ async def summarize_if_needed(
                 )
 
                 # Create a new long summary
-                long_summary_text = await history.create_summary(
+                long_summary_response = await history.create_summary(
                     messages=long_messages,
                     previous_summary=previous_long_summary,
                     summary_type=history.SummaryType.LONG,
                 )
+                long_summary_text = str(long_summary_response.content)
                 # Save the long summary as a metamessage and capture the returned object
                 # Use the last message in the summarized messages, not the current message being processed
                 last_summarized_message_id = (
@@ -346,11 +354,12 @@ async def summarize_if_needed(
                 latest_long_summary.content if latest_long_summary else None
             )
             # Create a new short summary
-            short_summary_text = await history.create_summary(
+            short_summary_response = await history.create_summary(
                 messages=short_messages,
                 previous_summary=previous_summary,
                 summary_type=history.SummaryType.SHORT,
             )
+            short_summary_text = str(short_summary_response.content)
             # Save the short summary as a metamessage
             # Use the last message in the summarized messages, not the current message being processed
             last_summarized_message_id = (
