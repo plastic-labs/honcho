@@ -1,7 +1,9 @@
 import datetime
 import logging
 import uuid
+from datetime import datetime as dt
 
+from typing import cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.utils import update_document_access_metadata
@@ -119,11 +121,17 @@ class CollectionEmbeddingStore:
                         # Extract metadata from doc.h_metadata
                         metadata = ObservationMetadata()
                         if doc.h_metadata:
-                            metadata.session_context = doc.h_metadata.get("session_context", "")
+                            metadata.session_context = doc.h_metadata.get(
+                                "session_context", ""
+                            )
                             metadata.summary_id = doc.h_metadata.get("summary_id", "")
                             metadata.last_accessed = doc.h_metadata.get("last_accessed")
-                            metadata.access_count = doc.h_metadata.get("access_count", 0)
-                            metadata.accessed_sessions = doc.h_metadata.get("accessed_sessions", [])
+                            metadata.access_count = doc.h_metadata.get(
+                                "access_count", 0
+                            )
+                            metadata.accessed_sessions = doc.h_metadata.get(
+                                "accessed_sessions", []
+                            )
                             metadata.message_id = doc.h_metadata.get("message_id")
                             metadata.level = doc.h_metadata.get("level")
                             metadata.session_id = doc.h_metadata.get("session_id")
@@ -132,7 +140,7 @@ class CollectionEmbeddingStore:
                         observation = Observation(
                             content=doc.content,
                             metadata=metadata,
-                            created_at=doc.created_at
+                            created_at=doc.created_at,
                         )
                         context.add_observation(observation, level)
                         seen_observations.add(normalized_content)
@@ -152,7 +160,7 @@ class CollectionEmbeddingStore:
             simple_context = await self.get_relevant_observations_for_reasoning(
                 current_message, conversation_context, max_distance
             )
-            
+
             # Convert simple context to ObservationContext
             context = ObservationContext()
             for level_name, observations in simple_context.items():
@@ -160,11 +168,10 @@ class CollectionEmbeddingStore:
                     level = ReasoningLevel(level_name)
                     for obs_content in observations:
                         observation = Observation(
-                            content=obs_content,
-                            created_at=datetime.now()
+                            content=obs_content, created_at=dt.now()
                         )
                         context.add_observation(observation, level)
-            
+
             return context
 
     async def get_relevant_observations_for_reasoning(
@@ -216,21 +223,24 @@ class CollectionEmbeddingStore:
                 )
 
                 # Take the most recent among semantically relevant results and deduplicate
-                selected_docs = docs_sorted[:count * 2]  # Get more candidates for deduplication
+                selected_docs = docs_sorted[
+                    : count * 2
+                ]  # Get more candidates for deduplication
 
                 # Deduplicate observations for this level
                 seen_observations = set()
                 added_count = 0
 
                 for doc in selected_docs:
-                    if added_count >= count:  # Stop when we have enough unique observations
+                    if (
+                        added_count >= count
+                    ):  # Stop when we have enough unique observations
                         break
 
                     normalized_content = doc.content.strip().lower()
                     if normalized_content not in seen_observations:
                         observation = Observation(
-                            content=doc.content,
-                            created_at=doc.created_at
+                            content=doc.content, created_at=doc.created_at
                         )
                         context.add_observation(observation, level)
                         seen_observations.add(normalized_content)
@@ -275,8 +285,7 @@ class CollectionEmbeddingStore:
                 # Convert to Observation objects
                 for doc in docs:
                     observation = Observation(
-                        content=doc.content,
-                        created_at=doc.created_at
+                        content=doc.content, created_at=doc.created_at
                     )
                     context.add_observation(observation, level)
 
@@ -313,7 +322,7 @@ class CollectionEmbeddingStore:
             for level_name in ["abductive", "inductive", "deductive"]:
                 count = getattr(self, f"{level_name}_observations_count")
                 level = ReasoningLevel(level_name)
-                
+
                 stmt = await crud.get_documents(
                     app_id=self.app_id,
                     user_id=self.user_id,
@@ -327,11 +336,15 @@ class CollectionEmbeddingStore:
                 for doc in docs:
                     metadata = ObservationMetadata()
                     if doc.h_metadata:
-                        metadata.session_context = doc.h_metadata.get("session_context", "")
+                        metadata.session_context = doc.h_metadata.get(
+                            "session_context", ""
+                        )
                         metadata.summary_id = doc.h_metadata.get("summary_id", "")
                         metadata.last_accessed = doc.h_metadata.get("last_accessed")
                         metadata.access_count = doc.h_metadata.get("access_count", 0)
-                        metadata.accessed_sessions = doc.h_metadata.get("accessed_sessions", [])
+                        metadata.accessed_sessions = doc.h_metadata.get(
+                            "accessed_sessions", []
+                        )
                         metadata.message_id = doc.h_metadata.get("message_id")
                         metadata.level = doc.h_metadata.get("level")
                         metadata.session_id = doc.h_metadata.get("session_id")
@@ -340,7 +353,7 @@ class CollectionEmbeddingStore:
                     observation = Observation(
                         content=doc.content,
                         metadata=metadata,
-                        created_at=doc.created_at
+                        created_at=doc.created_at,
                     )
                     context.add_observation(observation, level)
 
@@ -387,13 +400,13 @@ class CollectionEmbeddingStore:
         summary_content = None
         if session_id:
             try:
-                latest_summaries = await get_session_summaries(
-                    self.db, session_id, SummaryType.SHORT, only_latest=True
+                latest_summary = cast(
+                    models.Metamessage | None,
+                    await get_session_summaries(
+                        self.db, session_id, SummaryType.SHORT, only_latest=True
+                    ),
                 )
-                if latest_summaries and len(latest_summaries) > 0:
-                    latest_summary = latest_summaries[
-                        0
-                    ]  # Get the first (latest) summary
+                if latest_summary:
                     summary_id = latest_summary.public_id
                     summary_content = latest_summary.content
             except Exception as e:
@@ -549,7 +562,7 @@ class CollectionEmbeddingStore:
             self.user_id,
             self.collection_id,
             session_id=session_id,
-            message_id=message_id
+            message_id=message_id,
         )
 
     async def get_relevant_observations(
