@@ -36,9 +36,9 @@ class Workspace(Base):
     feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
 
     __table_args__ = (
-        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(name) <= 512", name="name_length"),
-        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
     )
 
 
@@ -76,7 +76,7 @@ class Peer(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
-        Index("idx_peers_workspace_lookup", "workspace_name", "id"),
+        Index("idx_peers_workspace_lookup", "workspace_name", "name"),
     )
 
     def __repr__(self) -> str:
@@ -88,7 +88,7 @@ class Session(Base):
     id: Mapped[str] = mapped_column(
         TEXT, primary_key=True, default=generate_nanoid
     )
-    name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
+    name: Mapped[str] = mapped_column(TEXT, index=True, default=generate_nanoid)
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -103,6 +103,7 @@ class Session(Base):
     peers = relationship("Peer", secondary="session_peers", back_populates="sessions")
 
     __table_args__ = (
+        UniqueConstraint("name", "workspace_name", name="unique_session_name"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
     )
