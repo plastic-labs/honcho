@@ -7,10 +7,12 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Column,
     DateTime,
     ForeignKey,
     Identity,
     Index,
+    Table,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
@@ -21,12 +23,18 @@ from .db import Base
 
 load_dotenv()
 
+# Association table for many-to-many relationship between sessions and peers
+session_peers_table = Table(
+    "session_peers",
+    Base.metadata,
+    Column("session_name", TEXT, ForeignKey("sessions.name"), primary_key=True),
+    Column("peer_name", TEXT, ForeignKey("peers.name"), primary_key=True),
+)
+
 
 class Workspace(Base):
     __tablename__ = "workspaces"
-    id: Mapped[str] = mapped_column(
-        TEXT, default=generate_nanoid, primary_key=True
-    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     peers = relationship("Peer", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -42,21 +50,9 @@ class Workspace(Base):
     )
 
 
-class SessionPeer(Base):
-    __tablename__ = "session_peers"
-    session_name: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("sessions.name"), primary_key=True
-    )
-    peer_name: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("peers.name"), primary_key=True
-    )
-
-
 class Peer(Base):
     __tablename__ = "peers"
-    id: Mapped[str] = mapped_column(
-        TEXT, default=generate_nanoid, primary_key=True
-    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -68,7 +64,9 @@ class Peer(Base):
     feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
 
     workspace = relationship("Workspace", back_populates="peers")
-    sessions = relationship("Session", secondary="session_peers", back_populates="peers")
+    sessions = relationship(
+        "Session", secondary=session_peers_table, back_populates="peers"
+    )
     collections = relationship("Collection", back_populates="peer")
 
     __table_args__ = (
@@ -85,10 +83,8 @@ class Peer(Base):
 
 class Session(Base):
     __tablename__ = "sessions"
-    id: Mapped[str] = mapped_column(
-        TEXT, primary_key=True, default=generate_nanoid
-    )
-    name: Mapped[str] = mapped_column(TEXT, index=True, default=generate_nanoid)
+    id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
+    name: Mapped[str] = mapped_column(TEXT, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -100,7 +96,9 @@ class Session(Base):
     )
     feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
 
-    peers = relationship("Peer", secondary="session_peers", back_populates="sessions")
+    peers = relationship(
+        "Peer", secondary=session_peers_table, back_populates="sessions"
+    )
 
     __table_args__ = (
         UniqueConstraint("name", "workspace_name", name="unique_session_name"),
@@ -117,7 +115,9 @@ class Message(Base):
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
-    public_id: Mapped[str] = mapped_column(TEXT, index=True, unique=True, default=generate_nanoid)
+    public_id: Mapped[str] = mapped_column(
+        TEXT, index=True, unique=True, default=generate_nanoid
+    )
     session_name: Mapped[str | None] = mapped_column(
         ForeignKey("sessions.name"), index=True
     )
@@ -152,9 +152,7 @@ class Message(Base):
 class Collection(Base):
     __tablename__ = "collections"
 
-    id: Mapped[str] = mapped_column(
-        TEXT, default=generate_nanoid, primary_key=True
-    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -164,9 +162,7 @@ class Collection(Base):
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
     peer = relationship("Peer", back_populates="collections")
-    peer_name: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("peers.name"), index=True
-    )
+    peer_name: Mapped[str] = mapped_column(TEXT, ForeignKey("peers.name"), index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
@@ -181,9 +177,7 @@ class Collection(Base):
 
 class Document(Base):
     __tablename__ = "documents"
-    id: Mapped[str] = mapped_column(
-        TEXT, default=generate_nanoid, primary_key=True
-    )
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     content: Mapped[str] = mapped_column(TEXT)
     embedding = mapped_column(Vector(1536))
@@ -210,7 +204,9 @@ class Document(Base):
             "embedding",
             postgresql_using="hnsw",  # HNSW index type
             postgresql_with={"m": 16, "ef_construction": 64},  # HNSW parameters
-            postgresql_ops={"embedding": "vector_cosine_ops"},  # Cosine distance operator
+            postgresql_ops={
+                "embedding": "vector_cosine_ops"
+            },  # Cosine distance operator
         ),
     )
 
@@ -232,3 +228,7 @@ class ActiveQueueSession(Base):
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class SessionPeer(Base):
+    __table__ = session_peers_table

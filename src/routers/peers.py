@@ -1,12 +1,16 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    Path,
+    Query,
+)
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
-from fastapi.responses import StreamingResponse
-from fastapi import HTTPException
-from fastapi import BackgroundTasks
 
 from src import crud, schemas
 from src.dependencies import db
@@ -14,6 +18,7 @@ from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
 )
+from src.routers.messages import enqueue
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -46,7 +51,9 @@ async def get_peers(
 
     return await paginate(
         db,
-        await crud.get_peers(workspace_name=workspace_id, reverse=reverse, filter=filter_param),
+        await crud.get_peers(
+            workspace_name=workspace_id, reverse=reverse, filter=filter_param
+        ),
     )
 
 
@@ -56,9 +63,7 @@ async def get_peers(
 )
 async def get_or_create_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    peer: schemas.PeerCreate = Body(
-        ..., description="Peer creation parameters"
-    ),
+    peer: schemas.PeerCreate = Body(..., description="Peer creation parameters"),
     jwt_params: JWTParams = Depends(require_auth()),
     db=db,
 ):
@@ -69,11 +74,19 @@ async def get_or_create_peer(
     Otherwise, it uses the peer_id from the JWT token.
     """
     # validate workspace query param
-    if not jwt_params.ad and jwt_params.ap is not None and jwt_params.ap != workspace_id:
+    if (
+        not jwt_params.ad
+        and jwt_params.ap is not None
+        and jwt_params.ap != workspace_id
+    ):
         raise AuthenticationException("Unauthorized access to resource")
 
     if peer.name:
-        if not jwt_params.ad and jwt_params.us is not None and jwt_params.us != peer.name:
+        if (
+            not jwt_params.ad
+            and jwt_params.us is not None
+            and jwt_params.us != peer.name
+        ):
             raise AuthenticationException("Unauthorized access to resource")
     else:
         # Use peer_id from JWT
@@ -96,7 +109,9 @@ async def update_peer(
     db=db,
 ):
     """Update a Peer's name and/or metadata"""
-    updated_peer = await crud.update_peer(db, workspace_name=workspace_id, peer_name=peer_id, peer=peer)
+    updated_peer = await crud.update_peer(
+        db, workspace_name=workspace_id, peer_name=peer_id, peer=peer
+    )
     return updated_peer
 
 
@@ -117,7 +132,7 @@ async def get_sessions_for_peer(
     """Get All Sessions for a Peer"""
     filter_param = None
     is_active = False  # Default from schemas
-    
+
     if options:
         if hasattr(options, "filter"):
             filter_param = options.filter
@@ -128,7 +143,7 @@ async def get_sessions_for_peer(
 
     return await paginate(
         db,
-        await crud.get_sessions_for_peer    (
+        await crud.get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
             reverse=reverse,
@@ -147,16 +162,14 @@ async def get_sessions_for_peer(
             "content": {"text/event-stream": {}},
         },
     },
-    dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", user_id="peer_id")
-        )
-    ],
+    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
 )
 async def chat(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    session_id: Optional[str] = Query(None, description="ID of the session to chat with"),
+    session_id: Optional[str] = Query(
+        None, description="ID of the session to chat with"
+    ),
     target: Optional[str] = Query(None, description="ID of the target peer"),
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
@@ -164,14 +177,11 @@ async def chat(
 ):
     pass
 
+
 @router.post(
     "/{peer_id}/messages",
     response_model=list[schemas.Message],
-    dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", user_id="peer_id")
-        )
-    ],
+    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
 )
 async def create_messages_for_peer(
     background_tasks: BackgroundTasks,
@@ -183,4 +193,74 @@ async def create_messages_for_peer(
     db=db,
 ):
     """Create messages for a peer"""
-    pass
+    workspace_name, peer_name = workspace_id, peer_id
+    """Bulk create messages for a peer while maintaining order."""
+    try:
+        created_messages = await crud.create_messages_for_peer(
+            db,
+            messages=messages.messages,
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
+
+        # Create payloads for all messages
+        payloads = [
+            {
+                "workspace_name": workspace_name,
+                "session_name": None,
+                "message_id": message.public_id,
+                "is_user": True,
+                "content": message.content,
+                "metadata": message.h_metadata,
+                "peer_name": message.peer_name,
+            }
+            for message in created_messages
+        ]
+
+        # Enqueue all messages in one call
+        background_tasks.add_task(enqueue, payloads)  # type: ignore
+        logger.info(
+            f"Batch of {len(created_messages)} messages created and queued for processing"
+        )
+
+        return created_messages
+    except ValueError as e:
+        logger.error(f"Failed to create batch messages for peer {peer_id}: {str(e)}")
+        raise ResourceNotFoundException("Peer not found") from e
+
+
+@router.post(
+    "/{peer_id}/messages/list",
+    response_model=Page[schemas.Message],
+    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
+)
+async def get_messages_for_peer(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    options: Optional[schemas.MessageGet] = Body(
+        None, description="Filtering options for the messages list"
+    ),
+    reverse: Optional[bool] = Query(
+        False, description="Whether to reverse the order of results"
+    ),
+    db=db,
+):
+    """Get all messages for a peer"""
+    try:
+        filter = None
+        if options and hasattr(options, "filter"):
+            filter = options.filter
+            if filter == {}:
+                filter = None
+
+        messages_query = await crud.get_messages_for_peer(
+            workspace_name=workspace_id,
+            peer_name=peer_id,
+            filter=filter,
+            reverse=reverse,
+        )
+
+        return await paginate(db, messages_query)
+    except ValueError as e:
+        logger.warning(f"Failed to get messages for peer {peer_id}: {str(e)}")
+        raise ResourceNotFoundException("Peer not found") from e

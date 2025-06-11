@@ -51,7 +51,9 @@ async def get_or_create_session(
     # Use peer_id from JWT if not provided in query
     if not session.name:
         if not jwt_params.se:
-            raise AuthenticationException("Session ID not found in query parameter or JWT")
+            raise AuthenticationException(
+                "Session ID not found in query parameter or JWT"
+            )
         session.name = jwt_params.se
 
     # Let crud function handle the ResourceNotFoundException
@@ -80,11 +82,11 @@ async def get_sessions(
     is_active_param = False  # Default from schema
 
     if options:
-        if hasattr(options, 'filter') and options.filter:
+        if hasattr(options, "filter") and options.filter:
             filter_param = options.filter
-            if filter_param == {}: # Explicitly check for empty dict
+            if filter_param == {}:  # Explicitly check for empty dict
                 filter_param = None
-        if hasattr(options, 'is_active'): # Check if is_active is present
+        if hasattr(options, "is_active"):  # Check if is_active is present
             is_active_param = options.is_active
 
     return await paginate(
@@ -102,9 +104,7 @@ async def get_sessions(
     "/{session_id}",
     response_model=schemas.Session,
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def update_session(
@@ -113,9 +113,7 @@ async def update_session(
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
     ),
-    peer_id: Optional[str] = Query(
-        None, description="Peer ID to verify access"
-    ),
+    peer_id: Optional[str] = Query(None, description="Peer ID to verify access"),
     db=db,
 ):
     """Update the metadata of a Session"""
@@ -133,9 +131,7 @@ async def update_session(
 @router.delete(
     "/{session_id}",
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def delete_session(
@@ -218,9 +214,7 @@ async def delete_session(
     "/{session_id}/clone",
     response_model=schemas.Session,
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def clone_session(
@@ -251,9 +245,7 @@ async def clone_session(
     "/{session_id}/peers",
     response_model=schemas.Session,
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def add_peers_to_session(
@@ -266,7 +258,10 @@ async def add_peers_to_session(
     try:
         workspace_name, session_name = workspace_id, session_id
         session = await crud.add_peers_to_session(
-            db, workspace_name=workspace_name, session_name=session_name, peer_names=set(peers)
+            db,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_names=set(peers),
         )
         logger.info(f"Added peers to session {session_name} successfully")
         return session
@@ -279,9 +274,7 @@ async def add_peers_to_session(
     "/{session_id}/peers",
     response_model=schemas.Session,
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def set_session_peers(
@@ -294,7 +287,10 @@ async def set_session_peers(
     try:
         workspace_name, session_name = workspace_id, session_id
         session = await crud.set_peers_for_session(
-            db, workspace_name=workspace_name, session_name=session_name, peer_names=set(peers)
+            db,
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_names=set(peers),
         )
         logger.info(f"Set peers for session {session_name} successfully")
         return session
@@ -307,22 +303,25 @@ async def set_session_peers(
     "/{session_id}/peers",
     response_model=schemas.Session,
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def remove_peers_from_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    peers: list[str] = Body(..., description="List of peer IDs to remove from the session"),
+    peers: list[str] = Body(
+        ..., description="List of peer IDs to remove from the session"
+    ),
     db=db,
 ):
     """Remove peers from a session"""
     try:
         session_name = session_id
         session = await crud.remove_peers_from_session(
-            db, workspace_name=workspace_id, session_name=session_name, peer_names=set(peers)
+            db,
+            workspace_name=workspace_id,
+            session_name=session_name,
+            peer_names=set(peers),
         )
         logger.info(f"Removed peers from session {session_name} successfully")
         return session
@@ -333,11 +332,9 @@ async def remove_peers_from_session(
 
 @router.get(
     "/{session_id}/peers",
-    response_model=list[str],
+    response_model=Page[schemas.Peer],
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def get_session_peers(
@@ -346,13 +343,12 @@ async def get_session_peers(
     db=db,
 ):
     """Get peers from a session"""
-    # TODO: Should this be paginated?
     try:
         session_name = session_id
-        peers = await crud.get_peers_from_session(
+        peers_query = await crud.get_peers_from_session(
             db, workspace_name=workspace_id, session_name=session_name
         )
-        return peers
+        return await paginate(db, peers_query)
     except ValueError as e:
         logger.warning(f"Failed to get peers from session {session_name}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
@@ -362,16 +358,20 @@ async def get_session_peers(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 async def get_session_context(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    tokens: Optional[int] = Path(..., description="Number of tokens to use for the context"),
-    summary: bool = Path(..., description="Whether to summarize the context"), # default to false
+    tokens: Optional[int] = Query(
+        None,
+        description="Number of tokens to use for the context. Includes summary if set to true",
+    ),
+    summary: bool = Query(
+        False,
+        description="Whether to summarize the session history prior to the cutoff message",
+    ),  # default to false
     db=db,
 ):
     pass
@@ -385,4 +385,3 @@ async def get_session_context(
     # except ValueError as e:
     #     logger.warning(f"Failed to get context from session {session_id}: {str(e)}")
     #     raise ResourceNotFoundException("Session not found") from e
-

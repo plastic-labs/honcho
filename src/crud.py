@@ -4,12 +4,11 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, delete, select, insert
+from sqlalchemy import Select, cast, delete, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import func
 from sqlalchemy.types import BigInteger
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models, schemas
 from .exceptions import (
@@ -675,7 +674,7 @@ async def get_peers_from_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-) -> list[models.Peer]:
+) -> Select:
     """
     Get all peers from a session.
 
@@ -685,7 +684,7 @@ async def get_peers_from_session(
         session_name: Name of the session
 
     Returns:
-        List of Peer objects in the session
+        Paginated list of Peer objects in the session
 
     Raises:
         ResourceNotFoundException: If the session does not exist
@@ -711,8 +710,8 @@ async def get_peers_from_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
     )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+
+    return stmt
 
 
 async def add_peers_to_session(
@@ -861,32 +860,6 @@ async def _add_peers_to_session(
 ########################################################
 
 
-async def create_message(
-    db: AsyncSession,
-    message: schemas.MessageCreate,
-    workspace_name: str,
-    session_name: str,
-) -> models.Message:
-    honcho_session = await get_or_create_session(
-        db,
-        schemas.SessionCreate(name=session_name, peer_names=set(message.peer_name)),
-        workspace_name=workspace_name,
-    )
-
-    honcho_message = models.Message(
-        session_name=honcho_session.name,
-        peer_name=message.peer_name,
-        content=message.content,
-        h_metadata=message.metadata,
-        workspace_name=workspace_name,
-    )
-    db.add(honcho_message)
-    await db.commit()
-    # await db.refresh(honcho_message, attribute_names=["id", "content", "h_metadata"])
-    # await db.refresh(honcho_message)
-    return honcho_message
-
-
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
@@ -922,6 +895,38 @@ async def create_messages(
     return list(result.scalars().all())
 
 
+async def create_messages_for_peer(
+    db: AsyncSession,
+    messages: list[schemas.MessageCreate],
+    workspace_name: str,
+    peer_name: str,
+) -> list[models.Message]:
+    """
+    Bulk create messages for a peer while maintaining order.
+    Note that session_name for messages created this way will be None
+    and peer_name will be the provided peer_name for each message,
+    regardless of the peer_name in the individual message(s).
+    """
+    # Create list of message records
+    message_records = [
+        {
+            "session_name": None,
+            "peer_name": peer_name,
+            "content": message.content,
+            "h_metadata": message.metadata,
+            "workspace_name": workspace_name,
+        }
+        for message in messages
+    ]
+
+    # Bulk insert messages and return them in order
+    stmt = insert(models.Message).returning(models.Message)
+    result = await db.execute(stmt, message_records)
+    await db.commit()
+
+    return list(result.scalars().all())
+
+
 async def get_messages(
     workspace_name: str,
     session_name: str,
@@ -932,6 +937,30 @@ async def get_messages(
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.session_name == session_name)
+    )
+
+    if filter is not None:
+        stmt = stmt.where(models.Message.h_metadata.contains(filter))
+
+    if reverse:
+        stmt = stmt.order_by(models.Message.id.desc())
+    else:
+        stmt = stmt.order_by(models.Message.id)
+
+    return stmt
+
+
+async def get_messages_for_peer(
+    workspace_name: str,
+    peer_name: str,
+    reverse: Optional[bool] = False,
+    filter: Optional[dict] = None,
+) -> Select:
+    stmt = (
+        select(models.Message)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.peer_name == peer_name)
+        .where(models.Message.session_name.is_(None))
     )
 
     if filter is not None:
