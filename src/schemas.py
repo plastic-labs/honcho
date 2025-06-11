@@ -9,8 +9,12 @@ class WorkspaceBase(BaseModel):
 
 
 class WorkspaceCreate(WorkspaceBase):
-    name: Annotated[str, Field(serialization_alias='id', min_length=1, max_length=100)]
+    name: Annotated[str, Field(alias='id', min_length=1, max_length=100)]
     metadata: dict = {}
+
+    model_config = ConfigDict(
+        populate_by_name=True
+    )
 
 
 class WorkspaceGet(WorkspaceBase):
@@ -37,8 +41,13 @@ class PeerBase(BaseModel):
 
 
 class PeerCreate(PeerBase):
-    name: Annotated[str, Field(serialization_alias='id', min_length=1, max_length=100)]
+    name: Annotated[str, Field(alias='id', min_length=1, max_length=100)]
     metadata: dict = {}
+
+    model_config = ConfigDict(
+        populate_by_name=True
+    )
+
 
 
 class PeerGet(PeerBase):
@@ -67,7 +76,7 @@ class MessageBase(BaseModel):
 
 class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
-    peer_name: str
+    peer_name: str = Field(alias='peer_id')
     metadata: dict = {}
 
 
@@ -99,9 +108,13 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    name: Annotated[str, Field(serialization_alias='id', min_length=1, max_length=100)]
+    name: Annotated[str, Field(alias='id', min_length=1, max_length=100)]
     metadata: dict = {}
-    peer_names: set[str] | None = Field(serialization_alias='peer_ids', default=None)
+    peer_names: set[str] | None = None
+
+    model_config = ConfigDict(
+        populate_by_name=True
+    )
 
 
 class SessionGet(SessionBase):
@@ -124,6 +137,10 @@ class Session(SessionBase):
         from_attributes=True,
         populate_by_name=True
     )
+
+class SessionContext(SessionBase):
+    name: str = Field(serialization_alias='id')
+    context: str
 
 
 # class CollectionBase(BaseModel):

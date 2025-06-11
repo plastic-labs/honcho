@@ -245,3 +245,145 @@ async def clone_session(
     except ValueError as e:
         logger.warning(f"Failed to clone session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
+
+
+@router.post(
+    "/{session_id}/peers",
+    response_model=schemas.Session,
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", session_id="session_id")
+        )
+    ],
+)
+async def add_peers_to_session(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    peers: list[str] = Body(..., description="List of peer IDs to add to the session"),
+    db=db,
+):
+    """Add peers to a session"""
+    pass
+    # try:
+    #     # TODO: Implement crud.add_peers_to_session
+    #     updated_session = await crud.add_peers_to_session(
+    #         db, workspace_name=workspace_id, session_name=session_id, peers=peers
+    #     )
+    #     logger.info(f"Added peers to session {session_id} successfully")
+    #     return updated_session
+    # except ValueError as e:
+    #     logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
+    #     raise ResourceNotFoundException("Session not found") from e
+
+
+@router.put(
+    "/{session_id}/peers",
+    response_model=schemas.Session,
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", session_id="session_id")
+        )
+    ],
+)
+async def set_session_peers(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    peers: list[str] = Body(..., description="List of peer IDs to set for the session"),
+    db=db,
+):
+    """Set the peers in a session"""
+    pass
+    # try:
+    #     # TODO: Implement crud.set_session_peers
+    #     updated_session = await crud.set_session_peers(
+    #         db, workspace_name=workspace_id, session_name=session_id, peers=peers
+    #     )
+    #     logger.info(f"Set peers for session {session_id} successfully")
+    #     return updated_session
+    # except ValueError as e:
+    #     logger.warning(f"Failed to set peers for session {session_id}: {str(e)}")
+    #     raise ResourceNotFoundException("Session not found") from e
+
+
+@router.delete(
+    "/{session_id}/peers",
+    response_model=schemas.Session,
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", session_id="session_id")
+        )
+    ],
+)
+async def remove_peers_from_session(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    peers: list[str] = Body(..., description="List of peer IDs to remove from the session"),
+    db=db,
+):
+    """Remove peers from a session"""
+    pass
+    # try:
+    #     # TODO: Implement crud.remove_peers_from_session
+    #     updated_session = await crud.remove_peers_from_session(
+    #         db, workspace_name=workspace_id, session_name=session_id, peers=peers
+    #     )
+    #     logger.info(f"Removed peers from session {session_id} successfully")
+    #     return updated_session
+    # except ValueError as e:
+    #     logger.warning(f"Failed to remove peers from session {session_id}: {str(e)}")
+    #     raise ResourceNotFoundException("Session not found") from e
+
+
+@router.get(
+    "/{session_id}/peers",
+    response_model=list[str],
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", session_id="session_id")
+        )
+    ],
+)
+async def get_session_peers(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    db=db,
+):
+    """Get peers from a session"""
+    pass
+    # try:
+    #     # TODO: Implement crud.get_session_peers
+    #     peers = await crud.get_session_peers(
+    #         db, workspace_name=workspace_id, session_name=session_id
+    #     )
+    #     return peers
+    # except ValueError as e:
+    #     logger.warning(f"Failed to get peers from session {session_id}: {str(e)}")
+    #     raise ResourceNotFoundException("Session not found") from e
+
+
+@router.get(
+    "/{session_id}/context",
+    response_model=schemas.SessionContext,
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", session_id="session_id")
+        )
+    ],
+)
+async def get_session_context(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    db=db,
+):
+    pass
+    # """Get context from a session"""
+    # try:
+    #     # TODO: Implement crud.get_session_context
+    #     context = await crud.get_session_context(
+    #         db, workspace_name=workspace_id, session_name=session_id
+    #     )
+    #     return context
+    # except ValueError as e:
+    #     logger.warning(f"Failed to get context from session {session_id}: {str(e)}")
+    #     raise ResourceNotFoundException("Session not found") from e
+

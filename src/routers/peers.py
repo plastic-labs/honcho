@@ -4,11 +4,15 @@ from typing import Optional
 from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi.responses import StreamingResponse
+from fastapi import HTTPException
+from fastapi import BackgroundTasks
 
 from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import (
     AuthenticationException,
+    ResourceNotFoundException,
 )
 from src.security import JWTParams, require_auth
 
@@ -132,3 +136,49 @@ async def get_peer_sessions(
             filter=filter_param,
         ),
     )
+
+
+@router.post(
+    "/{peer_id}/chat",
+    response_model=schemas.DialecticResponse,
+    responses={
+        200: {
+            "description": "Response to a question informed by Honcho's User Representation",
+            "content": {"text/event-stream": {}},
+        },
+    },
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", user_id="peer_id")
+        )
+    ],
+)
+async def chat(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    options: schemas.DialecticOptions = Body(
+        ..., description="Dialectic Endpoint Parameters"
+    ),
+):
+    pass
+
+@router.post(
+    "/{peer_id}/messages",
+    response_model=list[schemas.Message],
+    dependencies=[
+        Depends(
+            require_auth(app_id="workspace_id", user_id="peer_id")
+        )
+    ],
+)
+async def create_messages_for_peer(
+    background_tasks: BackgroundTasks,
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    messages: schemas.MessageBatchCreate = Body(
+        ..., description="Batch of messages to create"
+    ),
+    db=db,
+):
+    """Create messages for a peer"""
+    pass

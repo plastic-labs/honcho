@@ -148,52 +148,12 @@ async def enqueue(payload: dict | list[dict]):
                 sentry_sdk.capture_exception(e)
 
 
-@router.post("", response_model=schemas.Message)
-async def create_message_for_session(
+@router.post("/", response_model=list[schemas.Message])
+async def create_messages_for_session(
     background_tasks: BackgroundTasks,
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    message: schemas.MessageCreate = Body(
-        ..., description="Message creation parameters"
-    ),
-    db=db,
-):
-    """Adds a message to a session"""
-    try:
-        workspace_name, session_name = workspace_id, session_id
-        honcho_message = await crud.create_message(
-            db, message=message, workspace_name=workspace_name, session_name=session_name
-        )
-
-        # Prepare message payload for background processing
-        payload = {
-            "workspace_name": workspace_name,
-            "session_name": session_name,
-            "message_id": honcho_message.public_id,
-            "is_user": honcho_message.is_user,
-            "content": honcho_message.content,
-            "metadata": honcho_message.h_metadata,
-            "peer_name": honcho_message.peer_name,
-        }
-
-        # Queue message for background processing
-        background_tasks.add_task(enqueue, payload)  # type: ignore
-        logger.info(
-            f"Message {honcho_message.public_id} created and queued for processing"
-        )
-
-        return honcho_message
-    except ValueError as e:
-        logger.error(f"Failed to create message for session {session_id}: {str(e)}")
-        raise ResourceNotFoundException("Session not found") from e
-
-
-@router.post("/batch", response_model=list[schemas.Message])
-async def create_batch_messages_for_session(
-    background_tasks: BackgroundTasks,
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
-    batch: schemas.MessageBatchCreate = Body(
+    messages: schemas.MessageBatchCreate = Body(
         ..., description="Batch of messages to create"
     ),
     db=db,
@@ -203,7 +163,7 @@ async def create_batch_messages_for_session(
     try:
         created_messages = await crud.create_messages(
             db,
-            messages=batch.messages,
+            messages=messages.messages,
             workspace_name=workspace_name,
             session_name=session_name,
         )
@@ -239,7 +199,6 @@ async def create_batch_messages_for_session(
 @router.post("/list", response_model=Page[schemas.Message])
 async def get_messages(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
     session_id: str = Path(..., description="ID of the session"),
     options: Optional[schemas.MessageGet] = Body(
         None, description="Filtering options for the messages list"
@@ -259,7 +218,6 @@ async def get_messages(
 
         messages_query = await crud.get_messages(
             workspace_name=workspace_id,
-            peer_name=peer_id,
             session_name=session_id,
             filter=filter,
             reverse=reverse,
