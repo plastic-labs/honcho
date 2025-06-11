@@ -603,30 +603,29 @@ class CollectionEmbeddingStore:
         """
         unique_observations = []
 
-        async with tracked_db("embedding_store.remove_duplicates") as db:
-            for observation in observations:
-                try:
-                    # Check for duplicates using the crud function
-                    duplicates = await crud.get_duplicate_documents(
-                        db,
-                        app_id=self.app_id,
-                        user_id=self.user_id,
-                        collection_id=self.collection_id,
-                        content=observation,
-                        similarity_threshold=similarity_threshold,
-                    )
+        for observation in observations:
+            try:
+                # Check for duplicates using the crud function with existing db session
+                duplicates = await crud.get_duplicate_documents(
+                    self.db,
+                    app_id=self.app_id,
+                    user_id=self.user_id,
+                    collection_id=self.collection_id,
+                    content=observation,
+                    similarity_threshold=similarity_threshold,
+                )
 
-                    if not duplicates:
-                        # No duplicates found, add to unique observations
-                        unique_observations.append(observation)
-                    else:
-                        # Log duplicate found
-                        logger.debug(
-                            f"Duplicate found: {duplicates[0].content}. Ignoring observation: {observation}"
-                        )
-                except Exception as e:
-                    logger.error(f"Error checking for duplicates: {e}")
-                    # If there's an error, still include the observation to avoid losing information
+                if not duplicates:
+                    # No duplicates found, add to unique observations
                     unique_observations.append(observation)
+                else:
+                    # Log duplicate found
+                    logger.debug(
+                        f"Duplicate found: {duplicates[0].content}. Ignoring observation: {observation}"
+                    )
+            except Exception as e:
+                logger.error(f"Error checking for duplicates: {e}")
+                # If there's an error, still include the observation to avoid losing information
+                unique_observations.append(observation)
 
         return unique_observations

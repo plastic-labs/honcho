@@ -48,6 +48,12 @@ class StructuredObservation(BaseModel):
         default_factory=list
     )
     
+    def __str__(self) -> str:
+        """Format as readable string with conclusion and premises."""
+        # Import here to avoid circular imports
+        from src.utils.deriver import format_structured_observation
+        return format_structured_observation(self.conclusion, self.premises)
+    
     def to_observation(self, metadata: ObservationMetadata | None = None) -> Observation:
         """Convert to storage Observation format."""
         if metadata is None:

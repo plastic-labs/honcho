@@ -15,6 +15,7 @@ from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.models import SemanticQueries
+from src.utils.deriver import format_structured_observation, format_premises_for_display
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -210,11 +211,8 @@ def _format_observation_list(observations: list) -> list[str]:
             # Handle structured observations with conclusion/premises
             conclusion = obs['conclusion']
             premises = obs.get('premises', [])
-            if premises:
-                premises_text = ", ".join(premises)
-                formatted.append(f"- {conclusion} (based on: {premises_text})")
-            else:
-                formatted.append(f"- {conclusion}")
+            formatted_obs = format_structured_observation(conclusion, premises)
+            formatted.append(f"- {formatted_obs}")
         else:
             # Handle other formats (dict or string)
             formatted.append(f"- {str(obs)}")
@@ -226,7 +224,21 @@ def _format_observation_list(observations: list) -> list[str]:
 # @with_langfuse()
 @llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219")
 async def dialectic_call(query: str, working_representation: str, additional_context: str):
-    return dialectic_prompt(query, working_representation, additional_context)
+    # Generate the prompt and log it
+    prompt_result = dialectic_prompt(query, working_representation, additional_context)
+    
+    # Pretty print the prompt content
+    if isinstance(prompt_result, list) and len(prompt_result) > 0:
+        # Extract content from the first BaseMessageParam
+        prompt_content = prompt_result[0].content
+    else:
+        prompt_content = str(prompt_result)
+    
+    logger.info("=== DIALECTIC PROMPT ===")
+    logger.info(prompt_content)
+    logger.info("=== END DIALECTIC PROMPT ===")
+    
+    return prompt_result
 
 
 @ai_track("Dialectic Stream")
@@ -234,7 +246,21 @@ async def dialectic_call(query: str, working_representation: str, additional_con
 # @with_langfuse()
 @llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219", stream=True)
 async def dialectic_stream(query: str, working_representation: str, additional_context: str):
-    return dialectic_prompt(query, working_representation, additional_context)
+    # Generate the prompt and log it
+    prompt_result = dialectic_prompt(query, working_representation, additional_context)
+    
+    # Pretty print the prompt content
+    if isinstance(prompt_result, list) and len(prompt_result) > 0:
+        # Extract content from the first BaseMessageParam
+        prompt_content = prompt_result[0].content
+    else:
+        prompt_content = str(prompt_result)
+    
+    logger.info("=== DIALECTIC PROMPT (STREAM) ===")
+    logger.info(prompt_content)
+    logger.info("=== END DIALECTIC PROMPT ===")
+    
+    return prompt_result
 
 
 async def chat(
@@ -276,7 +302,12 @@ async def chat(
             user_id=user_id,
             collection_id=collection.public_id,
         )
-        additional_context = await get_observations(final_query, embedding_store, include_premises=True)
+        additional_context = await get_observations(
+            final_query, 
+            embedding_store, 
+            include_premises=True,
+            session_id=session_id
+        )
         logger.debug(f"Retrieved additional context: {len(additional_context)} characters")
 
     # 3. Call dialectic with enhanced context
@@ -300,7 +331,8 @@ async def chat(
 
 
 async def get_observations(
-    query: str, embedding_store: CollectionEmbeddingStore, include_premises: bool = False
+    query: str, embedding_store: CollectionEmbeddingStore, include_premises: bool = False, 
+    session_id: str | None = None
 ) -> str:
     """
     Generate queries based on the dialectic query and retrieve relevant observations.
@@ -312,6 +344,7 @@ async def get_observations(
         query: The user query
         embedding_store: The embedding store to search
         include_premises: Whether to include premises from document metadata
+        session_id: Current session ID to exclude from results
 
     Returns:
         String containing additional relevant observations from semantic search
@@ -329,10 +362,17 @@ async def get_observations(
     
     # Combine and deduplicate results
     unique_observations = _deduplicate_observations(all_results)
-    logger.debug(f"Retrieved {len(unique_observations)} unique observations")
+    logger.debug(f"Retrieved {len(unique_observations)} unique observations before filtering")
+    
+    # Filter out current session observations to get only historical context
+    if session_id:
+        filtered_observations = _filter_current_session_observations(unique_observations, session_id)
+        logger.debug(f"After session filtering: {len(filtered_observations)} observations (removed {len(unique_observations) - len(filtered_observations)} current session observations)")
+        unique_observations = filtered_observations
     
     # Format observations
     if not unique_observations:
+        logger.debug("No unique historical observations found after filtering")
         return "No additional relevant context found."
     
     return _format_observations(unique_observations, include_premises)
@@ -371,8 +411,7 @@ def _format_observations(observations: list[tuple[str, str, dict]], include_prem
     
     for content, timestamp, metadata in observations:
         level = metadata.get('level', 'unknown')
-        date = timestamp.split('-')[0:3]  # Extract YYYY-MM-DD
-        date_str = '-'.join(date)
+        date_str = timestamp[:10]  # Extract YYYY-MM-DD
         
         if level not in grouped:
             grouped[level] = {}
@@ -384,8 +423,8 @@ def _format_observations(observations: list[tuple[str, str, dict]], include_prem
         
         # Add premises if requested and available
         if include_premises and metadata.get('premises'):
-            premises_text = ", ".join(metadata['premises'])
-            formatted_content = f"{content} (based on: {premises_text})"
+            premises_text = format_premises_for_display(metadata['premises'])
+            formatted_content = f"{content}{premises_text}"
         
         # Add access metadata if available
         access_parts = []
@@ -421,17 +460,12 @@ def _format_observations(observations: list[tuple[str, str, dict]], include_prem
         header = f"\n{level.upper()} OBSERVATIONS:" if level != 'unknown' else "\nOBSERVATIONS:"
         parts.append(header)
         
-        for date in sorted(grouped[level].keys(), reverse=True):
-            observations_for_date = grouped[level][date]
-            if len(observations_for_date) == 1:
-                parts.append(f"[{date}]: {observations_for_date[0]}")
-            else:
-                parts.append(f"[{date}]:")
-                for obs in observations_for_date:
-                    parts.append(f"  - {obs}")
+        for date_str in sorted(grouped[level].keys(), reverse=True):  # Most recent first
+            parts.append(f"\n{date_str}:")
+            for obs in grouped[level][date_str]:
+                parts.append(f"  • {obs}")
     
-    return "\n".join(parts)
-
+    return "\n".join(parts).strip()
 
 
 @prompt_template()
@@ -521,8 +555,27 @@ def query_generation_prompt(query: str) -> str:
     )
 
 
-@with_langfuse()
+# @with_langfuse()
 @llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
 async def generate_semantic_queries(query: str):
     return query_generation_prompt(query)
+
+
+def _filter_current_session_observations(observations: list[tuple[str, str, dict]], session_id: str) -> list[tuple[str, str, dict]]:
+    """Filter out observations from the current session."""
+    filtered = []
+    current_session_count = 0
+    
+    for content, timestamp, metadata in observations:
+        obs_session_id = metadata.get('session_id')
+        if obs_session_id != session_id:
+            filtered.append((content, timestamp, metadata))
+        else:
+            current_session_count += 1
+            logger.debug(f"Filtered out current session observation: {content[:50]}...")
+    
+    if current_session_count > 0:
+        logger.info(f"Filtered out {current_session_count} observations from current session {session_id}")
+    
+    return filtered
 

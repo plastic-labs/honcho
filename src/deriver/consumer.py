@@ -134,7 +134,7 @@ async def process_user_message(
     logger.debug(f"Starting fact extraction for user message: {message_id}")
 
     # Get current datetime for timestamping new observations
-    current_datetime = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    current_datetime = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
     # Create summary if needed BEFORE history retrieval to ensure consistent state
     await summarize_if_needed(db, app_id, session_id, user_id, message_id)

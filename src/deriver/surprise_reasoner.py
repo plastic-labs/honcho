@@ -7,7 +7,7 @@ from mirascope import llm, prompt_template
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.deriver.models import ObservationContext, ReasoningResponse
+from src.deriver.models import ObservationContext, ReasoningResponse, StructuredObservation
 from src.utils.deriver import (
     REASONING_LEVELS,
     analyze_observation_changes,
@@ -33,9 +33,10 @@ def reasoning_system_prompt() -> str:
 # @with_langfuse()
 @llm.call(
     provider="anthropic",
-    model="claude-3-7-sonnet-20250219",
+    model="claude-sonnet-4-20250514",
     response_model=ReasoningResponse,
     call_params={"max_tokens": 1500, "temperature": 0.7},
+    json_mode=True,
 )
 async def critical_analysis_call(
     current_time: str, context: str, history: str, new_turn: str
@@ -118,16 +119,12 @@ async def critical_analysis_call(
         </new_turn>
 
         **YOUR CRITICAL MISSION:**
-        Apply rigorous logical reasoning to analyze what we know about the user. ONLY make changes when evidence compels them.
-
-        Work through each reasoning type systematically in your thinking process:
+        Apply rigorous logical reasoning to analyze what we know about the user. ONLY make changes when evidence compels them. Work through each reasoning type systematically in your thinking process:
 
         1. **EXPLICIT OBSERVATIONS**:
-        - What facts are LITERALLY stated in the messages? Each observation should be a separate list item.
+        - What facts are LITERALLY stated in the messages? When writing these premises, append "User said:" to the beginning.
         - No inference, no reading between lines - only explicit statements
-        - Format each as: "User said: [exact quote or clear paraphrase]"
-        - Return as a list of individual observations, not a single concatenated string
-        - Examples: ["User said: I am 25 years old", "User said: I work as a teacher"]
+        - Include only direct quotes or clear paraphrases, be sure to denote them as such.
 
         2. **DEDUCTIVE OBSERVATIONS**:
         - Given the explicit facts as premises, what MUST be true?
@@ -149,16 +146,47 @@ async def critical_analysis_call(
         - Are current observations still well-supported?
         - Would changes genuinely improve understanding?
 
-        Remember: STABILITY is valuable. Only change what strong evidence demands.
-
         Provide your analysis in a structured JSON format:
-        - "thinking": string (the thinking process of the LLM)
-        - "explicit": array of strings (each starting with "User said:")
-        - "deductive": array of objects with "conclusion" and "premises" fields
-        - "inductive": array of objects with "conclusion" and "premises" fields  
-        - "abductive": array of objects with "conclusion" and "premises" fields
-
-        CRITICAL: The "explicit" field must be an array of strings, not a single string.
+        {{
+            "thinking": "Your critical analysis of the user's understanding, including your reasoning process and the changes you made to the observations.",
+            "explicit": [
+                "List of facts LITERALLY stated by the user",
+                "Direct quotes or clear paraphrases only",
+                "No interpretation or inference"
+            ],
+            "deductive": [
+                {{
+                    "conclusion": "Conclusions that MUST be true given explicit facts and premises as well as strict logical necessities from premises",
+                    "premises": ["Explicit fact or prior deductive conclusion used", "Another premise if needed"]
+                }},
+                {{
+                    "conclusion": "...",
+                    "premises": ["..."]
+                }}
+            ],
+            "inductive": [
+                {{
+                    "conclusion": "Highly probable patterns based on multiple observations, strong generalizations with substantial support, high confidence predictions about user behavior/preferences",
+                    "premises": ["Multiple observations supporting this", "Evidence from explicit/deductive observations", "Repeated instances"]
+                }},
+                {{
+                    "conclusion": "...",
+                    "premises": ["..."]
+                }}
+            ],
+            "abductive": [
+                {{
+                    "conclusion": "Best explanatory hypotheses for all observations, plausible theories about identity/motivations/context, coherent explanations that fit the overall pattern",
+                    "premises": ["All types of observations this explains", "Patterns it accounts for", "Facts it makes coherent"]
+                }},
+                {{
+                    "conclusion": "...",
+                    "premises": ["..."]
+                }}
+            ]
+        }}
+        
+        Remember: STABILITY is valuable. Only change what strong evidence demands.
         """
     )
 
@@ -173,32 +201,10 @@ class SurpriseReasoner:
         # Trace capture for analysis
         self.trace = None
 
-    def _reasoning_response_to_dict(
-        self, reasoning_response: ReasoningResponse
-    ) -> dict:
-        """Convert a ReasoningResponse to a dictionary format for compatibility with existing code."""
-        return {
-            "explicit": reasoning_response.explicit,
-            "deductive": [
-                {"conclusion": obs.conclusion, "premises": obs.premises}
-                for obs in reasoning_response.deductive
-            ],
-            "inductive": [
-                {"conclusion": obs.conclusion, "premises": obs.premises}
-                for obs in reasoning_response.inductive
-            ],
-            "abductive": [
-                {"conclusion": obs.conclusion, "premises": obs.premises}
-                for obs in reasoning_response.abductive
-            ],
-        }
-
     def _observation_context_to_reasoning_response(
         self, context: "ObservationContext"
     ) -> ReasoningResponse:
         """Convert ObservationContext to ReasoningResponse for compatibility."""
-        from src.deriver.models import StructuredObservation
-
         thinking = context.thinking
 
         # Convert explicit observations (strings)
@@ -255,7 +261,6 @@ class SurpriseReasoner:
             ),
             "reasoning_iterations": [],
             "final_observations": {},
-            "saved_documents": {},
             "summary": {},
         }
 
@@ -300,9 +305,6 @@ class SurpriseReasoner:
         self.trace["final_observations"] = final_observations
         self.trace["summary"] = {
             "total_iterations": len(self.trace["reasoning_iterations"]),
-            "max_depth_reached": max(
-                [it["depth"] for it in self.trace["reasoning_iterations"]], default=0
-            ),
             "total_observations_added": sum(
                 [
                     len(it["changes_detected"].get(level, {}).get("added", []))
@@ -350,7 +352,7 @@ class SurpriseReasoner:
     @observe()
     @ai_track("Derive New Insights")
     async def derive_new_insights(
-        self, context, history, new_turn, message_id: str, current_time: str
+        self, context, history, new_turn, current_time: str
     ) -> ReasoningResponse:
         """
         Critically analyzes and revises understanding, returning structured observations.
@@ -360,9 +362,6 @@ class SurpriseReasoner:
         logger.debug(
             f"CRITICAL ANALYSIS: current_time='{current_time}', formatted_new_turn='{formatted_new_turn}'"
         )
-
-        # Log prompts for debugging
-        logger.info(f"CRITICAL ANALYSIS - Context length: {len(formatted_context)}")
 
         # Call the standalone LLM function
         return await critical_analysis_call(
@@ -404,7 +403,7 @@ class SurpriseReasoner:
             total_duration_ms = int((time.time() - start_time) * 1000)
             convergence_reason = "completed"
             self._finalize_trace(
-                self._reasoning_response_to_dict(final_observations),
+                final_observations.model_dump(),
                 convergence_reason,
                 total_duration_ms,
             )
@@ -449,13 +448,18 @@ class SurpriseReasoner:
 
             # Perform critical analysis to get revised observation lists
             reasoning_response = await self.derive_new_insights(
-                context, history, new_turn, message_id, current_time
+                context, history, new_turn, current_time
             )
 
-            # Convert ReasoningResponse to dict for compatibility with existing code
-            revised_observations = self._reasoning_response_to_dict(reasoning_response)
-
-            logger.debug(f"Critical analysis result: {revised_observations}")
+            # Output the thinking content for this recursive iteration
+            thinking_lines = reasoning_response.thinking.strip().split('\n')
+            formatted_thinking = '\n'.join(f"    {line}" for line in thinking_lines)
+            
+            logger.info(f"""
+╭─── 🧠 THINKING (Depth {self.current_depth}) ───╮
+{formatted_thinking}
+╰─────────────────────────────────╯
+""")
 
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
@@ -493,7 +497,7 @@ class SurpriseReasoner:
                 depth=self.current_depth,
                 input_context=context,
                 thinking=reasoning_response.thinking,
-                output_observations=revised_observations,
+                output_observations=reasoning_response.model_dump(),
                 changes_detected=changes_detected or {},  # Ensure it's always a dict
                 significance_score=significance_score,
                 threshold_met=has_changes,
@@ -591,34 +595,39 @@ class SurpriseReasoner:
             return
 
         for observation in observations:
-            if (
-                isinstance(observation, dict)
-                and "conclusion" in observation
-                and "premises" in observation
-            ):
-                # This is a structured observation with premises
-                conclusion = observation["conclusion"]
-                premises = observation.get("premises", [])
+            if isinstance(observation, StructuredObservation):
+                # Handle StructuredObservation Pydantic objects
+                conclusion = observation.conclusion
+                premises = observation.premises
 
-                # Save the conclusion with premises in metadata
                 await self.embedding_store.save_observations(
                     db,
                     [conclusion],  # Only save the conclusion as content
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
-                    premises=premises,  # Pass premises directly
+                    premises=premises,  # Pass premises in metadata
                 )
 
                 logger.debug(
-                    f"Saved structured observation: conclusion='{conclusion}' with {len(premises)} premises in metadata"
+                    f"Saved structured observation: conclusion='{conclusion}' with {len(premises)} premises"
                 )
 
-            else:
-                # Simple observation (string or dict without structure)
-                observation_content = extract_observation_content(observation)
+            elif isinstance(observation, str):
+                # Handle simple string observations (like explicit observations)
+                await self.embedding_store.save_observations(
+                    db,
+                    [observation],
+                    message_id=message_id,
+                    level=level,
+                    session_id=session_id,
+                )
 
-                # Save simple observations normally (no premises)
+                logger.debug(f"Saved simple observation: '{observation[:50]}...'")
+
+            else:
+                # Fallback: extract content for unknown types
+                observation_content = extract_observation_content(observation)
                 await self.embedding_store.save_observations(
                     db,
                     [observation_content],
@@ -626,3 +635,6 @@ class SurpriseReasoner:
                     level=level,
                     session_id=session_id,
                 )
+
+                logger.debug(f"Saved fallback observation: '{observation_content[:50]}...'")
+                logger.warning(f"Unexpected observation type: {type(observation)}")

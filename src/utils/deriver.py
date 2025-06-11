@@ -20,20 +20,51 @@ LEVEL_LABELS = {
 }
 
 
+def format_premises_for_display(premises: list[str]) -> str:
+    """
+    Format premises as a clean bulleted list for display.
+    
+    Args:
+        premises: List of premise strings
+        
+    Returns:
+        Formatted premises text with newlines and bullets, or empty string if no premises
+    """
+    if not premises:
+        return ""
+    
+    premises_formatted = []
+    for premise in premises:
+        premises_formatted.append(f"    - {premise}")
+    return "\n" + "\n".join(premises_formatted)
+
+
+def format_structured_observation(conclusion: str, premises: list[str]) -> str:
+    """
+    Format a structured observation with conclusion and premises for display.
+    
+    Args:
+        conclusion: The main conclusion
+        premises: List of supporting premises
+        
+    Returns:
+        Formatted observation string
+    """
+    premises_text = format_premises_for_display(premises)
+    return f"{conclusion}{premises_text}"
+
+
 def extract_observation_content(observation) -> str:
     """Extract content string from an observation (dict or string)."""
+    # Handle StructuredObservation objects (Pydantic models)
+    if hasattr(observation, 'conclusion') and hasattr(observation, 'premises'):
+        return observation.conclusion 
+    
     if isinstance(observation, dict):
-        # For structured observations, format conclusion first with premises below
+        # For structured observations, return only the conclusion
         if "conclusion" in observation:
             conclusion = observation["conclusion"]
-            premises = observation.get("premises", [])
-
-            if premises:
-                premises_lines = [f"    - {premise}" for premise in premises]
-                premises_text = "\n" + "\n".join(premises_lines)
-                return f"{conclusion}{premises_text}"
-            else:
-                return conclusion
+            return conclusion
         # Fallback to content field or string representation
         return observation.get("content", str(observation))
     return str(observation)
@@ -293,10 +324,9 @@ def analyze_observation_changes(
         level_original_count = len(original_observations)
         total_original_observations += level_original_count
 
-        # Count significant changes (additions, removals, modifications)
+        # Count significant changes (only additions for deriver)
         added_observations = revised_observations_list - original_observations
-        removed_observations = original_observations - revised_observations_list
-        level_changes = len(added_observations) + len(removed_observations)
+        level_changes = len(added_observations)
         total_changed_observations += level_changes
 
         # Log changes for debugging
@@ -304,25 +334,15 @@ def analyze_observation_changes(
             logger.debug(f"Changes in {level} level:")
             logger.debug(f"  Original: {level_original_count} observations")
             logger.debug(f"  Added: {len(added_observations)} observations")
-            logger.debug(f"  Removed: {len(removed_observations)} observations")
             if added_observations:
                 logger.debug(
                     f"  New observations: {list(added_observations)[:3]}..."
-                )  # Show first 3
-            if removed_observations:
-                logger.debug(
-                    f"  Removed observations: {list(removed_observations)[:3]}..."
                 )  # Show first 3
 
         # Format changes for trace if detailed output requested
         if include_details and changes_detected is not None:
             changes_detected[level] = {
                 "added": list(added_observations),
-                "removed": [
-                    {"content": observation, "document_id": "unknown"}
-                    for observation in removed_observations
-                ],
-                "modified": [],  # Could enhance this to detect modifications vs additions/removals
             }
 
     # Calculate change percentage
