@@ -137,6 +137,46 @@ async def update_workspace(
 # peer methods
 ########################################################
 
+async def get_or_create_peers(
+    db: AsyncSession,
+    workspace_name: str,
+    peers: list[schemas.PeerCreate],
+) -> list[models.Peer]:
+    """
+    Get an existing list of peers or create new peers if they don't exist.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peers: List of peer creation schemas
+
+    Returns:
+        List of peers if found or created
+    """
+    peer_names = [p.name for p in peers]
+    stmt = (
+        select(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name.in_(peer_names))
+    )
+    result = await db.execute(stmt)
+    existing_peers = list(result.scalars().all())
+    
+    # If all peers exist, return them
+    if len(existing_peers) == len(peers):
+        return existing_peers
+    
+    # Find which peers need to be created
+    existing_names = {p.name for p in existing_peers}
+    peers_to_create = [p for p in peers if p.name not in existing_names]
+    
+    # Create new peers
+    new_peers = [models.Peer(workspace_name=workspace_name, name=p.name, h_metadata=p.metadata) for p in peers_to_create]
+    db.add_all(new_peers)
+    await db.commit()
+    
+    # Return combined list of existing and new peers
+    return existing_peers + new_peers
 
 async def get_or_create_peer(
     db: AsyncSession, workspace_name: str, peer: schemas.PeerCreate
@@ -242,6 +282,11 @@ async def update_peer(
         ) from e
 
 
+########################################################
+# session peer methods
+########################################################
+
+
 async def get_peer_sessions(
     workspace_name: str,
     peer_name: str,
@@ -281,6 +326,56 @@ async def get_peer_sessions(
         stmt = stmt.order_by(models.Session.id)
 
     return stmt
+
+async def add_peers_to_existing_session(
+    db: AsyncSession,
+    session_name: str,
+    peer_names: set[str],
+) -> list[models.SessionPeer]:
+    """
+    Add multiple peers to an existing session. If a peer already exists in the session,
+    it will be skipped gracefully.
+
+    Args:
+        db: Database session
+        session_name: Name of the session
+        peer_names: Set of peer names to add to the session
+
+    Returns:
+        List of all SessionPeer objects (both existing and newly created)
+    """
+    # Get existing peers for this session
+    stmt = (
+        select(models.SessionPeer)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.SessionPeer.peer_name.in_(peer_names))
+    )
+    result = await db.execute(stmt)
+    existing_peers = list(result.scalars().all())
+    existing_peer_names = {sp.peer_name for sp in existing_peers}
+    
+    # Filter out peers that already exist
+    new_peer_names = peer_names - existing_peer_names
+    
+    if not new_peer_names:
+        logger.debug(f"All peers already exist in session {session_name}")
+        return existing_peers
+
+    # Create SessionPeer objects only for new peers
+    new_session_peers = [
+        models.SessionPeer(
+            session_name=session_name,
+            peer_name=peer_name
+        )
+        for peer_name in new_peer_names
+    ]
+    
+    # Add all new session peers to the database
+    db.add_all(new_session_peers)
+    await db.commit()
+    
+    logger.debug(f"Added {len(new_session_peers)} new peers to session {session_name}")
+    return existing_peers + new_session_peers
 
 
 ########################################################
@@ -360,18 +455,11 @@ async def get_or_create_session(
             )
             db.add(honcho_session)
 
-        # Get or create all peers if provided
-        if peer_names: # TODO: Add bulk get_or_create for peers
-            for peer_name in peer_names:
-                await get_or_create_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+        # Get or create peers
+        await get_or_create_peers(db, workspace_name=workspace_name, peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names])
 
-        # add peers to session
-        for peer_name in peer_names:
-            session_peer = models.SessionPeer(
-                session_name=session.name,
-                peer_name=peer_name
-            ) # TODO: Add crud#add_peers_to_session
-            db.add(session_peer)
+        # Add all peers to session
+        await add_peers_to_existing_session(db, session_name=session.name, peer_names=peer_names)
 
         await db.commit()
         logger.info(f"Session {session.name} updated successfully in workspace {workspace_name} with {len(peer_names)} peers")
@@ -638,14 +726,12 @@ async def get_messages(
 async def get_message(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
     session_name: str,
     message_id: str,
 ) -> Optional[models.Message]:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.peer_name == peer_name)
         .where(models.Message.session_name == session_name)
         .where(models.Message.public_id == message_id)
     )
@@ -657,12 +743,11 @@ async def update_message(
     db: AsyncSession,
     message: schemas.MessageUpdate,
     workspace_name: str,
-    peer_name: str,
     session_name: str,
     message_id: str,
 ) -> bool:
     honcho_message = await get_message(
-        db, workspace_name=workspace_name, peer_name=peer_name, session_name=session_name, message_id=message_id
+        db, workspace_name=workspace_name, session_name=session_name, message_id=message_id
     )
     if honcho_message is None:
         raise ValueError("Message not found or does not belong to user")
