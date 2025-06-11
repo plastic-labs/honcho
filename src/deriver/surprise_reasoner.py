@@ -1,191 +1,195 @@
-import json
 import logging
 import time
-from typing import Any
+from inspect import cleandoc as c
 
-import sentry_sdk
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import observe
+from mirascope import llm, prompt_template
 from sentry_sdk.ai.monitoring import ai_track
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.agent import parse_xml_content
+from src.deriver.models import ObservationContext, ReasoningResponse, StructuredObservation
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
-from src.utils.model_client import ModelClient, ModelProvider
 from src.utils.deriver import (
     REASONING_LEVELS,
+    analyze_observation_changes,
     extract_observation_content,
-    ensure_context_structure,
-    format_new_turn_with_timestamp,
+    find_new_observations,
     format_context_for_prompt,
     format_context_for_trace,
-    analyze_observation_changes,
-    find_new_observations,
+    format_new_turn_with_timestamp,
 )
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
-PROVIDER = ModelProvider.ANTHROPIC
-MODEL = "claude-3-7-sonnet-20250219"
 
-REASONING_SYSTEM_PROMPT = """
-You are an expert at critically analyzing user understanding through rigorous logical reasoning while maintaining appropriate stability. Your goal is to IMPROVE understanding through careful analysis, not to change things unnecessarily.
 
-**REASONING MODES - STRICT DEFINITIONS:**
 
-1. **EXPLICIT OBSERVATIONS**: 
-   - Direct, literal facts stated by the user in their messages
-   - No interpretation or inference - only what is explicitly written
-   - Examples: "I am 25 years old", "I work as a teacher", "I live in NYC"
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
+@llm.call(
+    provider="anthropic",
+    model="claude-sonnet-4-20250514",
+    response_model=ReasoningResponse,
+    call_params={"max_tokens": 1500, "temperature": 0.7},
+    json_mode=True,
+)
+async def critical_analysis_call(
+    current_time: str, context: str, history: str, new_turn: str
+):
+    """
+    Standalone LLM call function for critical analysis using Mirascope.
+    """
+    return c(
+        f"""
+        You are an expert at critically analyzing user understanding through rigorous logical reasoning while maintaining appropriate stability. Your goal is to IMPROVE understanding through careful analysis, not to change things unnecessarily.
 
-2. **DEDUCTIVE OBSERVATIONS**: 
-   - Facts that MUST be true given explicit observations OR previous deductive observations as premises
-   - Follow strict logical necessity - if premises are true, conclusion MUST be true
-   - Can scaffold: use both explicit facts and previously deduced facts as premises
-   - Example: If user says "I'm teaching my 5th grade class" → They teach elementary school
+        **REASONING MODES - STRICT DEFINITIONS:**
 
-3. **INDUCTIVE OBSERVATIONS**:
-   - Highly probable generalizations based on patterns in certain observations (explicit and deductive)
-   - Strong likelihood based on repeated evidence, but not logically guaranteed
-   - Example: User mentions coding problems across 5 conversations → They likely work in tech
+        1. **EXPLICIT OBSERVATIONS**: 
+        - Direct, literal facts stated by the user in their messages
+        - No interpretation or inference - only what is explicitly written
+        - Examples: "I am 25 years old", "I work as a teacher", "I live in NYC"
 
-4. **ABDUCTIVE OBSERVATIONS**: 
-   - Plausible explanatory hypotheses that best explain the totality of observations
-   - Provisional conclusions that offer the most coherent explanation for observed patterns
-   - Example: Technical discussions + late night messages + coffee mentions → Possibly a startup founder
+        2. **DEDUCTIVE OBSERVATIONS**: 
+        - Facts that MUST be true given explicit observations OR previous deductive observations as premises
+        - Follow strict logical necessity - if premises are true, conclusion MUST be true
+        - Can scaffold: use both explicit facts and previously deduced facts as premises
+        - Example: If user says "I'm teaching my 5th grade class" → They teach elementary school
 
-**REASONING HIERARCHY & MOVEMENT:**
-- Explicit → Deductive: When logical necessity allows certain conclusion
-- Explicit/Deductive → Further Deductive: Can use certain facts to deduce more certain facts
-- Explicit/Deductive → Inductive: When patterns strongly support generalization
-- All observations → Abductive: When seeking best explanation for overall pattern
-- Abductive → Inductive: When hypothesis gains strong repeated support
-- Inductive → Deductive: When generalization becomes explicitly confirmed
+        3. **INDUCTIVE OBSERVATIONS**:
+        - Highly probable generalizations based on patterns in certain observations (explicit and deductive)
+        - Strong likelihood based on repeated evidence, but not logically guaranteed
+        - Example: User mentions coding problems across 5 conversations → They likely work in tech
 
-**CONSERVATIVE ANALYSIS PRINCIPLE:**
-Only make changes when evidence COMPELS change. The current understanding may be accurate and well-founded. Stability is valuable.
+        4. **ABDUCTIVE OBSERVATIONS**: 
+        - Plausible explanatory hypotheses that best explain the totality of observations
+        - Provisional conclusions that offer the most coherent explanation for observed patterns
+        - Example: Technical discussions + late night messages + coffee mentions → Possibly a startup founder
 
-**EVIDENCE STANDARDS BY TYPE:**
-1. **Explicit**: Only what is literally stated - no interpretation
-2. **Deductive**: Must follow with logical necessity - no exceptions possible
-3. **Inductive**: Requires multiple supporting instances, strong pattern
-4. **Abductive**: Must be best available explanation, coherent with all observations
+        **REASONING HIERARCHY & MOVEMENT:**
+        - Explicit → Deductive: When logical necessity allows certain conclusion
+        - Explicit/Deductive → Further Deductive: Can use certain facts to deduce more certain facts
+        - Explicit/Deductive → Inductive: When patterns strongly support generalization
+        - All observations → Abductive: When seeking best explanation for overall pattern
+        - Abductive → Inductive: When hypothesis gains strong repeated support
+        - Inductive → Deductive: When generalization becomes explicitly confirmed
 
-**TEMPORAL CONTEXT AWARENESS:**
-Facts may include temporal metadata showing access patterns:
-- **High access count**: Indicates core, stable traits
-- **Recent access**: Shows immediately relevant patterns  
-- **Cross-session consistency**: Suggests reliable patterns
-- **Low/single access**: May indicate situational information
+        **CONSERVATIVE ANALYSIS PRINCIPLE:**
+        Only make changes when evidence COMPELS change. The current understanding may be accurate and well-founded. Stability is valuable.
 
-**QUALITY OVER CHANGE:**
-Maintaining accurate existing insights is better than unnecessary modifications. Every change should demonstrably improve understanding.
-"""
+        **EVIDENCE STANDARDS BY TYPE:**
+        1. **Explicit**: Only what is literally stated - no interpretation
+        2. **Deductive**: Must follow with logical necessity - no exceptions possible
+        3. **Inductive**: Requires multiple supporting instances, strong pattern
+        4. **Abductive**: Must be best available explanation, coherent with all observations
 
-REASONING_USER_PROMPT = """
-Current date and time: {current_time}
+        **TEMPORAL CONTEXT AWARENESS:**
+        Facts may include temporal metadata showing access patterns:
+        - **High access count**: Indicates core, stable traits
+        - **Recent access**: Shows immediately relevant patterns  
+        - **Cross-session consistency**: Suggests reliable patterns
+        - **Low/single access**: May indicate situational information
 
-Here's the current user understanding to be CRITICALLY EXAMINED:
-<current_context>
-{context}
-</current_context>
+        **QUALITY OVER CHANGE:**
+        Maintaining accurate existing insights is better than unnecessary modifications. Every change should demonstrably improve understanding.
 
-Recent conversation history for context:
-<history>
-{history}
-</history>
+        You will respond with a structured analysis containing four types of observations. Be thorough but conservative - only include observations that meet the strict evidence standards for each reasoning type.
 
-New conversation turn to analyze:
-<new_turn>
-{new_turn}
-</new_turn>
 
-Here are the results of the last queries that were run (if any):
-<query_results>
-{query_results}
-</query_results>
+        Current date and time: {current_time}
 
-**YOUR CRITICAL MISSION:**
-Apply rigorous logical reasoning to analyze what we know about the user. ONLY make changes when evidence compels them.
+        Here's the current user understanding to be CRITICALLY EXAMINED:
+        <current_context>
+        {context}
+        </current_context>
 
-<thinking>
-Work through each reasoning type systematically:
+        Recent conversation history for context:
+        <history>
+        {history}
+        </history>
 
-1. **EXPLICIT OBSERVATIONS**:
-   - What facts are LITERALLY stated in the messages? When writing these premises, append "User said:" to the beginning.
-   - No inference, no reading between lines - only explicit statements
-   - Include only direct quotes or clear paraphrases, be sure to denote them as such.
+        New conversation turn to analyze:
+        <new_turn>
+        {new_turn}
+        </new_turn>
 
-2. **DEDUCTIVE OBSERVATIONS**:
-   - Given the explicit facts as premises, what MUST be true?
-   - Apply strict logical deduction - if premises are true, what conclusions are CERTAIN?
-   - Test each deduction: "If X is true, then Y MUST be true" (not just likely)
+        **YOUR CRITICAL MISSION:**
+        Apply rigorous logical reasoning to analyze what we know about the user. ONLY make changes when evidence compels them. Work through each reasoning type systematically in your thinking process:
 
-3. **INDUCTIVE OBSERVATIONS**:
-   - What patterns emerge from multiple observations?
-   - What generalizations have STRONG support (not just single instances)?
-   - How confident can we be in these patterns? (High probability required)
+        1. **EXPLICIT OBSERVATIONS**:
+        - What facts are LITERALLY stated in the messages? When writing these premises, append "User said:" to the beginning.
+        - No inference, no reading between lines - only explicit statements
+        - Include only direct quotes or clear paraphrases, be sure to denote them as such.
 
-4. **ABDUCTIVE OBSERVATIONS**:
-   - What hypotheses BEST explain all our observations?
-   - What plausible explanations make sense of the overall pattern?
-   - Which explanations are most coherent with everything we know?
+        2. **DEDUCTIVE OBSERVATIONS**:
+        - Given the explicit facts as premises, what MUST be true?
+        - Apply strict logical deduction - if premises are true, what conclusions are CERTAIN?
+        - Test each deduction: "If X is true, then Y MUST be true" (not just likely)
 
-For each category, ask:
-- Is there COMPELLING evidence to change existing observations?
-- Are current observations still well-supported?
-- Would changes genuinely improve understanding?
+        3. **INDUCTIVE OBSERVATIONS**:
+        - What patterns emerge from multiple observations?
+        - What generalizations have STRONG support (not just single instances)?
+        - How confident can we be in these patterns? (High probability required)
 
-Remember: STABILITY is valuable. Only change what strong evidence demands.
-</thinking>
+        4. **ABDUCTIVE OBSERVATIONS**:
+        - What hypotheses BEST explain all our observations?
+        - What plausible explanations make sense of the overall pattern?
+        - Which explanations are most coherent with everything we know?
 
-Format your response as follows:
-<response>
-{{
-    "explicit": [
-        "List of facts LITERALLY stated by the user",
-        "Direct quotes or clear paraphrases only",
-        "No interpretation or inference"
-    ],
-    "deductive": [
+        For each category, ask:
+        - Is there COMPELLING evidence to change existing observations?
+        - Are current observations still well-supported?
+        - Would changes genuinely improve understanding?
+
+        Provide your analysis in a structured JSON format:
         {{
-            "conclusion": "Conclusions that MUST be true given explicit facts and premises as well as strict logical necessities from premises",
-            "premises": ["Explicit fact or prior deductive conclusion used", "Another premise if needed"]
-        }},
-        {{
-            "conclusion": "...",
-            "premises": ["..."]
+            "thinking": "Your critical analysis of the user's understanding, including your reasoning process and the changes you made to the observations.",
+            "explicit": [
+                "List of facts LITERALLY stated by the user",
+                "Direct quotes or clear paraphrases only",
+                "No interpretation or inference"
+            ],
+            "deductive": [
+                {{
+                    "conclusion": "Conclusions that MUST be true given explicit facts and premises as well as strict logical necessities from premises",
+                    "premises": ["Explicit fact or prior deductive conclusion used", "Another premise if needed"]
+                }},
+                {{
+                    "conclusion": "...",
+                    "premises": ["..."]
+                }}
+            ],
+            "inductive": [
+                {{
+                    "conclusion": "Highly probable patterns based on multiple observations, strong generalizations with substantial support, high confidence predictions about user behavior/preferences",
+                    "premises": ["Multiple observations supporting this", "Evidence from explicit/deductive observations", "Repeated instances"]
+                }},
+                {{
+                    "conclusion": "...",
+                    "premises": ["..."]
+                }}
+            ],
+            "abductive": [
+                {{
+                    "conclusion": "Best explanatory hypotheses for all observations, plausible theories about identity/motivations/context, coherent explanations that fit the overall pattern",
+                    "premises": ["All types of observations this explains", "Patterns it accounts for", "Facts it makes coherent"]
+                }},
+                {{
+                    "conclusion": "...",
+                    "premises": ["..."]
+                }}
+            ],
+            "queries": [
+                "Query to learn more about the user, to either confirm or inform future reasoning",
+                "Query to learn more about the user, to either confirm or inform future reasoning"
+            ]
         }}
-    ],
-    "inductive": [
-        {{
-            "conclusion": "Highly probable patterns based on multiple observations, strong generalizations with substantial support, high confidence predictions about user behavior/preferences",
-            "premises": ["Multiple observations supporting this", "Evidence from explicit/deductive observations", "Repeated instances"]
-        }},
-        {{
-            "conclusion": "...",
-            "premises": ["..."]
-        }}
-    ],
-    "abductive": [
-        {{
-            "conclusion": "Best explanatory hypotheses for all observations, plausible theories about identity/motivations/context, coherent explanations that fit the overall pattern",
-            "premises": ["All types of observations this explains", "Patterns it accounts for", "Facts it makes coherent"]
-        }},
-        {{
-            "conclusion": "...",
-            "premises": ["..."]
-        }}
-    ]
-    queries: [
-        "Query to learn more about the user, to either confirm or inform future reasoning",
-        "Query to learn more about the user, to either confirm or inform future reasoning",
-        ...
-    ]
-}}
-</response>
+        
+        Remember: STABILITY is valuable. Only change what strong evidence demands.
+        """
+    )
 
-If evidence isn't compelling enough to warrant changes, return the SAME observations. Unnecessary changes degrade system quality.
-"""
 
 
 class SurpriseReasoner:
@@ -198,12 +202,53 @@ class SurpriseReasoner:
         # Trace capture for analysis
         self.trace = None
 
+    def _observation_context_to_reasoning_response(
+        self, context: "ObservationContext"
+    ) -> ReasoningResponse:
+        """Convert ObservationContext to ReasoningResponse for compatibility."""
+        thinking = context.thinking
+
+        # Convert explicit observations (strings)
+        explicit = [obs.content for obs in context.explicit]
+
+        # Convert structured observations
+        deductive = []
+        for obs in context.deductive:
+            structured_obs = StructuredObservation(
+                conclusion=obs.content,
+                premises=obs.metadata.premises if obs.metadata else [],
+            )
+            deductive.append(structured_obs)
+
+        inductive = []
+        for obs in context.inductive:
+            structured_obs = StructuredObservation(
+                conclusion=obs.content,
+                premises=obs.metadata.premises if obs.metadata else [],
+            )
+            inductive.append(structured_obs)
+
+        abductive = []
+        for obs in context.abductive:
+            structured_obs = StructuredObservation(
+                conclusion=obs.content,
+                premises=obs.metadata.premises if obs.metadata else [],
+            )
+            abductive.append(structured_obs)
+
+        return ReasoningResponse(
+            thinking=thinking,
+            explicit=explicit,
+            deductive=deductive,
+            inductive=inductive,
+            abductive=abductive,
+        )
     def _init_trace(
         self,
         message_id: str,
         session_id: str | None,
         user_message: str,
-        initial_context: dict,
+        initial_context: ReasoningResponse,
     ):
         """Initialize trace capture for this reasoning session."""
         self.trace = {
@@ -223,8 +268,8 @@ class SurpriseReasoner:
     def _capture_iteration(
         self,
         depth: int,
-        input_context: dict,
-        raw_response: str,
+        input_context: ReasoningResponse,
+        thinking: str,
         output_observations: dict,
         changes_detected: dict,
         significance_score: float,
@@ -236,15 +281,11 @@ class SurpriseReasoner:
         if not self.trace:
             return
 
-        # Extract reasoning trace from <thinking> tags
-        reasoning_trace = (
-            parse_xml_content(raw_response, "thinking") or "No thinking content found"
-        )
 
         iteration = {
             "depth": depth,
             "input_context": format_context_for_trace(input_context),
-            "reasoning_trace": reasoning_trace,
+            "thinking": thinking,
             "output_observations": output_observations,
             "changes_detected": changes_detected,
             "significance_score": significance_score,
@@ -265,9 +306,6 @@ class SurpriseReasoner:
         self.trace["final_observations"] = final_observations
         self.trace["summary"] = {
             "total_iterations": len(self.trace["reasoning_iterations"]),
-            "max_depth_reached": max(
-                [it["depth"] for it in self.trace["reasoning_iterations"]], default=0
-            ),
             "total_observations_added": sum(
                 [
                     len(it["changes_detected"].get(level, {}).get("added", []))
@@ -315,89 +353,35 @@ class SurpriseReasoner:
     @observe()
     @ai_track("Derive New Insights")
     async def derive_new_insights(
-        self,
-        context,
-        history,
-        new_turn,
-        message_id: str,
-        current_time: str,
-        query_results: dict[str, list[str]],
-    ) -> tuple[dict[str, list[str]], str]:
+        self, context, history, new_turn, current_time: str
+    ) -> ReasoningResponse:
         """
-        Critically analyzes and revises understanding, returning final observation lists at each level.
+        Critically analyzes and revises understanding, returning structured observations.
         """
-        system_prompt = REASONING_SYSTEM_PROMPT
         formatted_new_turn = format_new_turn_with_timestamp(new_turn, current_time)
         formatted_context = format_context_for_prompt(context)
         logger.debug(
             f"CRITICAL ANALYSIS: current_time='{current_time}', formatted_new_turn='{formatted_new_turn}'"
         )
-        user_prompt = REASONING_USER_PROMPT.format(
+
+        # Call the standalone LLM function
+        return await critical_analysis_call(
             current_time=current_time,
             context=formatted_context,
             history=history,
             new_turn=formatted_new_turn,
-            query_results=query_results,
         )
-
-        # Log prompts for debugging
-        logger.info(f"CRITICAL ANALYSIS PROMPT:\n{user_prompt}")
-
-        client = ModelClient(provider=PROVIDER, model=MODEL)
-
-        # prepare the messages
-        messages: list[dict[str, Any]] = [
-            {"role": "user", "content": user_prompt},
-        ]
-
-        langfuse_context.update_current_observation(input=messages, model=MODEL)
-
-        try:
-            # generate the response
-            response = await client.generate(
-                messages=messages,
-                system=system_prompt,
-                max_tokens=1500,  # Increased for more complex responses
-                temperature=0.7,  # Slightly lower for more consistent critical analysis
-                use_caching=True,
-            )
-            logger.info(f"Critical analysis response: {response}")
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            logger.error(f"Error generating critical analysis response: {e}")
-            raise e
-
-        # Parse the response to extract final observation lists
-        try:
-            # Find and parse the JSON response between <response> tags
-            try:
-                json_str = response[
-                    response.find("<response>") + 10 : response.find("</response>")
-                ].strip()
-                revised_observations = json.loads(json_str)
-            except (ValueError, json.JSONDecodeError) as e:
-                logger.error(f"Failed to parse critical analysis response: {e}")
-                logger.error(f"Response: {response}")
-                return ensure_context_structure({}), response
-
-            # Ensure we have the expected structure
-            final_observations = ensure_context_structure(revised_observations)
-
-            return final_observations, response
-
-        except (ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to parse critical analysis response: {e}")
-            return ensure_context_structure({}), response
 
     async def recursive_reason_with_trace(
         self,
-        context: dict,
+        db: AsyncSession,
+        context: ReasoningResponse,
         history: str,
         new_turn: str,
         message_id: str,
         session_id: str | None = None,
         current_time: str | None = None,
-    ) -> tuple[dict, dict]:
+    ) -> tuple[ReasoningResponse, dict]:
         """
         Main entry point for recursive reasoning with full trace capture.
         Returns final observations and complete trace.
@@ -413,14 +397,16 @@ class SurpriseReasoner:
         try:
             # Run recursive reasoning
             final_observations = await self.recursive_reason(
-                context, history, new_turn, message_id, session_id, current_time
+                db, context, history, new_turn, message_id, session_id, current_time
             )
 
             # Finalize trace
             total_duration_ms = int((time.time() - start_time) * 1000)
             convergence_reason = "completed"
             self._finalize_trace(
-                final_observations, convergence_reason, total_duration_ms
+                final_observations.model_dump(),
+                convergence_reason,
+                total_duration_ms,
             )
 
             # Ensure trace is not None before returning
@@ -436,14 +422,15 @@ class SurpriseReasoner:
 
     async def recursive_reason(
         self,
-        context: dict,
+        db: AsyncSession,
+        context: ReasoningResponse,
         history: str,
         new_turn: str,
         message_id: str,
         session_id: str | None = None,
         current_time: str | None = None,
         query_results: dict[str, list[str]] | None = None,
-    ) -> dict:
+    ) -> ReasoningResponse:
         """
         Main recursive reasoning function that critically analyzes and revises understanding.
         Continues recursion only if the LLM makes changes (is "surprised").
@@ -462,24 +449,25 @@ class SurpriseReasoner:
             iteration_start = time.time()
 
             # Perform critical analysis to get revised observation lists
-            revised_observations, raw_response = await self.derive_new_insights(
-                context, history, new_turn, message_id, current_time, query_results
+            reasoning_response = await self.derive_new_insights(
+                context, history, new_turn, current_time
             )
 
-            new_queries = revised_observations.get("queries", [])
-            logger.debug(f"new_queries: {new_queries}")
-            query_results = {}
-            if new_queries:
-                logger.info(f"New queries: {new_queries}")
+            # Process queries if any were generated
+            if reasoning_response.queries:
+                logger.info(f"Executing {len(reasoning_response.queries)} queries: {reasoning_response.queries}")
+                query_execution = await self.embedding_store.execute_queries(reasoning_response.queries)
+                logger.debug(f"Query execution returned {query_execution.total_observations} observations")
 
-                query_results = (
-                    await self.embedding_store.get_relevant_observations_for_queries(
-                        new_queries
-                    )
-                )
-                print("query_results", query_results)
-
-            logger.debug(f"Critical analysis result: {revised_observations}")
+            # Output the thinking content for this recursive iteration
+            thinking_lines = reasoning_response.thinking.strip().split('\n')
+            formatted_thinking = '\n'.join(f"    {line}" for line in thinking_lines)
+            
+            logger.info(f"""
+╭─── 🧠 THINKING (Depth {self.current_depth}) ───╮
+{formatted_thinking}
+╰─────────────────────────────────╯
+""")
 
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
@@ -493,7 +481,7 @@ class SurpriseReasoner:
 
             # Use the unified change analysis function
             result = analyze_observation_changes(
-                context, revised_observations, effective_threshold, include_details=True
+                context, reasoning_response, effective_threshold, include_details=True
             )
 
             # Unpack the result - it should be a tuple when include_details=True
@@ -515,8 +503,8 @@ class SurpriseReasoner:
             self._capture_iteration(
                 depth=self.current_depth,
                 input_context=context,
-                raw_response=raw_response,
-                output_observations=revised_observations,
+                thinking=reasoning_response.thinking,
+                output_observations=reasoning_response.model_dump(),
                 changes_detected=changes_detected or {},  # Ensure it's always a dict
                 significance_score=significance_score,
                 threshold_met=has_changes,
@@ -540,29 +528,29 @@ class SurpriseReasoner:
 
             # Save only the NEW observations that weren't in the original context
             await self._save_new_observations(
-                context, revised_observations, message_id, session_id
+                db, context, reasoning_response, message_id, session_id
             )
 
             # Pass the revised observations directly to the next iteration
-            # The LLM has already curated the most relevant observations in revised_observations
+            # The LLM has already curated the most relevant observations in reasoning_response
             logger.debug(
                 "Passing revised observations directly to next recursive iteration"
             )
             for level in REASONING_LEVELS:
-                level_observations = revised_observations.get(level, [])
+                level_observations = getattr(reasoning_response, level, [])
                 logger.debug(
                     f"Passing {level}: {len(level_observations)} revised observations to next iteration"
                 )
 
             # Recursively analyze with the revised observations from the LLM
             return await self.recursive_reason(
-                revised_observations,
+                db,
+                reasoning_response,
                 history,
                 new_turn,
                 message_id,
                 session_id,
                 current_time,
-                query_results=query_results,
             )
 
         finally:
@@ -571,8 +559,9 @@ class SurpriseReasoner:
 
     async def _save_new_observations(
         self,
-        original_context: dict,
-        revised_observations: dict,
+        db: AsyncSession,
+        original_context: ReasoningResponse,
+        revised_observations: ReasoningResponse,
         message_id: str,
         session_id: str | None = None,
     ):
@@ -591,6 +580,7 @@ class SurpriseReasoner:
                     f"Saving {len(new_observations)} new {level} observations: {new_observations}"
                 )
                 await self._save_structured_observations(
+                    db,
                     new_observations,
                     message_id=message_id,
                     level=level,
@@ -601,6 +591,7 @@ class SurpriseReasoner:
 
     async def _save_structured_observations(
         self,
+        db: AsyncSession,
         observations: list,
         message_id: str,
         level: str,
@@ -611,36 +602,45 @@ class SurpriseReasoner:
             return
 
         for observation in observations:
-            if (
-                isinstance(observation, dict)
-                and "conclusion" in observation
-                and "premises" in observation
-            ):
-                # This is a structured observation with premises
-                conclusion = observation["conclusion"]
-                premises = observation.get("premises", [])
-
-                # Save the conclusion with premises in metadata
+            if isinstance(observation, StructuredObservation):
+                # Handle StructuredObservation Pydantic objects
+                conclusion = observation.conclusion
+                premises = observation.premises
                 await self.embedding_store.save_observations(
+                    db,
                     [conclusion],  # Only save the conclusion as content
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
-                    premises=premises,  # Pass premises directly
+                    premises=premises,  # Pass premises in metadata
                 )
 
                 logger.debug(
-                    f"Saved structured observation: conclusion='{conclusion}' with {len(premises)} premises in metadata"
+                    f"Saved structured observation: conclusion='{conclusion}' with {len(premises)} premises"
                 )
 
-            else:
-                # Simple observation (string or dict without structure)
-                observation_content = extract_observation_content(observation)
-
-                # Save simple observations normally (no premises)
+            elif isinstance(observation, str):
+                # Handle simple string observations (like explicit observations)
                 await self.embedding_store.save_observations(
+                    db,
+                    [observation],
+                    message_id=message_id,
+                    level=level,
+                    session_id=session_id,
+                )
+
+                logger.debug(f"Saved simple observation: '{observation[:50]}...'")
+
+            else:
+                # Fallback: extract content for unknown types
+                observation_content = extract_observation_content(observation)
+                await self.embedding_store.save_observations(
+                    db,
                     [observation_content],
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
                 )
+
+                logger.debug(f"Saved fallback observation: '{observation_content[:50]}...'")
+                logger.warning(f"Unexpected observation type: {type(observation)}")

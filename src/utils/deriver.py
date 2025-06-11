@@ -9,8 +9,9 @@ from typing import Dict, List, Any
 import logging
 from datetime import datetime
 
+from src.deriver.models import ReasoningResponse
+
 REASONING_LEVELS = ["explicit", "deductive", "inductive", "abductive"]
-FIELDS = REASONING_LEVELS + ["queries"]
 LEVEL_LABELS = {
     "explicit": "Explicit (Literal facts directly stated by the user)",
     "deductive": "Deductive (Logically necessary conclusions from explicit facts)",
@@ -19,20 +20,51 @@ LEVEL_LABELS = {
 }
 
 
+def format_premises_for_display(premises: list[str]) -> str:
+    """
+    Format premises as a clean bulleted list for display.
+    
+    Args:
+        premises: List of premise strings
+        
+    Returns:
+        Formatted premises text with newlines and bullets, or empty string if no premises
+    """
+    if not premises:
+        return ""
+    
+    premises_formatted = []
+    for premise in premises:
+        premises_formatted.append(f"    - {premise}")
+    return "\n" + "\n".join(premises_formatted)
+
+
+def format_structured_observation(conclusion: str, premises: list[str]) -> str:
+    """
+    Format a structured observation with conclusion and premises for display.
+    
+    Args:
+        conclusion: The main conclusion
+        premises: List of supporting premises
+        
+    Returns:
+        Formatted observation string
+    """
+    premises_text = format_premises_for_display(premises)
+    return f"{conclusion}{premises_text}"
+
+
 def extract_observation_content(observation) -> str:
     """Extract content string from an observation (dict or string)."""
+    # Handle StructuredObservation objects (Pydantic models)
+    if hasattr(observation, 'conclusion') and hasattr(observation, 'premises'):
+        return observation.conclusion 
+    
     if isinstance(observation, dict):
-        # For structured observations, format conclusion first with premises below
+        # For structured observations, return only the conclusion
         if "conclusion" in observation:
             conclusion = observation["conclusion"]
-            premises = observation.get("premises", [])
-
-            if premises:
-                premises_lines = [f"    - {premise}" for premise in premises]
-                premises_text = "\n" + "\n".join(premises_lines)
-                return f"{conclusion}{premises_text}"
-            else:
-                return conclusion
+            return conclusion
         # Fallback to content field or string representation
         return observation.get("content", str(observation))
     return str(observation)
@@ -40,7 +72,7 @@ def extract_observation_content(observation) -> str:
 
 def ensure_context_structure(context: dict) -> dict:
     """Ensure context has all reasoning levels with empty lists as defaults."""
-    return {level: context.get(level, []) for level in FIELDS}
+    return {level: context.get(level, []) for level in REASONING_LEVELS}
 
 
 def format_new_turn_with_timestamp(new_turn: str, current_time: str) -> str:
@@ -60,12 +92,12 @@ def format_new_turn_with_timestamp(new_turn: str, current_time: str) -> str:
         return f"user: {new_turn}"
 
 
-def format_context_for_prompt(context: dict) -> str:
+def format_context_for_prompt(context) -> str:
     """
-    Format context dictionary into a clean, readable string for LLM prompts.
+    Format context into a clean, readable string for LLM prompts.
 
     Args:
-        context: Dictionary with reasoning levels as keys and observation lists as values
+        context: ReasoningResponse object or dict with reasoning levels as keys and observation lists as values
                 Observations can be strings or dicts - will be normalized
 
     Returns:
@@ -76,9 +108,21 @@ def format_context_for_prompt(context: dict) -> str:
 
     formatted_sections = []
 
+    # Handle both ReasoningResponse objects and dicts
+    if hasattr(context, "explicit"):
+        # It's a ReasoningResponse object
+        observations_by_level = {
+            "explicit": context.explicit,
+            "deductive": context.deductive,
+            "inductive": context.inductive,
+            "abductive": context.abductive,
+        }
+    else:
+        # It's a dict
+        observations_by_level = context
     # Process each level in a consistent order
     for level in REASONING_LEVELS:
-        observations = context.get(level, [])
+        observations = observations_by_level.get(level, [])
         if not observations:
             continue
 
@@ -199,7 +243,7 @@ def normalize_observations_for_comparison(observations: list) -> set:
 
 
 def format_context_for_trace(
-    context: Dict[str, List], include_similarity_scores: bool = False
+    context: ReasoningResponse, include_similarity_scores: bool = False
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Format context for trace capture with optional similarity scores.
@@ -211,30 +255,12 @@ def format_context_for_trace(
     Returns:
         Formatted context dictionary for trace
     """
-    formatted: Dict[str, List[Dict[str, Any]]] = {}
-    for level in REASONING_LEVELS:
-        observations = context.get(level, [])
-        formatted[level] = []
-        for observation in observations:
-            if isinstance(observation, dict):
-                entry: Dict[str, Any] = {
-                    "content": extract_observation_content(observation),
-                    "document_id": observation.get("document_id", "unknown"),
-                }
-                if include_similarity_scores:
-                    entry["similarity_score"] = observation.get("similarity_score", 0.0)
-                formatted[level].append(entry)
-            else:
-                entry = {"content": str(observation), "document_id": "unknown"}
-                if include_similarity_scores:
-                    entry["similarity_score"] = 0.0
-                formatted[level].append(entry)
-    return formatted
+    return context.model_dump()
 
 
 def analyze_observation_changes(
-    original_context: dict,
-    revised_observations: dict,
+    original_context: ReasoningResponse,
+    revised_observations: ReasoningResponse,
     significance_threshold: float,
     include_details: bool = False,
 ):
@@ -257,22 +283,30 @@ def analyze_observation_changes(
     total_changed_observations = 0
     changes_detected = {} if include_details else None
 
+    # Helper function to get observations from either ReasoningResponse or dict
+    def get_observations(context, level):
+        if hasattr(context, "explicit"):
+            # It's a ReasoningResponse object
+            return getattr(context, level, [])
+        else:
+            # It's a dict
+            return context.get(level, [])
+
     for level in REASONING_LEVELS:
         # Get normalized observation sets for comparison
         original_observations = normalize_observations_for_comparison(
-            original_context.get(level, [])
+            get_observations(original_context, level)
         )
         revised_observations_list = normalize_observations_for_comparison(
-            revised_observations.get(level, [])
+            get_observations(revised_observations, level)
         )
 
         level_original_count = len(original_observations)
         total_original_observations += level_original_count
 
-        # Count significant changes (additions, removals, modifications)
+        # Count significant changes (only additions for deriver)
         added_observations = revised_observations_list - original_observations
-        removed_observations = original_observations - revised_observations_list
-        level_changes = len(added_observations) + len(removed_observations)
+        level_changes = len(added_observations)
         total_changed_observations += level_changes
 
         # Log changes for debugging
@@ -280,25 +314,15 @@ def analyze_observation_changes(
             logger.debug(f"Changes in {level} level:")
             logger.debug(f"  Original: {level_original_count} observations")
             logger.debug(f"  Added: {len(added_observations)} observations")
-            logger.debug(f"  Removed: {len(removed_observations)} observations")
             if added_observations:
                 logger.debug(
                     f"  New observations: {list(added_observations)[:3]}..."
-                )  # Show first 3
-            if removed_observations:
-                logger.debug(
-                    f"  Removed observations: {list(removed_observations)[:3]}..."
                 )  # Show first 3
 
         # Format changes for trace if detailed output requested
         if include_details and changes_detected is not None:
             changes_detected[level] = {
                 "added": list(added_observations),
-                "removed": [
-                    {"content": observation, "document_id": "unknown"}
-                    for observation in removed_observations
-                ],
-                "modified": [],  # Could enhance this to detect modifications vs additions/removals
             }
 
     # Calculate change percentage
@@ -328,7 +352,9 @@ def analyze_observation_changes(
         return is_significant
 
 
-def find_new_observations(original_context: dict, revised_observations: dict) -> dict:
+def find_new_observations(
+    original_context: ReasoningResponse, revised_observations: ReasoningResponse
+) -> dict:
     """
     Find observations that are new in revised_observations compared to original_context.
 
@@ -341,11 +367,20 @@ def find_new_observations(original_context: dict, revised_observations: dict) ->
     """
     new_observations_by_level = {}
 
+    # Helper function to get observations from either ReasoningResponse or dict
+    def get_observations(context, level):
+        if hasattr(context, "explicit"):
+            # It's a ReasoningResponse object
+            return getattr(context, level, [])
+        else:
+            # It's a dict
+            return context.get(level, [])
+
     for level in REASONING_LEVELS:
         original_observations = normalize_observations_for_comparison(
-            original_context.get(level, [])
+            get_observations(original_context, level)
         )
-        revised_list = revised_observations.get(level, [])
+        revised_list = get_observations(revised_observations, level)
 
         # Find genuinely new observations
         new_observations = []

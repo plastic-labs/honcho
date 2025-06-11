@@ -1,16 +1,21 @@
-import asyncio
+import datetime
 import logging
-import uuid
+from typing import cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.utils import update_document_access_metadata
 from src.utils.deriver import format_datetime_simple
 
-from ... import crud, models
+from ... import crud, models, schemas
 from ...dependencies import tracked_db
 from ...utils.history import SummaryType, get_session_summaries
-from ..fact_saver import get_observation_saver_queue
+from ..models import (
+    Observation,
+    ObservationContext,
+    ObservationMetadata,
+    ReasoningLevel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +61,7 @@ class CollectionEmbeddingStore:
         current_message: str,
         conversation_context: str = "",
         max_distance: float = 0.8,
-    ) -> dict[str, list[dict]]:
+    ) -> ObservationContext:
         """Retrieve semantically relevant observations with their session context for reasoning.
 
         Args:
@@ -65,8 +70,7 @@ class CollectionEmbeddingStore:
             max_distance: Maximum distance for semantic similarity
 
         Returns:
-            Dictionary with reasoning levels as keys and lists of observation dicts as values.
-            Each observation dict contains: {'content': str, 'session_context': str, 'created_at': datetime}
+            ObservationContext with typed observations organized by reasoning level
         """
         try:
             # Create a combined query from message and context
@@ -75,11 +79,12 @@ class CollectionEmbeddingStore:
             else:
                 combined_query = current_message
 
-            context = {}
+            context = ObservationContext()
 
             # Search within each reasoning level separately
-            for level in ["abductive", "inductive", "deductive"]:
-                count = getattr(self, f"{level}_observations_count")
+            for level_name in ["abductive", "inductive", "deductive"]:
+                count = getattr(self, f"{level_name}_observations_count")
+                level = ReasoningLevel(level_name)
 
                 # Get semantically relevant documents for this level
                 documents = await crud.query_documents(
@@ -90,7 +95,7 @@ class CollectionEmbeddingStore:
                     query=combined_query,
                     max_distance=max_distance,
                     top_k=count * 3,  # Get more candidates than needed
-                    filter={"level": level},  # Filter to specific reasoning level
+                    filter={"level": level_name},  # Filter to specific reasoning level
                 )
 
                 # Convert to list and sort by recency within semantic results
@@ -102,30 +107,39 @@ class CollectionEmbeddingStore:
                 # Take the most recent among semantically relevant results
                 selected_docs = docs_sorted[:count]
 
-                # Format with session context and deduplicate
-                context[level] = []
+                # Create typed observations and deduplicate
                 seen_observations = set()
-
                 for doc in selected_docs:
                     # Normalize observation content for deduplication
                     normalized_content = doc.content.strip().lower()
 
                     # Skip if we've seen a very similar observation
                     if normalized_content not in seen_observations:
-                        observation_info = {
-                            "content": doc.content,
-                            "session_context": doc.h_metadata.get(
+                        # Extract metadata from doc.h_metadata
+                        metadata = ObservationMetadata()
+                        if doc.h_metadata:
+                            metadata.session_context = doc.h_metadata.get(
                                 "session_context", ""
-                            ),
-                            "summary_id": doc.h_metadata.get("summary_id", ""),
-                            "created_at": doc.created_at,
-                            "last_accessed": doc.h_metadata.get("last_accessed"),
-                            "access_count": doc.h_metadata.get("access_count", 0),
-                            "accessed_sessions": doc.h_metadata.get(
+                            )
+                            metadata.summary_id = doc.h_metadata.get("summary_id", "")
+                            metadata.last_accessed = doc.h_metadata.get("last_accessed")
+                            metadata.access_count = doc.h_metadata.get(
+                                "access_count", 0
+                            )
+                            metadata.accessed_sessions = doc.h_metadata.get(
                                 "accessed_sessions", []
-                            ),
-                        }
-                        context[level].append(observation_info)
+                            )
+                            metadata.message_id = doc.h_metadata.get("message_id")
+                            metadata.level = doc.h_metadata.get("level")
+                            metadata.session_id = doc.h_metadata.get("session_id")
+                            metadata.premises = doc.h_metadata.get("premises", [])
+
+                        observation = Observation(
+                            content=doc.content,
+                            metadata=metadata,
+                            created_at=doc.created_at,
+                        )
+                        context.add_observation(observation, level)
                         seen_observations.add(normalized_content)
                     else:
                         logger.debug(
@@ -143,26 +157,27 @@ class CollectionEmbeddingStore:
             simple_context = await self.get_relevant_observations_for_reasoning(
                 current_message, conversation_context, max_distance
             )
-            # Convert to context format
-            enhanced_context = {}
-            for level, observations in simple_context.items():
-                enhanced_context[level] = [
-                    {
-                        "content": observation,
-                        "session_context": "",
-                        "summary_id": "",
-                        "created_at": None,
-                    }
-                    for observation in observations
-                ]
-            return enhanced_context
+
+            # Convert simple context to ObservationContext
+            context = ObservationContext()
+            for level_name, observations in simple_context:
+                if level_name in {"abductive", "inductive", "deductive"}:
+                    level = ReasoningLevel(level_name)
+                    for obs_content in observations:
+                        observation = Observation(
+                            content=obs_content,
+                            created_at=datetime.datetime.now()
+                        )
+                        context.add_observation(observation, level)
+
+            return context
 
     async def get_relevant_observations_for_reasoning(
         self,
         current_message: str,
         conversation_context: str = "",
         max_distance: float = 0.8,
-    ) -> dict[str, list[str]]:
+    ) -> ObservationContext:
         """Retrieve semantically relevant observations for reasoning about the current message.
 
         Args:
@@ -171,7 +186,7 @@ class CollectionEmbeddingStore:
             max_distance: Maximum distance for semantic similarity
 
         Returns:
-            Dictionary with reasoning levels as keys and lists of relevant observations as values.
+            ObservationContext with observations organized by reasoning level
         """
         try:
             # Create a combined query from message and context
@@ -180,11 +195,12 @@ class CollectionEmbeddingStore:
             else:
                 combined_query = current_message
 
-            context = {}
+            context = ObservationContext()
 
             # Search within each reasoning level separately
-            for level in ["abductive", "inductive", "deductive"]:
-                count = getattr(self, f"{level}_observations_count")
+            for level_name in ["abductive", "inductive", "deductive"]:
+                count = getattr(self, f"{level_name}_observations_count")
+                level = ReasoningLevel(level_name)
 
                 # Get semantically relevant documents for this level
                 documents = await crud.query_documents(
@@ -195,7 +211,7 @@ class CollectionEmbeddingStore:
                     query=combined_query,
                     max_distance=max_distance,
                     top_k=count * 3,  # Get more candidates than needed
-                    filter={"level": level},  # Filter to specific reasoning level
+                    filter={"level": level_name},  # Filter to specific reasoning level
                 )
 
                 # Convert to list and sort by recency within semantic results
@@ -210,25 +226,27 @@ class CollectionEmbeddingStore:
                 ]  # Get more candidates for deduplication
 
                 # Deduplicate observations for this level
-                unique_observations = []
                 seen_observations = set()
+                added_count = 0
 
                 for doc in selected_docs:
                     if (
-                        len(unique_observations) >= count
+                        added_count >= count
                     ):  # Stop when we have enough unique observations
                         break
 
                     normalized_content = doc.content.strip().lower()
                     if normalized_content not in seen_observations:
-                        unique_observations.append(doc.content)
+                        observation = Observation(
+                            content=doc.content, created_at=doc.created_at
+                        )
+                        context.add_observation(observation, level)
                         seen_observations.add(normalized_content)
+                        added_count += 1
                     else:
                         logger.debug(
                             f"Skipping duplicate observation during retrieval: {doc.content[:50]}..."
                         )
-
-                context[level] = unique_observations
 
             return context
 
@@ -238,108 +256,107 @@ class CollectionEmbeddingStore:
             logger.warning("Falling back to recent observations retrieval")
             return await self.get_most_recent_observations()
 
-    async def get_relevant_observations_for_queries(
-        self, queries: list[str]
-    ) -> dict[str, list[str]]:
-        """Retrieve relevant observations for multiple queries using semantic search.
-
+    async def execute_queries(self, queries: list[str]) -> "QueryExecutionResult":
+        """Execute multiple semantic queries and return strongly-typed results.
+        
         Args:
             queries: List of query strings to search for
-
+            
         Returns:
-            Dictionary mapping each query to a list of relevant observations across all reasoning levels
+            QueryExecutionResult with results organized by query and level
         """
+        from src.deriver.models import QueryExecutionResult, QueryResult, QueryResultsByLevel
+        
         try:
-            # Use asyncio.gather to run all queries concurrently
-            query_results_list = await asyncio.gather(
-                *[
-                    self.get_relevant_observations_for_reasoning(current_message=query)
-                    for query in queries
-                ]
+            # Execute queries concurrently
+            query_results_list = []
+            for query in queries:
+                try:
+                    # Get observations for this query
+                    context = await self.get_relevant_observations_for_reasoning(
+                        current_message=query
+                    )
+                    
+                    # Extract observation content strings
+                    observations = []
+                    for level_name in ["explicit", "deductive", "inductive", "abductive"]:
+                        level_obs = getattr(context, level_name, [])
+                        for obs in level_obs:
+                            observations.append(obs.content)
+                    
+                    query_results_list.append(QueryResult(
+                        query=query,
+                        observations=observations
+                    ))
+                except Exception as e:
+                    logger.error(f"Error executing query '{query}': {e}")
+                    query_results_list.append(QueryResult(
+                        query=query,
+                        observations=[]
+                    ))
+            
+            # Organize results by level
+            results_by_level = QueryResultsByLevel()
+            total_observations = 0
+            
+            for query_result in query_results_list:
+                total_observations += len(query_result.observations)
+                
+                # For now, we'll add all observations to abductive level
+                # This could be enhanced to categorize by level in the future
+                results_by_level.abductive.extend(query_result.observations)
+            
+            return QueryExecutionResult(
+                queries=queries,
+                results_by_query=query_results_list,
+                results_by_level=results_by_level,
+                total_observations=total_observations
+            )
+            
+        except Exception as e:
+            logger.error(f"Error executing queries: {e}")
+            return QueryExecutionResult(
+                queries=queries,
+                results_by_query=[],
+                results_by_level=QueryResultsByLevel(),
+                total_observations=0
             )
 
-            # Build the result dictionary grouped by level
-            query_results = {}
-
-            # Initialize result structure with empty lists for each level
-            for level in ["explicit", "deductive", "inductive", "abductive"]:
-                query_results[level] = []
-
-            # Collect observations from all queries, grouped by level
-            for i, query in enumerate(queries):
-                relevant_context = query_results_list[i]
-
-                for level in ["explicit", "deductive", "inductive", "abductive"]:
-                    if level in relevant_context:
-                        query_results[level].extend(relevant_context[level])
-
-            return query_results
-
-        except Exception as e:
-            logger.error(f"Error retrieving relevant observations for queries: {e}")
-            return {query: [] for query in queries}
-
-    async def get_most_recent_observations(self) -> dict[str, list[str]]:
+    async def get_most_recent_observations(self) -> ObservationContext:
         """Retrieve the most recent observations for each reasoning level.
 
         Returns:
-            Dictionary with reasoning levels as keys and lists of observations as values.
-            Each list contains the most recent observations for that reasoning level.
+            ObservationContext with the most recent observations for each reasoning level.
         """
         try:
-            # Get most recent abductive observations
-            abductive_stmt = await crud.get_documents(
-                app_id=self.app_id,
-                user_id=self.user_id,
-                collection_id=self.collection_id,
-                filter={"level": "abductive"},
-                reverse=True,  # Sort by created_at in descending order
-            )
-            abductive_docs = (
-                (await self.db.execute(abductive_stmt))
-                .scalars()
-                .all()[: self.abductive_observations_count]
-            )
+            context = ObservationContext()
 
-            # Get most recent inductive observations
-            inductive_stmt = await crud.get_documents(
-                app_id=self.app_id,
-                user_id=self.user_id,
-                collection_id=self.collection_id,
-                filter={"level": "inductive"},
-                reverse=True,
-            )
-            inductive_docs = (
-                (await self.db.execute(inductive_stmt))
-                .scalars()
-                .all()[: self.inductive_observations_count]
-            )
+            # Process each reasoning level
+            for level_name in ["abductive", "inductive", "deductive"]:
+                count = getattr(self, f"{level_name}_observations_count")
+                level = ReasoningLevel(level_name)
 
-            # Get most recent deductive observations
-            deductive_stmt = await crud.get_documents(
-                app_id=self.app_id,
-                user_id=self.user_id,
-                collection_id=self.collection_id,
-                filter={"level": "deductive"},
-                reverse=True,
-            )
-            deductive_docs = (
-                (await self.db.execute(deductive_stmt))
-                .scalars()
-                .all()[: self.deductive_observations_count]
-            )
+                # Get most recent observations for this level
+                stmt = await crud.get_documents(
+                    app_id=self.app_id,
+                    user_id=self.user_id,
+                    collection_id=self.collection_id,
+                    filter={"level": level_name},
+                    reverse=True,  # Sort by created_at in descending order
+                )
+                docs = (await self.db.execute(stmt)).scalars().all()[:count]
 
-            # Initialize context with retrieved observations
-            context = {
-                "abductive": [doc.content for doc in abductive_docs],
-                "inductive": [doc.content for doc in inductive_docs],
-                "deductive": [doc.content for doc in deductive_docs],
-            }
+                # Convert to Observation objects
+                for doc in docs:
+                    observation = Observation(
+                        content=doc.content, created_at=doc.created_at
+                    )
+                    context.add_observation(observation, level)
 
             logger.debug(
-                f"Retrieved observations - Abductive: {len(abductive_docs)}, "
-                f"Inductive: {len(inductive_docs)}, "
-                f"Deductive: {len(deductive_docs)}"
+                f"Retrieved observations - Abductive: {len(context.abductive)}, "
+                f"Inductive: {len(context.inductive)}, "
+                f"Deductive: {len(context.deductive)}"
             )
 
             return context
@@ -347,86 +364,68 @@ class CollectionEmbeddingStore:
         except Exception as e:
             logger.error(f"Error retrieving observations from collection: {e}")
             # Return empty context if retrieval fails
-            return {"abductive": [], "inductive": [], "deductive": []}
+            return ObservationContext()
 
     # Backward compatibility alias
-    async def get_most_recent_facts(self) -> dict[str, list[str]]:
+    async def get_most_recent_facts(self) -> ObservationContext:
         """Backward compatibility alias for get_most_recent_observations."""
         return await self.get_most_recent_observations()
 
     async def get_contextualized_observations_for_dialectic(
         self,
-    ) -> dict[str, list[str]]:
+    ) -> ObservationContext:
         """Retrieve observations with their session context for dialectic API calls.
 
         Returns:
-            Dictionary with reasoning levels as keys and lists of contextualized observations.
-            Observations are grouped by session summary to avoid redundancy and provide context.
+            ObservationContext with observations organized by reasoning level.
+            This method creates simple observations without the complex formatting.
         """
         try:
-            levels = ["abductive", "inductive", "deductive"]
-            context = {}
+            context = ObservationContext()
 
-            for level in levels:
-                count = getattr(self, f"{level}_observations_count")
+            for level_name in ["abductive", "inductive", "deductive"]:
+                count = getattr(self, f"{level_name}_observations_count")
+                level = ReasoningLevel(level_name)
+
                 stmt = await crud.get_documents(
                     app_id=self.app_id,
                     user_id=self.user_id,
                     collection_id=self.collection_id,
-                    filter={"level": level},
+                    filter={"level": level_name},
                     reverse=True,
                 )
                 docs = (await self.db.execute(stmt)).scalars().all()[:count]
 
-                # Group observations by session summary to avoid redundancy
-                summary_groups = {}
-                docs_without_summary = []
-
-                # Note: We skip metadata updates during retrieval to avoid concurrent session operations
-                # Access tracking will be handled through other paths when observations are saved/updated
+                # Convert to Observation objects with full metadata
                 for doc in docs:
+                    metadata = ObservationMetadata()
+                    if doc.h_metadata:
+                        metadata.session_context = doc.h_metadata.get(
+                            "session_context", ""
+                        )
+                        metadata.summary_id = doc.h_metadata.get("summary_id", "")
+                        metadata.last_accessed = doc.h_metadata.get("last_accessed")
+                        metadata.access_count = doc.h_metadata.get("access_count", 0)
+                        metadata.accessed_sessions = doc.h_metadata.get(
+                            "accessed_sessions", []
+                        )
+                        metadata.message_id = doc.h_metadata.get("message_id")
+                        metadata.level = doc.h_metadata.get("level")
+                        metadata.session_id = doc.h_metadata.get("session_id")
+                        metadata.premises = doc.h_metadata.get("premises", [])
 
-                    session_context = doc.h_metadata.get("session_context", "")
-                    summary_id = doc.h_metadata.get("summary_id", "")
-
-                    if session_context and summary_id:
-                        if summary_id not in summary_groups:
-                            summary_groups[summary_id] = {
-                                "context": session_context,
-                                "observations": [],
-                            }
-                        summary_groups[summary_id]["observations"].append(doc.content)
-                    else:
-                        docs_without_summary.append(doc)
-
-                # Format the output to avoid redundancy
-                formatted_observations = []
-
-                # Add observations with session context (grouped to avoid repeating context)
-                for _summary_id, group in summary_groups.items():
-                    context_header = f"From session: {group['context'][:200]}..."
-                    observations_list = "\n".join(
-                        [
-                            f"  • {observation_content}"
-                            for observation_content in group["observations"]
-                        ]
+                    observation = Observation(
+                        content=doc.content,
+                        metadata=metadata,
+                        created_at=doc.created_at,
                     )
-                    formatted_observations.append(
-                        f"{context_header}\n{observations_list}"
-                    )
-
-                # Add observations without session context - include temporal metadata
-                for doc in docs_without_summary:
-                    temporal_info = self._format_temporal_metadata_for_dialectic(doc)
-                    formatted_observations.append(f"• {doc.content}{temporal_info}")
-
-                context[level] = formatted_observations
+                    context.add_observation(observation, level)
 
             logger.debug(
                 f"Retrieved contextualized observations for dialectic - "
-                f"Abductive: {len(context['abductive'])}, "
-                f"Inductive: {len(context['inductive'])}, "
-                f"Deductive: {len(context['deductive'])}"
+                f"Abductive: {len(context.abductive)}, "
+                f"Inductive: {len(context.inductive)}, "
+                f"Deductive: {len(context.deductive)}"
             )
 
             return context
@@ -434,15 +433,16 @@ class CollectionEmbeddingStore:
         except Exception as e:
             logger.error(f"Error retrieving contextualized observations: {e}")
             # Return empty context if retrieval fails
-            return {"abductive": [], "inductive": [], "deductive": []}
+            return ObservationContext()
 
     # Backward compatibility alias
-    async def get_contextualized_facts_for_dialectic(self) -> dict[str, list[str]]:
+    async def get_contextualized_facts_for_dialectic(self) -> ObservationContext:
         """Backward compatibility alias for get_contextualized_observations_for_dialectic."""
         return await self.get_contextualized_observations_for_dialectic()
 
     async def save_observations(
         self,
+        db: AsyncSession,
         observations: list[str],
         similarity_threshold: float = 0.85,
         message_id: str | None = None,
@@ -453,6 +453,7 @@ class CollectionEmbeddingStore:
         """Save observations to the collection with summary linking.
 
         Args:
+            db: Database session to use for saving
             observations: List of observations to save
             similarity_threshold: Observations with similarity above this threshold are considered duplicates
             message_id: Message ID to associate with the observations
@@ -465,13 +466,13 @@ class CollectionEmbeddingStore:
         summary_content = None
         if session_id:
             try:
-                latest_summaries = await get_session_summaries(
-                    self.db, session_id, SummaryType.SHORT, only_latest=True
+                latest_summary = cast(
+                    models.Metamessage | None,
+                    await get_session_summaries(
+                        db, session_id, SummaryType.SHORT, only_latest=True
+                    )
                 )
-                if latest_summaries and len(latest_summaries) > 0:
-                    latest_summary = latest_summaries[
-                        0
-                    ]  # Get the first (latest) summary
+                if latest_summary:  # latest_summary is a single Metamessage or None
                     summary_id = latest_summary.public_id
                     summary_content = latest_summary.content
             except Exception as e:
@@ -479,9 +480,9 @@ class CollectionEmbeddingStore:
                     f"Could not retrieve latest summary for session {session_id}: {e}"
                 )
 
-        # Queue observations for asynchronous saving to avoid transaction conflicts
-        observation_saver = get_observation_saver_queue()
-
+        # Save observations directly (we're already in background processing context)
+        saved_count = 0
+        
         for observation in observations:
             try:
                 # Check if similar observation already exists
@@ -517,27 +518,26 @@ class CollectionEmbeddingStore:
                 if premises:
                     metadata["premises"] = premises
 
-                # Generate unique task ID for tracking
-                task_id = f"{level}_{message_id}_{uuid.uuid4().hex[:8]}"
-
-                # Queue the observation for saving
-                await observation_saver.queue_observation(
-                    content=observation,
+                # Save the observation directly
+                document = schemas.DocumentCreate(content=observation, metadata=metadata)
+                await crud.create_document(
+                    db,
+                    document=document,
                     app_id=self.app_id,
                     user_id=self.user_id,
                     collection_id=self.collection_id,
-                    metadata=metadata,
                     duplicate_threshold=1 - similarity_threshold,
-                    task_id=task_id,
                 )
-                logger.debug(f"Queued observation for saving: {observation[:50]}...")
+                
+                saved_count += 1
+                logger.debug(f"Saved observation: {observation[:50]}...")
 
             except Exception as e:
-                logger.error(f"Error queuing observation '{observation[:50]}...': {e}")
+                logger.error(f"Error saving observation '{observation[:50]}...': {e}")
                 continue
 
         logger.info(
-            f"Queued {len(observations)} observations for saving (level: {level})"
+            f"Saved {saved_count} observations directly (level: {level})"
         )
 
     def _format_temporal_metadata_for_dialectic(self, doc: models.Document) -> str:
@@ -627,7 +627,7 @@ class CollectionEmbeddingStore:
             self.user_id,
             self.collection_id,
             session_id=session_id,
-            message_id=message_id
+            message_id=message_id,
         )
 
     async def get_relevant_observations(
@@ -669,30 +669,29 @@ class CollectionEmbeddingStore:
         """
         unique_observations = []
 
-        async with tracked_db("embedding_store.remove_duplicates") as db:
-            for observation in observations:
-                try:
-                    # Check for duplicates using the crud function
-                    duplicates = await crud.get_duplicate_documents(
-                        db,
-                        app_id=self.app_id,
-                        user_id=self.user_id,
-                        collection_id=self.collection_id,
-                        content=observation,
-                        similarity_threshold=similarity_threshold,
-                    )
+        for observation in observations:
+            try:
+                # Check for duplicates using the crud function with existing db session
+                duplicates = await crud.get_duplicate_documents(
+                    self.db,
+                    app_id=self.app_id,
+                    user_id=self.user_id,
+                    collection_id=self.collection_id,
+                    content=observation,
+                    similarity_threshold=similarity_threshold,
+                )
 
-                    if not duplicates:
-                        # No duplicates found, add to unique observations
-                        unique_observations.append(observation)
-                    else:
-                        # Log duplicate found
-                        logger.debug(
-                            f"Duplicate found: {duplicates[0].content}. Ignoring observation: {observation}"
-                        )
-                except Exception as e:
-                    logger.error(f"Error checking for duplicates: {e}")
-                    # If there's an error, still include the observation to avoid losing information
+                if not duplicates:
+                    # No duplicates found, add to unique observations
                     unique_observations.append(observation)
+                else:
+                    # Log duplicate found
+                    logger.debug(
+                        f"Duplicate found: {duplicates[0].content}. Ignoring observation: {observation}"
+                    )
+            except Exception as e:
+                logger.error(f"Error checking for duplicates: {e}")
+                # If there's an error, still include the observation to avoid losing information
+                unique_observations.append(observation)
 
         return unique_observations

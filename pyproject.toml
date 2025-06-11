@@ -6,7 +6,7 @@ authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.111.0",
     "python-dotenv>=1.0.0",
@@ -22,9 +22,10 @@ dependencies = [
     "anthropic>=0.36.0",
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
-    "langfuse>=2.57.1",
+    "langfuse<3",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
+    "mirascope[anthropic,google,groq]>=1.25.0",
 ]
 [tool.uv]
 dev-dependencies = [
