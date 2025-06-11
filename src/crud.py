@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Optional
+from typing import Optional, Any
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -1437,7 +1437,7 @@ async def create_document(
             logger.info(f"Duplicate found: {duplicate.content}. Ignoring new document.")
             return duplicate
 
-    honcho_document = models.Document(
+    doc_kwargs: dict[str, Any] = dict(
         app_id=app_id,
         user_id=user_id,
         collection_id=collection_id,
@@ -1445,6 +1445,11 @@ async def create_document(
         h_metadata=document.metadata,
         embedding=embedding,
     )
+
+    if document.created_at is not None:
+        doc_kwargs["created_at"] = document.created_at
+
+    honcho_document = models.Document(**doc_kwargs)
     db.add(honcho_document)
     await db.commit()
     await db.refresh(honcho_document)

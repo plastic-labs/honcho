@@ -47,7 +47,7 @@ async def save_deriver_trace(
     """Save the deriver trace as a metamessage attached to the user message."""
     try:
         # Convert trace to JSON string
-        trace_content = json.dumps(deriver_trace, indent=2)
+        trace_content = json.dumps(deriver_trace, indent=2, default=str)
 
         # Create metamessage schema
         metamessage_data = schemas.MetamessageCreate(
@@ -138,7 +138,16 @@ async def process_user_message(
     logger.debug(f"Starting fact extraction for user message: {message_id}")
 
     # Use message timestamp instead of wall-clock time for reasoning/fact dating
+    from datetime import datetime as _dt
     current_time = format_datetime_simple(message_datetime)
+    # Parse raw message_datetime to datetime object if possible
+    if isinstance(message_datetime, str):
+        try:
+            message_dt_obj = _dt.fromisoformat(message_datetime.replace("Z", "+00:00"))
+        except ValueError:
+            message_dt_obj = None
+    else:
+        message_dt_obj = message_datetime
     logger.info(f"Using message timestamp '{current_time}' for message {message_id}")
 
     # Create summary if needed BEFORE history retrieval to ensure consistent state
@@ -227,6 +236,7 @@ async def process_user_message(
         message_id=message_id,
         session_id=session_id,
         current_time=current_time,
+        message_created_at=message_dt_obj,
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")

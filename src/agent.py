@@ -15,7 +15,11 @@ from src import crud, models
 from src.dependencies import tracked_db
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.models import SemanticQueries
-from src.utils.deriver import format_structured_observation, format_premises_for_display
+from src.utils.deriver import (
+    format_structured_observation,
+    format_premises_for_display,
+    format_datetime_simple,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -207,14 +211,25 @@ def _format_observation_list(observations: list) -> list[str]:
     """Format a list of observations into consistent string format."""
     formatted = []
     for obs in observations:
-        if isinstance(obs, dict) and 'conclusion' in obs:
-            # Handle structured observations with conclusion/premises
-            conclusion = obs['conclusion']
-            premises = obs.get('premises', [])
-            formatted_obs = format_structured_observation(conclusion, premises)
+        if isinstance(obs, dict):
+            # Determine core content and premises
+            if 'conclusion' in obs:
+                content = obs['conclusion']
+                premises = obs.get('premises', [])
+                formatted_obs = format_structured_observation(content, premises)
+            else:
+                content = obs.get('content', str(obs))
+                formatted_obs = content
+
+            # Prepend timestamp if available
+            ts_raw = obs.get('created_at')
+            if ts_raw:
+                ts = format_datetime_simple(ts_raw)
+                formatted_obs = f"{ts}: {formatted_obs}"
+
             formatted.append(f"- {formatted_obs}")
         else:
-            # Handle other formats (dict or string)
+            # Handle string fallback
             formatted.append(f"- {str(obs)}")
     return formatted
 
@@ -420,6 +435,10 @@ def _format_observations(observations: list[tuple[str, str, dict]], include_prem
         if include_premises and metadata.get('premises'):
             premises_text = format_premises_for_display(metadata['premises'])
             formatted_content = f"{content}{premises_text}"
+        
+        # Prefix with full timestamp for clarity
+        if timestamp:
+            formatted_content = f"{timestamp}: {formatted_content}"
         
         # Add access metadata if available
         access_parts = []

@@ -1,6 +1,7 @@
 import logging
 import time
 from inspect import cleandoc as c
+import datetime
 
 from langfuse.decorators import observe
 from mirascope import llm
@@ -217,7 +218,7 @@ class SurpriseReasoner:
         """Convert ObservationContext to ReasoningResponse for compatibility."""
         thinking = context.thinking
 
-        # Convert explicit observations (strings)
+        # Convert explicit observations (strings) without modifying content
         explicit = [obs.content for obs in context.explicit]
 
         # Convert structured observations
@@ -390,6 +391,7 @@ class SurpriseReasoner:
         message_id: str,
         session_id: str | None = None,
         current_time: str | None = None,
+        message_created_at: datetime.datetime | None = None,
     ) -> tuple[ReasoningResponse, dict]:
         """
         Main entry point for recursive reasoning with full trace capture.
@@ -406,14 +408,17 @@ class SurpriseReasoner:
         try:
             # Run recursive reasoning
             final_observations = await self.recursive_reason(
-                db, context, history, new_turn, message_id, session_id, current_time
+                db, context, history, new_turn, message_id, session_id, current_time, message_created_at
             )
+
+            # Build obs dict with timestamps for trace
+            final_obs_with_dates = self._attach_created_at(final_observations, message_created_at)
 
             # Finalize trace
             total_duration_ms = int((time.time() - start_time) * 1000)
             convergence_reason = "completed"
             self._finalize_trace(
-                final_observations.model_dump(),
+                final_obs_with_dates,
                 convergence_reason,
                 total_duration_ms,
             )
@@ -445,6 +450,7 @@ class SurpriseReasoner:
         message_id: str,
         session_id: str | None = None,
         current_time: str | None = None,
+        message_created_at: datetime.datetime | None = None,
         query_results: dict[str, list[str]] | None = None,
     ) -> ReasoningResponse:
         """
@@ -555,7 +561,7 @@ class SurpriseReasoner:
 
             # Save only the NEW observations that weren't in the original context
             await self._save_new_observations(
-                db, context, reasoning_response, message_id, session_id
+                db, context, reasoning_response, message_id, session_id, message_created_at
             )
 
             # Display observations in a tree structure and performance metrics
@@ -587,6 +593,7 @@ class SurpriseReasoner:
                 message_id,
                 session_id,
                 current_time,
+                message_created_at,
             )
 
         finally:
@@ -600,6 +607,7 @@ class SurpriseReasoner:
         revised_observations: ReasoningResponse,
         message_id: str,
         session_id: str | None = None,
+        message_created_at: datetime.datetime | None = None,
     ):
         """Save only the observations that are new compared to the original context."""
         if not self.embedding_store:
@@ -621,6 +629,7 @@ class SurpriseReasoner:
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
+                    message_created_at=message_created_at,
                 )
             else:
                 logger.debug(f"No new observations to save for {level} level")
@@ -632,6 +641,7 @@ class SurpriseReasoner:
         message_id: str,
         level: str,
         session_id: str | None = None,
+        message_created_at: datetime.datetime | None = None,
     ):
         """Save observations with proper handling of structured data including premises."""
         if not self.embedding_store:
@@ -649,6 +659,7 @@ class SurpriseReasoner:
                     level=level,
                     session_id=session_id,
                     premises=premises,  # Pass premises in metadata
+                    message_created_at=message_created_at,
                 )
 
                 logger.debug(
@@ -663,6 +674,7 @@ class SurpriseReasoner:
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
+                    message_created_at=message_created_at,
                 )
 
                 logger.debug(f"Saved simple observation: '{observation[:50]}...'")
@@ -676,9 +688,40 @@ class SurpriseReasoner:
                     message_id=message_id,
                     level=level,
                     session_id=session_id,
+                    message_created_at=message_created_at,
                 )
 
                 logger.debug(
                     f"Saved fallback observation: '{observation_content[:50]}...'"
                 )
                 logger.warning(f"Unexpected observation type: {type(observation)}")
+
+    # ---------------------------------------------------------------------
+    # Helper: attach created_at timestamps to ReasoningResponse for trace
+    # ---------------------------------------------------------------------
+
+    def _attach_created_at(
+        self,
+        observations: ReasoningResponse,
+        created_at: datetime.datetime | None,
+    ) -> dict:
+        """Return a dict version of observations with created_at on every item."""
+
+        ts = created_at.isoformat() if created_at else None
+
+        def explicit_item(content: str):
+            return {"content": content, "created_at": ts}
+
+        def structured_item(ob):
+            return {
+                "conclusion": ob.conclusion,
+                "premises": ob.premises,
+                "created_at": ts,
+            }
+
+        return {
+            "explicit": [explicit_item(c) for c in observations.explicit],
+            "deductive": [structured_item(o) for o in observations.deductive],
+            "inductive": [structured_item(o) for o in observations.inductive],
+            "abductive": [structured_item(o) for o in observations.abductive],
+        }

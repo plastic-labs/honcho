@@ -238,6 +238,7 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict = {}
+    created_at: datetime.datetime | None = None
 
 
 class DocumentGet(DocumentBase):

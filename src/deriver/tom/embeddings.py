@@ -458,6 +458,7 @@ class CollectionEmbeddingStore:
         level: str | None = None,
         session_id: str | None = None,
         premises: list[str] | None = None,
+        message_created_at: datetime.datetime | None = None,
     ) -> None:
         """Save observations to the collection with summary linking.
 
@@ -469,6 +470,7 @@ class CollectionEmbeddingStore:
             level: Reasoning level (abductive, inductive, deductive)
             session_id: Session ID to link with existing summary context
             premises: List of premises that support this observation (stored in metadata)
+            message_created_at: Timestamp for the message associated with the observations
         """
         # Get latest short summary for context linking if session_id provided
         summary_id = None
@@ -509,6 +511,21 @@ class CollectionEmbeddingStore:
                     )
                     continue
 
+                # Determine timestamp for this observation
+                obs_created_at = message_created_at
+
+                # If not provided, attempt to derive from message_id
+                if obs_created_at is None and message_id is not None:
+                    try:
+                        from sqlalchemy import select
+                        stmt_msg = select(models.Message).where(models.Message.public_id == message_id).limit(1)
+                        msg_res = await db.execute(stmt_msg)
+                        msg_obj = msg_res.scalar_one_or_none()
+                        if msg_obj is not None:
+                            obs_created_at = msg_obj.created_at
+                    except Exception as e:
+                        logger.warning(f"Could not fetch message timestamp for {message_id}: {e}")
+
                 # No similar observation found, create new one
                 metadata = {}
                 if message_id:
@@ -528,7 +545,11 @@ class CollectionEmbeddingStore:
                     metadata["premises"] = premises
 
                 # Save the observation directly
-                document = schemas.DocumentCreate(content=observation, metadata=metadata)
+                document = schemas.DocumentCreate(
+                    content=observation,
+                    metadata=metadata,
+                    created_at=obs_created_at,
+                )
                 await crud.create_document(
                     db,
                     document=document,
