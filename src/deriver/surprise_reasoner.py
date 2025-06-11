@@ -484,16 +484,7 @@ class SurpriseReasoner:
                 )
 
             # Output the thinking content for this recursive iteration
-            thinking_lines = reasoning_response.thinking.strip().split("\n")
-            formatted_thinking = "\n".join(f"    {line}" for line in thinking_lines)
-
-            logger.info(
-                f"""
-╭─── 🧠 THINKING (Depth {self.current_depth}) ───╮
-{formatted_thinking}
-╰─────────────────────────────────╯
-"""
-            )
+            log_thinking_panel(reasoning_response.thinking, self.current_depth)
 
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
@@ -539,7 +530,9 @@ class SurpriseReasoner:
             )
 
             # Log changes in a beautiful table
-            log_changes_table(changes_detected or {}, significance_score, effective_threshold)
+            log_changes_table(
+                changes_detected or {}, significance_score, effective_threshold
+            )
 
             # If no changes were made, the LLM wasn't surprised - exit recursion
             if not has_changes:
