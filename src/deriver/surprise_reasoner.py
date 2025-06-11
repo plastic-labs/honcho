@@ -7,7 +7,11 @@ from mirascope import llm, prompt_template
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.deriver.models import ObservationContext, ReasoningResponse, StructuredObservation
+from src.deriver.models import (
+    ObservationContext,
+    ReasoningResponse,
+    StructuredObservation,
+)
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils.deriver import (
     REASONING_LEVELS,
@@ -21,8 +25,6 @@ from src.utils.deriver import (
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-
 
 
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
@@ -182,14 +184,14 @@ async def critical_analysis_call(
             ],
             "queries": [
                 "Query to learn more about the user, to either confirm or inform future reasoning",
-                "Query to learn more about the user, to either confirm or inform future reasoning"
+                "Query to learn more about the user, to either confirm or inform future reasoning",
+                ...
             ]
         }}
         
         Remember: STABILITY is valuable. Only change what strong evidence demands.
         """
     )
-
 
 
 class SurpriseReasoner:
@@ -243,6 +245,7 @@ class SurpriseReasoner:
             inductive=inductive,
             abductive=abductive,
         )
+
     def _init_trace(
         self,
         message_id: str,
@@ -280,7 +283,6 @@ class SurpriseReasoner:
         """Capture data for a single reasoning iteration."""
         if not self.trace:
             return
-
 
         iteration = {
             "depth": depth,
@@ -455,19 +457,27 @@ class SurpriseReasoner:
 
             # Process queries if any were generated
             if reasoning_response.queries:
-                logger.info(f"Executing {len(reasoning_response.queries)} queries: {reasoning_response.queries}")
-                query_execution = await self.embedding_store.execute_queries(reasoning_response.queries)
-                logger.debug(f"Query execution returned {query_execution.total_observations} observations")
+                logger.info(
+                    f"Executing {len(reasoning_response.queries)} queries: {reasoning_response.queries}"
+                )
+                query_execution = await self.embedding_store.execute_queries(
+                    reasoning_response.queries
+                )
+                logger.debug(
+                    f"Query execution returned {query_execution.total_observations} observations"
+                )
 
             # Output the thinking content for this recursive iteration
-            thinking_lines = reasoning_response.thinking.strip().split('\n')
-            formatted_thinking = '\n'.join(f"    {line}" for line in thinking_lines)
-            
-            logger.info(f"""
+            thinking_lines = reasoning_response.thinking.strip().split("\n")
+            formatted_thinking = "\n".join(f"    {line}" for line in thinking_lines)
+
+            logger.info(
+                f"""
 ╭─── 🧠 THINKING (Depth {self.current_depth}) ───╮
 {formatted_thinking}
 ╰─────────────────────────────────╯
-""")
+"""
+            )
 
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
@@ -642,5 +652,7 @@ class SurpriseReasoner:
                     session_id=session_id,
                 )
 
-                logger.debug(f"Saved fallback observation: '{observation_content[:50]}...'")
+                logger.debug(
+                    f"Saved fallback observation: '{observation_content[:50]}...'"
+                )
                 logger.warning(f"Unexpected observation type: {type(observation)}")
