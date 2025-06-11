@@ -4,12 +4,11 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, delete, select, insert
+from sqlalchemy import Select, cast, delete, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import func
 from sqlalchemy.types import BigInteger
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models, schemas
 from .exceptions import (
@@ -675,7 +674,7 @@ async def get_peers_from_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-) -> list[models.Peer]:
+) -> Select:
     """
     Get all peers from a session.
 
@@ -685,7 +684,7 @@ async def get_peers_from_session(
         session_name: Name of the session
 
     Returns:
-        List of Peer objects in the session
+        Paginated list of Peer objects in the session
 
     Raises:
         ResourceNotFoundException: If the session does not exist
@@ -711,8 +710,8 @@ async def get_peers_from_session(
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
     )
-    result = await db.execute(stmt)
-    return list(result.scalars().all())
+
+    return stmt
 
 
 async def add_peers_to_session(
