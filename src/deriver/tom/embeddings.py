@@ -256,6 +256,72 @@ class CollectionEmbeddingStore:
             logger.warning("Falling back to recent observations retrieval")
             return await self.get_most_recent_observations()
 
+    async def execute_queries(self, queries: list[str]) -> "QueryExecutionResult":
+        """Execute multiple semantic queries and return strongly-typed results.
+        
+        Args:
+            queries: List of query strings to search for
+            
+        Returns:
+            QueryExecutionResult with results organized by query and level
+        """
+        from src.deriver.models import QueryExecutionResult, QueryResult, QueryResultsByLevel
+        
+        try:
+            # Execute queries concurrently
+            query_results_list = []
+            for query in queries:
+                try:
+                    # Get observations for this query
+                    context = await self.get_relevant_observations_for_reasoning(
+                        current_message=query
+                    )
+                    
+                    # Extract observation content strings
+                    observations = []
+                    for level_name in ["explicit", "deductive", "inductive", "abductive"]:
+                        level_obs = getattr(context, level_name, [])
+                        for obs in level_obs:
+                            observations.append(obs.content)
+                    
+                    query_results_list.append(QueryResult(
+                        query=query,
+                        observations=observations
+                    ))
+                except Exception as e:
+                    logger.error(f"Error executing query '{query}': {e}")
+                    query_results_list.append(QueryResult(
+                        query=query,
+                        observations=[]
+                    ))
+            
+            # Organize results by level
+            results_by_level = QueryResultsByLevel()
+            total_observations = 0
+            
+            for query_result in query_results_list:
+                total_observations += len(query_result.observations)
+                
+                # For now, we'll add all observations to abductive level
+                # This could be enhanced to categorize by level in the future
+                results_by_level.abductive.extend(query_result.observations)
+            
+            return QueryExecutionResult(
+                queries=queries,
+                results_by_query=query_results_list,
+                results_by_level=results_by_level,
+                total_observations=total_observations
+            )
+            
+        except Exception as e:
+            logger.error(f"Error executing queries: {e}")
+            return QueryExecutionResult(
+                queries=queries,
+                results_by_query=[],
+                results_by_level=QueryResultsByLevel(),
+                total_observations=0
+            )
+
     async def get_most_recent_observations(self) -> ObservationContext:
         """Retrieve the most recent observations for each reasoning level.
 

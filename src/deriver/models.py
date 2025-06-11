@@ -88,6 +88,10 @@ class ReasoningResponse(BaseModel):
         description="Best explanatory hypotheses for all observations - plausible theories about identity/motivations/context",
         default_factory=list
     )
+    queries: list[str] = Field(
+        description="Semantic search queries to learn more about the user to either confirm or inform future reasoning",
+        default_factory=list
+    )
 
 
 class ObservationContext(BaseModel):
@@ -154,4 +158,46 @@ class SemanticQueries(BaseModel):
     """Model for semantic query generation responses."""
     queries: list[str] = Field(
         description="List of semantic search queries to retrieve relevant observations"
+    )
+
+
+class QueryResult(BaseModel):
+    """Single query result with retrieved observations."""
+    query: str = Field(description="The original query")
+    observations: list[str] = Field(
+        description="Retrieved observations for this query",
+        default_factory=list
+    )
+
+
+class QueryResultsByLevel(BaseModel):
+    """Query results organized by reasoning level."""
+    explicit: list[str] = Field(default_factory=list)
+    deductive: list[str] = Field(default_factory=list)
+    inductive: list[str] = Field(default_factory=list)
+    abductive: list[str] = Field(default_factory=list)
+    
+    def get_all_observations(self) -> list[str]:
+        """Get all observations across all levels."""
+        return self.explicit + self.deductive + self.inductive + self.abductive
+    
+    def get_by_level(self, level: ReasoningLevel) -> list[str]:
+        """Get observations for a specific reasoning level."""
+        return getattr(self, level.value)
+
+
+class QueryExecutionResult(BaseModel):
+    """Complete result of query execution."""
+    queries: list[str] = Field(description="The executed queries")
+    results_by_query: list[QueryResult] = Field(
+        description="Results for each individual query",
+        default_factory=list
+    )
+    results_by_level: QueryResultsByLevel = Field(
+        description="All results organized by reasoning level",
+        default_factory=QueryResultsByLevel
+    )
+    total_observations: int = Field(
+        description="Total number of observations retrieved",
+        default=0
     )

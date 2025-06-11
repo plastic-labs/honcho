@@ -12,6 +12,7 @@ from src.deriver.models import (
     ReasoningResponse,
     StructuredObservation,
 )
+from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils.deriver import (
     REASONING_LEVELS,
     analyze_observation_changes,
@@ -30,6 +31,7 @@ from src.utils.logging import (
 )
 
 logger = logging.getLogger(__name__)
+logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
@@ -186,6 +188,11 @@ async def critical_analysis_call(
                     "conclusion": "...",
                     "premises": ["..."]
                 }}
+            ],
+            "queries": [
+                "Query to learn more about the user, to either confirm or inform future reasoning",
+                "Query to learn more about the user, to either confirm or inform future reasoning",
+                ...
             ]
         }}
         
@@ -195,7 +202,7 @@ async def critical_analysis_call(
 
 
 class SurpriseReasoner:
-    def __init__(self, embedding_store=None):
+    def __init__(self, embedding_store: CollectionEmbeddingStore):
         self.max_recursion_depth = 3  # Reduced from 5 to prevent excessive recursion
         self.current_depth = 0
         self.embedding_store = embedding_store
@@ -264,6 +271,7 @@ class SurpriseReasoner:
             ),
             "reasoning_iterations": [],
             "final_observations": {},
+            "saved_documents": {},
             "summary": {},
         }
 
@@ -437,6 +445,7 @@ class SurpriseReasoner:
         message_id: str,
         session_id: str | None = None,
         current_time: str | None = None,
+        query_results: dict[str, list[str]] | None = None,
     ) -> ReasoningResponse:
         """
         Main recursive reasoning function that critically analyzes and revises understanding.
@@ -462,8 +471,29 @@ class SurpriseReasoner:
                 context, history, new_turn, current_time
             )
 
+            # Process queries if any were generated
+            if reasoning_response.queries:
+                logger.info(
+                    f"Executing {len(reasoning_response.queries)} queries: {reasoning_response.queries}"
+                )
+                query_execution = await self.embedding_store.execute_queries(
+                    reasoning_response.queries
+                )
+                logger.debug(
+                    f"Query execution returned {query_execution.total_observations} observations"
+                )
+
             # Output the thinking content for this recursive iteration
-            log_thinking_panel(reasoning_response.thinking, self.current_depth)
+            thinking_lines = reasoning_response.thinking.strip().split("\n")
+            formatted_thinking = "\n".join(f"    {line}" for line in thinking_lines)
+
+            logger.info(
+                f"""
+╭─── 🧠 THINKING (Depth {self.current_depth}) ───╮
+{formatted_thinking}
+╰─────────────────────────────────╯
+"""
+            )
 
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
@@ -619,7 +649,6 @@ class SurpriseReasoner:
                 # Handle StructuredObservation Pydantic objects
                 conclusion = observation.conclusion
                 premises = observation.premises
-
                 await self.embedding_store.save_observations(
                     db,
                     [conclusion],  # Only save the conclusion as content

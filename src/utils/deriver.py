@@ -120,7 +120,6 @@ def format_context_for_prompt(context) -> str:
     else:
         # It's a dict
         observations_by_level = context
-
     # Process each level in a consistent order
     for level in REASONING_LEVELS:
         observations = observations_by_level.get(level, [])
@@ -256,25 +255,6 @@ def format_context_for_trace(
     Returns:
         Formatted context dictionary for trace
     """
-    # formatted: Dict[str, List[Dict[str, Any]]] = {}
-    # for level in REASONING_LEVELS:
-    #     observations = context.get(level, [])
-    #     formatted[level] = []
-    #     for observation in observations:
-    #         if isinstance(observation, dict):
-    #             entry: Dict[str, Any] = {
-    #                 "content": extract_observation_content(observation),
-    #                 "document_id": observation.get("document_id", "unknown"),
-    #             }
-    #             if include_similarity_scores:
-    #                 entry["similarity_score"] = observation.get("similarity_score", 0.0)
-    #             formatted[level].append(entry)
-    #         else:
-    #             entry = {"content": str(observation), "document_id": "unknown"}
-    #             if include_similarity_scores:
-    #                 entry["similarity_score"] = 0.0
-    #             formatted[level].append(entry)
-    # return formatted
     return context.model_dump()
 
 
