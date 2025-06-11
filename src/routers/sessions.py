@@ -63,7 +63,7 @@ async def get_or_create_session(
 @router.post(
     "/list",
     response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(workspace_id="workspace_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id"))],
 )
 async def get_sessions(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -103,7 +103,7 @@ async def get_sessions(
     response_model=schemas.Session,
     dependencies=[
         Depends(
-            require_auth(workspace_id="workspace_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )
@@ -134,7 +134,7 @@ async def update_session(
     "/{session_id}",
     dependencies=[
         Depends(
-            require_auth(workspace_id="workspace_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )
@@ -219,7 +219,7 @@ async def delete_session(
     response_model=schemas.Session,
     dependencies=[
         Depends(
-            require_auth(workspace_id="workspace_id", session_id="session_id")
+            require_auth(app_id="workspace_id", session_id="session_id")
         )
     ],
 )

@@ -9,7 +9,7 @@ class WorkspaceBase(BaseModel):
 
 
 class WorkspaceCreate(WorkspaceBase):
-    name: Annotated[str, Field(min_length=1, max_length=100)]
+    name: Annotated[str, Field(serialization_alias='id', min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -37,7 +37,7 @@ class PeerBase(BaseModel):
 
 
 class PeerCreate(PeerBase):
-    name: Annotated[str, Field(min_length=1, max_length=100)]
+    name: Annotated[str, Field(serialization_alias='id', min_length=1, max_length=100)]
     metadata: dict = {}
 
 
@@ -99,8 +99,9 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    name: Annotated[str, Field(min_length=1, max_length=100)]
+    name: Annotated[str, Field(serialization_alias='id', min_length=1, max_length=100)]
     metadata: dict = {}
+    peer_names: set[str] | None = Field(serialization_alias='peer_ids', default=None)
 
 
 class SessionGet(SessionBase):

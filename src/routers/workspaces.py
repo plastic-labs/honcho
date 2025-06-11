@@ -78,7 +78,7 @@ async def get_all_workspaces(
 @router.put(
     "/{workspace_id}",
     response_model=schemas.Workspace,
-    dependencies=[Depends(require_auth(workspace_id="workspace_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id"))],
 )
 async def update_workspace(
     workspace_id: str = Path(..., description="ID of the workspace to update"),

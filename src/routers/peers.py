@@ -23,7 +23,7 @@ router = APIRouter(
 @router.post(
     "/list",
     response_model=Page[schemas.Peer],
-    dependencies=[Depends(require_auth(workspace_id="workspace_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id"))],
 )
 async def get_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -83,7 +83,7 @@ async def get_or_create_peer(
 @router.put(
     "/{peer_id}",
     response_model=schemas.Peer,
-    dependencies=[Depends(require_auth(workspace_id="workspace_id", user_id="peer_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
 )
 async def update_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -99,7 +99,7 @@ async def update_peer(
 @router.post(
     "/{peer_id}/sessions",
     response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(workspace_id="workspace_id", user_id="peer_id"))],
+    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
 )
 async def get_peer_sessions(
     workspace_id: str = Path(..., description="ID of the workspace"),
