@@ -43,18 +43,18 @@ async def enqueue(payload: dict | list[dict]):
                     return
 
                 logger.debug(f"Enqueueing batch of {len(payload)} messages")
-
+                workspace_name, session_name = payload[0]["workspace_name"], payload[0]["session_name"]
+                peer_names = {p["peer_name"] for p in payload}
                 # Check session once since all messages are for same session
                 try:
-                    session = await crud.get_session(
+                    session = await crud.get_or_create_session(
                         db_session,
-                        app_id=payload[0]["app_id"],
-                        user_id=payload[0]["user_id"],
-                        session_id=payload[0]["session_id"],
+                        session=schemas.SessionCreate(name=session_name, peer_names=peer_names),
+                        workspace_name=workspace_name,
                     )
                     if not session:
                         logger.warning(
-                            f"Session {payload[0]['session_id']} not found, skipping enqueue"
+                            f"Session {session_name} not found, skipping enqueue"
                         )
                         return
                 except ResourceNotFoundException:
@@ -101,11 +101,10 @@ async def enqueue(payload: dict | list[dict]):
                 )
 
                 try:
-                    session = await crud.get_session(
+                    session = await crud.get_or_create_session(
                         db_session,
-                        app_id=payload["app_id"],
-                        user_id=payload["user_id"],
-                        session_id=payload["session_id"],
+                        session=schemas.SessionCreate(name=payload["session_name"], peer_names={payload["peer_name"]}),
+                        workspace_name=payload["workspace_name"],
                     )
                     if not session:
                         logger.warning(
@@ -152,8 +151,7 @@ async def enqueue(payload: dict | list[dict]):
 @router.post("", response_model=schemas.Message)
 async def create_message_for_session(
     background_tasks: BackgroundTasks,
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     message: schemas.MessageCreate = Body(
         ..., description="Message creation parameters"
@@ -162,19 +160,20 @@ async def create_message_for_session(
 ):
     """Adds a message to a session"""
     try:
+        workspace_name, session_name = workspace_id, session_id
         honcho_message = await crud.create_message(
-            db, message=message, app_id=app_id, user_id=user_id, session_id=session_id
+            db, message=message, workspace_name=workspace_name, session_name=session_name
         )
 
         # Prepare message payload for background processing
         payload = {
-            "app_id": app_id,
-            "user_id": user_id,
-            "session_id": session_id,
+            "workspace_name": workspace_name,
+            "session_name": session_name,
             "message_id": honcho_message.public_id,
             "is_user": honcho_message.is_user,
             "content": honcho_message.content,
             "metadata": honcho_message.h_metadata,
+            "peer_name": honcho_message.peer_name,
         }
 
         # Queue message for background processing
@@ -192,34 +191,33 @@ async def create_message_for_session(
 @router.post("/batch", response_model=list[schemas.Message])
 async def create_batch_messages_for_session(
     background_tasks: BackgroundTasks,
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     batch: schemas.MessageBatchCreate = Body(
         ..., description="Batch of messages to create"
     ),
     db=db,
 ):
+    workspace_name, session_name = workspace_id, session_id
     """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
     try:
         created_messages = await crud.create_messages(
             db,
             messages=batch.messages,
-            app_id=app_id,
-            user_id=user_id,
-            session_id=session_id,
+            workspace_name=workspace_name,
+            session_name=session_name,
         )
 
         # Create payloads for all messages
         payloads = [
             {
-                "app_id": app_id,
-                "user_id": user_id,
-                "session_id": session_id,
+                "workspace_name": workspace_name,
+                "session_name": session_name,
                 "message_id": message.public_id,
                 "is_user": message.is_user,
                 "content": message.content,
                 "metadata": message.h_metadata,
+                "peer_name": message.peer_name,
             }
             for message in created_messages
         ]
@@ -240,8 +238,8 @@ async def create_batch_messages_for_session(
 
 @router.post("/list", response_model=Page[schemas.Message])
 async def get_messages(
-    app_id: str = Path(..., description="ID of the app"),
-    user_id: str = Path(..., description="ID of the user"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
     session_id: str = Path(..., description="ID of the session"),
     options: Optional[schemas.MessageGet] = Body(
         None, description="Filtering options for the messages list"
@@ -260,9 +258,9 @@ async def get_messages(
                 filter = None
 
         messages_query = await crud.get_messages(
-            app_id=app_id,
-            user_id=user_id,
-            session_id=session_id,
+            workspace_name=workspace_id,
+            peer_name=peer_id,
+            session_name=session_id,
             filter=filter,
             reverse=reverse,
         )
@@ -276,14 +274,13 @@ async def get_messages(
 @router.get("/{message_id}", response_model=schemas.Message)
 async def get_message(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to retrieve"),
     db=db,
 ):
     """Get a Message by ID"""
     honcho_message = await crud.get_message(
-        db, workspace_name=workspace_id, session_name=session_id, peer_name=peer_id, message_id=message_id
+        db, workspace_name=workspace_id, session_name=session_id, message_id=message_id
     )
     if honcho_message is None:
         logger.warning(f"Message {message_id} not found in session {session_id}")
@@ -293,8 +290,7 @@ async def get_message(
 
 @router.put("/{message_id}", response_model=schemas.Message)
 async def update_message(
-    app_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
+    workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to update"),
     message: schemas.MessageUpdate = Body(
@@ -307,8 +303,7 @@ async def update_message(
         updated_message = await crud.update_message(
             db,
             message=message,
-            workspace_name=app_id,
-            peer_name=peer_id,
+            workspace_name=workspace_id,
             session_name=session_id,
             message_id=message_id,
         )
