@@ -4,11 +4,11 @@ import logging
 import os
 
 import sentry_sdk
-from langfuse.decorators import observe
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import crud, schemas
 from ..utils import history
+from ..utils.logging import log_observations_tree, log_performance_metrics
 from .surprise_reasoner import SurpriseReasoner
 from .tom.embeddings import CollectionEmbeddingStore
 
@@ -224,16 +224,28 @@ async def process_user_message(
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
-    logger.info(
-        f"Final observations:\n{json.dumps(final_observations.model_dump(), indent=2)}"
-    )
+    
+    # Display final observations in a beautiful tree
+    from src.utils.deriver import REASONING_LEVELS
+    final_obs_dict = {
+        level: getattr(final_observations, level, [])
+        for level in REASONING_LEVELS
+    }
+    log_observations_tree(final_obs_dict, "🎯 FINAL OBSERVATIONS")
+    
+    # Display final reasoning metrics
+    rsr_time = os.times()[4] - process_start
+    total_observations = sum(len(obs_list) for obs_list in final_obs_dict.values())
+    summary_metrics = {
+        "total_processing_time": rsr_time * 1000,  # Convert to ms
+        "total_iterations": deriver_trace.get("summary", {}).get("total_iterations", 0),
+        "final_observation_count": total_observations,
+        "reasoning_convergence": deriver_trace.get("summary", {}).get("convergence_reason", "unknown"),
+    }
+    log_performance_metrics(summary_metrics, "🏁 REASONING SUMMARY")
 
     # Save the deriver trace as a metamessage attached to the user message
     await save_deriver_trace(db, message_id, deriver_trace, app_id, user_id, session_id)
-
-    # Log queue stats for monitoring
-    rsr_time = os.times()[4] - process_start
-    logger.debug(f"Parallel reasoning completed in {rsr_time:.2f}s")
 
 
 async def cleanup_deriver():

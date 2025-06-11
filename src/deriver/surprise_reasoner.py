@@ -3,11 +3,15 @@ import time
 from inspect import cleandoc as c
 
 from langfuse.decorators import observe
-from mirascope import llm, prompt_template
+from mirascope import llm
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.deriver.models import ObservationContext, ReasoningResponse, StructuredObservation
+from src.deriver.models import (
+    ObservationContext,
+    ReasoningResponse,
+    StructuredObservation,
+)
 from src.utils.deriver import (
     REASONING_LEVELS,
     analyze_observation_changes,
@@ -17,11 +21,15 @@ from src.utils.deriver import (
     format_context_for_trace,
     format_new_turn_with_timestamp,
 )
+from src.utils.logging import (
+    log_changes_table,
+    log_error_panel,
+    log_observations_tree,
+    log_performance_metrics,
+    log_thinking_panel,
+)
 
 logger = logging.getLogger(__name__)
-logging.getLogger("sqlalchemy.engine.Engine").disabled = True
-
-
 
 
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
@@ -275,7 +283,6 @@ class SurpriseReasoner:
         if not self.trace:
             return
 
-
         iteration = {
             "depth": depth,
             "input_context": format_context_for_trace(input_context),
@@ -412,6 +419,13 @@ class SurpriseReasoner:
             convergence_reason = f"error: {str(e)}"
             self._finalize_trace({}, convergence_reason, total_duration_ms)
 
+            # Log error with rich formatting
+            log_error_panel(
+                logger,
+                e,
+                f"Recursive reasoning failed\nMessage ID: {message_id}\nSession ID: {session_id}\nDepth: {self.current_depth}",
+            )
+
             raise e
 
     async def recursive_reason(
@@ -431,7 +445,9 @@ class SurpriseReasoner:
         # Check if we've hit the maximum recursion depth
         if self.current_depth >= self.max_recursion_depth:
             logger.warning(
-                f"Maximum recursion depth reached.\nSession ID: {session_id}\nMessage ID: {message_id}"
+                f"[bold red]🚨 Maximum recursion depth ({self.max_recursion_depth}) reached![/]\n"
+                f"Session ID: {session_id}\nMessage ID: {message_id}",
+                extra={"markup": True},
             )
             return context
 
@@ -447,14 +463,7 @@ class SurpriseReasoner:
             )
 
             # Output the thinking content for this recursive iteration
-            thinking_lines = reasoning_response.thinking.strip().split('\n')
-            formatted_thinking = '\n'.join(f"    {line}" for line in thinking_lines)
-            
-            logger.info(f"""
-╭─── 🧠 THINKING (Depth {self.current_depth}) ───╮
-{formatted_thinking}
-╰─────────────────────────────────╯
-""")
+            log_thinking_panel(reasoning_response.thinking, self.current_depth)
 
             # Compare input context with output to detect changes (surprise)
             # Apply depth-based conservatism - require more significant changes at deeper levels
@@ -486,7 +495,6 @@ class SurpriseReasoner:
             # Calculate iteration duration
             iteration_duration_ms = int((time.time() - iteration_start) * 1000)
 
-
             # Capture this iteration in trace
             self._capture_iteration(
                 depth=self.current_depth,
@@ -500,35 +508,52 @@ class SurpriseReasoner:
                 duration_ms=iteration_duration_ms,
             )
 
+            # Log changes in a beautiful table
+            log_changes_table(changes_detected or {}, significance_score, effective_threshold)
+
             # If no changes were made, the LLM wasn't surprised - exit recursion
             if not has_changes:
                 if self.current_depth > 0:
                     logger.info(
-                        f"No significant changes detected at depth {self.current_depth} - LLM stabilized. Exiting recursion."
+                        f"[yellow]🔄 Depth {self.current_depth}:[/] LLM stabilized. Exiting recursion.",
+                        extra={"markup": True},
                     )
                 else:
                     logger.info(
-                        "No changes detected - LLM was not surprised. Exiting recursion."
+                        "[yellow]🔄 LLM was not surprised. Exiting recursion.[/]",
+                        extra={"markup": True},
                     )
                 return context
 
-            logger.info("Changes detected - LLM was surprised. Continuing analysis.")
+            logger.info(
+                "[green]✨ Changes detected - LLM was surprised. Continuing analysis.[/]",
+                extra={"markup": True},
+            )
 
             # Save only the NEW observations that weren't in the original context
             await self._save_new_observations(
                 db, context, reasoning_response, message_id, session_id
             )
 
-            # Pass the revised observations directly to the next iteration
-            # The LLM has already curated the most relevant observations in reasoning_response
-            logger.debug(
-                "Passing revised observations directly to next recursive iteration"
+            # Display observations in a tree structure and performance metrics
+            observations = {
+                level: getattr(reasoning_response, level, [])
+                for level in REASONING_LEVELS
+            }
+            log_observations_tree(
+                observations,
+                f"📊 REVISED OBSERVATIONS (Depth {self.current_depth})",
             )
-            for level in REASONING_LEVELS:
-                level_observations = getattr(reasoning_response, level, [])
-                logger.debug(
-                    f"Passing {level}: {len(level_observations)} revised observations to next iteration"
-                )
+
+            # Log performance metrics for this iteration
+            metrics = {
+                "iteration_duration": iteration_duration_ms,
+                "significance_score": significance_score,
+                "recursion_depth": self.current_depth,
+            }
+            log_performance_metrics(
+                metrics, f"⚡ ITERATION {self.current_depth} METRICS"
+            )
 
             # Recursively analyze with the revised observations from the LLM
             return await self.recursive_reason(
@@ -631,5 +656,7 @@ class SurpriseReasoner:
                     session_id=session_id,
                 )
 
-                logger.debug(f"Saved fallback observation: '{observation_content[:50]}...'")
+                logger.debug(
+                    f"Saved fallback observation: '{observation_content[:50]}...'"
+                )
                 logger.warning(f"Unexpected observation type: {type(observation)}")
