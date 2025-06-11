@@ -17,6 +17,7 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 
 - Setup: `uv sync`
 - Run server: `uv run fastapi dev src/main.py`
+- Run deriver: `uv run python -m src.deriver`
 - Run tests: `uv run pytest tests/`
 - Run single test: `uv run pytest tests/path/to/test_file.py::test_function`
 - Linting: `ruff check src/`
@@ -38,6 +39,22 @@ Honcho leverages the inherent theory-of-mind capabilities of LLMs to build coher
 - Pydantic schemas in src/schemas.py for API validation
 - Tests in pytest with fixtures in tests/conftest.py
 - Use environment variables via python-dotenv (.env)
+
+### Queue Configuration
+
+The deriver queue system supports two locking modes to prevent concurrent processing:
+
+- **Session-level locking** (default): `QUEUE_LOCK_MODE=session`
+  - Prevents multiple processes from processing the same session simultaneously
+  - Allows multiple sessions from the same user to be processed concurrently
+  
+- **User-level locking**: `QUEUE_LOCK_MODE=user`
+  - Prevents multiple processes from processing any session belonging to the same user
+  - Ensures only one session per user is processed at a time across all sessions
+
+Other queue environment variables:
+- `DERIVER_WORKERS`: Number of concurrent workers (default: 10)
+- `LOG_LEVEL`: Logging level for deriver process (default: INFO)
 
 ### Error Handling
 
