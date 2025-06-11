@@ -9,12 +9,11 @@ class WorkspaceBase(BaseModel):
 
 
 class WorkspaceCreate(WorkspaceBase):
-    name: Annotated[str, Field(alias='id', min_length=1, max_length=100)]
+    name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
     metadata: dict = {}
+    feature_flags: dict = {}
 
-    model_config = ConfigDict(
-        populate_by_name=True
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class WorkspaceGet(WorkspaceBase):
@@ -23,17 +22,16 @@ class WorkspaceGet(WorkspaceBase):
 
 class WorkspaceUpdate(WorkspaceBase):
     metadata: dict | None = None
+    feature_flags: dict | None = None
 
 
 class Workspace(WorkspaceBase):
-    name: str = Field(serialization_alias='id')
-    h_metadata: dict = Field(default={}, serialization_alias='metadata')
+    name: str = Field(serialization_alias="id")
+    h_metadata: dict = Field(default={}, serialization_alias="metadata")
+    feature_flags: dict = Field(default={})
     created_at: datetime.datetime
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
-    )
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class PeerBase(BaseModel):
@@ -41,13 +39,11 @@ class PeerBase(BaseModel):
 
 
 class PeerCreate(PeerBase):
-    name: Annotated[str, Field(alias='id', min_length=1, max_length=100)]
+    name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
     metadata: dict = {}
+    feature_flags: dict = {}
 
-    model_config = ConfigDict(
-        populate_by_name=True
-    )
-
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class PeerGet(PeerBase):
@@ -56,18 +52,17 @@ class PeerGet(PeerBase):
 
 class PeerUpdate(PeerBase):
     metadata: dict | None = None
+    feature_flags: dict | None = None
 
 
 class Peer(PeerBase):
-    name: str = Field(serialization_alias='id')
+    name: str = Field(serialization_alias="id")
     workspace: str
     created_at: datetime.datetime
-    h_metadata: dict = Field(default={}, serialization_alias='metadata')
+    h_metadata: dict = Field(default={}, serialization_alias="metadata")
+    feature_flags: dict = Field(default={})
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
-    )
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class MessageBase(BaseModel):
@@ -76,7 +71,7 @@ class MessageBase(BaseModel):
 
 class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
-    peer_name: str = Field(alias='peer_id')
+    peer_name: str = Field(alias="peer_id")
     metadata: dict = {}
 
 
@@ -91,16 +86,14 @@ class MessageUpdate(MessageBase):
 class Message(MessageBase):
     id: str
     content: str
-    sender_id: str
+    peer_id: str
     session_id: str | None
-    h_metadata: dict = Field(default={}, serialization_alias='metadata')
+    h_metadata: dict = Field(default={}, serialization_alias="metadata")
     created_at: datetime.datetime
     workspace: str
+    token_count: int
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
-    )
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class SessionBase(BaseModel):
@@ -108,13 +101,12 @@ class SessionBase(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    name: Annotated[str, Field(alias='id', min_length=1, max_length=100)]
+    name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
     metadata: dict = {}
     peer_names: set[str] | None = None
+    feature_flags: dict = {}
 
-    model_config = ConfigDict(
-        populate_by_name=True
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SessionGet(SessionBase):
@@ -124,67 +116,26 @@ class SessionGet(SessionBase):
 
 class SessionUpdate(SessionBase):
     metadata: dict
+    feature_flags: dict | None = None
 
 
 class Session(SessionBase):
-    name: str = Field(serialization_alias='id')
+    name: str = Field(serialization_alias="id")
     is_active: bool
     workspace: str
-    h_metadata: dict = Field(default={}, serialization_alias='metadata')
+    h_metadata: dict = Field(default={}, serialization_alias="metadata")
+    feature_flags: dict = Field(default={})
     created_at: datetime.datetime
 
-    model_config = ConfigDict(
-        from_attributes=True,
-        populate_by_name=True
-    )
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
 
 class SessionContext(SessionBase):
-    name: str = Field(serialization_alias='id')
-    context: str
+    name: str = Field(serialization_alias="id")
+    messages: list[Message]
+    summary: str
 
-
-# class CollectionBase(BaseModel):
-#     pass
-
-
-# class CollectionCreate(CollectionBase):
-#     name: Annotated[str, Field(min_length=1, max_length=100)]
-#     metadata: dict = {}
-
-#     @field_validator("name")
-#     def validate_name(cls, v):
-#         if v.lower() == "honcho":
-#             raise ValueError("Collection name cannot be 'honcho'")
-#         return v
-
-
-# class CollectionGet(CollectionBase):
-#     filter: dict | None = None
-
-
-# class CollectionUpdate(CollectionBase):
-#     name: str | None = None
-#     metadata: dict | None = None
-
-#     @field_validator("name")
-#     def validate_name(cls, v):
-#         if v is not None and v.lower() == "honcho":
-#             raise ValueError("Collection name cannot be 'honcho'")
-#         return v
-
-
-# class Collection(CollectionBase):
-#     public_id: str = Field(serialization_alias='id')
-#     name: str
-#     peer_id: str
-#     workspace_id: str
-#     h_metadata: dict = Field(default={}, serialization_alias='metadata')
-#     created_at: datetime.datetime
-
-#     model_config = ConfigDict(
-#         from_attributes=True,
-#         populate_by_name=True
-#     )
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class DocumentBase(BaseModel):
@@ -194,36 +145,6 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict = {}
-
-
-# class DocumentGet(DocumentBase):
-#     filter: dict | None = None
-
-
-# class DocumentQuery(DocumentBase):
-#     query: Annotated[str, Field(min_length=1, max_length=1000)]
-#     filter: dict | None = None
-#     top_k: int = Field(default=5, ge=1, le=50)
-
-
-# class DocumentUpdate(DocumentBase):
-#     metadata: dict | None = Field(None, max_length=10000)
-#     content: Annotated[str | None, Field(min_length=1, max_length=100000)] = None
-
-
-# class Document(DocumentBase):
-#     public_id: str = Field(serialization_alias='id')
-#     content: str
-#     h_metadata: dict = Field(default={}, serialization_alias='metadata')
-#     created_at: datetime.datetime
-#     collection_id: str
-#     workspace_id: str
-#     peer_id: str
-
-#     model_config = ConfigDict(
-#         from_attributes=True,
-#         populate_by_name=True
-#     )
 
 
 class DialecticOptions(BaseModel):

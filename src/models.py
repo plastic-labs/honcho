@@ -33,6 +33,7 @@ class Workspace(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+    feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
 
     __table_args__ = (
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
@@ -64,6 +65,8 @@ class Peer(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
+    feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
+
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship("Session", secondary="session_peers", back_populates="peers")
     collections = relationship("Collection", back_populates="peer")
@@ -95,6 +98,8 @@ class Session(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
+    feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
+
     peers = relationship("Peer", secondary="session_peers", back_populates="sessions")
 
     __table_args__ = (

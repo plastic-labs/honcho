@@ -370,6 +370,8 @@ async def get_session_peers(
 async def get_session_context(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
+    tokens: Optional[int] = Path(..., description="Number of tokens to use for the context"),
+    summary: bool = Path(..., description="Whether to summarize the context"), # default to false
     db=db,
 ):
     pass

@@ -50,17 +50,18 @@ async def get_or_create_workspace(
     stmt = select(models.Workspace).where(models.Workspace.name == workspace.name)
     result = await db.execute(stmt)
     existing_workspace = result.scalar_one_or_none()
-    
+
     if existing_workspace is not None:
         # Workspace already exists
         logger.debug(f"Found existing workspace: {workspace.name}")
         return existing_workspace
-    
+
     # Workspace doesn't exist, create a new one
     try:
         honcho_workspace = models.Workspace(
             name=workspace.name,
             h_metadata=workspace.metadata,
+            feature_flags=workspace.feature_flags,
         )
         db.add(honcho_workspace)
         await db.commit()
@@ -68,8 +69,12 @@ async def get_or_create_workspace(
         return honcho_workspace
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError creating workspace with name '{workspace.name}': {str(e)}")
-        raise ConflictException(f"Workspace with name '{workspace.name}' already exists") from e
+        logger.error(
+            f"IntegrityError creating workspace with name '{workspace.name}': {str(e)}"
+        )
+        raise ConflictException(
+            f"Workspace with name '{workspace.name}' already exists"
+        ) from e
 
 
 async def get_all_workspaces(
@@ -94,6 +99,7 @@ async def get_all_workspaces(
     return stmt
 
 
+# TODO: Why do we get or create a workspace here?
 async def update_workspace(
     db: AsyncSession, workspace_name: str, workspace: schemas.WorkspaceUpdate
 ) -> models.Workspace:
@@ -113,22 +119,28 @@ async def update_workspace(
     """
     try:
         honcho_workspace = await get_or_create_workspace(
-            db, 
+            db,
             schemas.WorkspaceCreate(
                 name=workspace_name,
-                metadata=workspace.metadata or {}  # Provide empty dict if metadata is None
-            )
+                metadata=workspace.metadata
+                or {},  # Provide empty dict if metadata is None
+            ),
         )
 
         if workspace.metadata is not None:
             honcho_workspace.h_metadata = workspace.metadata
+
+        if workspace.feature_flags is not None:
+            honcho_workspace.feature_flags = workspace.feature_flags
 
         await db.commit()
         logger.info(f"Workspace with id {honcho_workspace.id} updated successfully")
         return honcho_workspace
     except IntegrityError as e:
         await db.rollback()
-        logger.error(f"IntegrityError updating workspace {honcho_workspace.id}: {str(e)}")
+        logger.error(
+            f"IntegrityError updating workspace {honcho_workspace.id}: {str(e)}"
+        )
         raise ConflictException(
             "Workspace update failed - unique constraint violation"
         ) from e
@@ -137,6 +149,7 @@ async def update_workspace(
 ########################################################
 # peer methods
 ########################################################
+
 
 async def get_or_create_peers(
     db: AsyncSession,
@@ -162,22 +175,31 @@ async def get_or_create_peers(
     )
     result = await db.execute(stmt)
     existing_peers = list(result.scalars().all())
-    
+
     # If all peers exist, return them
     if len(existing_peers) == len(peers):
         return existing_peers
-    
+
     # Find which peers need to be created
     existing_names = {p.name for p in existing_peers}
     peers_to_create = [p for p in peers if p.name not in existing_names]
-    
+
     # Create new peers
-    new_peers = [models.Peer(workspace_name=workspace_name, name=p.name, h_metadata=p.metadata) for p in peers_to_create]
+    new_peers = [
+        models.Peer(
+            workspace_name=workspace_name,
+            name=p.name,
+            h_metadata=p.metadata,
+            feature_flags=p.feature_flags,
+        )
+        for p in peers_to_create
+    ]
     db.add_all(new_peers)
     await db.commit()
-    
+
     # Return combined list of existing and new peers
     return existing_peers + new_peers
+
 
 async def get_or_create_peer(
     db: AsyncSession, workspace_name: str, peer: schemas.PeerCreate
@@ -204,22 +226,25 @@ async def get_or_create_peer(
     )
     result = await db.execute(stmt)
     existing_peer = result.scalar_one_or_none()
-    
+
     if existing_peer is not None:
         # Peer already exists
         logger.debug(f"Found existing peer: {peer.name} for workspace {workspace_name}")
         return existing_peer
-    
+
     # Peer doesn't exist, create a new one
     try:
         honcho_peer = models.Peer(
             workspace_name=workspace_name,
             name=peer.name,
             h_metadata=peer.metadata,
+            feature_flags=peer.feature_flags,
         )
         db.add(honcho_peer)
         await db.commit()
-        logger.debug(f"Peer created successfully: {peer.name} for workspace {workspace_name}")
+        logger.debug(
+            f"Peer created successfully: {peer.name} for workspace {workspace_name}"
+        )
         return honcho_peer
     except IntegrityError as e:
         await db.rollback()
@@ -267,10 +292,15 @@ async def update_peer(
     """
     try:
         # get_peer will raise ResourceNotFoundException if not found
-        honcho_peer = await get_or_create_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+        honcho_peer = await get_or_create_peer(
+            db, workspace_name, schemas.PeerCreate(name=peer_name)
+        )
 
         if peer.metadata is not None:
             honcho_peer.h_metadata = peer.metadata
+
+        if peer.feature_flags is not None:
+            honcho_peer.feature_flags = peer.feature_flags
 
         await db.commit()
         logger.info(f"Peer {peer_name} updated successfully")
@@ -305,7 +335,9 @@ async def get_sessions_for_peer(
     """
     stmt = (
         select(models.Session)
-        .join(models.SessionPeer, models.Session.name == models.SessionPeer.session_name)
+        .join(
+            models.SessionPeer, models.Session.name == models.SessionPeer.session_name
+        )
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.Session.workspace_name == workspace_name)
     )
@@ -338,10 +370,7 @@ async def get_sessions(
     """
     Get all sessions in a workspace.
     """
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-    )
+    stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
 
     if is_active:
         stmt = stmt.where(models.Session.is_active.is_(True))
@@ -398,18 +427,27 @@ async def get_or_create_session(
                 workspace_name=workspace_name,
                 name=session.name,
                 h_metadata=session.metadata,
+                feature_flags=session.feature_flags,
             )
             db.add(honcho_session)
 
         # Get or create peers
-        await get_or_create_peers(db, workspace_name=workspace_name, peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names])
+        await get_or_create_peers(
+            db,
+            workspace_name=workspace_name,
+            peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
+        )
 
         # Add all peers to session
-        await _add_peers_to_session(db, session_name=session.name, peer_names=peer_names)
+        await _add_peers_to_session(
+            db, session_name=session.name, peer_names=peer_names
+        )
 
         await db.commit()
-        logger.info(f"Session {session.name} updated successfully in workspace {workspace_name} with {len(peer_names)} peers")
-        return honcho_session        
+        logger.info(
+            f"Session {session.name} updated successfully in workspace {workspace_name} with {len(peer_names)} peers"
+        )
+        return honcho_session
     except Exception as e:
         await db.rollback()
         logger.error(f"Error creating session in workspace {workspace_name}: {str(e)}")
@@ -441,10 +479,11 @@ async def update_session(
         db, schemas.SessionCreate(name=session_name), workspace_name=workspace_name
     )
 
-    if (
-        session.metadata is not None
-    ):  # Need to explicitly be there won't make it empty by default
+    if session.metadata is not None:
         honcho_session.h_metadata = session.metadata
+
+    if session.feature_flags is not None:
+        honcho_session.feature_flags = session.feature_flags
 
     await db.commit()
     logger.info(f"Session {session_name} updated successfully")
@@ -477,7 +516,9 @@ async def delete_session(
     honcho_session = result.scalar_one_or_none()
 
     if honcho_session is None:
-        logger.warning(f"Session {session_name} not found in workspace {workspace_name}")
+        logger.warning(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
         raise ResourceNotFoundException("Session not found")
 
     honcho_session.is_active = False
@@ -559,7 +600,7 @@ async def clone_session(
             "content": message.content,
             "h_metadata": message.h_metadata,
             "workspace_name": workspace_name,
-            "peer_name": message.peer_name
+            "peer_name": message.peer_name,
         }
         for message in messages_to_clone
     ]
@@ -568,18 +609,21 @@ async def clone_session(
     result = await db.execute(insert_stmt, new_messages)
 
     # Clone peers from original session to new session
-    stmt = select(models.SessionPeer).where(models.SessionPeer.session_name == original_session_name)
+    stmt = select(models.SessionPeer).where(
+        models.SessionPeer.session_name == original_session_name
+    )
     result = await db.execute(stmt)
     session_peers = result.scalars().all()
     for session_peer in session_peers:
         new_session_peer = models.SessionPeer(
-            session_name=new_session.name,
-            peer_name=session_peer.peer_name)
+            session_name=new_session.name, peer_name=session_peer.peer_name
+        )
         db.add(new_session_peer)
 
     await db.commit()
     logger.info(f"Session {original_session_name} cloned successfully")
     return new_session
+
 
 async def remove_peers_from_session(
     db: AsyncSession,
@@ -610,19 +654,22 @@ async def remove_peers_from_session(
     )
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
-    
+
     if session is None:
-        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
 
     # Delete specified session peers
     delete_stmt = delete(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
-        models.SessionPeer.peer_name.in_(peer_names)
+        models.SessionPeer.peer_name.in_(peer_names),
     )
     result = await db.execute(delete_stmt)
-    
+
     await db.commit()
     return True
+
 
 async def get_peers_from_session(
     db: AsyncSession,
@@ -651,9 +698,11 @@ async def get_peers_from_session(
     )
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
-    
+
     if session is None:
-        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
 
     # Get all peers in the session
     stmt = (
@@ -664,6 +713,7 @@ async def get_peers_from_session(
     )
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
 
 async def add_peers_to_session(
     db: AsyncSession,
@@ -695,19 +745,23 @@ async def add_peers_to_session(
     )
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
-    
+
     if session is None:
-        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
 
     # Get or create peers
     await get_or_create_peers(
-        db, 
-        workspace_name=workspace_name, 
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names]
+        db,
+        workspace_name=workspace_name,
+        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
     )
 
     # Add peers to session
-    return await _add_peers_to_session(db, session_name=session_name, peer_names=peer_names)
+    return await _add_peers_to_session(
+        db, session_name=session_name, peer_names=peer_names
+    )
 
 
 async def set_peers_for_session(
@@ -740,9 +794,11 @@ async def set_peers_for_session(
     )
     result = await db.execute(stmt)
     session = result.scalar_one_or_none()
-    
+
     if session is None:
-        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
+        )
 
     # Delete all existing session peers
     delete_stmt = delete(models.SessionPeer).where(
@@ -752,13 +808,16 @@ async def set_peers_for_session(
 
     # Get or create peers
     await get_or_create_peers(
-        db, 
-        workspace_name=workspace_name, 
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names]
+        db,
+        workspace_name=workspace_name,
+        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
     )
 
     # Add new peers to session
-    return await _add_peers_to_session(db, session_name=session_name, peer_names=peer_names)
+    return await _add_peers_to_session(
+        db, session_name=session_name, peer_names=peer_names
+    )
+
 
 async def _add_peers_to_session(
     db: AsyncSession,
@@ -779,19 +838,20 @@ async def _add_peers_to_session(
     """
     # Get existing peers for this session
 
-    stmt = pg_insert(models.SessionPeer).values([
-        {
-            "session_name": session_name,
-            "peer_name": peer_name
-        }
-        for peer_name in peer_names
-    ])
+    stmt = pg_insert(models.SessionPeer).values(
+        [
+            {"session_name": session_name, "peer_name": peer_name}
+            for peer_name in peer_names
+        ]
+    )
 
     stmt = stmt.on_conflict_do_nothing(index_elements=["session_name", "peer_name"])
     await db.execute(stmt)
     await db.commit()
 
-    select_stmt = select(models.SessionPeer).where(models.SessionPeer.session_name == session_name)
+    select_stmt = select(models.SessionPeer).where(
+        models.SessionPeer.session_name == session_name
+    )
     result = await db.execute(select_stmt)
     return list(result.scalars().all())
 
@@ -808,7 +868,9 @@ async def create_message(
     session_name: str,
 ) -> models.Message:
     honcho_session = await get_or_create_session(
-        db, schemas.SessionCreate(name=session_name, peer_names=set(message.peer_name)), workspace_name=workspace_name
+        db,
+        schemas.SessionCreate(name=session_name, peer_names=set(message.peer_name)),
+        workspace_name=workspace_name,
     )
 
     honcho_message = models.Message(
@@ -835,7 +897,9 @@ async def create_messages(
     # Verify session exists
     peer_names = set([message.peer_name for message in messages])
     honcho_session = await get_or_create_session(
-        db, schemas.SessionCreate(name=session_name, peer_names=peer_names), workspace_name=workspace_name
+        db,
+        schemas.SessionCreate(name=session_name, peer_names=peer_names),
+        workspace_name=workspace_name,
     )
 
     # Create list of message records
@@ -905,7 +969,10 @@ async def update_message(
     message_id: str,
 ) -> bool:
     honcho_message = await get_message(
-        db, workspace_name=workspace_name, session_name=session_name, message_id=message_id
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        message_id=message_id,
     )
     if honcho_message is None:
         raise ValueError("Message not found or does not belong to user")
@@ -981,9 +1048,11 @@ async def get_or_create_peer_protected_collection(
         await db.commit()
         return honcho_collection
 
+
 ########################################################
 # document methods
 ########################################################
+
 
 async def query_documents(
     db: AsyncSession,
@@ -1048,7 +1117,10 @@ async def create_document(
 
     # This will raise ResourceNotFoundException if collection not found
     await get_collection(
-        db, workspace_name=workspace_name, peer_name=peer_name, collection_name=collection_name
+        db,
+        workspace_name=workspace_name,
+        peer_name=peer_name,
+        collection_name=collection_name,
     )
 
     # Using async client with await
