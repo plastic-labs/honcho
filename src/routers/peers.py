@@ -105,7 +105,7 @@ async def update_peer(
     response_model=Page[schemas.Session],
     dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
 )
-async def get_peer_sessions(
+async def get_sessions_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
     options: Optional[schemas.SessionGet] = Body(
@@ -128,7 +128,7 @@ async def get_peer_sessions(
 
     return await paginate(
         db,
-        await crud.get_peer_sessions(
+        await crud.get_sessions_for_peer    (
             workspace_name=workspace_id,
             peer_name=peer_id,
             reverse=reverse,
@@ -156,6 +156,8 @@ async def get_peer_sessions(
 async def chat(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
+    session_id: Optional[str] = Query(None, description="ID of the session to chat with"),
+    target: Optional[str] = Query(None, description="ID of the target peer"),
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),

@@ -263,17 +263,16 @@ async def add_peers_to_session(
     db=db,
 ):
     """Add peers to a session"""
-    pass
-    # try:
-    #     # TODO: Implement crud.add_peers_to_session
-    #     updated_session = await crud.add_peers_to_session(
-    #         db, workspace_name=workspace_id, session_name=session_id, peers=peers
-    #     )
-    #     logger.info(f"Added peers to session {session_id} successfully")
-    #     return updated_session
-    # except ValueError as e:
-    #     logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
-    #     raise ResourceNotFoundException("Session not found") from e
+    try:
+        workspace_name, session_name = workspace_id, session_id
+        session = await crud.add_peers_to_session(
+            db, workspace_name=workspace_name, session_name=session_name, peer_names=set(peers)
+        )
+        logger.info(f"Added peers to session {session_name} successfully")
+        return session
+    except ValueError as e:
+        logger.warning(f"Failed to add peers to session {session_name}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.put(
@@ -292,17 +291,16 @@ async def set_session_peers(
     db=db,
 ):
     """Set the peers in a session"""
-    pass
-    # try:
-    #     # TODO: Implement crud.set_session_peers
-    #     updated_session = await crud.set_session_peers(
-    #         db, workspace_name=workspace_id, session_name=session_id, peers=peers
-    #     )
-    #     logger.info(f"Set peers for session {session_id} successfully")
-    #     return updated_session
-    # except ValueError as e:
-    #     logger.warning(f"Failed to set peers for session {session_id}: {str(e)}")
-    #     raise ResourceNotFoundException("Session not found") from e
+    try:
+        workspace_name, session_name = workspace_id, session_id
+        session = await crud.set_peers_for_session(
+            db, workspace_name=workspace_name, session_name=session_name, peer_names=set(peers)
+        )
+        logger.info(f"Set peers for session {session_name} successfully")
+        return session
+    except ValueError as e:
+        logger.warning(f"Failed to set peers for session {session_name}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.delete(
@@ -321,17 +319,16 @@ async def remove_peers_from_session(
     db=db,
 ):
     """Remove peers from a session"""
-    pass
-    # try:
-    #     # TODO: Implement crud.remove_peers_from_session
-    #     updated_session = await crud.remove_peers_from_session(
-    #         db, workspace_name=workspace_id, session_name=session_id, peers=peers
-    #     )
-    #     logger.info(f"Removed peers from session {session_id} successfully")
-    #     return updated_session
-    # except ValueError as e:
-    #     logger.warning(f"Failed to remove peers from session {session_id}: {str(e)}")
-    #     raise ResourceNotFoundException("Session not found") from e
+    try:
+        session_name = session_id
+        session = await crud.remove_peers_from_session(
+            db, workspace_name=workspace_id, session_name=session_name, peer_names=set(peers)
+        )
+        logger.info(f"Removed peers from session {session_name} successfully")
+        return session
+    except ValueError as e:
+        logger.warning(f"Failed to remove peers from session {session_name}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.get(
@@ -349,16 +346,16 @@ async def get_session_peers(
     db=db,
 ):
     """Get peers from a session"""
-    pass
-    # try:
-    #     # TODO: Implement crud.get_session_peers
-    #     peers = await crud.get_session_peers(
-    #         db, workspace_name=workspace_id, session_name=session_id
-    #     )
-    #     return peers
-    # except ValueError as e:
-    #     logger.warning(f"Failed to get peers from session {session_id}: {str(e)}")
-    #     raise ResourceNotFoundException("Session not found") from e
+    # TODO: Should this be paginated?
+    try:
+        session_name = session_id
+        peers = await crud.get_peers_from_session(
+            db, workspace_name=workspace_id, session_name=session_name
+        )
+        return peers
+    except ValueError as e:
+        logger.warning(f"Failed to get peers from session {session_name}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
 
 
 @router.get(

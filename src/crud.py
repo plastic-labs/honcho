@@ -4,11 +4,12 @@ from typing import Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, insert, select
+from sqlalchemy import Select, cast, delete, select, insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 from sqlalchemy.types import BigInteger
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from . import models, schemas
 from .exceptions import (
@@ -282,12 +283,7 @@ async def update_peer(
         ) from e
 
 
-########################################################
-# session peer methods
-########################################################
-
-
-async def get_peer_sessions(
+async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
     reverse: bool = False,
@@ -326,56 +322,6 @@ async def get_peer_sessions(
         stmt = stmt.order_by(models.Session.id)
 
     return stmt
-
-async def add_peers_to_existing_session(
-    db: AsyncSession,
-    session_name: str,
-    peer_names: set[str],
-) -> list[models.SessionPeer]:
-    """
-    Add multiple peers to an existing session. If a peer already exists in the session,
-    it will be skipped gracefully.
-
-    Args:
-        db: Database session
-        session_name: Name of the session
-        peer_names: Set of peer names to add to the session
-
-    Returns:
-        List of all SessionPeer objects (both existing and newly created)
-    """
-    # Get existing peers for this session
-    stmt = (
-        select(models.SessionPeer)
-        .where(models.SessionPeer.session_name == session_name)
-        .where(models.SessionPeer.peer_name.in_(peer_names))
-    )
-    result = await db.execute(stmt)
-    existing_peers = list(result.scalars().all())
-    existing_peer_names = {sp.peer_name for sp in existing_peers}
-    
-    # Filter out peers that already exist
-    new_peer_names = peer_names - existing_peer_names
-    
-    if not new_peer_names:
-        logger.debug(f"All peers already exist in session {session_name}")
-        return existing_peers
-
-    # Create SessionPeer objects only for new peers
-    new_session_peers = [
-        models.SessionPeer(
-            session_name=session_name,
-            peer_name=peer_name
-        )
-        for peer_name in new_peer_names
-    ]
-    
-    # Add all new session peers to the database
-    db.add_all(new_session_peers)
-    await db.commit()
-    
-    logger.debug(f"Added {len(new_session_peers)} new peers to session {session_name}")
-    return existing_peers + new_session_peers
 
 
 ########################################################
@@ -459,7 +405,7 @@ async def get_or_create_session(
         await get_or_create_peers(db, workspace_name=workspace_name, peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names])
 
         # Add all peers to session
-        await add_peers_to_existing_session(db, session_name=session.name, peer_names=peer_names)
+        await _add_peers_to_session(db, session_name=session.name, peer_names=peer_names)
 
         await db.commit()
         logger.info(f"Session {session.name} updated successfully in workspace {workspace_name} with {len(peer_names)} peers")
@@ -634,6 +580,220 @@ async def clone_session(
     await db.commit()
     logger.info(f"Session {original_session_name} cloned successfully")
     return new_session
+
+async def remove_peers_from_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: set[str],
+) -> bool:
+    """
+    Remove specified peers from a session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_names: Set of peer names to remove from the session
+
+    Returns:
+        True if peers were removed successfully
+
+    Raises:
+        ResourceNotFoundException: If the session does not exist
+    """
+    # Verify session exists
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+    )
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    
+    if session is None:
+        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+
+    # Delete specified session peers
+    delete_stmt = delete(models.SessionPeer).where(
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.peer_name.in_(peer_names)
+    )
+    result = await db.execute(delete_stmt)
+    
+    await db.commit()
+    return True
+
+async def get_peers_from_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+) -> list[models.Peer]:
+    """
+    Get all peers from a session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+
+    Returns:
+        List of Peer objects in the session
+
+    Raises:
+        ResourceNotFoundException: If the session does not exist
+    """
+    # Verify session exists
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+    )
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    
+    if session is None:
+        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+
+    # Get all peers in the session
+    stmt = (
+        select(models.Peer)
+        .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.Peer.workspace_name == workspace_name)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+async def add_peers_to_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: set[str],
+) -> list[models.SessionPeer]:
+    """
+    Add peers to a session. Verifies the session exists first.
+    If peers don't exist, they will be created.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_names: Set of peer names to add to the session
+
+    Returns:
+        List of SessionPeer objects for all peers in the session
+
+    Raises:
+        ResourceNotFoundException: If the session does not exist
+    """
+    # Verify session exists
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+    )
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    
+    if session is None:
+        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+
+    # Get or create peers
+    await get_or_create_peers(
+        db, 
+        workspace_name=workspace_name, 
+        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names]
+    )
+
+    # Add peers to session
+    return await _add_peers_to_session(db, session_name=session_name, peer_names=peer_names)
+
+
+async def set_peers_for_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_names: set[str],
+) -> list[models.SessionPeer]:
+    """
+    Set peers for a session, overwriting any existing peers.
+    If peers don't exist, they will be created.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_names: Set of peer names to set for the session
+
+    Returns:
+        List of SessionPeer objects for all peers in the session
+
+    Raises:
+        ResourceNotFoundException: If the session does not exist
+    """
+    # Verify session exists
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+    )
+    result = await db.execute(stmt)
+    session = result.scalar_one_or_none()
+    
+    if session is None:
+        raise ResourceNotFoundException(f"Session {session_name} not found in workspace {workspace_name}")
+
+    # Delete all existing session peers
+    delete_stmt = delete(models.SessionPeer).where(
+        models.SessionPeer.session_name == session_name
+    )
+    result = await db.execute(delete_stmt)
+
+    # Get or create peers
+    await get_or_create_peers(
+        db, 
+        workspace_name=workspace_name, 
+        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names]
+    )
+
+    # Add new peers to session
+    return await _add_peers_to_session(db, session_name=session_name, peer_names=peer_names)
+
+async def _add_peers_to_session(
+    db: AsyncSession,
+    session_name: str,
+    peer_names: set[str],
+) -> list[models.SessionPeer]:
+    """
+    Add multiple peers to an existing session. If a peer already exists in the session,
+    it will be skipped gracefully.
+
+    Args:
+        db: Database session
+        session_name: Name of the session
+        peer_names: Set of peer names to add to the session
+
+    Returns:
+        List of all SessionPeer objects (both existing and newly created)
+    """
+    # Get existing peers for this session
+
+    stmt = pg_insert(models.SessionPeer).values([
+        {
+            "session_name": session_name,
+            "peer_name": peer_name
+        }
+        for peer_name in peer_names
+    ])
+
+    stmt = stmt.on_conflict_do_nothing(index_elements=["session_name", "peer_name"])
+    await db.execute(stmt)
+    await db.commit()
+
+    select_stmt = select(models.SessionPeer).where(models.SessionPeer.session_name == session_name)
+    result = await db.execute(select_stmt)
+    return list(result.scalars().all())
 
 
 ########################################################
