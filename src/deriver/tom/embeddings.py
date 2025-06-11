@@ -25,6 +25,8 @@ class CollectionEmbeddingStore:
     DEFAULT_ABDUCTIVE_OBSERVATIONS_COUNT = 1
     DEFAULT_INDUCTIVE_OBSERVATIONS_COUNT = 3
     DEFAULT_DEDUCTIVE_OBSERVATIONS_COUNT = 5
+    DEFAULT_EXPLICIT_OBSERVATIONS_COUNT = 7
+
 
     def __init__(self, db: AsyncSession, app_id: str, user_id: str, collection_id: str):
         self.db = db
@@ -32,12 +34,14 @@ class CollectionEmbeddingStore:
         self.user_id = user_id
         self.collection_id = collection_id
         # Initialize observation counts with defaults
+        self.explicit_observations_count = self.DEFAULT_EXPLICIT_OBSERVATIONS_COUNT
         self.abductive_observations_count = self.DEFAULT_ABDUCTIVE_OBSERVATIONS_COUNT
         self.inductive_observations_count = self.DEFAULT_INDUCTIVE_OBSERVATIONS_COUNT
         self.deductive_observations_count = self.DEFAULT_DEDUCTIVE_OBSERVATIONS_COUNT
 
     def set_observation_counts(
         self,
+        explicit: int | None = None,
         abductive: int | None = None,
         inductive: int | None = None,
         deductive: int | None = None,
@@ -45,10 +49,13 @@ class CollectionEmbeddingStore:
         """Set the number of observations to retrieve for each reasoning level.
 
         Args:
+            explicit: Number of explicit observations to retrieve
             abductive: Number of abductive observations to retrieve
             inductive: Number of inductive observations to retrieve
             deductive: Number of deductive observations to retrieve
         """
+        if explicit is not None:
+            self.explicit_observations_count = explicit
         if abductive is not None:
             self.abductive_observations_count = abductive
         if inductive is not None:
@@ -82,7 +89,7 @@ class CollectionEmbeddingStore:
             context = ObservationContext()
 
             # Search within each reasoning level separately
-            for level_name in ["abductive", "inductive", "deductive"]:
+            for level_name in ["explicit", "deductive", "inductive", "abductive"]:
                 count = getattr(self, f"{level_name}_observations_count")
                 level = ReasoningLevel(level_name)
 
@@ -198,7 +205,7 @@ class CollectionEmbeddingStore:
             context = ObservationContext()
 
             # Search within each reasoning level separately
-            for level_name in ["abductive", "inductive", "deductive"]:
+            for level_name in ["explicit", "deductive", "inductive", "abductive"]:
                 count = getattr(self, f"{level_name}_observations_count")
                 level = ReasoningLevel(level_name)
 
@@ -332,7 +339,7 @@ class CollectionEmbeddingStore:
             context = ObservationContext()
 
             # Process each reasoning level
-            for level_name in ["abductive", "inductive", "deductive"]:
+            for level_name in ["explicit", "deductive", "inductive", "abductive"]:
                 count = getattr(self, f"{level_name}_observations_count")
                 level = ReasoningLevel(level_name)
 
@@ -354,7 +361,8 @@ class CollectionEmbeddingStore:
                     context.add_observation(observation, level)
 
             logger.debug(
-                f"Retrieved observations - Abductive: {len(context.abductive)}, "
+                f"Retrieved observations - Explicit: {len(context.explicit)}, "
+                f"Abductive: {len(context.abductive)}, "
                 f"Inductive: {len(context.inductive)}, "
                 f"Deductive: {len(context.deductive)}"
             )
@@ -383,7 +391,7 @@ class CollectionEmbeddingStore:
         try:
             context = ObservationContext()
 
-            for level_name in ["abductive", "inductive", "deductive"]:
+            for level_name in ["explicit", "deductive", "inductive", "abductive"]:
                 count = getattr(self, f"{level_name}_observations_count")
                 level = ReasoningLevel(level_name)
 
@@ -423,6 +431,7 @@ class CollectionEmbeddingStore:
 
             logger.debug(
                 f"Retrieved contextualized observations for dialectic - "
+                f"Explicit: {len(context.explicit)}, "
                 f"Abductive: {len(context.abductive)}, "
                 f"Inductive: {len(context.inductive)}, "
                 f"Deductive: {len(context.deductive)}"

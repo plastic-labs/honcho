@@ -189,6 +189,7 @@ async def process_user_message(
         abductive=2,  # Keep only the most relevant high-level insights
         inductive=4,  # Limit behavioral patterns to the most relevant ones
         deductive=6,  # Allow more specific observations but keep them manageable
+        explicit=7,  # Include literal facts directly stated by the user
     )
 
     # Retrieve semantically relevant observations with session context for the current message
