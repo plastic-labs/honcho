@@ -27,6 +27,7 @@ load_dotenv()
 session_peers_table = Table(
     "session_peers",
     Base.metadata,
+    Column("workspace_name", TEXT, ForeignKey("workspaces.name"), primary_key=True),
     Column("session_name", TEXT, ForeignKey("sessions.name"), primary_key=True),
     Column("peer_name", TEXT, ForeignKey("peers.name"), primary_key=True),
 )
@@ -168,7 +169,9 @@ class Collection(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("name", "peer_name", name="unique_name_collection_peer"),
+        UniqueConstraint(
+            "name", "peer_name", "workspace_name", name="unique_name_collection_peer"
+        ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         CheckConstraint("length(name) <= 512", name="name_length"),
