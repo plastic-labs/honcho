@@ -700,7 +700,6 @@ async def create_messages(
 
 async def get_messages(
     workspace_name: str,
-    peer_name: str,
     session_name: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
@@ -708,7 +707,6 @@ async def get_messages(
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.peer_name == peer_name)
         .where(models.Message.session_name == session_name)
     )
 
