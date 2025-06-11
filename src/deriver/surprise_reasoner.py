@@ -22,11 +22,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
-@prompt_template()
-def reasoning_system_prompt() -> str:
-    return """
-
-"""
 
 
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
