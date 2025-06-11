@@ -11,12 +11,14 @@ async def test_create_message(client, db_session, sample_data):
     db_session.add(test_session)
     await db_session.commit()
 
+    ts = "2020-01-01T12:34:56Z"
     response = client.post(
         f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages",
         json={
             "content": "Test message",
             "is_user": True,
             "metadata": {"message_key": "message_value"},
+            "created_at": ts,
         },
     )
     assert response.status_code == 200
@@ -25,6 +27,7 @@ async def test_create_message(client, db_session, sample_data):
     assert data["is_user"] is True
     assert data["metadata"] == {"message_key": "message_value"}
     assert "id" in data
+    assert data["created_at"].startswith("2020-01-01T12:34:56")
 
 
 @pytest.mark.asyncio
@@ -148,12 +151,14 @@ async def test_create_batch_messages(client, db_session, sample_data):
     await db_session.commit()
 
     # Create batch of test messages
+    ts = "2019-12-27T18:11:19Z"
     test_messages = {
         "messages": [
             {
                 "content": f"Test message {i}",
                 "is_user": i % 2 == 0,  # Alternating user/non-user messages
                 "metadata": {"batch_index": i},
+                "created_at": ts,
             }
             for i in range(3)
         ]
@@ -175,6 +180,7 @@ async def test_create_batch_messages(client, db_session, sample_data):
         assert message["content"] == f"Test message {i}"
         assert message["is_user"] == (i % 2 == 0)
         assert message["metadata"] == {"batch_index": i}
+        assert message["created_at"].startswith(ts[:19])
         assert "id" in message
         assert message["session_id"] == test_session.public_id
 

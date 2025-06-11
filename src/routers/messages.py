@@ -175,6 +175,7 @@ async def create_message_for_session(
             "is_user": honcho_message.is_user,
             "content": honcho_message.content,
             "metadata": honcho_message.h_metadata,
+            "created_at": honcho_message.created_at.isoformat(),
         }
 
         # Queue message for background processing
@@ -216,12 +217,13 @@ async def create_batch_messages_for_session(
                 "app_id": app_id,
                 "user_id": user_id,
                 "session_id": session_id,
-                "message_id": message.public_id,
-                "is_user": message.is_user,
-                "content": message.content,
-                "metadata": message.h_metadata,
+                "message_id": msg.public_id,
+                "is_user": msg.is_user,
+                "content": msg.content,
+                "metadata": msg.h_metadata,
+                "created_at": msg.created_at.isoformat(),
             }
-            for message in created_messages
+            for msg in created_messages
         ]
 
         # Enqueue all messages in one call
