@@ -236,12 +236,27 @@ def log_performance_metrics(
 
 
 def _extract_observation_text(obs: Any) -> str:
-    """Extract text content from various observation types."""
+    """Extract text content from various observation types, including premises."""
     if isinstance(obs, str):
         return obs
     elif hasattr(obs, "conclusion"):
-        return obs.conclusion
+        # Handle structured observations with premises
+        conclusion = obs.conclusion
+        if hasattr(obs, "premises") and obs.premises:
+            premises_text = "\n" + "\n".join(f"    - {p}" for p in obs.premises)
+            return f"{conclusion}{premises_text}"
+        return conclusion
     elif hasattr(obs, "content"):
         return obs.content
+    elif isinstance(obs, dict):
+        # Handle dict-based structured observations
+        if "conclusion" in obs:
+            conclusion = obs["conclusion"]
+            premises = obs.get("premises", [])
+            if premises:
+                premises_text = "\n" + "\n".join(f"    - {p}" for p in premises)
+                return f"{conclusion}{premises_text}"
+            return conclusion
+        return obs.get("content", str(obs))
     else:
         return str(obs)
