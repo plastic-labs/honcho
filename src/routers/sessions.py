@@ -1,20 +1,13 @@
 import logging
 from typing import Optional
 
-from anthropic import AsyncMessageStreamManager
 from fastapi import APIRouter, Body, Depends, Path, Query
-from fastapi.exceptions import HTTPException
-from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
-from src import agent, crud, schemas
+from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import (
-    AuthenticationException,
-    ResourceNotFoundException,
-    ValidationException,
-)
+from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -44,17 +37,23 @@ async def get_or_create_session(
     Otherwise, it uses the peer_id from the JWT token for verification.
     """
     # Verify JWT has access to the requested resource
-    if not jwt_params.ad:
-        if jwt_params.ap is not None and jwt_params.ap != workspace_id:
-            raise AuthenticationException("Unauthorized access to resource")
+    if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
+        raise AuthenticationException("Unauthorized access to resource")
 
     # Use peer_id from JWT if not provided in query
-    if not session.name:
-        if not jwt_params.se:
+    if session.name:
+        if (
+            not jwt_params.ad
+            and jwt_params.s is not None
+            and jwt_params.s != session.name
+        ):
+            raise AuthenticationException("Unauthorized access to resource")
+    else:
+        if not jwt_params.s:
             raise AuthenticationException(
                 "Session ID not found in query parameter or JWT"
             )
-        session.name = jwt_params.se
+        session.name = jwt_params.s
 
     # Let crud function handle the ResourceNotFoundException
     return await crud.get_or_create_session(
@@ -65,7 +64,7 @@ async def get_or_create_session(
 @router.post(
     "/list",
     response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(app_id="workspace_id"))],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_sessions(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -104,7 +103,7 @@ async def get_sessions(
     "/{session_id}",
     response_model=schemas.Session,
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def update_session(
@@ -131,7 +130,7 @@ async def update_session(
 @router.delete(
     "/{session_id}",
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def delete_session(
@@ -214,7 +213,7 @@ async def delete_session(
     "/{session_id}/clone",
     response_model=schemas.Session,
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def clone_session(
@@ -245,7 +244,7 @@ async def clone_session(
     "/{session_id}/peers",
     response_model=schemas.Session,
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def add_peers_to_session(
@@ -276,7 +275,7 @@ async def add_peers_to_session(
     "/{session_id}/peers",
     response_model=schemas.Session,
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def set_session_peers(
@@ -305,7 +304,7 @@ async def set_session_peers(
     "/{session_id}/peers",
     response_model=schemas.Session,
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def remove_peers_from_session(
@@ -336,7 +335,7 @@ async def remove_peers_from_session(
     "/{session_id}/peers",
     response_model=Page[schemas.Peer],
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def get_session_peers(
@@ -360,7 +359,7 @@ async def get_session_peers(
     "/{session_id}/context",
     response_model=schemas.SessionContext,
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 async def get_session_context(

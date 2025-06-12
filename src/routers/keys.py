@@ -31,9 +31,6 @@ async def create_key(
     session_id: str | None = Query(
         None, description="ID of the session to scope the key to"
     ),
-    collection_id: str | None = Query(
-        None, description="ID of the collection to scope the key to"
-    ),
     expires_at: datetime.datetime | None = None,
 ):
     """Create a new Key"""
@@ -41,18 +38,17 @@ async def create_key(
         raise DisabledException()
 
     # Validate that at least one parameter is provided for proper scoping
-    if not any([workspace_id, peer_id, session_id, collection_id]):
+    if not any([workspace_id, peer_id, session_id]):
         raise ValidationException(
-            "At least one of workspace_id, peer_id, session_id, or collection_id must be provided"
+            "At least one of workspace_id, peer_id, or session_id must be provided"
         )
 
     key_str = create_jwt(
         JWTParams(
             exp=expires_at.isoformat() if expires_at else None,
-            ap=workspace_id,
-            us=peer_id,
-            se=session_id,
-            co=collection_id,
+            w=workspace_id,
+            p=peer_id,
+            s=session_id,
         )
     )
     return {
