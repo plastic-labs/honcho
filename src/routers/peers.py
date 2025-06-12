@@ -32,7 +32,7 @@ router = APIRouter(
 @router.post(
     "/list",
     response_model=Page[schemas.Peer],
-    dependencies=[Depends(require_auth(app_id="workspace_id"))],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def get_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -74,25 +74,17 @@ async def get_or_create_peer(
     Otherwise, it uses the peer_id from the JWT token.
     """
     # validate workspace query param
-    if (
-        not jwt_params.ad
-        and jwt_params.ap is not None
-        and jwt_params.ap != workspace_id
-    ):
+    if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
     if peer.name:
-        if (
-            not jwt_params.ad
-            and jwt_params.us is not None
-            and jwt_params.us != peer.name
-        ):
+        if not jwt_params.ad and jwt_params.p is not None and jwt_params.p != peer.name:
             raise AuthenticationException("Unauthorized access to resource")
     else:
         # Use peer_id from JWT
-        if not jwt_params.us:
+        if not jwt_params.p:
             raise AuthenticationException("Peer ID not found in query parameter or JWT")
-        peer.name = jwt_params.us
+        peer.name = jwt_params.p
     peer = await crud.get_or_create_peer(db, workspace_name=workspace_id, peer=peer)
     return peer
 
@@ -100,7 +92,9 @@ async def get_or_create_peer(
 @router.put(
     "/{peer_id}",
     response_model=schemas.Peer,
-    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
 )
 async def update_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -118,7 +112,9 @@ async def update_peer(
 @router.post(
     "/{peer_id}/sessions",
     response_model=Page[schemas.Session],
-    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
 )
 async def get_sessions_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -162,7 +158,9 @@ async def get_sessions_for_peer(
             "content": {"text/event-stream": {}},
         },
     },
-    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
 )
 async def chat(
     workspace_id: str = Path(..., description="ID of the workspace"),
@@ -183,7 +181,9 @@ async def chat(
 @router.post(
     "/{peer_id}/messages",
     response_model=list[schemas.Message],
-    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
 )
 async def create_messages_for_peer(
     background_tasks: BackgroundTasks,
@@ -234,7 +234,9 @@ async def create_messages_for_peer(
 @router.post(
     "/{peer_id}/messages/list",
     response_model=Page[schemas.Message],
-    dependencies=[Depends(require_auth(app_id="workspace_id", user_id="peer_id"))],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
 )
 async def get_messages_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),

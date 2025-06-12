@@ -19,7 +19,7 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions/{session_id}/messages",
     tags=["messages"],
     dependencies=[
-        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
 )
 

@@ -41,10 +41,14 @@ security = HTTPBearer(
 class JWTParams(BaseModel):
     """
     JWT parameters used to produce tokens valid for different routes.
-    Hierarchy: app > user > (session / collection)
+    Workspaces are the top level of the hierarchy -- a workspace key will
+    give access to all peers/sessions/collections in that workspace.
 
-    All routers require at least the most tightly scoped parameter.
-    Routes will accept a JWT with a scope higher in the hierarchy.
+    A session key will allow the listing and creation of messages in
+    that session.
+
+    A peer key will allow the listing and creation of peer-level messages
+    and querying the peer's dialectic endpoint.
 
     Names shortened to minimize token size. Timestamp is included
     so that many unique tokens can be generated for the same resource.
@@ -56,19 +60,17 @@ class JWTParams(BaseModel):
     `t`: a string timestamp of when the JWT was created
     `exp`: a string timestamp of when the JWT expires (optional)
     `ad`: a boolean flag indicating if the JWT is an admin JWT
-    `ap`: (string) app id
-    `us`: (string) user id
-    `se`: (string) session id
-    `co`: (string) collection id
+    `w`: (string) workspace name
+    `p`: (string) peer name
+    `s`: (string) session name
     """
 
     t: str = datetime.datetime.now().isoformat()
     exp: Optional[str] = None
     ad: Optional[bool] = None
-    ap: Optional[str] = None
-    us: Optional[str] = None
-    se: Optional[str] = None
-    co: Optional[str] = None
+    w: Optional[str] = None
+    p: Optional[str] = None
+    s: Optional[str] = None
 
 
 def create_admin_jwt() -> str:
@@ -104,14 +106,12 @@ async def verify_jwt(token: str) -> JWTParams:
                 raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
-        if "ap" in decoded:
-            params.ap = decoded["ap"]
-        if "us" in decoded:
-            params.us = decoded["us"]
-        if "se" in decoded:
-            params.se = decoded["se"]
-        if "co" in decoded:
-            params.co = decoded["co"]
+        if "w" in decoded:
+            params.w = decoded["w"]
+        if "p" in decoded:
+            params.p = decoded["p"]
+        if "s" in decoded:
+            params.s = decoded["s"]
         return params
     except jwt.PyJWTError:
         raise AuthenticationException("Invalid JWT") from None
@@ -119,10 +119,9 @@ async def verify_jwt(token: str) -> JWTParams:
 
 def require_auth(
     admin: Optional[bool] = None,
-    app_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    collection_id: Optional[str] = None,
+    workspace_name: Optional[str] = None,
+    peer_name: Optional[str] = None,
+    session_name: Optional[str] = None,
 ):
     """
     Generate a dependency that requires authentication for the given parameters.
@@ -133,35 +132,30 @@ def require_auth(
         credentials: HTTPAuthorizationCredentials = Depends(security),
         db: AsyncSession = Depends(get_db),
     ):
-        app_id_param = (
-            request.path_params.get(app_id) or request.query_params.get(app_id)
-            if app_id
+        workspace_name_param = (
+            request.path_params.get(workspace_name)
+            or request.query_params.get(workspace_name)
+            if workspace_name
             else None
         )
-        user_id_param = (
-            request.path_params.get(user_id) or request.query_params.get(user_id)
-            if user_id
+        peer_name_param = (
+            request.path_params.get(peer_name) or request.query_params.get(peer_name)
+            if peer_name
             else None
         )
-        session_id_param = (
-            request.path_params.get(session_id) or request.query_params.get(session_id)
-            if session_id
-            else None
-        )
-        collection_id_param = (
-            request.path_params.get(collection_id)
-            or request.query_params.get(collection_id)
-            if collection_id
+        session_name_param = (
+            request.path_params.get(session_name)
+            or request.query_params.get(session_name)
+            if session_name
             else None
         )
 
         return await auth(
             credentials=credentials,
             admin=admin,
-            app_id=app_id_param,
-            user_id=user_id_param,
-            session_id=session_id_param,
-            collection_id=collection_id_param,
+            workspace_name=workspace_name_param,
+            peer_name=peer_name_param,
+            session_name=session_name_param,
         )
 
     return auth_dependency
@@ -170,10 +164,9 @@ def require_auth(
 async def auth(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
     admin: Optional[bool] = None,
-    app_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    session_id: Optional[str] = None,
-    collection_id: Optional[str] = None,
+    workspace_name: Optional[str] = None,
+    peer_name: Optional[str] = None,
+    session_name: Optional[str] = None,
 ) -> JWTParams:
     """Authenticate the given JWT and return the decoded parameters."""
     if not USE_AUTH:
@@ -190,24 +183,19 @@ async def auth(
     if admin:
         raise AuthenticationException("Resource requires admin privileges")
 
-    # Check if the JWT has direct access to the requested resource
-    # For session or collection level access
-    if session_id and jwt_params.se == session_id:
-        return jwt_params
-    if collection_id and jwt_params.co == collection_id:
+    # For session level access
+    if session_name and jwt_params.s == session_name:
         return jwt_params
 
-    # For user level access - can access all sessions/collections under this user
-    if user_id and jwt_params.us == user_id:
+    # For peer level access
+    if peer_name and jwt_params.p == peer_name:
         return jwt_params
 
-    # For app level access - can access all users/sessions/collections under this app
-    if app_id and jwt_params.ap == app_id:
+    # For workspace level access - can access all peers/sessions under this workspace
+    if workspace_name and jwt_params.w == workspace_name:
         return jwt_params
 
-    if any([session_id, collection_id, user_id, app_id]):
-        print([session_id, collection_id, user_id, app_id])
-        print(jwt_params)
+    if any([session_name, peer_name, workspace_name]):
         raise AuthenticationException("JWT not permissioned for this resource")
 
     # Route did not specify any parameters, so it should parse parameters itself

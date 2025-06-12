@@ -1,7 +1,7 @@
 import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class WorkspaceBase(BaseModel):
