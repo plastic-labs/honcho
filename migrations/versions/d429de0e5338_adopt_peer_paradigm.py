@@ -67,7 +67,6 @@ def upgrade() -> None:
         op.drop_table("metamessages", schema=schema)
 
     # Step 10: Drop app_id, user_id from peers and sessions
-    op.drop_column("peers", "app_id", schema=schema)
     op.drop_column("sessions", "app_id", schema=schema)
     op.drop_column("sessions", "user_id", schema=schema)
 
@@ -199,6 +198,7 @@ def update_peers_table(schema: str, inspector) -> None:
     op.create_check_constraint(
         "id_format", "peers", "id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
+
     op.drop_column("peers", "app_id", schema=schema)
 
 
@@ -348,17 +348,21 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
 
     # Populate session_peers table
     sessions = conn.execute(
-        sa.text(f"SELECT user_id, name, workspace_name FROM {schema}.sessions")
+        sa.text(f"""
+        SELECT s.user_id, s.name, s.workspace_name, p.name as peer_name
+        FROM {schema}.sessions s
+        JOIN {schema}.peers p ON p.id = s.user_id AND p.workspace_name = s.workspace_name
+    """)
     ).fetchall()
     for session in sessions:
-        user_id, session_name, workspace_name = session
+        user_id, session_name, workspace_name, peer_name = session
         op.execute(
             sa.text(
                 "INSERT INTO session_peers (workspace_name, session_name, peer_name) VALUES (:workspace_name, :session_name, :peer_name)"
             ).bindparams(
                 workspace_name=workspace_name,
                 session_name=session_name,
-                peer_name=user_id,
+                peer_name=peer_name,
             )
         )
         agent_peer_id, _ = agent_peers_map[workspace_name]
@@ -397,7 +401,7 @@ def update_messages_table(schema: str, inspector) -> None:
     op.execute(
         sa.text(f"""
         UPDATE {schema}.messages SET 
-        workspace_name = (SELECT workspace_name FROM {schema}.workspaces WHERE workspaces.id = messages.app_id)
+        workspace_name = (SELECT name FROM {schema}.workspaces WHERE workspaces.id = messages.app_id)
     """)
     )
 
@@ -543,7 +547,7 @@ def update_collections_table(schema: str, inspector) -> None:
         sa.text(f"""
         UPDATE {schema}.collections SET 
         peer_name = (SELECT name FROM {schema}.peers WHERE peers.id = collections.user_id),
-        workspace_name = (SELECT workspace_name FROM {schema}.workspaces WHERE workspaces.id = collections.app_id)
+        workspace_name = (SELECT name FROM {schema}.workspaces WHERE workspaces.id = collections.app_id)
     """)
     )
 
@@ -636,7 +640,7 @@ def update_collections_table(schema: str, inspector) -> None:
 def update_documents_table(schema: str, inspector) -> None:
     """Update documents table."""
 
-    # Add new columns
+        # Add new columns
     if not column_exists("documents", "peer_name", inspector):
         op.add_column(
             "documents", sa.Column("peer_name", sa.TEXT(), nullable=True), schema=schema
@@ -653,25 +657,8 @@ def update_documents_table(schema: str, inspector) -> None:
         sa.text(f"""
         UPDATE {schema}.documents SET 
         peer_name = (SELECT name FROM {schema}.peers WHERE peers.id = documents.user_id),
-        workspace_name = (SELECT workspace_name FROM {schema}.workspaces WHERE workspaces.id = documents.app_id)
+        workspace_name = (SELECT name FROM {schema}.workspaces WHERE workspaces.id = documents.app_id)
     """)
-    )
-
-    # Make columns not nullable
-    op.alter_column("documents", "peer_name", nullable=False, schema=schema)
-    op.alter_column("documents", "workspace_name", nullable=False, schema=schema)
-
-    # Update primary key structure
-    if primary_constraint_exists("documents", "pk_documents", inspector):
-        op.drop_constraint("pk_documents", "documents", type_="primary", schema=schema)
-    if column_exists("documents", "id", inspector):
-        op.drop_column("documents", "id", schema=schema)
-    op.alter_column("documents", "public_id", new_column_name="id", schema=schema)
-    op.create_primary_key("pk_documents", "documents", ["id"], schema=schema)
-
-    # Update collection reference
-    op.alter_column(
-        "documents", "collection_id", new_column_name="collection_name", schema=schema
     )
 
     # Drop old constraints and columns
@@ -698,6 +685,37 @@ def update_documents_table(schema: str, inspector) -> None:
         op.drop_constraint(
             "documents_user_id_fkey", "documents", type_="foreignkey", schema=schema
         )
+
+    # Now rename the column
+    if column_exists("documents", "collection_id", inspector):
+        op.alter_column(
+            "documents", "collection_id", new_column_name="collection_name", schema=schema
+        )
+
+    # Convert collection_id references to collection names
+    # (collection_id contains old collection IDs, we need to get the collection names)
+    op.execute(sa.text(f"""
+        UPDATE {schema}.documents 
+        SET collection_name = (
+            SELECT c.name 
+            FROM {schema}.collections c 
+            WHERE c.id = documents.collection_name 
+            AND c.peer_name = documents.peer_name 
+            AND c.workspace_name = documents.workspace_name
+        )
+    """))
+
+    # Make columns not nullable
+    op.alter_column("documents", "peer_name", nullable=False, schema=schema)
+    op.alter_column("documents", "workspace_name", nullable=False, schema=schema)
+
+    # Update primary key structure
+    if primary_constraint_exists("documents", "pk_documents", inspector):
+        op.drop_constraint("pk_documents", "documents", type_="primary", schema=schema)
+    if column_exists("documents", "id", inspector):
+        op.drop_column("documents", "id", schema=schema)
+    op.alter_column("documents", "public_id", new_column_name="id", schema=schema)
+    op.create_primary_key("pk_documents", "documents", ["id"], schema=schema)
 
     op.drop_column("documents", "user_id", schema=schema)
     op.drop_column("documents", "app_id", schema=schema)
