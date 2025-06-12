@@ -12,20 +12,20 @@ def test_create_key_no_params(auth_client):
 
 def test_create_key_with_params(auth_client, sample_data):
     """Test creating a key with specific parameters"""
-    test_app, test_user = sample_data
+    test_workspace, test_peer = sample_data
 
     if auth_client.auth_type != "admin":
         return  # Skip test if not admin authentication
 
     # Test with app_id
-    response = auth_client.post("/v1/keys", params={"app_id": test_app.public_id})
+    response = auth_client.post("/v1/keys", params={"workspace_id": test_workspace.name})
     assert response.status_code == 200
     assert "key" in response.json()
 
     # Test with app_id and user_id
     response = auth_client.post(
         "/v1/keys",
-        params={"app_id": test_app.public_id, "user_id": test_user.public_id},
+        params={"workspace_id": test_workspace.name, "peer_id": test_peer.name},
     )
     assert response.status_code == 200
     assert "key" in response.json()
@@ -34,8 +34,8 @@ def test_create_key_with_params(auth_client, sample_data):
     response = auth_client.post(
         "/v1/keys",
         params={
-            "app_id": test_app.public_id,
-            "user_id": test_user.public_id,
+            "workspace_id": test_workspace.name,
+            "peer_id": test_peer.name,
             "session_id": "test-session",
             "collection_id": "test-collection",
         },
@@ -59,5 +59,5 @@ def test_create_key_with_expires_at(auth_client, sample_data):
     test_app, _ = sample_data
 
     # assert that the key is expired
-    response = auth_client.post("/v1/keys", params={"app_id": test_app.public_id})
+    response = auth_client.post("/v1/keys", params={"app_id": test_app.id})
     assert response.status_code == 401

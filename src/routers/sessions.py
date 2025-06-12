@@ -36,7 +36,6 @@ async def get_or_create_session(
     If peer_id is provided as a query parameter, it verifies the peer is in the session.
     Otherwise, it uses the peer_id from the JWT token for verification.
     """
-    print("this is called")
     # Verify JWT has access to the requested resource
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")

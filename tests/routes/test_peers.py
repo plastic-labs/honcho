@@ -122,23 +122,16 @@ def test_get_sessions_for_peer(client, sample_data):
     # Now get sessions for the peer and validate the session is returned
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
-        json={},
     )
     assert response.status_code == 200
     data = response.json()
-    print(data)
     assert "items" in data
     # Check that the created session is in the returned items
     session_ids = [item["id"] for item in data["items"]]
     assert session_name in session_ids
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
+    assert len(data["items"]) == 1
 
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
-        json={},
-    )
+
 def test_create_and_get_messages_for_peer(client, sample_data):
     test_workspace, test_peer = sample_data
     

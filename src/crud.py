@@ -831,7 +831,6 @@ async def _add_peers_to_session(
         models.SessionPeer.workspace_name == workspace_name,
     )
     result = await db.execute(select_stmt)
-    print("SessionPeer query result:", [sp.__dict__ for sp in result.scalars().all()])
     return list(result.scalars().all())
 
 

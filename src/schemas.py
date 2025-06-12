@@ -84,7 +84,7 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
-    id: int
+    public_id: str = Field(serialization_alias="id")
     content: str
     peer_id: str = Field(alias="peer_name")
     session_id: str | None = Field(alias="session_name")
