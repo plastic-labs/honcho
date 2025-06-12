@@ -66,6 +66,11 @@ def upgrade() -> None:
     if table_exists("metamessages", inspector):
         op.drop_table("metamessages", schema=schema)
 
+    # Step 10: Drop app_id, user_id from peers and sessions
+    op.drop_column("peers", "app_id", schema=schema)
+    op.drop_column("sessions", "app_id", schema=schema)
+    op.drop_column("sessions", "user_id", schema=schema)
+
 
 def downgrade() -> None:
     pass

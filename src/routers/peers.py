@@ -175,7 +175,9 @@ async def chat(
         ..., description="Dialectic Endpoint Parameters"
     ),
 ):
-    pass
+    return schemas.DialecticResponse(
+        content=f"Hello, {peer_id}! You are chatting with {target} in {session_id} in workspace {workspace_id} with options {options}",
+    )
 
 
 @router.post(
