@@ -70,12 +70,44 @@ def upgrade() -> None:
         op.drop_table("metamessages", schema=schema)
 
     # Step 11: Drop app_id, user_id from peers and sessions
-    op.drop_column("sessions", "app_id", schema=schema)
-    op.drop_column("sessions", "user_id", schema=schema)
+    if column_exists("sessions", "app_id", inspector):
+        op.drop_column("sessions", "app_id", schema=schema)
+    if column_exists("sessions", "user_id", inspector):
+        op.drop_column("sessions", "user_id", schema=schema)
 
 
 def downgrade() -> None:
-    pass
+    """Downgrade database schema to reverse peer paradigm adoption."""
+    schema = getenv("DATABASE_SCHEMA", "public")
+    inspector = sa.inspect(op.get_bind())
+
+    # Step 10 (reverse): Add back app_id, user_id to peers and sessions
+    restore_app_user_columns(schema, inspector)
+
+    # Step 8 (reverse): Restore documents table
+    restore_documents_table(schema, inspector)
+
+    # Step 7 (reverse): Restore collections table
+    restore_collections_table(schema, inspector)
+
+    # Step 6 (reverse): Restore messages table
+    restore_messages_table(schema, inspector)
+
+    # Step 5 (reverse): Drop session_peers table
+    if table_exists("session_peers", inspector):
+        op.drop_table("session_peers", schema=schema)
+
+    # Step 4 (reverse): Restore sessions table
+    restore_sessions_table(schema, inspector)
+
+    # Step 3 (reverse): Restore peers table
+    restore_peers_table(schema, inspector)
+
+    # Step 2 (reverse): Restore workspaces table
+    restore_workspaces_table(schema, inspector)
+
+    # Step 1 (reverse): Rename tables back
+    restore_table_names(schema, inspector)
 
 
 def rename_tables(schema: str, inspector) -> None:
@@ -868,3 +900,628 @@ def backfill_token_counts(schema: str) -> None:
             )
 
         offset += batch_size
+
+
+def restore_app_user_columns(schema: str, inspector) -> None:
+    """Restore app_id and user_id columns to peers and sessions."""
+    # Add app_id back to peers
+    if not column_exists("peers", "app_id", inspector):
+        op.add_column(
+            "peers",
+            sa.Column("app_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate app_id from workspace_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.peers SET app_id = (
+                    SELECT id FROM {schema}.workspaces WHERE name = peers.workspace_name
+                )
+            """)
+        )
+        op.alter_column("peers", "app_id", nullable=False, schema=schema)
+
+    # Add app_id back to sessions
+    if not column_exists("sessions", "app_id", inspector):
+        op.add_column(
+            "sessions",
+            sa.Column("app_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate app_id from workspace_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.sessions SET app_id = (
+                    SELECT id FROM {schema}.workspaces WHERE name = sessions.workspace_name
+                )
+            """)
+        )
+        op.alter_column("sessions", "app_id", nullable=False, schema=schema)
+
+    # Add user_id back to sessions
+    if not column_exists("sessions", "user_id", inspector):
+        op.add_column(
+            "sessions",
+            sa.Column("user_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate user_id from session_peers
+        # The user peer is the one that existed before agent peers were created
+        # Agent peers have names that match their IDs (both are nanoids), user peers have different names and IDs
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.sessions SET user_id = (
+                    SELECT sp.peer_name FROM {schema}.session_peers sp 
+                    JOIN {schema}.peers p ON p.name = sp.peer_name AND p.workspace_name = sp.workspace_name
+                    WHERE sp.session_name = sessions.name 
+                    AND sp.workspace_name = sessions.workspace_name
+                    AND p.id != p.name
+                    LIMIT 1
+                )
+            """)
+        )
+        
+        # Check for any sessions with null user_id
+        conn = op.get_bind()
+        null_sessions = conn.execute(
+            sa.text(f"SELECT COUNT(*) FROM {schema}.sessions WHERE user_id IS NULL")
+        ).scalar()
+        if null_sessions and null_sessions > 0:
+            print(f"WARNING: Found {null_sessions} sessions with null user_id")
+        
+        op.alter_column("sessions", "user_id", nullable=False, schema=schema)
+
+def restore_documents_table(schema: str, inspector) -> None:
+    """Restore documents table to pre-peer paradigm state."""
+    # Add back id column as primary key
+    if not column_exists("documents", "temp_id", inspector):
+        op.add_column(
+            "documents",
+            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            schema=schema,
+        )
+
+    # Drop current primary key and rename columns
+    if primary_constraint_exists("documents", "pk_documents", inspector):
+        op.drop_constraint("pk_documents", "documents", type_="primary", schema=schema)
+    
+    op.alter_column("documents", "id", new_column_name="public_id", schema=schema)
+    op.alter_column("documents", "temp_id", new_column_name="id", schema=schema)
+    
+    op.create_primary_key("pk_documents", "documents", ["id"], schema=schema)
+
+    # Add back user_id and app_id columns
+    if not column_exists("documents", "user_id", inspector):
+        op.add_column(
+            "documents",
+            sa.Column("user_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate from peer_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.documents SET user_id = (
+                    SELECT id FROM {schema}.users WHERE name = documents.peer_name
+                )
+            """)
+        )
+        op.alter_column("documents", "user_id", nullable=False, schema=schema)
+
+    if not column_exists("documents", "app_id", inspector):
+        op.add_column(
+            "documents",
+            sa.Column("app_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate from workspace_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.documents SET app_id = (
+                    SELECT id FROM {schema}.apps WHERE name = documents.workspace_name
+                )
+            """)
+        )
+        op.alter_column("documents", "app_id", nullable=False, schema=schema)
+
+    # Restore collection_id from collection_name
+    op.alter_column(
+        "documents", "collection_name", new_column_name="collection_id", schema=schema
+    )
+    op.execute(
+        sa.text(f"""
+            UPDATE {schema}.documents SET collection_id = (
+                SELECT id FROM {schema}.collections WHERE name = documents.collection_id
+            )
+        """)
+    )
+
+    # Drop new foreign keys
+    if fk_exists("documents", "fk_documents_collection_name_collections", inspector):
+        op.drop_constraint(
+            "fk_documents_collection_name_collections",
+            "documents",
+            type_="foreignkey",
+            schema=schema,
+        )
+    if fk_exists("documents", "fk_documents_workspace_name_workspaces", inspector):
+        op.drop_constraint(
+            "fk_documents_workspace_name_workspaces",
+            "documents",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    # Drop new columns
+    op.drop_column("documents", "peer_name", schema=schema)
+    op.drop_column("documents", "workspace_name", schema=schema)
+
+    # Restore old foreign keys (only fk_ format)
+    op.create_foreign_key(
+        "fk_documents_collection_id_collections",
+        "documents",
+        "collections",
+        ["collection_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_documents_user_id_users",
+        "documents",
+        "users",
+        ["user_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_documents_app_id_apps",
+        "documents",
+        "apps",
+        ["app_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+
+    # Restore old constraint names
+    if check_constraint_exists("documents", "id_length", inspector):
+        op.drop_constraint("id_length", "documents", type_="check", schema=schema)
+    if check_constraint_exists("documents", "id_format", inspector):
+        op.drop_constraint("id_format", "documents", type_="check", schema=schema)
+
+    op.create_check_constraint(
+        "public_id_length", "documents", "length(public_id) = 21", schema=schema
+    )
+    op.create_check_constraint(
+        "public_id_format", "documents", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+    )
+
+
+def restore_collections_table(schema: str, inspector) -> None:
+    """Restore collections table to pre-peer paradigm state."""
+    # Add back id column as primary key
+    if not column_exists("collections", "temp_id", inspector):
+        op.add_column(
+            "collections",
+            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            schema=schema,
+        )
+
+    # Drop current primary key and rename columns
+    if primary_constraint_exists("collections", "pk_collections", inspector):
+        op.drop_constraint("pk_collections", "collections", type_="primary", schema=schema)
+    
+    op.alter_column("collections", "id", new_column_name="public_id", schema=schema)
+    op.alter_column("collections", "temp_id", new_column_name="id", schema=schema)
+    
+    op.create_primary_key("pk_collections", "collections", ["id"], schema=schema)
+
+    # Add back user_id and app_id columns
+    if not column_exists("collections", "user_id", inspector):
+        op.add_column(
+            "collections",
+            sa.Column("user_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate from peer_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.collections SET user_id = (
+                    SELECT id FROM {schema}.users WHERE name = collections.peer_name
+                )
+            """)
+        )
+        op.alter_column("collections", "user_id", nullable=False, schema=schema)
+
+    if not column_exists("collections", "app_id", inspector):
+        op.add_column(
+            "collections",
+            sa.Column("app_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate from workspace_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.collections SET app_id = (
+                    SELECT id FROM {schema}.apps WHERE name = collections.workspace_name
+                )
+            """)
+        )
+        op.alter_column("collections", "app_id", nullable=False, schema=schema)
+
+    # Drop new foreign keys
+    if fk_exists("collections", "fk_collections_peer_name_peers", inspector):
+        op.drop_constraint(
+            "fk_collections_peer_name_peers",
+            "collections",
+            type_="foreignkey",
+            schema=schema,
+        )
+    if fk_exists("collections", "fk_collections_workspace_name_workspaces", inspector):
+        op.drop_constraint(
+            "fk_collections_workspace_name_workspaces",
+            "collections",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    # Drop new unique constraint
+    op.drop_constraint(
+        "unique_name_collection_peer", "collections", type_="unique", schema=schema
+    )
+
+    # Drop new columns
+    op.drop_column("collections", "peer_name", schema=schema)
+    op.drop_column("collections", "workspace_name", schema=schema)
+
+    # Restore old foreign keys (only fk_ format)
+    op.create_foreign_key(
+        "fk_collections_user_id_users",
+        "collections",
+        "users",
+        ["user_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_collections_app_id_apps",
+        "collections",
+        "apps",
+        ["app_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+
+    # Restore old unique constraint
+    op.create_unique_constraint(
+        "unique_name_collection_user",
+        "collections",
+        ["name", "user_id"],
+        schema=schema,
+    )
+
+    # Restore old constraint names
+    if check_constraint_exists("collections", "id_length", inspector):
+        op.drop_constraint("id_length", "collections", type_="check", schema=schema)
+    if check_constraint_exists("collections", "id_format", inspector):
+        op.drop_constraint("id_format", "collections", type_="check", schema=schema)
+
+    op.create_check_constraint(
+        "public_id_length", "collections", "length(public_id) = 21", schema=schema
+    )
+    op.create_check_constraint(
+        "public_id_format", "collections", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+    )
+
+
+def restore_messages_table(schema: str, inspector) -> None:
+    """Restore messages table to pre-peer paradigm state."""
+    # Add back old columns
+    if not column_exists("messages", "session_id", inspector):
+        op.add_column(
+            "messages",
+            sa.Column("session_id", sa.BigInteger(), nullable=True),
+            schema=schema,
+        )
+        # Populate from session_name - need to get the old BigInteger ID
+        # This is tricky since we changed the sessions.id from BigInteger to TEXT
+        # We'll need to create a mapping or use a sequential approach
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.messages SET session_id = (
+                    SELECT ROW_NUMBER() OVER (ORDER BY created_at) 
+                    FROM {schema}.sessions s 
+                    WHERE s.name = messages.session_name
+                )
+            """)
+        )
+        op.alter_column("messages", "session_id", nullable=False, schema=schema)
+
+    if not column_exists("messages", "user_id", inspector):
+        op.add_column(
+            "messages",
+            sa.Column("user_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate from peer_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.messages SET user_id = (
+                    SELECT id FROM {schema}.users WHERE name = messages.peer_name
+                )
+            """)
+        )
+        op.alter_column("messages", "user_id", nullable=False, schema=schema)
+
+    if not column_exists("messages", "app_id", inspector):
+        op.add_column(
+            "messages",
+            sa.Column("app_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        # Populate from workspace_name
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.messages SET app_id = (
+                    SELECT id FROM {schema}.apps WHERE name = messages.workspace_name
+                )
+            """)
+        )
+        op.alter_column("messages", "app_id", nullable=False, schema=schema)
+
+    if not column_exists("messages", "is_user", inspector):
+        op.add_column(
+            "messages",
+            sa.Column("is_user", sa.Boolean(), nullable=True),
+            schema=schema,
+        )
+        # Determine is_user based on whether peer_name matches session's user
+        op.execute(
+            sa.text(f"""
+                UPDATE {schema}.messages SET is_user = (
+                    SELECT CASE 
+                        WHEN s.user_id = messages.peer_name THEN true 
+                        ELSE false 
+                    END
+                    FROM {schema}.sessions s 
+                    WHERE s.name = messages.session_name
+                )
+            """)
+        )
+        op.alter_column("messages", "is_user", nullable=False, schema=schema)
+
+    # Drop new foreign keys
+    if fk_exists("messages", "fk_messages_session_name_sessions", inspector):
+        op.drop_constraint(
+            "fk_messages_session_name_sessions",
+            "messages",
+            type_="foreignkey",
+            schema=schema,
+        )
+    if fk_exists("messages", "fk_messages_peer_name_peers", inspector):
+        op.drop_constraint(
+            "fk_messages_peer_name_peers", "messages", type_="foreignkey", schema=schema
+        )
+    if fk_exists("messages", "fk_messages_workspace_name_workspaces", inspector):
+        op.drop_constraint(
+            "fk_messages_workspace_name_workspaces",
+            "messages",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    # Drop new indexes
+    if index_exists("messages", "ix_messages_peer_name", inspector):
+        op.drop_index("ix_messages_peer_name", table_name="messages", schema=schema)
+    if index_exists("messages", "ix_messages_workspace_name", inspector):
+        op.drop_index("ix_messages_workspace_name", table_name="messages", schema=schema)
+
+    # Drop new columns
+    op.drop_column("messages", "peer_name", schema=schema)
+    op.drop_column("messages", "workspace_name", schema=schema)
+    op.drop_column("messages", "session_name", schema=schema)
+    op.drop_column("messages", "token_count", schema=schema)
+
+    # Restore old foreign keys (only fk_ format)
+    op.create_foreign_key(
+        "fk_messages_session_id_sessions",
+        "messages",
+        "sessions",
+        ["session_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_messages_app_id_apps",
+        "messages",
+        "apps",
+        ["app_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_messages_user_id_users",
+        "messages",
+        "users",
+        ["user_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+
+
+def restore_sessions_table(schema: str, inspector) -> None:
+    """Restore sessions table to pre-peer paradigm state."""
+    # Add back id column as BigInteger primary key
+    if not column_exists("sessions", "temp_id", inspector):
+        op.add_column(
+            "sessions",
+            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            schema=schema,
+        )
+
+    # Drop current primary key and rename columns
+    if primary_constraint_exists("sessions", "pk_sessions", inspector):
+        op.drop_constraint("pk_sessions", "sessions", type_="primary", schema=schema)
+    
+    op.alter_column("sessions", "id", new_column_name="public_id", schema=schema)
+    op.alter_column("sessions", "temp_id", new_column_name="id", schema=schema)
+    
+    op.create_primary_key("pk_sessions", "sessions", ["id"], schema=schema)
+
+    # Drop new foreign keys
+    if fk_exists("sessions", "fk_sessions_workspace_name_workspaces", inspector):
+        op.drop_constraint(
+            "fk_sessions_workspace_name_workspaces",
+            "sessions",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    # Drop new unique constraint
+    op.drop_constraint(
+        "unique_session_name", "sessions", type_="unique", schema=schema
+    )
+
+    # Drop new columns
+    op.drop_column("sessions", "name", schema=schema)
+    op.drop_column("sessions", "workspace_name", schema=schema)
+    op.drop_column("sessions", "feature_flags", schema=schema)
+
+    # Restore old foreign keys (only fk_ format) - will be added back in restore_app_user_columns
+    op.create_foreign_key(
+        "fk_sessions_app_id_apps",
+        "sessions",
+        "apps",
+        ["app_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_sessions_user_id_users",
+        "sessions",
+        "users",
+        ["user_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+
+    # Restore old constraint names
+    if check_constraint_exists("sessions", "id_length", inspector):
+        op.drop_constraint("id_length", "sessions", type_="check", schema=schema)
+    if check_constraint_exists("sessions", "id_format", inspector):
+        op.drop_constraint("id_format", "sessions", type_="check", schema=schema)
+
+    op.create_check_constraint(
+        "public_id_length", "sessions", "length(public_id) = 21", schema=schema
+    )
+    op.create_check_constraint(
+        "public_id_format", "sessions", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+    )
+
+
+def restore_peers_table(schema: str, inspector) -> None:
+    """Restore peers table to pre-user paradigm state."""
+    # Add back id column as BigInteger primary key
+    if not column_exists("peers", "temp_id", inspector):
+        op.add_column(
+            "peers",
+            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            schema=schema,
+        )
+
+    # Drop current primary key and rename columns
+    if primary_constraint_exists("peers", "pk_peers", inspector):
+        op.drop_constraint("pk_peers", "peers", type_="primary", schema=schema)
+    
+    op.alter_column("peers", "id", new_column_name="public_id", schema=schema)
+    op.alter_column("peers", "temp_id", new_column_name="id", schema=schema)
+    
+    op.create_primary_key("pk_users", "peers", ["id"], schema=schema)
+
+    # Drop new foreign keys
+    if fk_exists("peers", "fk_peers_workspace_name_workspaces", inspector):
+        op.drop_constraint(
+            "fk_peers_workspace_name_workspaces", "peers", type_="foreignkey", schema=schema
+        )
+
+    # Drop new unique constraint and index
+    op.drop_constraint(
+        "unique_name_workspace_peer", "peers", type_="unique", schema=schema
+    )
+    if index_exists("peers", "idx_peers_workspace_lookup", inspector):
+        op.drop_index("idx_peers_workspace_lookup", table_name="peers", schema=schema)
+
+    # Restore old unique constraint and index
+    op.create_unique_constraint(
+        "unique_name_app_user", "peers", ["name", "app_id"], schema=schema
+    )
+    op.create_index("idx_users_app_lookup", "peers", ["app_id", "name"], schema=schema)
+
+    # Drop new columns
+    op.drop_column("peers", "workspace_name", schema=schema)
+    op.drop_column("peers", "feature_flags", schema=schema)
+
+    # Restore old foreign key (only fk_ format) - will be added back in restore_app_user_columns
+    op.create_foreign_key(
+        "fk_users_app_id_apps",
+        "peers",
+        "apps",
+        ["app_id"],
+        ["id"],
+        referent_schema=schema,
+    )
+
+    # Restore old constraint names
+    if check_constraint_exists("peers", "id_length", inspector):
+        op.drop_constraint("id_length", "peers", type_="check", schema=schema)
+    if check_constraint_exists("peers", "id_format", inspector):
+        op.drop_constraint("id_format", "peers", type_="check", schema=schema)
+
+    op.create_check_constraint(
+        "public_id_length", "peers", "length(public_id) = 21", schema=schema
+    )
+    op.create_check_constraint(
+        "public_id_format", "peers", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+    )
+
+
+def restore_workspaces_table(schema: str, inspector) -> None:
+    """Restore workspaces table to pre-peer paradigm state (apps)."""
+    # Add back id column as BigInteger primary key
+    if not column_exists("workspaces", "temp_id", inspector):
+        op.add_column(
+            "workspaces",
+            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            schema=schema,
+        )
+
+    # Drop current primary key and rename columns
+    if primary_constraint_exists("workspaces", "pk_workspaces", inspector):
+        op.drop_constraint("pk_workspaces", "workspaces", type_="primary", schema=schema)
+    
+    op.alter_column("workspaces", "id", new_column_name="public_id", schema=schema)
+    op.alter_column("workspaces", "temp_id", new_column_name="id", schema=schema)
+    
+    op.create_primary_key("pk_apps", "workspaces", ["id"], schema=schema)
+
+    # Drop new columns
+    op.drop_column("workspaces", "feature_flags", schema=schema)
+
+    # Restore old constraint names
+    if check_constraint_exists("workspaces", "id_length", inspector):
+        op.drop_constraint("id_length", "workspaces", type_="check", schema=schema)
+    if check_constraint_exists("workspaces", "id_format", inspector):
+        op.drop_constraint("id_format", "workspaces", type_="check", schema=schema)
+
+    op.create_check_constraint(
+        "public_id_length", "workspaces", "length(public_id) = 21", schema=schema
+    )
+    op.create_check_constraint(
+        "public_id_format", "workspaces", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+    )
+
+
+def restore_table_names(schema: str, inspector) -> None:
+    """Restore table names: workspaces->apps and peers->users."""
+    if inspector.has_table("workspaces", schema=schema):
+        op.rename_table("workspaces", "apps", schema=schema)
+    if inspector.has_table("peers", schema=schema):
+        op.rename_table("peers", "users", schema=schema)
