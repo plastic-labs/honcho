@@ -4,7 +4,7 @@ api/docker-compose.yml
 
 *.db
 data
-docker-compose.yml
+./docker-compose.yml
 compose.yml
 
 
