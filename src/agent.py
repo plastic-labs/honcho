@@ -603,7 +603,6 @@ async def get_long_term_facts(
     """Backward compatibility helper that returns long-term observations (facts)."""
     results_str = await get_observations(query, embedding_store, include_premises=False)
     return [results_str]
-
 # ---------------------------------------------------------------------------
 # Helper: retrieve latest deriver_trace metamessage for current session
 # ---------------------------------------------------------------------------
@@ -683,3 +682,4 @@ async def get_latest_deriver_trace(session_id: str) -> str:
         logger.error(f"Failed to load deriver_trace metamessage: {e}")
 
     return latest_trace_block
+
