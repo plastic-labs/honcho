@@ -58,13 +58,14 @@ def extract_observation_content(observation) -> str:
     """Extract content string from an observation (dict or string)."""
     # Handle StructuredObservation objects (Pydantic models)
     if hasattr(observation, 'conclusion') and hasattr(observation, 'premises'):
-        return observation.conclusion 
+        return format_structured_observation(observation.conclusion, observation.premises)
     
     if isinstance(observation, dict):
-        # For structured observations, return only the conclusion
+        # For structured observations, return conclusion with premises formatted
         if "conclusion" in observation:
             conclusion = observation["conclusion"]
-            return conclusion
+            premises = observation.get("premises", [])
+            return format_structured_observation(conclusion, premises)
         # Fallback to content field or string representation
         return observation.get("content", str(observation))
     return str(observation)
