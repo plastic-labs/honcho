@@ -359,12 +359,12 @@ async def get_observations(
     Returns:
         String containing additional relevant observations from semantic search
     """
-    logger.debug(f"Starting observation retrieval for query: {query}")
+    logger.info(f"Starting observation retrieval for query: {query}")
     
     # Generate search queries and execute them in parallel
     search_queries_result = await generate_semantic_queries(query)
     search_queries = search_queries_result.queries
-    logger.debug(f"Generated {len(search_queries)} search queries")
+    logger.info(f"Generated {len(search_queries)} search queries: \n{json.dumps(search_queries, indent=2)}")
     
     # Execute all queries in parallel
     tasks = [_execute_single_query(q, embedding_store) for q in search_queries]
@@ -372,18 +372,21 @@ async def get_observations(
     
     # Combine and deduplicate results
     unique_observations = _deduplicate_observations(all_results)
-    logger.debug(f"Retrieved {len(unique_observations)} unique observations before filtering")
+    logger.info(f"Retrieved {len(unique_observations)} unique observations before filtering")
     
     # Filter out current session observations to get only historical context
     if session_id:
         filtered_observations = _filter_current_session_observations(unique_observations, session_id)
-        logger.debug(f"After session filtering: {len(filtered_observations)} observations (removed {len(unique_observations) - len(filtered_observations)} current session observations)")
+        logger.info(f"After session filtering: {len(filtered_observations)} observations (removed {len(unique_observations) - len(filtered_observations)} current session observations)")
         unique_observations = filtered_observations
     
     # Format observations
     if not unique_observations:
-        logger.debug("No unique historical observations found after filtering")
+        logger.info("No unique historical observations found after filtering")
         return "No additional relevant context found."
+    
+    # Log a summary of what was retrieved
+    logger.info(f"Final retrieval summary: {len(unique_observations)} observations retrieved across search queries: \n{json.dumps(unique_observations, indent=2)}")
     
     return _format_observations(unique_observations, include_premises)
 
