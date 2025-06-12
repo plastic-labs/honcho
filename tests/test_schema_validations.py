@@ -2,152 +2,88 @@ import pytest
 from pydantic import ValidationError
 
 from src.schemas import (
-    AppCreate,
-    CollectionCreate,
+    WorkspaceCreate,
+    PeerCreate,
     DocumentCreate,
-    DocumentQuery,
-    MessageBatchCreate,
     MessageCreate,
-    MetamessageCreate,
-    UserCreate,
+    SessionCreate,
 )
 
 
-class TestAppValidations:
-    def test_valid_app_create(self):
-        app = AppCreate(name="test", metadata={})
-        assert app.name == "test"
-        assert app.metadata == {}
+class TestWorkspaceValidations:
+    def test_valid_workspace_create(self):
+        workspace = WorkspaceCreate(name="test", metadata={})
+        assert workspace.name == "test"
+        assert workspace.metadata == {}
 
     def test_app_name_too_short(self):
         with pytest.raises(ValidationError) as exc_info:
-            AppCreate(name="", metadata={})
+            WorkspaceCreate(name="", metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_short"
 
     def test_app_name_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            AppCreate(name="a" * 101, metadata={})
+            WorkspaceCreate(name="a" * 101, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
 
     def test_app_invalid_metadata_type(self):
         with pytest.raises(ValidationError) as exc_info:
-            AppCreate(name="test", metadata="not a dict")
+            WorkspaceCreate(name="test", metadata="not a dict")
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "dict_type"
 
 
-class TestUserValidations:
-    def test_valid_user_create(self):
-        user = UserCreate(name="test", metadata={})
-        assert user.name == "test"
-        assert user.metadata == {}
+class TestPeerValidations:
+    def test_valid_peer_create(self):
+        peer = PeerCreate(name="test", metadata={})
+        assert peer.name == "test"
+        assert peer.metadata == {}
 
-    def test_user_name_too_short(self):
+    def test_valid_peer_create_feature_flags(self):
+        peer = PeerCreate(name="test", metadata={}, feature_flags={"test": True})
+        assert peer.name == "test"
+        assert peer.metadata == {}
+        assert peer.feature_flags == {"test": True}
+
+    def test_peer_name_too_short(self):
         with pytest.raises(ValidationError) as exc_info:
-            UserCreate(name="", metadata={})
+            PeerCreate(name="", metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_short"
 
-    def test_user_name_too_long(self):
+    def test_peer_name_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            UserCreate(name="a" * 101, metadata={})
+            PeerCreate(name="a" * 101, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
+
+class TestSessionValidations:
+    def test_valid_session_create(self):
+        session = SessionCreate(name="test", metadata={})
+        assert session.name == "test"
+        assert session.metadata == {}
+
+    def test_session_name_too_short(self):
+        with pytest.raises(ValidationError) as exc_info:
+            SessionCreate(name="", metadata={})
+        error_dict = exc_info.value.errors()[0]
+        assert error_dict["type"] == "string_too_short"
 
 
 class TestMessageValidations:
     def test_valid_message_create(self):
-        msg = MessageCreate(content="test", is_user=True, metadata={})
+        msg = MessageCreate(content="test", peer_id="12345", metadata={})
         assert msg.content == "test"
-        assert msg.is_user is True
+        assert msg.peer_name == "12345"
         assert msg.metadata == {}
 
     def test_message_content_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            MessageCreate(content="a" * 50001, is_user=True, metadata={})
+            MessageCreate(content="a" * 50001, peer_id="12345", metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
-
-    def test_message_invalid_is_user_type(self):
-        with pytest.raises(ValidationError) as exc_info:
-            MessageCreate(content="test", is_user="not a bool", metadata={})
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "bool_parsing"
-
-
-class TestMetamessageValidations:
-    def test_valid_metamessage_create(self):
-        meta = MetamessageCreate(
-            label="test",
-            content="test content",
-            message_id="123",
-            metadata={},
-        )
-        assert meta.label == "test"
-        assert meta.content == "test content"
-        assert meta.message_id == "123"
-
-    def test_label_too_short(self):
-        with pytest.raises(ValidationError) as exc_info:
-            MetamessageCreate(
-                label="",
-                content="test",
-                message_id="123",
-                metadata={},
-            )
-        error_dict = exc_info.value.errors(include_input=False)[0]
-        assert error_dict["type"] == "string_too_short"
-        assert error_dict["loc"] == ('label',)
-
-    def test_label_too_long(self):
-        with pytest.raises(ValidationError) as exc_info:
-            MetamessageCreate(
-                label="a" * 51,
-                content="test",
-                message_id="123",
-                metadata={},
-            )
-        error_dict = exc_info.value.errors(include_input=False)[0]
-        assert error_dict["type"] == "string_too_long"
-        assert error_dict["loc"] == ('label',)
-
-    def test_metamessage_content_too_long(self):
-        with pytest.raises(ValidationError) as exc_info:
-            MetamessageCreate(
-                label="test",
-                content="a" * 50001,
-                message_id="123",
-                metadata={},
-            )
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "string_too_long"
-
-
-class TestCollectionValidations:
-    def test_valid_collection_create(self):
-        collection = CollectionCreate(name="test", metadata={})
-        assert collection.name == "test"
-        assert collection.metadata == {}
-
-    def test_collection_name_too_short(self):
-        with pytest.raises(ValidationError) as exc_info:
-            CollectionCreate(name="", metadata={})
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "string_too_short"
-
-    def test_collection_name_too_long(self):
-        with pytest.raises(ValidationError) as exc_info:
-            CollectionCreate(name="a" * 101, metadata={})
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "string_too_long"
-
-    def test_collection_name_honcho(self):
-        with pytest.raises(ValidationError) as exc_info:
-            CollectionCreate(name="honcho", metadata={})
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "value_error"
 
 
 class TestDocumentValidations:
@@ -167,53 +103,3 @@ class TestDocumentValidations:
             DocumentCreate(content="a" * 100001, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
-
-
-class TestDocumentQueryValidations:
-    def test_valid_document_query(self):
-        query = DocumentQuery(query="test query", top_k=5)
-        assert query.query == "test query"
-        assert query.top_k == 5
-
-    def test_query_too_short(self):
-        with pytest.raises(ValidationError) as exc_info:
-            DocumentQuery(query="", top_k=5)
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "string_too_short"
-
-    def test_query_too_long(self):
-        with pytest.raises(ValidationError) as exc_info:
-            DocumentQuery(query="a" * 1001, top_k=5)
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "string_too_long"
-
-    def test_top_k_too_small(self):
-        with pytest.raises(ValidationError) as exc_info:
-            DocumentQuery(query="test", top_k=0)
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "greater_than_equal"
-
-    def test_top_k_too_large(self):
-        with pytest.raises(ValidationError) as exc_info:
-            DocumentQuery(query="test", top_k=51)
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "less_than_equal"
-
-
-class TestMessageBatchValidations:
-    def test_valid_message_batch(self):
-        batch = MessageBatchCreate(
-            messages=[MessageCreate(content="test", is_user=True, metadata={})]
-        )
-        assert len(batch.messages) == 1
-
-    def test_message_batch_too_large(self):
-        with pytest.raises(ValidationError) as exc_info:
-            MessageBatchCreate(
-                messages=[
-                    MessageCreate(content="test", is_user=True, metadata={})
-                    for _ in range(101)
-                ]
-            )
-        error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "too_long"

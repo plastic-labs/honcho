@@ -131,7 +131,7 @@ async def get_sessions_for_peer(
 ):
     """Get All Sessions for a Peer"""
     filter_param = None
-    is_active = False  # Default from schemas
+    is_active = None
 
     if options:
         if hasattr(options, "filter"):

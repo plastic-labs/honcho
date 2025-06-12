@@ -1,9 +1,9 @@
 from nanoid import generate as generate_nanoid
 
 
-def test_app_validations_api(client):
+def test_workspace_validations_api(client):
     # Test name too short
-    response = client.post("/v1/apps", json={"name": "", "metadata": {}})
+    response = client.post("/v1/workspaces", json={"name": "", "metadata": {}})
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "name"]
@@ -11,7 +11,7 @@ def test_app_validations_api(client):
     assert error["type"] == "string_too_short"
 
     # Test name too long
-    response = client.post("/v1/apps", json={"name": "a" * 101, "metadata": {}})
+    response = client.post("/v1/workspaces", json={"name": "a" * 101, "metadata": {}})
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "name"]
@@ -19,19 +19,19 @@ def test_app_validations_api(client):
     assert error["type"] == "string_too_long"
 
     # Test invalid metadata type
-    response = client.post("/v1/apps", json={"name": "test", "metadata": "not a dict"})
+    response = client.post("/v1/workspaces", json={"name": "test", "metadata": "not a dict"})
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "metadata"]
     assert error["type"] == "dict_type"
 
 
-def test_user_validations_api(client, sample_data):
-    test_app, _ = sample_data
+def test_peer_validations_api(client, sample_data):
+    test_workspace, _ = sample_data
 
     # Test name too short
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users", json={"name": "", "metadata": {}}
+        f"/v1/workspaces/{test_workspace.name}/peers", json={"name": "", "metadata": {}}
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -41,7 +41,7 @@ def test_user_validations_api(client, sample_data):
 
     # Test name too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users", json={"name": "a" * 101, "metadata": {}}
+        f"/v1/workspaces/{test_workspace.name}/peers", json={"name": "a" * 101, "metadata": {}}
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -51,17 +51,17 @@ def test_user_validations_api(client, sample_data):
 
 
 def test_message_validations_api(client, sample_data):
-    test_app, test_user = sample_data
+    test_workspace, test_peer = sample_data
     # Create a test session first
     session_response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
         json={"metadata": {}},
     )
     session_id = session_response.json()["id"]
 
     # Test content too long
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
+        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/{session_id}/messages",
         json={"content": "a" * 50001, "is_user": True, "metadata": {}},
     )
     assert response.status_code == 422
@@ -69,16 +69,6 @@ def test_message_validations_api(client, sample_data):
     assert error["loc"] == ["body", "content"]
     assert error["msg"] == "String should have at most 50000 characters"
     assert error["type"] == "string_too_long"
-
-    # Test invalid is_user type
-    response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session_id}/messages",
-        json={"content": "test", "is_user": "not a bool", "metadata": {}},
-    )
-    assert response.status_code == 422
-    error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "is_user"]
-    assert error["type"] == "bool_parsing"
 
 
 def test_collection_validations_api(client, sample_data):

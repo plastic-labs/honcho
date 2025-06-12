@@ -3,6 +3,7 @@ from logging import getLogger
 from typing import Optional
 
 from dotenv import load_dotenv
+from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, delete, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -335,7 +336,9 @@ async def get_sessions_for_peer(
     stmt = (
         select(models.Session)
         .join(
-            models.SessionPeer, models.Session.name == models.SessionPeer.session_name
+            models.SessionPeer, 
+            (models.Session.name == models.SessionPeer.session_name) & 
+            (models.Session.workspace_name == models.SessionPeer.workspace_name)
         )
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.Session.workspace_name == workspace_name)
@@ -576,6 +579,7 @@ async def clone_session(
     # Create new session
     new_session = models.Session(
         workspace_name=workspace_name,
+        name=generate_nanoid(),
         h_metadata=original_session.h_metadata,
     )
     db.add(new_session)
@@ -619,7 +623,9 @@ async def clone_session(
     session_peers = result.scalars().all()
     for session_peer in session_peers:
         new_session_peer = models.SessionPeer(
-            session_name=new_session.name, peer_name=session_peer.peer_name
+            session_name=new_session.name, 
+            peer_name=session_peer.peer_name,
+            workspace_name=workspace_name
         )
         db.add(new_session_peer)
 
@@ -825,6 +831,7 @@ async def _add_peers_to_session(
         models.SessionPeer.workspace_name == workspace_name,
     )
     result = await db.execute(select_stmt)
+    print("SessionPeer query result:", [sp.__dict__ for sp in result.scalars().all()])
     return list(result.scalars().all())
 
 

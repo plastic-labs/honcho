@@ -204,16 +204,16 @@ def auth_client(client, request, monkeypatch):
 async def sample_data(db_session):
     """Helper function to create test data"""
     # Create test app
-    test_app = models.App(name=str(generate_nanoid()))
-    db_session.add(test_app)
+    test_workspace = models.Workspace(name=str(generate_nanoid()))
+    db_session.add(test_workspace)
     await db_session.flush()
 
     # Create test user
-    test_user = models.User(name=str(generate_nanoid()), app_id=test_app.public_id)
-    db_session.add(test_user)
+    test_peer = models.Peer(name=str(generate_nanoid()), workspace_name=test_workspace.name)
+    db_session.add(test_peer)
     await db_session.flush()
 
-    yield test_app, test_user
+    yield test_workspace, test_peer
 
     await db_session.rollback()
 

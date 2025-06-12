@@ -18,6 +18,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     event,
+    ForeignKeyConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -61,12 +62,21 @@ session_peers_table = Table(
     Column(
         "session_name",
         TEXT,
-        ForeignKey("sessions.name"),
         primary_key=True,
         nullable=False,
     ),
     Column(
-        "peer_name", TEXT, ForeignKey("peers.name"), primary_key=True, nullable=False
+        "peer_name", TEXT, primary_key=True, nullable=False
+    ),
+    # Composite foreign key constraint for sessions
+    ForeignKeyConstraint(
+        ["session_name", "workspace_name"],
+        ["sessions.name", "sessions.workspace_name"],
+    ),
+    # Composite foreign key constraint for peers
+    ForeignKeyConstraint(
+        ["peer_name", "workspace_name"],
+        ["peers.name", "peers.workspace_name"],
     ),
 )
 
@@ -158,7 +168,7 @@ class Message(Base):
         TEXT, index=True, unique=True, default=generate_nanoid
     )
     session_name: Mapped[str | None] = mapped_column(
-        ForeignKey("sessions.name"), index=True, nullable=True
+        index=True, nullable=True
     )
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
@@ -168,7 +178,7 @@ class Message(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     session = relationship("Session", back_populates="messages")
-    peer_name: Mapped[str] = mapped_column(ForeignKey("peers.name"), index=True)
+    peer_name: Mapped[str] = mapped_column(index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
@@ -177,6 +187,16 @@ class Message(Base):
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
+        # Composite foreign key constraint for sessions
+        ForeignKeyConstraint(
+            ["session_name", "workspace_name"],
+            ["sessions.name", "sessions.workspace_name"],
+        ),
+        # Composite foreign key constraint for peers
+        ForeignKeyConstraint(
+            ["peer_name", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
         Index(
             "idx_messages_session_lookup",
             "session_name",
@@ -208,7 +228,7 @@ class Collection(Base):
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
     peer = relationship("Peer", back_populates="collections")
-    peer_name: Mapped[str] = mapped_column(TEXT, ForeignKey("peers.name"), index=True)
+    peer_name: Mapped[str] = mapped_column(TEXT, index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
@@ -220,6 +240,11 @@ class Collection(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         CheckConstraint("length(name) <= 512", name="name_length"),
+        # Composite foreign key constraint for peers
+        ForeignKeyConstraint(
+            ["peer_name", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
     )
 
 
@@ -234,9 +259,9 @@ class Document(Base):
     )
 
     collection_name: Mapped[str] = mapped_column(
-        TEXT, ForeignKey("collections.name"), index=True
+        TEXT, index=True
     )
-    peer_name: Mapped[str] = mapped_column(ForeignKey("peers.name"), index=True)
+    peer_name: Mapped[str] = mapped_column(index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
@@ -246,6 +271,16 @@ class Document(Base):
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        # Composite foreign key constraint for collections
+        ForeignKeyConstraint(
+            ["collection_name", "peer_name", "workspace_name"],
+            ["collections.name", "collections.peer_name", "collections.workspace_name"],
+        ),
+        # Composite foreign key constraint for peers
+        ForeignKeyConstraint(
+            ["peer_name", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
         # HNSW index on embedding column
         Index(
             "idx_documents_embedding_hnsw",

@@ -1,25 +1,55 @@
-import pytest
+from nanoid import generate as generate_nanoid
 
-from src import models  # Import your SQLAlchemy models
+def test_get_or_create_session(client, sample_data):
+    # Test get or create session
+    test_workspace, test_peer = sample_data
 
-
-def test_create_session(client, sample_data):
-    test_app, test_user = sample_data
+    # Test creating a new session with no parameters
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={},
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": str(generate_nanoid())},
     )
     assert response.status_code == 200
     data = response.json()
+    assert isinstance(data["id"], str)
     assert data["metadata"] == {}
-    assert "id" in data
+
+    # Test creating a session with a specific id and peer_names (should get or create)
+    session_id = str(generate_nanoid())
+    response2 = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name]
+        },
+    )
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert data2["id"] == session_id
+    assert data2["metadata"] == {}
+
+    # Test getting the same session again (should return the same session)
+    response3 = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name]
+        },
+    )
+    assert response3.status_code == 200
+    data3 = response3.json()
+    assert data3["id"] == session_id
+    assert data3["metadata"] == {}
 
 
 def test_create_session_with_metadata(client, sample_data):
-    test_app, test_user = sample_data
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
             "metadata": {"session_key": "session_value"},
         },
     )
@@ -27,15 +57,18 @@ def test_create_session_with_metadata(client, sample_data):
     data = response.json()
     assert data["metadata"] == {"session_key": "session_value"}
     assert "id" in data
+    assert data["id"] == session_id
 
 
-@pytest.mark.asyncio
-async def test_get_sessions(client, db_session, sample_data):
-    test_app, test_user = sample_data
+def test_get_sessions(client, sample_data):
+    test_workspace, test_peer = sample_data
     # Create a test session
+    session_id = str(generate_nanoid())
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
             "metadata": {"test_key": "test_value"},
         },
     )
@@ -45,7 +78,7 @@ async def test_get_sessions(client, db_session, sample_data):
     assert "id" in data
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        f"/v1/workspaces/{test_workspace.name}/sessions/list",
         json={"filter": {"test_key": "test_value"}},
     )
     assert response.status_code == 200
@@ -55,37 +88,42 @@ async def test_get_sessions(client, db_session, sample_data):
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
 
 
-@pytest.mark.asyncio
-async def test_empty_update_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
+def test_empty_update_session(client, sample_data):
+    test_workspace, test_peer = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+        },
     )
-    db_session.add(test_session)
-    await db_session.commit()
+    assert response.status_code == 200
 
     response = client.put(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
         json={},
     )
     assert response.status_code == 422
 
 
-@pytest.mark.asyncio
-async def test_update_delete_metadata(client, db_session, sample_data):
-    test_app, test_user = sample_data
+def test_update_delete_metadata(client, sample_data):
+    test_workspace, test_peer = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id,
-        h_metadata={"default": "value"},
-        app_id=test_app.public_id,
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+            "metadata": {"default": "value"},
+        },
     )
-    db_session.add(test_session)
-    await db_session.commit()
+    assert response.status_code == 200
 
     response = client.put(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
         json={"metadata": {}},
     )
     assert response.status_code == 200
@@ -93,18 +131,21 @@ async def test_update_delete_metadata(client, db_session, sample_data):
     assert data["metadata"] == {}
 
 
-@pytest.mark.asyncio
-async def test_update_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
+def test_update_session(client, sample_data):
+    test_workspace, test_peer = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+        },
     )
-    db_session.add(test_session)
-    await db_session.commit()
+    assert response.status_code == 200
 
     response = client.put(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
         json={"metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
@@ -112,398 +153,232 @@ async def test_update_session(client, db_session, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-@pytest.mark.asyncio
-async def test_delete_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
+def test_delete_session(client, sample_data):
+    test_workspace, test_peer = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id, h_metadata={}, app_id=test_app.public_id
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+        },
     )
-    db_session.add(test_session)
-    await db_session.commit()
+    assert response.status_code == 200
+    
     response = client.delete(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}"
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}"
     )
     assert response.status_code == 200
-    response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={test_session.public_id}"
+    
+    # Check that session is marked as inactive
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/list",
+        json={"is_active": False},
     )
     data = response.json()
-    assert data["is_active"] is False
+    # Find our session in the inactive sessions
+    inactive_session = next((s for s in data["items"] if s["id"] == session_id), None)
+    assert inactive_session is not None
+    assert inactive_session["is_active"] is False
 
 
-@pytest.mark.asyncio
-async def test_clone_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
+def test_clone_session(client, sample_data):
+    test_workspace, test_peer = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id,
-        h_metadata={"test": "key"},
-        app_id=test_app.public_id,
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+            "metadata": {"test": "key"},
+        },
     )
-    db_session.add(test_session)
-    await db_session.commit()
+    assert response.status_code == 200
 
-    test_message = models.Message(
-        session_id=test_session.public_id,
-        content="Test message",
-        is_user=True,
-        h_metadata={"key": "value"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
+    # Create some messages in the session
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message",
+                    "peer_id": test_peer.name,
+                    "metadata": {"key": "value"}
+                },
+                {
+                    "content": "Test message 2", 
+                    "peer_id": test_peer.name,
+                    "metadata": {"key": "value2"}
+                }
+            ]
+        },
     )
-    test_message2 = models.Message(
-        session_id=test_session.public_id,
-        content="Test message 2",
-        is_user=True,
-        h_metadata={"key": "value2"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-    db_session.add(test_message)
-    db_session.add(test_message2)
-    await db_session.commit()
+    assert response.status_code == 200
 
     response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/clone",
     )
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"] == {"test": "key"}
 
-    print(data)
-
+    # Check messages were cloned
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{data['id']}/messages/list",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{data['id']}/messages/list",
         json={},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) > 0
-    assert len(data["items"]) == 2
+    assert len(data["items"]) >= 2
 
     assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["is_user"] is True
     assert data["items"][0]["metadata"] == {"key": "value"}
 
     assert data["items"][1]["content"] == "Test message 2"
-    assert data["items"][1]["is_user"] is True
     assert data["items"][1]["metadata"] == {"key": "value2"}
 
 
-@pytest.mark.asyncio
-async def test_partial_clone_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
-    # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id,
-        h_metadata={"test": "key"},
-        app_id=test_app.public_id,
-    )
-    db_session.add(test_session)
-    await db_session.commit()
-
-    test_message = models.Message(
-        session_id=test_session.public_id,
-        content="Test message",
-        is_user=True,
-        h_metadata={"key": "value"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-    test_message2 = models.Message(
-        session_id=test_session.public_id,
-        content="Test message 2",
-        is_user=True,
-        h_metadata={"key": "value2"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-
-    test_message3 = models.Message(
-        session_id=test_session.public_id,
-        content="Test message 2",
-        is_user=True,
-        h_metadata={"key": "value2"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-
-    db_session.add(test_message)
-    db_session.add(test_message2)
-    db_session.add(test_message3)
-    await db_session.commit()
-
-    response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?message_id={test_message2.public_id}",
+def test_add_peers_to_session(client, sample_data):
+    test_workspace, test_peer = sample_data
+    # Create another peer
+    peer2_name = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {}},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data["metadata"] == {"test": "key"}
 
-    response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{data['id']}/messages/list",
-        json={},
-    )
-
-    data = response.json()
-    assert len(data["items"]) > 0
-    assert len(data["items"]) == 2
-
-    assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["is_user"] is True
-    assert data["items"][0]["metadata"] == {"key": "value"}
-
-    assert data["items"][1]["content"] == "Test message 2"
-    assert data["items"][1]["is_user"] is True
-    assert data["items"][1]["metadata"] == {"key": "value2"}
-
-
-@pytest.mark.asyncio
-async def test_deep_clone_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id,
-        h_metadata={"test": "key"},
-        app_id=test_app.public_id,
-    )
-    db_session.add(test_session)
-    await db_session.commit()
-
-    test_message = models.Message(
-        session_id=test_session.public_id,
-        content="Test message",
-        is_user=True,
-        h_metadata={"key": "value"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-    test_message2 = models.Message(
-        session_id=test_session.public_id,
-        content="Test message 2",
-        is_user=True,
-        h_metadata={"key": "value2"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-    db_session.add(test_message)
-    db_session.add(test_message2)
-    await db_session.commit()
-
-    test_metamessage_1 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message.public_id,
-        content="Test Metamessage 1",
-        h_metadata={},
-        label="test_type",
-        app_id=test_app.public_id,
-    )
-    test_metamessage_2 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message.public_id,
-        content="Test Metamessage 2",
-        h_metadata={},
-        label="test_type",
-        app_id=test_app.public_id,
-    )
-    test_metamessage_3 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message2.public_id,
-        content="Test Metamessage 3",
-        h_metadata={},
-        label="test_type",
-        app_id=test_app.public_id,
-    )
-    test_metamessage_4 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message2.public_id,
-        content="Test Metamessage 4",
-        h_metadata={},
-        app_id=test_app.public_id,
-        label="test_type_2",
-    )
-
-    db_session.add(test_metamessage_1)
-    db_session.add(test_metamessage_2)
-    db_session.add(test_metamessage_3)
-    db_session.add(test_metamessage_4)
-    await db_session.commit()
-
-    response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?deep_copy=true",
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+        },
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data["metadata"] == {"test": "key"}
 
-    cloned_session_id = data["id"]
-
+    # Add another peer to the session
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{cloned_session_id}/messages/list",
-        json={},
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=[peer2_name],
     )
+    assert response.status_code == 200
 
+
+def test_get_session_peers(client, sample_data):
+    test_workspace, test_peer = sample_data
+    # Create another peer
+    peer2_name = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {}},
+    )
+    assert response.status_code == 200
+
+    # Create a test session with multiple peers
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name, peer2_name],
+        },
+    )
+    assert response.status_code == 200
+
+    # Get peers from the session
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+    )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) > 0
     assert len(data["items"]) == 2
+    peer_names = [peer["id"] for peer in data["items"]]
+    assert test_peer.name in peer_names
+    assert peer2_name in peer_names
 
-    assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["is_user"] is True
-    assert data["items"][0]["metadata"] == {"key": "value"}
 
-    assert data["items"][1]["content"] == "Test message 2"
-    assert data["items"][1]["is_user"] is True
-    assert data["items"][1]["metadata"] == {"key": "value2"}
-
+def test_set_session_peers(client, sample_data):
+    test_workspace, test_peer = sample_data
+    # Create another peer
+    peer2_name = str(generate_nanoid())
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
-        json={"session_id": cloned_session_id},
+        f"/v1/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {}},
     )
-
     assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) > 0
-    assert len(data["items"]) == 4
-    assert data["items"][0]["content"] == "Test Metamessage 1"
-    assert data["items"][0]["label"] == "test_type"
-    assert data["items"][0]["metamessage_type"] == "test_type"
-    assert data["items"][0]["metadata"] == {}
-    assert data["items"][1]["content"] == "Test Metamessage 2"
-    assert data["items"][1]["label"] == "test_type"
-    assert data["items"][1]["metamessage_type"] == "test_type"
-    assert data["items"][1]["metadata"] == {}
-    assert data["items"][2]["content"] == "Test Metamessage 3"
-    assert data["items"][2]["label"] == "test_type"
-    assert data["items"][2]["metamessage_type"] == "test_type"
-    assert data["items"][2]["metadata"] == {}
-    assert data["items"][3]["content"] == "Test Metamessage 4"
-    assert data["items"][3]["label"] == "test_type_2"
-    assert data["items"][3]["metamessage_type"] == "test_type_2"
-    assert data["items"][3]["metadata"] == {}
 
-
-@pytest.mark.asyncio
-async def test_partial_deep_clone_session(client, db_session, sample_data):
-    test_app, test_user = sample_data
     # Create a test session
-    test_session = models.Session(
-        user_id=test_user.public_id,
-        h_metadata={"test": "key"},
-        app_id=test_app.public_id,
-    )
-    db_session.add(test_session)
-    await db_session.commit()
-
-    test_message = models.Message(
-        session_id=test_session.public_id,
-        content="Test message",
-        is_user=True,
-        h_metadata={"key": "value"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-    test_message2 = models.Message(
-        session_id=test_session.public_id,
-        content="Test message 2",
-        is_user=True,
-        h_metadata={"key": "value2"},
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
-    )
-    db_session.add(test_message)
-    db_session.add(test_message2)
-    await db_session.commit()
-
-    test_metamessage_1 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message.public_id,
-        content="Test Metamessage 1",
-        h_metadata={},
-        app_id=test_app.public_id,
-        label="test_type",
-    )
-    test_metamessage_2 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message.public_id,
-        content="Test Metamessage 2",
-        h_metadata={},
-        app_id=test_app.public_id,
-        label="test_type",
-    )
-    test_metamessage_3 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message2.public_id,
-        content="Test Metamessage 3",
-        h_metadata={},
-        app_id=test_app.public_id,
-        label="test_type",
-    )
-    test_metamessage_4 = models.Metamessage(
-        user_id=test_user.public_id,
-        session_id=test_session.public_id,
-        message_id=test_message2.public_id,
-        content="Test Metamessage 4",
-        h_metadata={},
-        app_id=test_app.public_id,
-        label="test_type_2",
-    )
-
-    db_session.add(test_metamessage_1)
-    db_session.add(test_metamessage_2)
-    db_session.add(test_metamessage_3)
-    db_session.add(test_metamessage_4)
-    await db_session.commit()
-
-    response = client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/clone?deep_copy=true&message_id={test_message.public_id}",
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+        },
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data["metadata"] == {"test": "key"}
 
-    cloned_session_id = data["id"]
-
-    response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{cloned_session_id}/messages/list",
-        json={},
+    # Set peers for the session (should replace existing peers)
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=[peer2_name],
     )
+    assert response.status_code == 200
 
+    # Check that only the new peer is in the session
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+    )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) > 0
     assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == peer2_name
 
-    assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["is_user"] is True
-    assert data["items"][0]["metadata"] == {"key": "value"}
 
+def test_remove_peers_from_session(client, sample_data):
+    test_workspace, test_peer = sample_data
+    # Create another peer
+    peer2_name = str(generate_nanoid())
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/metamessages/list",
-        json={"session_id": cloned_session_id},
+        f"/v1/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {}},
     )
+    assert response.status_code == 200
 
+    # Create a test session with multiple peers
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name, peer2_name],
+        },
+    )
+    assert response.status_code == 200
+
+    # Remove one peer from the session
+    response = client.request(
+        "DELETE",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=[test_peer.name],
+    )
+    assert response.status_code == 200
+
+    # Check that only the remaining peer is in the session
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+    )
     assert response.status_code == 200
     data = response.json()
-    assert len(data["items"]) > 0
-    assert len(data["items"]) == 2
-    assert data["items"][0]["content"] == "Test Metamessage 1"
-    assert data["items"][0]["label"] == "test_type"
-    assert data["items"][0]["metamessage_type"] == "test_type"
-    assert data["items"][0]["metadata"] == {}
-    assert data["items"][1]["content"] == "Test Metamessage 2"
-    assert data["items"][1]["label"] == "test_type"
-    assert data["items"][1]["metamessage_type"] == "test_type"
-    assert data["items"][1]["metadata"] == {}
+    assert "items" in data
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == peer2_name

@@ -43,6 +43,7 @@ async def get_or_create_session(
     If peer_id is provided as a query parameter, it verifies the peer is in the session.
     Otherwise, it uses the peer_id from the JWT token for verification.
     """
+    print("this is called")
     # Verify JWT has access to the requested resource
     if not jwt_params.ad:
         if jwt_params.ap is not None and jwt_params.ap != workspace_id:
@@ -288,11 +289,17 @@ async def set_session_peers(
     """Set the peers in a session"""
     try:
         workspace_name, session_name = workspace_id, session_id
-        session = await crud.set_peers_for_session(
+        await crud.set_peers_for_session(
             db,
             workspace_name=workspace_name,
             session_name=session_name,
             peer_names=set(peers),
+        )
+        # Get the session to return
+        session = await crud.get_or_create_session(
+            db,
+            session=schemas.SessionCreate(name=session_name),
+            workspace_name=workspace_name,
         )
         logger.info(f"Set peers for session {session_name} successfully")
         return session
@@ -319,11 +326,17 @@ async def remove_peers_from_session(
     """Remove peers from a session"""
     try:
         session_name = session_id
-        session = await crud.remove_peers_from_session(
+        await crud.remove_peers_from_session(
             db,
             workspace_name=workspace_id,
             session_name=session_name,
             peer_names=set(peers),
+        )
+        # Get the session to return
+        session = await crud.get_or_create_session(
+            db,
+            session=schemas.SessionCreate(name=session_name),
+            workspace_name=workspace_id,
         )
         logger.info(f"Removed peers from session {session_name} successfully")
         return session
