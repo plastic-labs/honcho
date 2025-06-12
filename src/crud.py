@@ -875,24 +875,23 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
-    # Create list of message records
-    message_records = [
-        {
-            "session_name": honcho_session.name,
-            "peer_name": message.peer_name,
-            "content": message.content,
-            "h_metadata": message.metadata,
-            "workspace_name": workspace_name,
-        }
+    # Create list of message objects (this will trigger the before_insert event)
+    message_objects = [
+        models.Message(
+            session_name=honcho_session.name,
+            peer_name=message.peer_name,
+            content=message.content,
+            h_metadata=message.metadata,
+            workspace_name=workspace_name,
+        )
         for message in messages
     ]
 
-    # Bulk insert messages and return them in order
-    stmt = insert(models.Message).returning(models.Message)
-    result = await db.execute(stmt, message_records)
+    # Add all messages and commit
+    db.add_all(message_objects)
     await db.commit()
 
-    return list(result.scalars().all())
+    return message_objects
 
 
 async def create_messages_for_peer(
@@ -907,24 +906,23 @@ async def create_messages_for_peer(
     and peer_name will be the provided peer_name for each message,
     regardless of the peer_name in the individual message(s).
     """
-    # Create list of message records
-    message_records = [
-        {
-            "session_name": None,
-            "peer_name": peer_name,
-            "content": message.content,
-            "h_metadata": message.metadata,
-            "workspace_name": workspace_name,
-        }
+    # Create list of message objects (this will trigger the before_insert event)
+    message_objects = [
+        models.Message(
+            session_name=None,
+            peer_name=peer_name,
+            content=message.content,
+            h_metadata=message.metadata,
+            workspace_name=workspace_name,
+        )
         for message in messages
     ]
 
-    # Bulk insert messages and return them in order
-    stmt = insert(models.Message).returning(models.Message)
-    result = await db.execute(stmt, message_records)
+    # Add all messages and commit
+    db.add_all(message_objects)
     await db.commit()
 
-    return list(result.scalars().all())
+    return message_objects
 
 
 async def get_messages(

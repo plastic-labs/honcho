@@ -11,8 +11,10 @@ from os import getenv
 from typing import Union
 
 import sqlalchemy as sa
+import tiktoken
 from alembic import op
 from nanoid import generate as generate_nanoid
+from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 from migrations.utils import (
@@ -192,6 +194,7 @@ def update_peers_table(schema: str, inspector) -> None:
     op.create_check_constraint(
         "id_format", "peers", "id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
+    op.drop_column("peers", "app_id", schema=schema)
 
 
 def update_sessions_table(schema: str, inspector) -> None:
@@ -503,6 +506,15 @@ def update_messages_table(schema: str, inspector) -> None:
         "ix_messages_workspace_name", "messages", ["workspace_name"], schema=schema
     )
 
+    op.add_column(
+        "messages",
+        sa.Column("token_count", sa.Integer(), nullable=False, server_default="0"),
+        schema=schema,
+    )
+    
+    # Backfill token counts for existing messages
+    backfill_token_counts(schema)
+
 
 def update_collections_table(schema: str, inspector) -> None:
     """Update collections table."""
@@ -719,3 +731,43 @@ def update_documents_table(schema: str, inspector) -> None:
     op.create_check_constraint(
         "id_format", "documents", "id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
+
+def _count_tokens(text: str) -> int:
+    """Count tokens in a text string using tiktoken."""
+    if not text:
+        return 0
+    try:
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        return len(tokenizer.encode(text))
+    except Exception:
+        # Fallback: rough estimation (4 chars per token)
+        return len(text) // 4
+
+
+def backfill_token_counts(schema: str) -> None:
+    """Backfill token counts for existing messages."""
+    connection = op.get_bind()
+    
+    # Get all messages in batches to handle large datasets
+    batch_size = 1000
+    offset = 0
+    
+    while True:
+        result = connection.execute(
+            text(f"SELECT id, content FROM {schema}.messages LIMIT :limit OFFSET :offset"),
+            {"limit": batch_size, "offset": offset}
+        )
+        messages = result.fetchall()
+        
+        if not messages:
+            break
+            
+        # Update each message with calculated token count
+        for message_id, content in messages:
+            token_count = _count_tokens(content)
+            connection.execute(
+                text(f"UPDATE {schema}.messages SET token_count = :token_count WHERE id = :id"),
+                {"token_count": token_count, "id": message_id}
+            )
+        
+        offset += batch_size
