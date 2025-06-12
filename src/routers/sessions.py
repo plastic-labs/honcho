@@ -376,7 +376,11 @@ async def get_session_context(
     ),  # default to false
     db=db,
 ):
-    pass
+    return schemas.SessionContext(
+        name=session_id,
+        messages=[],
+        summary="",
+    )
     # """Get context from a session"""
     # try:
     #     # TODO: Implement crud.get_session_context

@@ -438,12 +438,13 @@ async def get_or_create_session(
         )
 
         # Add all peers to session
-        await _add_peers_to_session(
-            db,
-            workspace_name=workspace_name,
-            session_name=session.name,
-            peer_names=peer_names,
-        )
+        if peer_names:
+            await _add_peers_to_session(
+                db,
+                workspace_name=workspace_name,
+                session_name=session.name,
+                peer_names=peer_names,
+            )
 
         await db.commit()
         logger.info(
@@ -793,7 +794,14 @@ async def _add_peers_to_session(
     Returns:
         List of all SessionPeer objects (both existing and newly created)
     """
-    # Get existing peers for this session
+    # If no peers to add, skip the insert and just return existing session peers
+    if not peer_names:
+        select_stmt = select(models.SessionPeer).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.workspace_name == workspace_name,
+        )
+        result = await db.execute(select_stmt)
+        return list(result.scalars().all())
 
     stmt = pg_insert(models.SessionPeer).values(
         [
@@ -846,7 +854,7 @@ async def create_messages(
             session_name=honcho_session.name,
             peer_name=message.peer_name,
             content=message.content,
-            h_metadata=message.metadata,
+            h_metadata=message.metadata or {},
             workspace_name=workspace_name,
         )
         for message in messages
@@ -877,7 +885,7 @@ async def create_messages_for_peer(
             session_name=None,
             peer_name=peer_name,
             content=message.content,
-            h_metadata=message.metadata,
+            h_metadata=message.metadata or {},
             workspace_name=workspace_name,
         )
         for message in messages

@@ -25,7 +25,7 @@ class QueueManager:
     def __init__(self):
         self.shutdown_event = asyncio.Event()
         self.active_tasks: set[asyncio.Task] = set()
-        self.owned_sessions: set[int] = set()
+        self.owned_sessions: set[str] = set()
         self.queue_empty_flag = asyncio.Event()
 
         # Initialize from environment
@@ -47,11 +47,11 @@ class QueueManager:
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
 
-    def track_session(self, session_id: int):
+    def track_session(self, session_id: str):
         """Track a new session owned by this process"""
         self.owned_sessions.add(session_id)
 
-    def untrack_session(self, session_id: int):
+    def untrack_session(self, session_id: str):
         """Remove a session from tracking"""
         self.owned_sessions.discard(session_id)
 
@@ -204,7 +204,7 @@ class QueueManager:
     ######################
 
     @sentry_sdk.trace
-    async def process_session(self, session_id: int):
+    async def process_session(self, session_id: str):
         """Process all messages for a session"""
         logger.debug(f"Starting to process session {session_id}")
         # Use the tracked_db dependency for transaction safety
@@ -272,7 +272,7 @@ class QueueManager:
                 self.untrack_session(session_id)
 
     @sentry_sdk.trace
-    async def get_next_message(self, db: AsyncSession, session_id: int):
+    async def get_next_message(self, db: AsyncSession, session_id: str):
         """Get the next unprocessed message for a session"""
         result = await db.execute(
             select(models.QueueItem)

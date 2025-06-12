@@ -19,9 +19,7 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions/{session_id}/messages",
     tags=["messages"],
     dependencies=[
-        Depends(
-            require_auth(app_id="workspace_id", session_id="session_id")
-        )
+        Depends(require_auth(app_id="workspace_id", session_id="session_id"))
     ],
 )
 
@@ -43,13 +41,24 @@ async def enqueue(payload: dict | list[dict]):
                     return
 
                 logger.debug(f"Enqueueing batch of {len(payload)} messages")
-                workspace_name, session_name = payload[0]["workspace_name"], payload[0]["session_name"]
-                peer_names = {p["peer_name"] for p in payload}
+                workspace_name, session_name = (
+                    payload[0]["workspace_name"],
+                    payload[0]["session_name"],
+                )
+                peer_names: set[str] = {p["peer_name"] for p in payload}
+
+                # TODO handle these
+                if session_name is None:
+                    logger.warning("Session name is None, skipping enqueue")
+                    return
+
                 # Check session once since all messages are for same session
                 try:
                     session = await crud.get_or_create_session(
                         db_session,
-                        session=schemas.SessionCreate(name=session_name, peer_names=peer_names),
+                        session=schemas.SessionCreate(
+                            name=session_name, peer_names=peer_names
+                        ),
                         workspace_name=workspace_name,
                     )
                     if not session:
@@ -63,7 +72,7 @@ async def enqueue(payload: dict | list[dict]):
                     )
                     return
 
-                logger.debug(f"Session {session.public_id} found for batch enqueue")
+                logger.debug(f"Session {session.name} found for batch enqueue")
 
                 # Check if deriver is disabled for this session
                 if (
@@ -71,7 +80,7 @@ async def enqueue(payload: dict | list[dict]):
                     and session.h_metadata.get("deriver_disabled") is not False
                 ):
                     logger.info(
-                        f"Deriver is disabled for session {session.public_id}, skipping enqueue"
+                        f"Deriver is disabled for session {session.name}, skipping enqueue"
                     )
                     return
 
@@ -103,7 +112,10 @@ async def enqueue(payload: dict | list[dict]):
                 try:
                     session = await crud.get_or_create_session(
                         db_session,
-                        session=schemas.SessionCreate(name=payload["session_name"], peer_names={payload["peer_name"]}),
+                        session=schemas.SessionCreate(
+                            name=payload["session_name"],
+                            peer_names={payload["peer_name"]},
+                        ),
                         workspace_name=payload["workspace_name"],
                     )
                     if not session:
@@ -174,7 +186,6 @@ async def create_messages_for_session(
                 "workspace_name": workspace_name,
                 "session_name": session_name,
                 "message_id": message.public_id,
-                "is_user": message.is_user,
                 "content": message.content,
                 "metadata": message.h_metadata,
                 "peer_name": message.peer_name,

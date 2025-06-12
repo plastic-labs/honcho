@@ -47,26 +47,29 @@ def upgrade() -> None:
     # Step 3: Update peers table
     update_peers_table(schema, inspector)
 
-    # Step 4: Update sessions table
+    # Step 4: Update queue and active_queue_sessions tables (moved before sessions update)
+    update_queue_and_active_queue_sessions_tables(schema, inspector)
+
+    # Step 5: Update sessions table
     update_sessions_table(schema, inspector)
 
-    # Step 5: Create and populate session_peers table
+    # Step 6: Create and populate session_peers table
     create_and_populate_session_peers_table(schema, inspector)
 
-    # Step 6: Update messages table
+    # Step 7: Update messages table
     update_messages_table(schema, inspector)
 
-    # Step 7: Update collections table
+    # Step 8: Update collections table
     update_collections_table(schema, inspector)
 
-    # Step 8: Update documents table
+    # Step 9: Update documents table
     update_documents_table(schema, inspector)
 
-    # Step 9: Drop metamessages table
+    # Step 10: Drop metamessages table
     if table_exists("metamessages", inspector):
         op.drop_table("metamessages", schema=schema)
 
-    # Step 10: Drop app_id, user_id from peers and sessions
+    # Step 11: Drop app_id, user_id from peers and sessions
     op.drop_column("sessions", "app_id", schema=schema)
     op.drop_column("sessions", "user_id", schema=schema)
 
@@ -244,31 +247,6 @@ def update_sessions_table(schema: str, inspector) -> None:
     if check_constraint_exists("sessions", "public_id_format", inspector):
         op.drop_constraint("public_id_format", "sessions", type_="check", schema=schema)
 
-    # Drop queue foreign key constraints that depend on sessions.id
-    # Note: These will be removed permanently as queue tables use BigInteger session_id
-    # but the new sessions.id will be TEXT, making them incompatible
-    if table_exists("queue", inspector) and fk_exists(
-        "queue", "fk_queue_session_id_sessions", inspector
-    ):
-        op.drop_constraint(
-            "fk_queue_session_id_sessions",
-            "queue",
-            type_="foreignkey",
-            schema=schema,
-        )
-
-    if table_exists("active_queue_sessions", inspector) and fk_exists(
-        "active_queue_sessions",
-        "fk_active_queue_sessions_session_id_sessions",
-        inspector,
-    ):
-        op.drop_constraint(
-            "fk_active_queue_sessions_session_id_sessions",
-            "active_queue_sessions",
-            type_="foreignkey",
-            schema=schema,
-        )
-
     # Update sessions table primary key and foreign keys
     if primary_constraint_exists("sessions", "pk_sessions", inspector):
         op.drop_constraint("pk_sessions", "sessions", type_="primary", schema=schema)
@@ -440,7 +418,6 @@ def update_messages_table(schema: str, inspector) -> None:
     # Make columns not nullable
     op.alter_column("messages", "peer_name", nullable=False, schema=schema)
     op.alter_column("messages", "workspace_name", nullable=False, schema=schema)
-    op.alter_column("messages", "session_name", nullable=False, schema=schema)
 
     # Drop old columns and constraints
     if fk_exists("messages", "fk_messages_session_id_sessions", inspector):
@@ -520,7 +497,7 @@ def update_messages_table(schema: str, inspector) -> None:
         sa.Column("token_count", sa.Integer(), nullable=False, server_default="0"),
         schema=schema,
     )
-    
+
     # Backfill token counts for existing messages
     backfill_token_counts(schema)
 
@@ -640,7 +617,7 @@ def update_collections_table(schema: str, inspector) -> None:
 def update_documents_table(schema: str, inspector) -> None:
     """Update documents table."""
 
-        # Add new columns
+    # Add new columns
     if not column_exists("documents", "peer_name", inspector):
         op.add_column(
             "documents", sa.Column("peer_name", sa.TEXT(), nullable=True), schema=schema
@@ -689,12 +666,16 @@ def update_documents_table(schema: str, inspector) -> None:
     # Now rename the column
     if column_exists("documents", "collection_id", inspector):
         op.alter_column(
-            "documents", "collection_id", new_column_name="collection_name", schema=schema
+            "documents",
+            "collection_id",
+            new_column_name="collection_name",
+            schema=schema,
         )
 
     # Convert collection_id references to collection names
     # (collection_id contains old collection IDs, we need to get the collection names)
-    op.execute(sa.text(f"""
+    op.execute(
+        sa.text(f"""
         UPDATE {schema}.documents 
         SET collection_name = (
             SELECT c.name 
@@ -703,7 +684,8 @@ def update_documents_table(schema: str, inspector) -> None:
             AND c.peer_name = documents.peer_name 
             AND c.workspace_name = documents.workspace_name
         )
-    """))
+    """)
+    )
 
     # Make columns not nullable
     op.alter_column("documents", "peer_name", nullable=False, schema=schema)
@@ -755,6 +737,94 @@ def update_documents_table(schema: str, inspector) -> None:
         "id_format", "documents", "id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
 
+
+def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> None:
+    """Update queue and active_queue_sessions tables."""
+
+    # Drop foreign key constraints first, before changing column types
+    if table_exists("queue", inspector) and fk_exists(
+        "queue", "fk_queue_session_id_sessions", inspector
+    ):
+        op.drop_constraint(
+            "fk_queue_session_id_sessions",
+            "queue",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    if table_exists("active_queue_sessions", inspector) and fk_exists(
+        "active_queue_sessions",
+        "fk_active_queue_sessions_session_id_sessions",
+        inspector,
+    ):
+        op.drop_constraint(
+            "fk_active_queue_sessions_session_id_sessions",
+            "active_queue_sessions",
+            type_="foreignkey",
+            schema=schema,
+        )
+
+    connection = op.get_bind()
+
+    # Get the mapping of old session.id (integer) to new session.id (text, which is public_id)
+    # At this point, sessions table still has both id (integer) and public_id (text) columns
+    session_id_mapping = {}
+    if table_exists("sessions", inspector):
+        sessions_mapping = connection.execute(
+            sa.text(f"SELECT id, public_id FROM {schema}.sessions")
+        ).fetchall()
+
+        for old_id, new_id in sessions_mapping:
+            session_id_mapping[old_id] = new_id
+
+    # Update queue table
+    if table_exists("queue", inspector) and session_id_mapping:
+        # Get current session_id values in queue table
+        queue_session_ids = connection.execute(
+            sa.text(
+                f"SELECT DISTINCT session_id FROM {schema}.queue WHERE session_id IS NOT NULL"
+            )
+        ).fetchall()
+
+        # Convert session_id values in queue table
+        for (session_id,) in queue_session_ids:
+            if session_id in session_id_mapping:
+                new_id = session_id_mapping[session_id]
+                connection.execute(
+                    sa.text(
+                        f"UPDATE {schema}.queue SET session_id = :new_id WHERE session_id = :old_id"
+                    ),
+                    {"new_id": str(new_id), "old_id": session_id},
+                )
+
+    # Update active_queue_sessions table
+    if table_exists("active_queue_sessions", inspector) and session_id_mapping:
+        active_queue_session_ids = connection.execute(
+            sa.text(
+                f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
+            )
+        ).fetchall()
+
+        # Convert session_id values in active_queue_sessions table
+        for (session_id,) in active_queue_session_ids:
+            if session_id in session_id_mapping:
+                new_id = session_id_mapping[session_id]
+                connection.execute(
+                    sa.text(
+                        f"UPDATE {schema}.active_queue_sessions SET session_id = :new_id WHERE session_id = :old_id"
+                    ),
+                    {"new_id": str(new_id), "old_id": session_id},
+                )
+
+    # Convert session_id column types from int to text
+    if table_exists("queue", inspector):
+        op.alter_column("queue", "session_id", type_=sa.TEXT(), schema=schema)
+    if table_exists("active_queue_sessions", inspector):
+        op.alter_column(
+            "active_queue_sessions", "session_id", type_=sa.TEXT(), schema=schema
+        )
+
+
 def _count_tokens(text: str) -> int:
     """Count tokens in a text string using tiktoken."""
     if not text:
@@ -770,27 +840,31 @@ def _count_tokens(text: str) -> int:
 def backfill_token_counts(schema: str) -> None:
     """Backfill token counts for existing messages."""
     connection = op.get_bind()
-    
+
     # Get all messages in batches to handle large datasets
     batch_size = 1000
     offset = 0
-    
+
     while True:
         result = connection.execute(
-            text(f"SELECT id, content FROM {schema}.messages LIMIT :limit OFFSET :offset"),
-            {"limit": batch_size, "offset": offset}
+            text(
+                f"SELECT id, content FROM {schema}.messages LIMIT :limit OFFSET :offset"
+            ),
+            {"limit": batch_size, "offset": offset},
         )
         messages = result.fetchall()
-        
+
         if not messages:
             break
-            
+
         # Update each message with calculated token count
         for message_id, content in messages:
             token_count = _count_tokens(content)
             connection.execute(
-                text(f"UPDATE {schema}.messages SET token_count = :token_count WHERE id = :id"),
-                {"token_count": token_count, "id": message_id}
+                text(
+                    f"UPDATE {schema}.messages SET token_count = :token_count WHERE id = :id"
+                ),
+                {"token_count": token_count, "id": message_id},
             )
-        
+
         offset += batch_size

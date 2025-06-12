@@ -1,5 +1,7 @@
 import datetime
+from logging import getLogger
 
+import tiktoken
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from pgvector.sqlalchemy import Vector
@@ -20,12 +22,8 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
-import tiktoken
-from logging import getLogger
-
 
 from .db import Base
-
 
 load_dotenv()
 
@@ -33,6 +31,7 @@ logger = getLogger(__name__)
 
 # Initialize tiktoken encoder for token counting for message content
 tokenizer = tiktoken.get_encoding("cl100k_base")
+
 
 def count_tokens(text: str) -> int:
     """Count tokens in a text string using tiktoken."""
@@ -42,8 +41,11 @@ def count_tokens(text: str) -> int:
         return len(tokenizer.encode(text))
     except Exception as e:
         # Fallback: rough estimation (4 chars per token)
-        logger.warning(f"Error counting tokens for text: {text[:50]}{'...' if len(text) > 50 else ''}, using fallback (4 chars per token). Error: {str(e)}")
+        logger.warning(
+            f"Error counting tokens for text: {text[:50]}{'...' if len(text) > 50 else ''}, using fallback (4 chars per token). Error: {str(e)}"
+        )
         return len(text) // 4
+
 
 # Association table for many-to-many relationship between sessions and peers
 session_peers_table = Table(
@@ -156,7 +158,7 @@ class Message(Base):
         TEXT, index=True, unique=True, default=generate_nanoid
     )
     session_name: Mapped[str | None] = mapped_column(
-        ForeignKey("sessions.name"), index=True
+        ForeignKey("sessions.name"), index=True, nullable=True
     )
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
@@ -172,8 +174,8 @@ class Message(Base):
     )
 
     __table_args__ = (
-        CheckConstraint("length(id) = 21", name="id_length"),
-        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
+        CheckConstraint("length(public_id) = 21", name="public_id_length"),
+        CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
         CheckConstraint("length(content) <= 65535", name="content_length"),
         Index(
             "idx_messages_session_lookup",
@@ -184,13 +186,14 @@ class Message(Base):
     )
 
     def __repr__(self) -> str:
-        return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content[10:]})"
+        return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
 
 
-@event.listens_for(Message, 'before_insert')
+@event.listens_for(Message, "before_insert")
 def calculate_token_count_on_insert(_mapper, _connection, target):
     """Calculate token count before inserting a new message."""
     target.token_count = count_tokens(target.content)
+
 
 class Collection(Base):
     __tablename__ = "collections"
@@ -261,7 +264,7 @@ class QueueItem(Base):
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
-    session_id: Mapped[int] = mapped_column(ForeignKey("sessions.id"), index=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), index=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -269,7 +272,7 @@ class QueueItem(Base):
 class ActiveQueueSession(Base):
     __tablename__ = "active_queue_sessions"
 
-    session_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, index=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), primary_key=True)
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )

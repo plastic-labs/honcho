@@ -72,7 +72,7 @@ class MessageBase(BaseModel):
 class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
-    metadata: dict = {}
+    metadata: dict | None = None
 
 
 class MessageGet(MessageBase):
@@ -84,13 +84,13 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
-    id: str
+    id: int
     content: str
-    peer_id: str
-    session_id: str | None
+    peer_id: str = Field(alias="peer_name")
+    session_id: str | None = Field(alias="session_name")
     h_metadata: dict = Field(default={}, serialization_alias="metadata")
     created_at: datetime.datetime
-    workspace: str
+    workspace_name: str
     token_count: int
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
