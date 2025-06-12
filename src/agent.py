@@ -324,13 +324,7 @@ async def chat(
         )
         logger.debug(f"Retrieved additional context: {len(additional_context)} characters")
 
-    # 3. Append latest deriver trace block (if any) ----------------------------
-    latest_trace_block = await get_latest_deriver_trace(session_id)
-    if latest_trace_block:
-        additional_context += "\n\n=== LATEST OBSERVATION TRACE ===\n" + latest_trace_block
-        logger.debug("Appended latest deriver trace to additional context")
-
-    # 4. Dialectic call --------------------------------------------------------
+    # 3. Dialectic call --------------------------------------------------------
     if stream:
         return await dialectic_stream(final_query, working_representation, additional_context)
     else:
@@ -595,91 +589,4 @@ def _filter_current_session_observations(observations: list[tuple[str, str, dict
         logger.info(f"Filtered out {current_session_count} observations from current session {session_id}")
     
     return filtered
-
-
-async def get_long_term_facts(
-    query: str, embedding_store: CollectionEmbeddingStore
-) -> list[str]:
-    """Backward compatibility helper that returns long-term observations (facts)."""
-    results_str = await get_observations(query, embedding_store, include_premises=False)
-    return [results_str]
-# ---------------------------------------------------------------------------
-# Helper: retrieve latest deriver_trace metamessage for current session
-# ---------------------------------------------------------------------------
-
-
-async def get_latest_deriver_trace(session_id: str) -> str:
-    """Return a formatted observation block from the latest deriver_trace.
-
-    If no trace exists or parsing fails, returns an empty string.  The block is
-    capped to 25 lines and grouped by reasoning level.
-    """
-
-    latest_trace_block: str = ""
-    try:
-        async with tracked_db("chat.load_deriver_trace") as db_trace:
-            trace_stmt = (
-                select(models.Metamessage)
-                .where(models.Metamessage.session_id == session_id)
-                .where(models.Metamessage.label == "deriver_trace")
-                .order_by(models.Metamessage.id.desc())
-                .limit(1)
-            )
-            trace_res = await db_trace.execute(trace_stmt)
-            trace_mm = trace_res.scalar_one_or_none()
-
-            if not trace_mm:
-                return ""  # Nothing to do
-
-            import json
-            from collections import defaultdict
-
-            try:
-                trace_json = json.loads(trace_mm.content)
-                final_obs = trace_json.get("final_observations", {}) or {}
-
-                grouped: dict[str, list[str]] = defaultdict(list)
-                for level in ("explicit", "deductive", "inductive", "abductive"):
-                    for entry in final_obs.get(level, []) or []:
-                        if isinstance(entry, str):
-                            grouped[level].append(entry.strip())
-                        elif isinstance(entry, dict):
-                            conc = (entry.get("conclusion") or entry.get("content") or "").strip()
-                            if conc:
-                                grouped[level].append(conc)
-
-                if not any(grouped.values()):
-                    return ""
-
-                MAX_LINES = 25
-                parts: list[str] = []
-                level_titles = {
-                    "explicit": "EXPLICIT",
-                    "deductive": "DEDUCTIVE",
-                    "inductive": "INDUCTIVE",
-                    "abductive": "ABDUCTIVE",
-                }
-                line_counter = 0
-                for level in ("explicit", "deductive", "inductive", "abductive"):
-                    if grouped[level]:
-                        parts.append(f"{level_titles[level]}:")
-                        for line in grouped[level]:
-                            parts.append(f"  • {line}")
-                            line_counter += 1
-                            if line_counter >= MAX_LINES:
-                                break
-                    if line_counter >= MAX_LINES:
-                        break
-
-                latest_trace_block = "\n".join(parts)
-                logger.debug(
-                    f"Loaded {line_counter} observation lines from deriver_trace for session {session_id}"
-                )
-            except Exception as e:
-                logger.error(f"Failed to parse deriver_trace metamessage: {e}")
-                latest_trace_block = ""
-    except Exception as e:
-        logger.error(f"Failed to load deriver_trace metamessage: {e}")
-
-    return latest_trace_block
 
