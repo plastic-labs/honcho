@@ -439,7 +439,10 @@ async def get_or_create_session(
 
         # Add all peers to session
         await _add_peers_to_session(
-            db, session_name=session.name, peer_names=peer_names
+            db,
+            workspace_name=workspace_name,
+            session_name=session.name,
+            peer_names=peer_names,
         )
 
         await db.commit()
@@ -714,55 +717,6 @@ async def get_peers_from_session(
     return stmt
 
 
-async def add_peers_to_session(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str,
-    peer_names: set[str],
-) -> list[models.SessionPeer]:
-    """
-    Add peers to a session. Verifies the session exists first.
-    If peers don't exist, they will be created.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        session_name: Name of the session
-        peer_names: Set of peer names to add to the session
-
-    Returns:
-        List of SessionPeer objects for all peers in the session
-
-    Raises:
-        ResourceNotFoundException: If the session does not exist
-    """
-    # Verify session exists
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
-    )
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-
-    if session is None:
-        raise ResourceNotFoundException(
-            f"Session {session_name} not found in workspace {workspace_name}"
-        )
-
-    # Get or create peers
-    await get_or_create_peers(
-        db,
-        workspace_name=workspace_name,
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
-    )
-
-    # Add peers to session
-    return await _add_peers_to_session(
-        db, session_name=session_name, peer_names=peer_names
-    )
-
-
 async def set_peers_for_session(
     db: AsyncSession,
     workspace_name: str,
@@ -814,12 +768,16 @@ async def set_peers_for_session(
 
     # Add new peers to session
     return await _add_peers_to_session(
-        db, session_name=session_name, peer_names=peer_names
+        db,
+        workspace_name=workspace_name,
+        session_name=session_name,
+        peer_names=peer_names,
     )
 
 
 async def _add_peers_to_session(
     db: AsyncSession,
+    workspace_name: str,
     session_name: str,
     peer_names: set[str],
 ) -> list[models.SessionPeer]:
@@ -839,17 +797,24 @@ async def _add_peers_to_session(
 
     stmt = pg_insert(models.SessionPeer).values(
         [
-            {"session_name": session_name, "peer_name": peer_name}
+            {
+                "session_name": session_name,
+                "peer_name": peer_name,
+                "workspace_name": workspace_name,
+            }
             for peer_name in peer_names
         ]
     )
 
-    stmt = stmt.on_conflict_do_nothing(index_elements=["session_name", "peer_name"])
+    stmt = stmt.on_conflict_do_nothing(
+        index_elements=["session_name", "peer_name", "workspace_name"]
+    )
     await db.execute(stmt)
     await db.commit()
 
     select_stmt = select(models.SessionPeer).where(
-        models.SessionPeer.session_name == session_name
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
     )
     result = await db.execute(select_stmt)
     return list(result.scalars().all())

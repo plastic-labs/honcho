@@ -257,11 +257,13 @@ async def add_peers_to_session(
     """Add peers to a session"""
     try:
         workspace_name, session_name = workspace_id, session_id
-        session = await crud.add_peers_to_session(
+        session = await crud.get_or_create_session(
             db,
+            session=schemas.SessionCreate(
+                name=session_name,
+                peer_names=set(peers),
+            ),
             workspace_name=workspace_name,
-            session_name=session_name,
-            peer_names=set(peers),
         )
         logger.info(f"Added peers to session {session_name} successfully")
         return session

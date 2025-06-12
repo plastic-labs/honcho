@@ -27,9 +27,23 @@ load_dotenv()
 session_peers_table = Table(
     "session_peers",
     Base.metadata,
-    Column("workspace_name", TEXT, ForeignKey("workspaces.name"), primary_key=True),
-    Column("session_name", TEXT, ForeignKey("sessions.name"), primary_key=True),
-    Column("peer_name", TEXT, ForeignKey("peers.name"), primary_key=True),
+    Column(
+        "workspace_name",
+        TEXT,
+        ForeignKey("workspaces.name"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "session_name",
+        TEXT,
+        ForeignKey("sessions.name"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "peer_name", TEXT, ForeignKey("peers.name"), primary_key=True, nullable=False
+    ),
 )
 
 

@@ -57,7 +57,7 @@ class PeerUpdate(PeerBase):
 
 class Peer(PeerBase):
     name: str = Field(serialization_alias="id")
-    workspace: str
+    workspace_name: str
     created_at: datetime.datetime
     h_metadata: dict = Field(default={}, serialization_alias="metadata")
     feature_flags: dict = Field(default={})
@@ -122,7 +122,7 @@ class SessionUpdate(SessionBase):
 class Session(SessionBase):
     name: str = Field(serialization_alias="id")
     is_active: bool
-    workspace: str
+    workspace_name: str
     h_metadata: dict = Field(default={}, serialization_alias="metadata")
     feature_flags: dict = Field(default={})
     created_at: datetime.datetime
