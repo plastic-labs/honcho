@@ -81,33 +81,38 @@ def downgrade() -> None:
     schema = getenv("DATABASE_SCHEMA", "public")
     inspector = sa.inspect(op.get_bind())
 
-    # Step 10 (reverse): Add back app_id, user_id to peers and sessions
+    # Step 1: Add back app_id, user_id to peers and sessions
     restore_app_user_columns(schema, inspector)
 
-    # Step 8 (reverse): Restore documents table
+    # Step 2: Restore documents table
     restore_documents_table(schema, inspector)
 
-    # Step 7 (reverse): Restore collections table
+    # Step 3: Restore collections table
     restore_collections_table(schema, inspector)
 
-    # Step 6 (reverse): Restore messages table
+    # Step 4: Restore messages table
     restore_messages_table(schema, inspector)
 
-    # Step 5 (reverse): Drop session_peers table
+    # Step 5: Drop session_peers table
     if table_exists("session_peers", inspector):
         op.drop_table("session_peers", schema=schema)
 
-    # Step 4 (reverse): Restore sessions table
+    # Step 6: Restore sessions table
     restore_sessions_table(schema, inspector)
 
-    # Step 3 (reverse): Restore peers table
+    # Step 7: Restore peers table
     restore_peers_table(schema, inspector)
 
-    # Step 2 (reverse): Restore workspaces table
+    # Step 8: Restore workspaces table
     restore_workspaces_table(schema, inspector)
 
-    # Step 1 (reverse): Rename tables back
+    # Step 9: Rename tables back
     restore_table_names(schema, inspector)
+
+    # TOOD: step 10: restore queues
+
+    # Step 10: Restore foreign keys
+    restore_foreign_keys(schema)
 
 
 def rename_tables(schema: str, inspector) -> None:
@@ -798,6 +803,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
 
     connection = op.get_bind()
 
+    # TODO: add downgrade for this (and re-add FK?)
     # Get the mapping of old session.id (integer) to new session.id (text, which is public_id)
     # At this point, sessions table still has both id (integer) and public_id (text) columns
     session_id_mapping = {}
@@ -809,6 +815,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
         for old_id, new_id in sessions_mapping:
             session_id_mapping[old_id] = new_id
 
+
     # Update queue table
     if table_exists("queue", inspector) and session_id_mapping:
         # Get current session_id values in queue table
@@ -818,6 +825,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             )
         ).fetchall()
 
+        op.alter_column("queue", "session_id", type_=sa.Text(), existing_type=sa.BigInteger(), postgresql_using="session_id::text")
         # Convert session_id values in queue table
         for (session_id,) in queue_session_ids:
             if session_id in session_id_mapping:
@@ -826,17 +834,19 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
                     sa.text(
                         f"UPDATE {schema}.queue SET session_id = :new_id WHERE session_id = :old_id"
                     ),
-                    {"new_id": str(new_id), "old_id": session_id},
+                    {"new_id": str(new_id), "old_id": str(session_id)},
                 )
 
     # Update active_queue_sessions table
     if table_exists("active_queue_sessions", inspector) and session_id_mapping:
+
         active_queue_session_ids = connection.execute(
             sa.text(
                 f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
             )
         ).fetchall()
 
+        op.alter_column("active_queue_sessions", "session_id", type_=sa.Text(), existing_type=sa.BigInteger(), postgresql_using="session_id::text")
         # Convert session_id values in active_queue_sessions table
         for (session_id,) in active_queue_session_ids:
             if session_id in session_id_mapping:
@@ -845,17 +855,8 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
                     sa.text(
                         f"UPDATE {schema}.active_queue_sessions SET session_id = :new_id WHERE session_id = :old_id"
                     ),
-                    {"new_id": str(new_id), "old_id": session_id},
+                    {"new_id": str(new_id), "old_id": str(session_id)},
                 )
-
-    # Convert session_id column types from int to text
-    if table_exists("queue", inspector):
-        op.alter_column("queue", "session_id", type_=sa.TEXT(), schema=schema)
-    if table_exists("active_queue_sessions", inspector):
-        op.alter_column(
-            "active_queue_sessions", "session_id", type_=sa.TEXT(), schema=schema
-        )
-
 
 def _count_tokens(text: str) -> int:
     """Count tokens in a text string using tiktoken."""
@@ -951,24 +952,16 @@ def restore_app_user_columns(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.sessions SET user_id = (
-                    SELECT sp.peer_name FROM {schema}.session_peers sp 
-                    JOIN {schema}.peers p ON p.name = sp.peer_name AND p.workspace_name = sp.workspace_name
+                    SELECT p.id FROM {schema}.peers p
+                    JOIN {schema}.session_peers sp ON p.name = sp.peer_name AND p.workspace_name = sp.workspace_name
                     WHERE sp.session_name = sessions.name 
-                    AND sp.workspace_name = sessions.workspace_name
+                    AND p.workspace_name = sessions.workspace_name
                     AND p.id != p.name
                     LIMIT 1
                 )
             """)
         )
-        
-        # Check for any sessions with null user_id
-        conn = op.get_bind()
-        null_sessions = conn.execute(
-            sa.text(f"SELECT COUNT(*) FROM {schema}.sessions WHERE user_id IS NULL")
-        ).scalar()
-        if null_sessions and null_sessions > 0:
-            print(f"WARNING: Found {null_sessions} sessions with null user_id")
-        
+                
         op.alter_column("sessions", "user_id", nullable=False, schema=schema)
 
 def restore_documents_table(schema: str, inspector) -> None:
@@ -977,9 +970,24 @@ def restore_documents_table(schema: str, inspector) -> None:
     if not column_exists("documents", "temp_id", inspector):
         op.add_column(
             "documents",
-            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            sa.Column("temp_id", sa.BigInteger(), nullable=True),
             schema=schema,
         )
+    
+    op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.documents_id_seq")
+
+    op.execute(f"""
+        UPDATE {schema}.documents 
+        SET temp_id = nextval('{schema}.documents_id_seq')
+        WHERE temp_id IS NULL
+    """)
+
+    op.alter_column(
+        "documents",
+        "temp_id", 
+        nullable=False,
+        schema=schema
+    )
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("documents", "pk_documents", inspector):
@@ -989,6 +997,16 @@ def restore_documents_table(schema: str, inspector) -> None:
     op.alter_column("documents", "temp_id", new_column_name="id", schema=schema)
     
     op.create_primary_key("pk_documents", "documents", ["id"], schema=schema)
+
+    op.alter_column(
+        "documents",
+        "id",
+        nullable=False,
+        server_default=sa.text(f"nextval('{schema}.documents_id_seq')"),
+        schema=schema
+    )
+
+    op.execute(f"ALTER SEQUENCE {schema}.documents_id_seq OWNED BY {schema}.documents.id")
 
     # Add back user_id and app_id columns
     if not column_exists("documents", "user_id", inspector):
@@ -1001,7 +1019,7 @@ def restore_documents_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.documents SET user_id = (
-                    SELECT id FROM {schema}.users WHERE name = documents.peer_name
+                    SELECT id FROM {schema}.peers WHERE name = documents.peer_name AND workspace_name = documents.workspace_name
                 )
             """)
         )
@@ -1017,23 +1035,12 @@ def restore_documents_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.documents SET app_id = (
-                    SELECT id FROM {schema}.apps WHERE name = documents.workspace_name
+                    SELECT id FROM {schema}.workspaces WHERE name = documents.workspace_name
                 )
             """)
         )
         op.alter_column("documents", "app_id", nullable=False, schema=schema)
 
-    # Restore collection_id from collection_name
-    op.alter_column(
-        "documents", "collection_name", new_column_name="collection_id", schema=schema
-    )
-    op.execute(
-        sa.text(f"""
-            UPDATE {schema}.documents SET collection_id = (
-                SELECT id FROM {schema}.collections WHERE name = documents.collection_id
-            )
-        """)
-    )
 
     # Drop new foreign keys
     if fk_exists("documents", "fk_documents_collection_name_collections", inspector):
@@ -1051,6 +1058,19 @@ def restore_documents_table(schema: str, inspector) -> None:
             schema=schema,
         )
 
+    op.execute(
+        sa.text(f"""
+            UPDATE {schema}.documents SET collection_name = (
+                SELECT id FROM {schema}.collections WHERE name = documents.collection_name AND workspace_name = documents.workspace_name AND peer_name = documents.peer_name
+            )
+        """)
+    )
+
+    # Restore collection_id from collection_name
+    op.alter_column(
+        "documents", "collection_name", new_column_name="collection_id", schema=schema
+    )
+
     # Drop new columns
     op.drop_column("documents", "peer_name", schema=schema)
     op.drop_column("documents", "workspace_name", schema=schema)
@@ -1061,22 +1081,6 @@ def restore_documents_table(schema: str, inspector) -> None:
         "documents",
         "collections",
         ["collection_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-    op.create_foreign_key(
-        "fk_documents_user_id_users",
-        "documents",
-        "users",
-        ["user_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-    op.create_foreign_key(
-        "fk_documents_app_id_apps",
-        "documents",
-        "apps",
-        ["app_id"],
         ["id"],
         referent_schema=schema,
     )
@@ -1101,9 +1105,24 @@ def restore_collections_table(schema: str, inspector) -> None:
     if not column_exists("collections", "temp_id", inspector):
         op.add_column(
             "collections",
-            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            sa.Column("temp_id", sa.BigInteger()),
             schema=schema,
         )
+
+    op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.collections_id_seq")
+
+    op.execute(f"""
+        UPDATE {schema}.collections 
+        SET temp_id = nextval('{schema}.collections_id_seq')
+        WHERE temp_id IS NULL
+    """)
+
+    op.alter_column(
+        "collections",
+        "temp_id", 
+        nullable=False,
+        schema=schema
+    )
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("collections", "pk_collections", inspector):
@@ -1113,6 +1132,16 @@ def restore_collections_table(schema: str, inspector) -> None:
     op.alter_column("collections", "temp_id", new_column_name="id", schema=schema)
     
     op.create_primary_key("pk_collections", "collections", ["id"], schema=schema)
+
+    op.alter_column(
+        "collections",
+        "id",
+        nullable=False,
+        server_default=sa.text(f"nextval('{schema}.collections_id_seq')"),
+        schema=schema
+    )
+
+    op.execute(f"ALTER SEQUENCE {schema}.collections_id_seq OWNED BY {schema}.collections.id")
 
     # Add back user_id and app_id columns
     if not column_exists("collections", "user_id", inspector):
@@ -1125,7 +1154,7 @@ def restore_collections_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.collections SET user_id = (
-                    SELECT id FROM {schema}.users WHERE name = collections.peer_name
+                    SELECT id FROM {schema}.peers WHERE name = collections.peer_name AND workspace_name = collections.workspace_name
                 )
             """)
         )
@@ -1141,7 +1170,7 @@ def restore_collections_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.collections SET app_id = (
-                    SELECT id FROM {schema}.apps WHERE name = collections.workspace_name
+                    SELECT id FROM {schema}.workspaces WHERE name = collections.workspace_name
                 )
             """)
         )
@@ -1172,24 +1201,6 @@ def restore_collections_table(schema: str, inspector) -> None:
     op.drop_column("collections", "peer_name", schema=schema)
     op.drop_column("collections", "workspace_name", schema=schema)
 
-    # Restore old foreign keys (only fk_ format)
-    op.create_foreign_key(
-        "fk_collections_user_id_users",
-        "collections",
-        "users",
-        ["user_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-    op.create_foreign_key(
-        "fk_collections_app_id_apps",
-        "collections",
-        "apps",
-        ["app_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-
     # Restore old unique constraint
     op.create_unique_constraint(
         "unique_name_collection_user",
@@ -1218,18 +1229,13 @@ def restore_messages_table(schema: str, inspector) -> None:
     if not column_exists("messages", "session_id", inspector):
         op.add_column(
             "messages",
-            sa.Column("session_id", sa.BigInteger(), nullable=True),
+            sa.Column("session_id", sa.Text(), nullable=True),
             schema=schema,
         )
-        # Populate from session_name - need to get the old BigInteger ID
-        # This is tricky since we changed the sessions.id from BigInteger to TEXT
-        # We'll need to create a mapping or use a sequential approach
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.messages SET session_id = (
-                    SELECT ROW_NUMBER() OVER (ORDER BY created_at) 
-                    FROM {schema}.sessions s 
-                    WHERE s.name = messages.session_name
+                    SELECT id FROM {schema}.sessions s WHERE s.name = messages.session_name
                 )
             """)
         )
@@ -1245,7 +1251,7 @@ def restore_messages_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.messages SET user_id = (
-                    SELECT id FROM {schema}.users WHERE name = messages.peer_name
+                    SELECT id FROM {schema}.peers WHERE name = messages.peer_name AND workspace_name = messages.workspace_name
                 )
             """)
         )
@@ -1261,12 +1267,13 @@ def restore_messages_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.messages SET app_id = (
-                    SELECT id FROM {schema}.apps WHERE name = messages.workspace_name
+                    SELECT id FROM {schema}.workspaces WHERE name = messages.workspace_name
                 )
             """)
         )
         op.alter_column("messages", "app_id", nullable=False, schema=schema)
 
+    # TODO: Review this
     if not column_exists("messages", "is_user", inspector):
         op.add_column(
             "messages",
@@ -1329,22 +1336,6 @@ def restore_messages_table(schema: str, inspector) -> None:
         ["id"],
         referent_schema=schema,
     )
-    op.create_foreign_key(
-        "fk_messages_app_id_apps",
-        "messages",
-        "apps",
-        ["app_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-    op.create_foreign_key(
-        "fk_messages_user_id_users",
-        "messages",
-        "users",
-        ["user_id"],
-        ["id"],
-        referent_schema=schema,
-    )
 
 
 def restore_sessions_table(schema: str, inspector) -> None:
@@ -1353,9 +1344,17 @@ def restore_sessions_table(schema: str, inspector) -> None:
     if not column_exists("sessions", "temp_id", inspector):
         op.add_column(
             "sessions",
-            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            sa.Column("temp_id", sa.BigInteger()),
             schema=schema,
         )
+
+    op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.sessions_id_seq")
+
+    op.execute(f"""
+        UPDATE {schema}.sessions 
+        SET temp_id = nextval('{schema}.sessions_id_seq')
+        WHERE temp_id IS NULL
+    """)
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("sessions", "pk_sessions", inspector):
@@ -1365,6 +1364,16 @@ def restore_sessions_table(schema: str, inspector) -> None:
     op.alter_column("sessions", "temp_id", new_column_name="id", schema=schema)
     
     op.create_primary_key("pk_sessions", "sessions", ["id"], schema=schema)
+
+    op.alter_column(
+        "sessions",
+        "id",
+        nullable=False,
+        server_default=sa.text(f"nextval('{schema}.sessions_id_seq')"),
+        schema=schema
+    )
+
+    op.execute(f"ALTER SEQUENCE {schema}.sessions_id_seq OWNED BY {schema}.sessions.id")
 
     # Drop new foreign keys
     if fk_exists("sessions", "fk_sessions_workspace_name_workspaces", inspector):
@@ -1385,23 +1394,6 @@ def restore_sessions_table(schema: str, inspector) -> None:
     op.drop_column("sessions", "workspace_name", schema=schema)
     op.drop_column("sessions", "feature_flags", schema=schema)
 
-    # Restore old foreign keys (only fk_ format) - will be added back in restore_app_user_columns
-    op.create_foreign_key(
-        "fk_sessions_app_id_apps",
-        "sessions",
-        "apps",
-        ["app_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-    op.create_foreign_key(
-        "fk_sessions_user_id_users",
-        "sessions",
-        "users",
-        ["user_id"],
-        ["id"],
-        referent_schema=schema,
-    )
 
     # Restore old constraint names
     if check_constraint_exists("sessions", "id_length", inspector):
@@ -1423,9 +1415,17 @@ def restore_peers_table(schema: str, inspector) -> None:
     if not column_exists("peers", "temp_id", inspector):
         op.add_column(
             "peers",
-            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            sa.Column("temp_id", sa.BigInteger()),
             schema=schema,
         )
+
+    op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.peers_id_seq")
+
+    op.execute(f"""
+        UPDATE {schema}.peers 
+        SET temp_id = nextval('{schema}.peers_id_seq')
+        WHERE temp_id IS NULL
+    """)
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("peers", "pk_peers", inspector):
@@ -1433,7 +1433,16 @@ def restore_peers_table(schema: str, inspector) -> None:
     
     op.alter_column("peers", "id", new_column_name="public_id", schema=schema)
     op.alter_column("peers", "temp_id", new_column_name="id", schema=schema)
+
+    op.alter_column(
+        "peers",
+        "id",
+        nullable=False,
+        server_default=sa.text(f"nextval('{schema}.peers_id_seq')"),
+        schema=schema
+    )
     
+    op.execute(f"ALTER SEQUENCE {schema}.peers_id_seq OWNED BY {schema}.peers.id")
     op.create_primary_key("pk_users", "peers", ["id"], schema=schema)
 
     # Drop new foreign keys
@@ -1459,16 +1468,6 @@ def restore_peers_table(schema: str, inspector) -> None:
     op.drop_column("peers", "workspace_name", schema=schema)
     op.drop_column("peers", "feature_flags", schema=schema)
 
-    # Restore old foreign key (only fk_ format) - will be added back in restore_app_user_columns
-    op.create_foreign_key(
-        "fk_users_app_id_apps",
-        "peers",
-        "apps",
-        ["app_id"],
-        ["id"],
-        referent_schema=schema,
-    )
-
     # Restore old constraint names
     if check_constraint_exists("peers", "id_length", inspector):
         op.drop_constraint("id_length", "peers", type_="check", schema=schema)
@@ -1489,9 +1488,17 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     if not column_exists("workspaces", "temp_id", inspector):
         op.add_column(
             "workspaces",
-            sa.Column("temp_id", sa.BigInteger(), nullable=False, autoincrement=True),
+            sa.Column("temp_id", sa.BigInteger()),
             schema=schema,
         )
+
+    op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.workspaces_id_seq")
+
+    op.execute(f"""
+        UPDATE {schema}.workspaces 
+        SET temp_id = nextval('{schema}.workspaces_id_seq')
+        WHERE temp_id IS NULL
+    """)
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("workspaces", "pk_workspaces", inspector):
@@ -1501,6 +1508,15 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     op.alter_column("workspaces", "temp_id", new_column_name="id", schema=schema)
     
     op.create_primary_key("pk_apps", "workspaces", ["id"], schema=schema)
+
+    op.alter_column(
+        "workspaces",
+        "id",
+        nullable=False,
+        server_default=sa.text(f"nextval('{schema}.workspaces_id_seq')"),
+        schema=schema
+    )
+    op.execute(f"ALTER SEQUENCE {schema}.workspaces_id_seq OWNED BY {schema}.workspaces.id")
 
     # Drop new columns
     op.drop_column("workspaces", "feature_flags", schema=schema)
@@ -1518,6 +1534,8 @@ def restore_workspaces_table(schema: str, inspector) -> None:
         "public_id_format", "workspaces", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
 
+def restore_queues_tables(schema: str):
+    pass
 
 def restore_table_names(schema: str, inspector) -> None:
     """Restore table names: workspaces->apps and peers->users."""
@@ -1525,3 +1543,78 @@ def restore_table_names(schema: str, inspector) -> None:
         op.rename_table("workspaces", "apps", schema=schema)
     if inspector.has_table("peers", schema=schema):
         op.rename_table("peers", "users", schema=schema)
+
+def restore_foreign_keys(schema: str) -> None:
+    op.create_foreign_key(
+        "fk_documents_user_id_users",
+        "documents",
+        "users",
+        ["user_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+
+    op.create_foreign_key(
+        "fk_documents_app_id_apps",
+        "documents",
+        "apps",
+        ["app_id"],
+        ["public_id"],
+        referent_schema=schema
+    )
+    op.create_foreign_key(
+        "fk_collections_user_id_users",
+        "collections",
+        "users",
+        ["user_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_collections_app_id_apps",
+        "collections",
+        "apps",
+        ["app_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_messages_app_id_apps",
+        "messages",
+        "apps",
+        ["app_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_messages_user_id_users",
+        "messages",
+        "users",
+        ["user_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key( 
+        "fk_sessions_app_id_apps",
+        "sessions",
+        "apps",
+        ["app_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_sessions_user_id_users",
+        "sessions",
+        "users",
+        ["user_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
+    op.create_foreign_key(
+        "fk_users_app_id_apps",
+        "users",
+        "apps",
+        ["app_id"],
+        ["public_id"],
+        referent_schema=schema,
+    )
