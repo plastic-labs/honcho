@@ -106,12 +106,13 @@ def downgrade() -> None:
     # Step 8: Restore workspaces table
     restore_workspaces_table(schema, inspector)
 
-    # Step 9: Rename tables back
+    # Step 9: Restore queue and active_queue_sessions tables
+    restore_queue_and_active_queue_sessions_tables(schema, inspector)
+
+    # Step 10: Rename tables back
     restore_table_names(schema, inspector)
 
-    # TOOD: step 10: restore queues
-
-    # Step 10: Restore foreign keys
+    # Step 11: Restore foreign keys
     restore_foreign_keys(schema)
 
 
@@ -475,10 +476,6 @@ def update_messages_table(schema: str, inspector) -> None:
     if fk_exists("messages", "messages_user_id_fkey", inspector):
         op.drop_constraint(
             "messages_user_id_fkey", "messages", type_="foreignkey", schema=schema
-        )
-    if fk_exists("messages", "fk_messages_user_id_users", inspector):
-        op.drop_constraint(
-            "fk_messages_user_id_users", "messages", type_="foreignkey", schema=schema
         )
 
     op.drop_column("messages", "is_user", schema=schema)
@@ -1534,8 +1531,88 @@ def restore_workspaces_table(schema: str, inspector) -> None:
         "public_id_format", "workspaces", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
 
-def restore_queues_tables(schema: str):
-    pass
+def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> None:
+    """Restore queue and active_queue_sessions tables to pre-peer paradigm state."""
+    
+    connection = op.get_bind()
+    
+    # Create reverse mapping from session.public_id (text) back to session.id (BigInteger)
+    # At this point in downgrade, sessions table still has both id (BigInteger) and public_id (text)
+    session_id_reverse_mapping = {}
+    if table_exists("sessions", inspector):
+        sessions_mapping = connection.execute(
+            sa.text(f"SELECT id, public_id FROM {schema}.sessions")
+        ).fetchall()
+        
+        for big_int_id, text_id in sessions_mapping:
+            session_id_reverse_mapping[text_id] = big_int_id
+    
+    # Update queue table
+    if table_exists("queue", inspector) and session_id_reverse_mapping:
+        # Get current session_id values in queue table (they are text now)
+        queue_session_ids = connection.execute(
+            sa.text(
+                f"SELECT DISTINCT session_id FROM {schema}.queue WHERE session_id IS NOT NULL"
+            )
+        ).fetchall()
+        
+        # Convert session_id values back to BigInteger
+        for (session_id,) in queue_session_ids:
+            if session_id in session_id_reverse_mapping:
+                old_id = session_id_reverse_mapping[session_id]
+                connection.execute(
+                    sa.text(
+                        f"UPDATE {schema}.queue SET session_id = :old_id WHERE session_id = :new_id"
+                    ),
+                    {"old_id": str(old_id), "new_id": str(session_id)},
+                )
+        
+        # Change column type back to BigInteger
+        op.alter_column("queue", "session_id", type_=sa.BigInteger(), existing_type=sa.Text(), postgresql_using="session_id::bigint")
+    
+    # Update active_queue_sessions table
+    if table_exists("active_queue_sessions", inspector) and session_id_reverse_mapping:
+        # Get current session_id values in active_queue_sessions table (they are text now)
+        active_queue_session_ids = connection.execute(
+            sa.text(
+                f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
+            )
+        ).fetchall()
+        
+        # Convert session_id values back to BigInteger
+        for (session_id,) in active_queue_session_ids:
+            if session_id in session_id_reverse_mapping:
+                old_id = session_id_reverse_mapping[session_id]
+                connection.execute(
+                    sa.text(
+                        f"UPDATE {schema}.active_queue_sessions SET session_id = :old_id WHERE session_id = :new_id"
+                    ),
+                    {"old_id": str(old_id), "new_id": str(session_id)},
+                )
+        
+        # Change column type back to BigInteger
+        op.alter_column("active_queue_sessions", "session_id", type_=sa.BigInteger(), existing_type=sa.Text(), postgresql_using="session_id::bigint")
+    
+    # Restore foreign key constraints
+    if table_exists("queue", inspector):
+        op.create_foreign_key(
+            "fk_queue_session_id_sessions",
+            "queue",
+            "sessions", 
+            ["session_id"],
+            ["id"],
+            referent_schema=schema,
+        )
+    
+    if table_exists("active_queue_sessions", inspector):
+        op.create_foreign_key(
+            "fk_active_queue_sessions_session_id_sessions",
+            "active_queue_sessions",
+            "sessions",
+            ["session_id"], 
+            ["id"],
+            referent_schema=schema,
+        )
 
 def restore_table_names(schema: str, inspector) -> None:
     """Restore table names: workspaces->apps and peers->users."""
