@@ -6,7 +6,7 @@ authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<4.0"
 dependencies = [
     "fastapi[standard]>=0.111.0",
     "python-dotenv>=1.0.0",
