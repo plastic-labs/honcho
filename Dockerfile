@@ -2,36 +2,40 @@
 # https://testdriven.io/blog/docker-best-practices/
 FROM python:3.11-slim-bullseye
 
+# Copy the uv binary from official image
 COPY --from=ghcr.io/astral-sh/uv:0.4.9 /uv /bin/uv
 
-# Set Working directory
+# Set working directory
 WORKDIR /app
 
+# Create and use non-root user
 RUN addgroup --system app && adduser --system --group app
 RUN chown -R app:app /app
 USER app
 
-# Enable bytecode compilation
+# Enable Python bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 
-# Copy from the cache instead of linking since it's a mounted volume
+# Use copy mode instead of linking
 ENV UV_LINK_MODE=copy
 
-# Copy only requirements to cache them in docker layer
+# Copy only requirement files first to leverage Docker layer caching
 COPY uv.lock pyproject.toml /app/
 
-# Install dependencies (no cache mount)
+# Install dependencies (no cache mount here)
 RUN uv sync --frozen --no-dev
 
-# Place executables in the environment at the front of the path
+# Add virtual environment to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
+# Copy project files (own by app user)
 COPY --chown=app:app src/ /app/src/
 COPY --chown=app:app migrations/ /app/migrations/
 COPY --chown=app:app scripts/ /app/scripts/
 COPY --chown=app:app alembic.ini /app/alembic.ini
 
+# Expose the application port
 EXPOSE 8000
 
-# https://stackoverflow.com/questions/29663459/python-app-does-not-print-anything-when-running-detached-in-docker
+# Run FastAPI app
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
