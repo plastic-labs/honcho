@@ -1,518 +1,592 @@
 import asyncio
 import json
 import logging
-import os
-from collections.abc import Iterable
-from typing import Any, Optional
+from inspect import cleandoc as c
 
-import sentry_sdk
-from anthropic import MessageStreamManager
 from dotenv import load_dotenv
-from langfuse.decorators import langfuse_context, observe
+from mirascope import llm, prompt_template
+from mirascope.integrations.langfuse import with_langfuse
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
-from src import crud, models, schemas
+from src import crud, models
 from src.dependencies import tracked_db
-from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
-from src.deriver.tom.long_term import get_user_representation_long_term
-from src.utils import history, parse_xml_content
-from src.utils.model_client import ModelClient, ModelProvider
+from src.deriver.models import SemanticQueries
+from src.utils.deriver import (
+    format_structured_observation,
+    format_premises_for_display,
+    format_datetime_simple,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
 USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
 
-DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
-DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
-
-DEF_QUERY_GENERATION_PROVIDER = ModelProvider.GROQ
-DEF_QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
-QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
-    Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
-    For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
-    
-    Format your response as a JSON array of strings, with each string being a search query. 
-    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
-    Example:
-    ["query about interests", "query about personality", "query about experiences"]"""
-
 load_dotenv()
 
-
-class Dialectic:
-    def __init__(self, agent_input: str, user_representation: str, chat_history: str):
-        self.agent_input = agent_input
-        self.user_representation = user_representation
-        self.chat_history = chat_history
-        self.client = ModelClient(
-            provider=DEF_DIALECTIC_PROVIDER, model=DEF_DIALECTIC_MODEL
-        )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
-
-    @ai_track("Dialectic Call")
-    @observe()
-    async def call(self):
-        with sentry_sdk.start_transaction(
-            op="dialectic-inference", name="Dialectic API Response"
-        ):
-            logger.debug(
-                f"Starting call() method with query length: {len(self.agent_input)}"
-            )
-            call_start = asyncio.get_event_loop().time()
-
-            prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history>
-            """
-            logger.debug(
-                f"Prompt constructed with context length: {len(self.user_representation)} chars"
-            )
-
-            # Create a properly formatted message
-            message: dict[str, Any] = {"role": "user", "content": prompt}
-
-            # Generate the response
-            logger.debug("Calling model for generation")
-            model_start = asyncio.get_event_loop().time()
-            response = await self.client.generate(
-                messages=[message], system=self.system_prompt, max_tokens=1000
-            )
-            model_time = asyncio.get_event_loop().time() - model_start
-            logger.debug(
-                f"Model response received in {model_time:.2f}s: {len(response)} chars"
-            )
-
-            total_time = asyncio.get_event_loop().time() - call_start
-            logger.debug(f"call() completed in {total_time:.2f}s")
-            return [{"text": response}]
-
-    @ai_track("Dialectic Call")
-    @observe()
-    async def stream(self):
-        with sentry_sdk.start_transaction(
-            op="dialectic-inference", name="Dialectic API Response"
-        ):
-            logger.debug(
-                f"Starting stream() method with query length: {len(self.agent_input)}"
-            )
-            stream_start = asyncio.get_event_loop().time()
-
-            prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history> 
-            """
-            logger.debug(
-                f"Prompt constructed with context length: {len(self.user_representation)} chars"
-            )
-
-            # Create a properly formatted message
-            message: dict[str, Any] = {"role": "user", "content": prompt}
-
-            # Stream the response
-            logger.debug("Calling model for streaming")
-            model_start = asyncio.get_event_loop().time()
-            stream = await self.client.stream(
-                messages=[message], system=self.system_prompt, max_tokens=1000
-            )
-
-            stream_setup_time = asyncio.get_event_loop().time() - model_start
-            logger.debug(f"Stream started in {stream_setup_time:.2f}s")
-
-            total_time = asyncio.get_event_loop().time() - stream_start
-            logger.debug(f"stream() setup completed in {total_time:.2f}s")
-            return stream
+# NOTE: Temporarily disabled @with_langfuse() decorators across multiple functions
+# due to compatibility issue between Mirascope 1.25.0 and Langfuse 2.60.8 where 
+# BaseMessageParam objects don't have a .get() method. The Langfuse integration
+# expects message_param to be a dict but it's a Pydantic model.
+# Error: AttributeError: 'BaseMessageParam' object has no attribute 'get'
+#
+# Additionally fixed ReasoningResponse validation error where explicit field
+# was expecting list[str] but receiving a single string from LLM.
+#
+# AFFECTED FUNCTIONS (all temporarily have @with_langfuse() commented out):
+# - src/agent.py: dialectic_call, dialectic_stream
+# - src/utils/history.py: create_short_summary, create_long_summary  
+# - src/deriver/surprise_reasoner.py: critical_analysis_call
+# - src/deriver/tom/long_term.py: get_user_representation_long_term, extract_facts_long_term
+# - src/deriver/tom/single_prompt.py: tom_inference, user_representation_inference
+# - src/deriver/consumer.py: process_user_message (@observe decorator)
+#
+# TODO: Re-enable all Langfuse decorators when compatibility issue is resolved
 
 
-@observe()
+@prompt_template()
+def dialectic_prompt(query: str, working_representation: str, additional_context: str) -> str:
+    return c(
+        f"""
+        You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant observations into coherent, actionable insights that directly and explicitly address what the application needs to know.
+
+        ## INPUT STRUCTURE
+
+        You receive three key inputs:
+
+        **Query**: The specific question or request from the application about this user 
+        **Working Representation**: Current session observations from recent conversation analysis  
+        **Global Context**: Historical observations from the user's global representation
+
+        Each observation contains:
+
+        - **Conclusion**: The derived insight
+        - **Premises**: Supporting evidence/reasoning
+        - **Type**: Explicit observations or observations concluded via Deductive, Inductive, or Abductive reasoning
+        - **Access Counter**: How many times this observation has been confirmed (higher = more reliable)
+        - **Timestamp**: When this was observed (recent = more immediately relevant)
+
+        ## REASONING TYPE HIERARCHY
+
+        **Explicit Observations** (Highest Certainty)
+
+        - Direct facts stated by the user
+        - Treat as foundational truth
+        - Weight: High reliability regardless of counter
+
+        **Deductive Observations** (Logical Certainty)
+
+        - Conclusions that MUST be true given premises
+        - Scaffold these as building blocks for synthesis
+        - Weight: High confidence, especially with high counters
+
+        **Inductive Observations** (Pattern-Based)
+
+        - Generalizations from repeated evidence
+        - Strength increases significantly with higher counters
+        - Weight: Counter-dependent reliability
+
+        **Abductive Observations** (Explanatory Hypotheses)
+
+        - Best explanations for observed patterns
+        - Most valuable for narrative synthesis
+        - Weight: Moderate confidence, enhanced by supporting evidence
+
+        ## SYNTHESIS APPROACH
+
+        **Query-Driven Context Synthesis**: Start by understanding what the application is asking, then surface and synthesize the most relevant context to answer that specific question.
+
+        **Think like human social cognition**: When someone asks a human about a mutual friend, their mind automatically surfaces relevant memories, feelings, and insights about that person related to the question. Replicate this process by:
+
+        1. **Query Analysis**: Understand what the application specifically wants to know about the user
+        2. **Relevance Filtering**: Identify observations that directly or indirectly relate to the query
+        3. **Pattern Recognition**: Find recurring themes across relevant observation types
+        4. **Narrative Construction**: Build a plausible, coherent answer that synthesizes relevant context
+        5. **Confidence Weighting**: Use access counters and timestamps to gauge reliability of your synthesis
+
+        ## RESPONSE FRAMEWORK
+
+        **For each query, synthesize context to directly answer what the application is asking**:
+
+        - **Query-First**: Always start by understanding the specific question (e.g., "What are this user's communication preferences?" vs "What motivates this user professionally?")
+        - **Relevant Evidence**: Select observations that relate to the query topic
+        - **Synthesis Pattern**: Build from your best explanatory hypothesis → support with observed patterns → anchor with explicit facts
+        - **Contextual Narrative**: Create a coherent answer that weaves together relevant context
+        - **Natural Response**: Reply in conversational language as if briefing the application about this user
+
+        **Example Query Types**:
+
+        - Preference-based: "How does this user like to receive feedback?"
+        - Behavioral: "What time of day is this user most productive?"
+        - Motivational: "What drives this user's decision-making?"
+        - Contextual: "Is this user currently dealing with any stressors?"
+        - Explicit: "What is the user's birthday?"
+
+        **Quality Indicators**:
+
+        - High access counters = more reliable patterns
+        - Recent timestamps = current relevance
+        - Consistent cross-type observations = stronger confidence
+        - Rich premise connections = deeper understanding
+
+        ## OUTPUT GUIDELINES
+
+        - **Query-Specific**: Answer the application's specific question, not general information about the user
+        - **Conversational Synthesis**: Respond as if explaining this user to a colleague who needs to interact with them
+        - **Evidence-Based**: Ground your response in the observations provided, weighted by reliability indicators
+        - **Coherent Narrative**: Synthesize rather than list - create understanding that flows naturally
+        - **Appropriate Scope**: Match the specificity and scope of the query
+
+        **CRITICAL: No Relevant Context Handling**
+
+        - If the context provided doesn't help address the query, write absolutely NOTHING but "No information available"
+        - If you are provided in the query with an alternative way to indicate that there is no information available, please use that instead
+
+        **Remember**: Applications are asking targeted questions about users to personalize their interactions. Your job is to surface and synthesize the most relevant context to help them do that effectively. When you lack relevant context, be explicit about it.
+
+        <query>{query}</query>
+        <working_representation>{working_representation}</working_representation>
+        <global_context>{additional_context}</global_context>
+        """
+    )
+
+
+async def get_working_representation_from_trace(session_id: str, db: AsyncSession) -> str:
+    """Extract working representation from most recent deriver trace in session."""
+    trace_metamessage = await _get_latest_deriver_trace(session_id, db)
+    if not trace_metamessage:
+        logger.warning(f"No deriver trace found for session: {session_id}")
+        return ""
+    
+    try:
+        trace_data = json.loads(trace_metamessage.content)
+        final_observations = trace_data.get("final_observations", {})
+        
+        if not final_observations:
+            logger.warning(f"No final_observations found in trace data. Available keys: {list(trace_data.keys())}")
+            return ""
+        
+        return _format_observations_by_level(final_observations)
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse JSON in deriver trace: {e}")
+        return ""
+    except Exception as e:
+        logger.error(f"Error processing deriver trace: {e}")
+        return ""
+
+
+async def _get_latest_deriver_trace(session_id: str, db: AsyncSession) -> models.Metamessage | None:
+    """Get the most recent deriver trace metamessage for a session."""
+    stmt = (
+        select(models.Metamessage)
+        .where(models.Metamessage.session_id == session_id)
+        .where(models.Metamessage.label == "deriver_trace")
+        .order_by(models.Metamessage.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+def _format_observations_by_level(final_observations: dict) -> str:
+    """Format final observations into structured text by level."""
+    formatted_sections = []
+    
+    for level in ['explicit', 'deductive', 'inductive', 'abductive']:
+        observations = final_observations.get(level, [])
+        if observations:
+            formatted_sections.append(f"{level.upper()} OBSERVATIONS:")
+            formatted_sections.extend(_format_observation_list(observations))
+            formatted_sections.append("")
+    
+    return "\n".join(formatted_sections) if formatted_sections else ""
+
+
+def _format_observation_list(observations: list) -> list[str]:
+    """Format a list of observations into consistent string format."""
+    formatted = []
+    for obs in observations:
+        if isinstance(obs, dict):
+            # Determine core content and premises
+            if 'conclusion' in obs:
+                content = obs['conclusion']
+                premises = obs.get('premises', [])
+                formatted_obs = format_structured_observation(content, premises)
+            else:
+                content = obs.get('content', str(obs))
+                formatted_obs = content
+
+            # Prepend timestamp if available
+            ts_raw = obs.get('created_at')
+            if ts_raw:
+                ts = format_datetime_simple(ts_raw)
+                formatted_obs = f"{ts}: {formatted_obs}"
+
+            formatted.append(f"- {formatted_obs}")
+        else:
+            # Handle string fallback
+            formatted.append(f"- {str(obs)}")
+    return formatted
+
+
+@ai_track("Dialectic Call")
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
+@llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219")
+async def dialectic_call(query: str, working_representation: str, additional_context: str):
+    # Generate the prompt and log it
+    prompt_result = dialectic_prompt(query, working_representation, additional_context)
+    
+    # Pretty print the prompt content
+    if isinstance(prompt_result, list) and len(prompt_result) > 0:
+        # Extract content from the first BaseMessageParam
+        prompt_content = prompt_result[0].content
+    else:
+        prompt_content = str(prompt_result)
+    
+    logger.info("=== DIALECTIC PROMPT ===")
+    logger.info(prompt_content)
+    logger.info("=== END DIALECTIC PROMPT ===")
+    
+    return prompt_result
+
+
+@ai_track("Dialectic Stream")
+# TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
+# @with_langfuse()
+@llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219", stream=True)
+async def dialectic_stream(query: str, working_representation: str, additional_context: str):
+    # Generate the prompt and log it
+    prompt_result = dialectic_prompt(query, working_representation, additional_context)
+    
+    # Pretty print the prompt content
+    if isinstance(prompt_result, list) and len(prompt_result) > 0:
+        # Extract content from the first BaseMessageParam
+        prompt_content = prompt_result[0].content
+    else:
+        prompt_content = str(prompt_result)
+    
+    logger.info("=== DIALECTIC PROMPT (STREAM) ===")
+    logger.info(prompt_content)
+    logger.info("=== END DIALECTIC PROMPT ===")
+    
+    return prompt_result
+
+
 async def chat(
     app_id: str,
     user_id: str,
     session_id: str,
     queries: str | list[str],
     stream: bool = False,
-) -> schemas.DialecticResponse | MessageStreamManager:
+) -> llm.Stream | llm.CallResponse:
     """
-    Chat with the Dialectic API using on-demand user representation generation.
+    Chat with the Dialectic API that builds on-demand user representations.
 
-    This function:
-    1. Sets up resources needed (embedding store, latest message ID)
-    2. Runs two parallel processes:
-       - Retrieves long-term facts from the vector store based on the query
-       - Gets recent chat history and runs ToM inference
-    3. Combines both into a fresh user representation
-    4. Uses this representation to answer the query
-    5. Saves the representation for future use
+    Steps:
+    1. Get working representation from deriver trace
+    2. Retrieve additional relevant context via semantic search
+    3. (New) Append observations from latest deriver trace into that context
+    4. Call Dialectic to synthesize an answer
     """
-    # Format the query string
+
+    # Consolidate the incoming queries into a single prompt
     questions = [queries] if isinstance(queries, str) else queries
     final_query = "\n".join(questions) if len(questions) > 1 else questions[0]
 
     logger.debug(f"Received query: {final_query} for session {session_id}")
-    logger.debug("Starting on-demand user representation generation")
-
     start_time = asyncio.get_event_loop().time()
 
-    # Setup phase - create resources we'll need for all operations
+    # 1. Working representation (short-term) -----------------------------------
+    async with tracked_db("chat.get_working_representation") as db:
+        working_representation = await get_working_representation_from_trace(session_id, db)
+    logger.debug(f"Working representation length: {len(working_representation)}")
 
-    # 1. Fetch latest user message & chat history
-    async with tracked_db("chat.load_history") as db_history:
-        stmt = (
-            select(models.Message)
-            .where(models.Message.app_id == app_id)
-            .where(models.Message.user_id == user_id)
-            .where(models.Message.session_id == session_id)
-            .where(models.Message.is_user)
-            .order_by(models.Message.id.desc())
-            .limit(1)
-        )
-        latest_messages = await db_history.execute(stmt)
-        latest_message = latest_messages.scalar_one_or_none()
-        latest_message_id = latest_message.public_id if latest_message else None
-        logger.debug(f"Latest user message ID: {latest_message_id}")
-
-        chat_history, _, _ = await history.get_summarized_history(
-            db_history, session_id, summary_type=history.SummaryType.SHORT
-        )
-        if not chat_history:
-            logger.warning(f"No chat history found for session {session_id}")
-            chat_history = f"someone asked this about the user's message: {final_query}"
-        logger.debug(f"IDs: {app_id}, {user_id}, {session_id}")
-        message_count = len(chat_history.split("\n"))
-        logger.debug(f"Retrieved chat history: {message_count} messages")
-
-    # Run short-term inference and long-term facts in parallel
-    async def fetch_long_term():
-        async with tracked_db("chat.get_collection") as db_embed:
-            collection = await crud.get_or_create_user_protected_collection(
-                db_embed, app_id, user_id
-            )
-            collection_id = (
-                collection.public_id
-            )  # Extract the ID while session is active
-        facts = await get_long_term_facts(final_query, app_id, user_id, collection_id)
-        return facts
-
-    long_term_task = asyncio.create_task(fetch_long_term())
-    short_term_task = asyncio.create_task(run_tom_inference(chat_history, session_id))
-
-    facts, tom_inference = await asyncio.gather(long_term_task, short_term_task)
-    logger.debug(f"Retrieved {len(facts)} facts from long-term memory")
-    logger.debug(f"TOM inference completed with {len(tom_inference)} characters")
-
-    # Generate a fresh user representation
-    logger.debug("Generating user representation")
-    async with tracked_db("chat.generate_user_representation") as db_rep:
-        user_representation = await generate_user_representation(
+    # 2. Additional context (long-term semantic search) ------------------------
+    async with tracked_db("chat.get_additional_context") as db:
+        collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
+        embedding_store = CollectionEmbeddingStore(
+            db=db,
             app_id=app_id,
             user_id=user_id,
-            session_id=session_id,
-            chat_history=chat_history,
-            tom_inference=tom_inference,
-            facts=facts,
-            db=db_rep,
-            message_id=latest_message_id,
-            with_inference=False,
+            collection_id=collection.public_id,
         )
-    logger.debug(
-        f"User representation generated: {len(user_representation)} characters"
-    )
+        additional_context = await get_observations(
+            final_query, 
+            embedding_store, 
+            include_premises=True,
+            session_id=session_id
+        )
+        logger.debug(f"Retrieved additional context: {len(additional_context)} characters")
 
-    # Create a Dialectic chain with the fresh user representation
-    chain = Dialectic(
-        agent_input=final_query,
-        user_representation=user_representation,
-        chat_history=chat_history,
-    )
-
-    generation_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(f"User representation generation completed in {generation_time:.2f}s")
-
-    langfuse_context.update_current_trace(
-        session_id=session_id,
-        user_id=user_id,
-        release=os.getenv("SENTRY_RELEASE"),
-        metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
-    )
-
-    # Use streaming or non-streaming response based on the request
-    logger.debug(f"Calling Dialectic with streaming={stream}")
-    query_start_time = asyncio.get_event_loop().time()
+    # 3. Dialectic call --------------------------------------------------------
     if stream:
-        response_stream = await chain.stream()
-        logger.debug(
-            f"Dialectic stream started after {asyncio.get_event_loop().time() - query_start_time:.2f}s"
-        )
-        return response_stream
-
-    response = await chain.call()
-    query_time = asyncio.get_event_loop().time() - query_start_time
-    total_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(
-        f"Dialectic response received in {query_time:.2f}s (total: {total_time:.2f}s)"
-    )
-    return schemas.DialecticResponse(content=response[0]["text"])
+        return await dialectic_stream(final_query, working_representation, additional_context)
+    else:
+        response = await dialectic_call(final_query, working_representation, additional_context)
+        elapsed = asyncio.get_event_loop().time() - start_time
+        logger.debug(f"Dialectic answered in {elapsed:.2f}s")
+        return response
 
 
-async def get_long_term_facts(
-    query: str, app_id: str, user_id: str, collection_id: str
-) -> list[str]:
+async def get_observations(
+    query: str, embedding_store: CollectionEmbeddingStore, include_premises: bool = False, 
+    session_id: str | None = None
+) -> str:
     """
-    Generate queries based on the dialectic query and retrieve relevant facts.
+    Generate queries based on the dialectic query and retrieve relevant observations.
+    
+    Uses semantic search to find additional relevant historical context beyond 
+    what's already in the working representation.
 
     Args:
         query: The user query
         embedding_store: The embedding store to search
+        include_premises: Whether to include premises from document metadata
+        session_id: Current session ID to exclude from results
 
     Returns:
-        List of retrieved facts
+        String containing additional relevant observations from semantic search
     """
-    logger.debug(f"Starting fact retrieval for query: {query}")
-    fact_start_time = asyncio.get_event_loop().time()
-
-    # Generate multiple queries for the semantic search
-    logger.debug("Generating semantic queries")
-    search_queries = await generate_semantic_queries(query)
-    logger.debug(f"Generated {len(search_queries)} semantic queries: {search_queries}")
-
-    # Create a list of coroutines, one for each query
-    async def execute_query(i: int, search_query: str) -> list[str]:
-        logger.debug(f"Starting query {i + 1}/{len(search_queries)}: {search_query}")
-        query_start = asyncio.get_event_loop().time()
-        query_embedding_store = CollectionEmbeddingStore(
-            app_id=app_id,
-            user_id=user_id,
-            collection_id=collection_id,
-        )
-        facts = await query_embedding_store.get_relevant_facts(
-            search_query, top_k=10, max_distance=0.85
-        )
-        query_time = asyncio.get_event_loop().time() - query_start
-        logger.debug(f"Query {i + 1} retrieved {len(facts)} facts in {query_time:.2f}s")
-        return facts
-
+    logger.info(f"Starting observation retrieval for query: {query}")
+    
+    # Generate search queries and execute them in parallel
+    search_queries_result = await generate_semantic_queries(query)
+    search_queries = search_queries_result.queries
+    logger.info(f"Generated {len(search_queries)} search queries: \n{json.dumps(search_queries, indent=2)}")
+    
     # Execute all queries in parallel
-    query_tasks = [
-        execute_query(i, search_query) for i, search_query in enumerate(search_queries)
+    tasks = [_execute_single_query(q, embedding_store) for q in search_queries]
+    all_results = await asyncio.gather(*tasks)
+    
+    # Combine and deduplicate results
+    unique_observations = _deduplicate_observations(all_results)
+    logger.info(f"Retrieved {len(unique_observations)} unique observations before filtering")
+    
+    # Filter out current session observations to get only historical context
+    if session_id:
+        filtered_observations = _filter_current_session_observations(unique_observations, session_id)
+        logger.info(f"After session filtering: {len(filtered_observations)} observations (removed {len(unique_observations) - len(filtered_observations)} current session observations)")
+        unique_observations = filtered_observations
+    
+    # Format observations
+    if not unique_observations:
+        logger.info("No unique historical observations found after filtering")
+        return "No additional relevant context found."
+    
+    # Log a summary of what was retrieved
+    logger.info(f"Final retrieval summary: {len(unique_observations)} observations retrieved across search queries: \n{json.dumps(unique_observations, indent=2)}")
+    
+    return _format_observations(unique_observations, include_premises)
+
+
+async def _execute_single_query(query: str, embedding_store: CollectionEmbeddingStore) -> list[tuple[str, str, dict]]:
+    """Execute a single semantic search query and return formatted results."""
+    documents = await embedding_store.get_relevant_observations(
+        query, top_k=10, max_distance=0.85
+    )
+    
+    # Extract data to avoid DetachedInstanceError
+    return [
+        (doc.content, doc.created_at.strftime("%Y-%m-%d-%H:%M:%S"), doc.h_metadata or {})
+        for doc in documents
     ]
-    all_facts_lists = await asyncio.gather(*query_tasks)
 
-    # Combine all facts into a single set to remove duplicates
-    retrieved_facts = set()
-    for facts in all_facts_lists:
-        retrieved_facts.update(facts)
 
-    total_time = asyncio.get_event_loop().time() - fact_start_time
-    logger.debug(
-        f"Total fact retrieval completed in {total_time:.2f}s with {len(retrieved_facts)} unique facts"
+def _deduplicate_observations(all_results: list[list[tuple[str, str, dict]]]) -> list[tuple[str, str, dict]]:
+    """Deduplicate observations based on content."""
+    unique_observations = []
+    seen_content = set()
+    
+    for results in all_results:
+        for content, timestamp, metadata in results:
+            if content not in seen_content:
+                unique_observations.append((content, timestamp, metadata))
+                seen_content.add(content)
+    
+    return unique_observations
+
+
+def _format_observations(observations: list[tuple[str, str, dict]], include_premises: bool) -> str:
+    """Format observations grouped by level and date, including access metadata."""
+    grouped = {}
+    
+    for content, timestamp, metadata in observations:
+        level = metadata.get('level', 'unknown')
+        date_str = timestamp[:10]  # Extract YYYY-MM-DD
+        
+        if level not in grouped:
+            grouped[level] = {}
+        if date_str not in grouped[level]:
+            grouped[level][date_str] = []
+        
+        # Build formatted content with premises and access metadata
+        formatted_content = content
+        
+        # Add premises if requested and available
+        if include_premises and metadata.get('premises'):
+            premises_text = format_premises_for_display(metadata['premises'])
+            formatted_content = f"{content}{premises_text}"
+        
+        # Prefix with full timestamp for clarity
+        if timestamp:
+            formatted_content = f"{timestamp}: {formatted_content}"
+        
+        # Add access metadata if available
+        access_parts = []
+        access_count = metadata.get('access_count', 0)
+        last_accessed = metadata.get('last_accessed')
+        
+        if access_count > 0:
+            access_parts.append(f"accessed {access_count}x")
+        
+        if last_accessed:
+            # Format the last_accessed datetime for display
+            try:
+                from datetime import datetime
+                if isinstance(last_accessed, str):
+                    # Parse ISO format datetime string
+                    dt = datetime.fromisoformat(last_accessed.replace('Z', '+00:00'))
+                    formatted_last_accessed = dt.strftime("%Y-%m-%d %H:%M")
+                    access_parts.append(f"last accessed {formatted_last_accessed}")
+            except (ValueError, AttributeError):
+                # If parsing fails, just show the raw value
+                access_parts.append(f"last accessed {last_accessed}")
+        
+        # Append access metadata to the formatted content
+        if access_parts:
+            access_info = ", ".join(access_parts)
+            formatted_content = f"{formatted_content} [{access_info}]"
+        
+        grouped[level][date_str].append(formatted_content)
+    
+    # Build output
+    parts = []
+    for level in sorted(grouped.keys()):
+        header = f"\n{level.upper()} OBSERVATIONS:" if level != 'unknown' else "\nOBSERVATIONS:"
+        parts.append(header)
+        
+        for date_str in sorted(grouped[level].keys(), reverse=True):  # Most recent first
+            parts.append(f"\n{date_str}:")
+            for obs in grouped[level][date_str]:
+                parts.append(f"  • {obs}")
+    
+    return "\n".join(parts).strip()
+
+
+@prompt_template()
+def query_generation_prompt(query: str) -> str:
+    return c(
+        f"""
+        You are a query expansion agent, part of a social cognition system that helps AI applications understand their users. Your job is to take application queries about users and generate targeted search queries that will retrieve the most relevant observations from the user's global representation.
+
+        ## UNDERSTANDING THE OBSERVATION SYSTEM
+
+        The global representation contains observations derived from natural conversation using four types of reasoning. Since these observations are stored as natural language derived from real dialogue, your semantic queries should match conversational patterns and use rich vocabulary to maximize similarity matches.
+
+        **Explicit Observations** (Highest Certainty)
+
+        - Direct facts literally stated by users ("I am 25 years old", "I work as a teacher")
+        - Semantic patterns: Demographic terms, role descriptions, stated preferences, personal declarations
+
+        **Deductive Observations** (Logical Certainty)
+
+        - Facts that MUST be true given explicit premises ("teaches 5th grade" → "works in elementary education")
+        - Semantic patterns: Professional implications, logical connections, role-based inferences
+
+        **Inductive Observations** (Pattern-Based)
+
+        - Generalizations from repeated evidence (mentions coding problems 5x → "likely works in tech")
+        - Semantic patterns: Behavioral descriptors, habit language, frequency terms, pattern recognition language
+
+        **Abductive Observations** (Explanatory Hypotheses)
+
+        - Best explanations for observed patterns (tech discussions + late messages + coffee → "possibly startup founder")
+        - Semantic patterns: Identity theories, lifestyle descriptors, motivational language, contextual explanations
+
+        ## QUERY EXPANSION STRATEGY FOR SEMANTIC SIMILARITY
+
+        **Your Goal**: Generate 3 complementary search queries optimized for semantic similarity matching that together will surface the most relevant observations to help answer the application's question.
+
+        **Semantic Similarity Optimization**:
+
+        1. **Analyze the Application Query**: What specific aspect of the user does the application want to understand?
+        2. **Think Conceptually**: What concepts, themes, and semantic fields relate to this question?
+        3. **Use Diverse Vocabulary**: Include synonyms, related terms, and different ways of expressing the same concepts
+        4. **Consider Natural Language Patterns**: Match how people actually talk about these topics in conversation
+        5. **Vary Semantic Scope**:
+            - One query with direct conceptual match and rich vocabulary
+            - One query targeting behavioral/pattern language around the topic
+            - One query for broader contextual semantic fields
+
+        ## SEMANTIC SEARCH QUERY CHARACTERISTICS
+
+        **Effective Semantic Queries Should**:
+
+        - **Rich Vocabulary**: Use multiple synonyms and related terms (e.g., "preferences choices likes dislikes tastes")
+        - **Natural Phrasing**: Match conversational language patterns since observations come from natural dialogue
+        - **Conceptual Breadth**: Include semantically related concepts that might appear in relevant observations
+        - **Behavioral Language**: Use action words and descriptive language that captures how behaviors are discussed
+        - **Contextual Terms**: Include situational and emotional language that provides semantic richness
+
+        **Example Semantic Transformation**: Application Query: "How does this user prefer to receive feedback?"
+
+        Generated Queries:
+
+        - "feedback preferences receiving criticism suggestions advice communication style likes dislikes" (direct + synonyms)
+        - "response reactions when criticized praised corrected defensive receptive patterns behavior" (behavioral patterns)
+        - "workplace professional relationships mentoring coaching interactions supervisory dynamics" (contextual semantic field)
+
+        **Vocabulary Expansion Techniques**:
+
+        - **Synonyms**: feedback/criticism/advice/suggestions/input/guidance
+        - **Related Actions**: receiving/getting/handling/processing/responding/reacting
+        - **Emotional Language**: sensitive/defensive/receptive/open/resistant/welcoming
+        - **Contextual Terms**: workplace/professional/personal/relationship/dynamic/interaction
+        - **Intensity Variations**: harsh/gentle/direct/subtle/constructive/blunt
+        - **Outcome Language**: improvement/growth/learning/development/change
+
+        **Remember**: Since observations come from natural conversations, use the vocabulary people actually use when discussing these topics, including casual language, emotional descriptors, and situational context.
+
+        ## OUTPUT FORMAT
+
+        Respond with exactly 3 search queries as a JSON object with a "queries" field containing an array of strings. Each query should target different aspects or reasoning levels to maximize retrieval coverage.
+
+        Format: `{{"queries": ["query1", "query2", "query3"]}}`
+
+        No markdown, no explanations, just the JSON object.
+
+        <query>{query}</query>
+        """
     )
-    return list(retrieved_facts)
 
 
-async def run_tom_inference(chat_history: str, session_id: str) -> str:
-    """
-    Run ToM inference on chat history.
-
-    Args:
-        chat_history: The chat history
-        session_id: The session ID
-
-    Returns:
-        The ToM inference
-    """
-    # Run ToM inference
-    logger.debug(f"Running ToM inference for session {session_id}")
-    tom_start_time = asyncio.get_event_loop().time()
-
-    # Get chat history length to determine if this is a new conversation
-    tom_inference_response = await get_tom_inference(
-        chat_history, session_id, method="single_prompt", user_representation=""
-    )
-
-    # Extract the prediction from the response
-    tom_time = asyncio.get_event_loop().time() - tom_start_time
-
-    logger.debug(f"ToM inference completed in {tom_time:.2f}s")
-    prediction = parse_xml_content(tom_inference_response, "prediction")
-    logger.debug(f"Prediction length: {len(prediction)} characters")
-
-    return prediction
+# @with_langfuse()
+@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
+async def generate_semantic_queries(query: str):
+    return query_generation_prompt(query)
 
 
-async def generate_semantic_queries(query: str) -> list[str]:
-    """
-    Generate multiple semantically relevant queries based on the original query using LLM.
-    This helps retrieve more diverse and relevant facts from the vector store.
+def _filter_current_session_observations(observations: list[tuple[str, str, dict]], session_id: str) -> list[tuple[str, str, dict]]:
+    """Filter out observations from the current session."""
+    filtered = []
+    current_session_count = 0
+    
+    for content, timestamp, metadata in observations:
+        obs_session_id = metadata.get('session_id')
+        if obs_session_id != session_id:
+            filtered.append((content, timestamp, metadata))
+        else:
+            current_session_count += 1
+            logger.debug(f"Filtered out current session observation: {content[:50]}...")
+    
+    if current_session_count > 0:
+        logger.info(f"Filtered out {current_session_count} observations from current session {session_id}")
+    
+    return filtered
 
-    Args:
-        query: The original dialectic query
-
-    Returns:
-        A list of semantically relevant queries
-    """
-    logger.debug(f"Generating semantic queries from: {query}")
-    query_start = asyncio.get_event_loop().time()
-
-    logger.debug("Calling LLM for query generation")
-    llm_start = asyncio.get_event_loop().time()
-
-    # Create a new model client
-    client = ModelClient(
-        provider=DEF_QUERY_GENERATION_PROVIDER, model=DEF_QUERY_GENERATION_MODEL
-    )
-
-    # Prepare the messages for Anthropic
-    messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
-
-    # Generate the response
-    try:
-        result = await client.generate(
-            messages=messages,
-            system=QUERY_GENERATION_SYSTEM,
-            max_tokens=1000,
-            use_caching=True,  # Likely not caching because the system prompt is under 1000 tokens
-        )
-        llm_time = asyncio.get_event_loop().time() - llm_start
-        logger.debug(f"LLM response received in {llm_time:.2f}s: {result[:100]}...")
-
-        # Parse the JSON response to get a list of queries
-        try:
-            queries = json.loads(result)
-            if not isinstance(queries, list):
-                # Fallback if response is not a valid list
-                logger.debug("LLM response not a list, using as single query")
-                queries = [result]
-        except json.JSONDecodeError:
-            # Fallback if response is not valid JSON
-            logger.debug("Failed to parse JSON response, using raw response as query")
-            queries = [query]  # Fall back to the original query
-
-        # Ensure we always include the original query
-        if query not in queries:
-            logger.debug("Adding original query to results")
-            queries.append(query)
-
-        total_time = asyncio.get_event_loop().time() - query_start
-        logger.debug(f"Generated {len(queries)} queries in {total_time:.2f}s")
-
-        return queries
-    except Exception as e:
-        logger.error(f"Error during API call: {str(e)}")
-        raise
-
-
-async def generate_user_representation(
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    chat_history: str,
-    tom_inference: str,
-    facts: list[str],
-    db: AsyncSession,
-    message_id: Optional[str] = None,
-    with_inference: bool = False,
-) -> str:
-    """
-    Generate a user representation by combining long-term facts and short-term context.
-    Optionally save it as a metamessage if message_id is provided.
-    Only uses existing representations from the same session for continuity.
-
-    Returns:
-        The generated user representation.
-    """
-    logger.debug("Starting user representation generation")
-    rep_start_time = asyncio.get_event_loop().time()
-
-    if with_inference:
-        # Fetch the latest user representation from the same session
-        logger.debug(f"Fetching latest representation for session {session_id}")
-        latest_representation_stmt = (
-            select(models.Metamessage)
-            .where(
-                models.Metamessage.session_id == session_id
-            )  # only from the same session
-            .where(models.Metamessage.label == USER_REPRESENTATION_METAMESSAGE_TYPE)
-            .order_by(models.Metamessage.id.desc())
-            .limit(1)
-        )
-        result = await db.execute(latest_representation_stmt)
-        latest_representation_obj = result.scalar_one_or_none()
-        latest_representation = (
-            latest_representation_obj.content
-            if latest_representation_obj
-            else "No user representation available."
-        )
-        logger.debug(
-            f"Found previous representation: {len(latest_representation)} characters"
-        )
-        logger.debug(f"Using {len(facts)} facts for representation")
-
-        # Generate the new user representation
-        logger.debug("Calling get_user_representation")
-        gen_start_time = asyncio.get_event_loop().time()
-        user_representation_response = await get_user_representation_long_term(
-            chat_history=chat_history,
-            session_id=session_id,
-            facts=facts,
-            user_representation=latest_representation,
-            tom_inference=tom_inference,
-        )
-        gen_time = asyncio.get_event_loop().time() - gen_start_time
-        logger.debug(f"get_user_representation completed in {gen_time:.2f}s")
-
-        # Extract the representation from the response
-        representation = parse_xml_content(
-            user_representation_response, "representation"
-        )
-        logger.debug(f"Extracted representation: {len(representation)} characters")
-    else:
-        representation = f"""
-PREDICTION ABOUT THE USER'S CURRENT MENTAL STATE:
-{tom_inference}
-
-RELEVANT LONG-TERM FACTS ABOUT THE USER:
-{facts}
-"""
-    logger.debug(f"Representation: {representation}")
-    # If message_id is provided, save the representation as a metamessage
-    if not representation:
-        logger.debug("Empty representation, skipping save")
-    else:
-        logger.debug(f"Saving representation to message_id: {message_id}")
-        save_start = asyncio.get_event_loop().time()
-        try:
-            # First check if message exists
-            message_check_stmt = select(models.Message).where(
-                models.Message.public_id == message_id
-            )
-            message_check = await db.execute(message_check_stmt)
-            message_exists = message_check.scalar_one_or_none() is not None
-
-            if not message_exists:
-                message_id = None
-            else:
-                metamessage = models.Metamessage(
-                    app_id=app_id,
-                    user_id=user_id,
-                    session_id=session_id,
-                    message_id=message_id if message_id else None,
-                    label=USER_REPRESENTATION_METAMESSAGE_TYPE,
-                    content=representation,
-                    h_metadata={},
-                )
-                db.add(metamessage)
-                await db.commit()
-                save_time = asyncio.get_event_loop().time() - save_start
-                logger.debug(f"Representation saved in {save_time:.2f}s")
-        except Exception as e:
-            logger.error(f"Error during save DB operation: {str(e)}")
-            await db.rollback()
-
-    total_time = asyncio.get_event_loop().time() - rep_start_time
-    logger.debug(f"Total representation generation completed in {total_time:.2f}s")
-    return representation

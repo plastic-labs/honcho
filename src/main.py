@@ -25,45 +25,17 @@ from src.routers import (
     users,
 )
 from src.security import create_admin_jwt
+from src.utils.logging import console, log_error_panel, setup_rich_logging
 
-
-def get_log_level(env_var="LOG_LEVEL", default="INFO"):
-    """
-    Convert log level string from environment variable to logging module constant.
-
-    Args:
-        env_var: Name of the environment variable to check
-        default: Default log level if environment variable is not set
-
-    Returns:
-        int: The logging level constant (e.g., logging.INFO)
-    """
-    log_level_str = os.getenv(env_var, default).upper()
-
-    log_levels = {
-        "CRITICAL": logging.CRITICAL,  # 50
-        "ERROR": logging.ERROR,  # 40
-        "WARNING": logging.WARNING,  # 30
-        "INFO": logging.INFO,  # 20
-        "DEBUG": logging.DEBUG,  # 10
-        "NOTSET": logging.NOTSET,  # 0
-    }
-
-    return log_levels.get(log_level_str, logging.INFO)
-
-
-# Configure logging
-logging.basicConfig(
-    level=get_log_level(),
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+# Setup beautiful rich logging
+setup_rich_logging(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
 # JWT Setup
 async def setup_admin_jwt():
     token = create_admin_jwt()
-    print(f"\n    ADMIN JWT: {token}\n")
+    console.print(f"\n[bold green]🔑 ADMIN JWT:[/] [dim]{token}[/]\n")
 
 
 # Sentry Setup
@@ -152,7 +124,7 @@ app.include_router(keys.router, prefix="/v1")
 @app.exception_handler(HonchoException)
 async def honcho_exception_handler(request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
-    logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
+    log_error_panel(logger, exc, f"Request: {request.method} {request.url}")
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
@@ -162,7 +134,9 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
-    logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+    log_error_panel(
+        logger, exc, f"Unhandled exception in {request.method} {request.url}"
+    )
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
     return JSONResponse(

@@ -73,6 +73,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     is_user: bool
     metadata: dict = {}
+    created_at: datetime.datetime | None = None
 
 
 class MessageGet(MessageBase):
@@ -80,7 +81,8 @@ class MessageGet(MessageBase):
 
 
 class MessageUpdate(MessageBase):
-    metadata: dict
+    metadata: dict | None = None
+    created_at: datetime.datetime | None = None
 
 
 class Message(MessageBase):
@@ -109,7 +111,7 @@ class SessionCreate(SessionBase):
 
 class SessionGet(SessionBase):
     filter: dict | None = None
-    is_active: bool = False
+    is_active: bool | None = None
 
 
 class SessionUpdate(SessionBase):
@@ -236,6 +238,7 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict = {}
+    created_at: datetime.datetime | None = None
 
 
 class DocumentGet(DocumentBase):

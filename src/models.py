@@ -302,3 +302,12 @@ class ActiveQueueSession(Base):
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
+
+
+class ActiveQueueUser(Base):
+    __tablename__ = "active_queue_users"
+
+    user_id: Mapped[str] = mapped_column(TEXT, primary_key=True, index=True)
+    last_updated: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), onupdate=func.now()
+    )

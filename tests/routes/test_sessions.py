@@ -56,6 +56,269 @@ async def test_get_sessions(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
+async def test_get_sessions_filter_functionality(client, db_session, sample_data):
+    """Test comprehensive filter functionality for sessions endpoint"""
+    test_app, test_user = sample_data
+    
+    # Create multiple sessions with different metadata
+    session1_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"category": "work", "priority": "high", "status": "active"}},
+    )
+    assert session1_response.status_code == 200
+    session1_id = session1_response.json()["id"]
+    
+    session2_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"category": "personal", "priority": "low", "tags": ["vacation", "planning"]}},
+    )
+    assert session2_response.status_code == 200
+    session2_id = session2_response.json()["id"]
+    
+    session3_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"category": "work", "priority": "medium", "nested": {"level": 1, "type": "project"}}},
+    )
+    assert session3_response.status_code == 200
+    session3_id = session3_response.json()["id"]
+    
+    # Test 1: Filter by single key-value pair
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"category": "work"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 2
+    work_sessions = [item for item in data["items"] if item["id"] in [session1_id, session3_id]]
+    assert len(work_sessions) == 2
+    
+    # Test 2: Filter by multiple key-value pairs (AND logic)
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"category": "work", "priority": "high"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == session1_id
+    
+    # Test 3: Filter by nested object
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"nested": {"level": 1}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == session3_id
+    
+    # Test 4: Filter by array element
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"tags": ["vacation", "planning"]}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == session2_id
+    
+    # Test 5: Filter with no matches
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"nonexistent": "value"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 0
+    
+    # Test 6: Empty filter (should return all sessions)
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) >= 3
+    
+    # Test 7: No filter parameter (should return all sessions)
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) >= 3
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_is_active_filter(client, db_session, sample_data):
+    """Test is_active filtering functionality"""
+    test_app, test_user = sample_data
+    
+    # Create an active session
+    active_session_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"type": "active_test"}},
+    )
+    assert active_session_response.status_code == 200
+    active_session_id = active_session_response.json()["id"]
+    
+    # Create another session and delete it (mark as inactive)
+    inactive_session_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"type": "inactive_test"}},
+    )
+    assert inactive_session_response.status_code == 200
+    inactive_session_id = inactive_session_response.json()["id"]
+    
+    # Delete the second session to make it inactive
+    delete_response = client.delete(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{inactive_session_id}"
+    )
+    assert delete_response.status_code == 200
+    
+    # Test 1: Filter for active sessions only
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"is_active": True},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Should include the active session but not the inactive one
+    active_sessions = [item for item in data["items"] if item["id"] == active_session_id]
+    inactive_sessions = [item for item in data["items"] if item["id"] == inactive_session_id]
+    
+    assert len(active_sessions) == 1
+    assert len(inactive_sessions) == 0
+    assert active_sessions[0]["is_active"] is True
+    
+    # Test 2: Filter for inactive sessions only
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"is_active": False},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Should include only the inactive session
+    all_active = [item for item in data["items"] if item["id"] == active_session_id]
+    all_inactive = [item for item in data["items"] if item["id"] == inactive_session_id]
+    
+    assert len(all_active) == 0
+    assert len(all_inactive) == 1
+    assert all_inactive[0]["is_active"] is False
+    
+    # Test 3: Default behavior (no is_active filter should return all sessions)
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Should include both active and inactive sessions by default
+    default_active = [item for item in data["items"] if item["id"] == active_session_id]
+    default_inactive = [item for item in data["items"] if item["id"] == inactive_session_id]
+    
+    assert len(default_active) == 1
+    assert len(default_inactive) == 1
+    assert default_active[0]["is_active"] is True
+    assert default_inactive[0]["is_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_reverse_order(client, db_session, sample_data):
+    """Test reverse order functionality"""
+    test_app, test_user = sample_data
+    
+    # Create sessions in sequence
+    session1_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"order": "first"}},
+    )
+    assert session1_response.status_code == 200
+    session1_id = session1_response.json()["id"]
+    
+    session2_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"order": "second"}},
+    )
+    assert session2_response.status_code == 200
+    session2_id = session2_response.json()["id"]
+    
+    # Test 1: Normal order (oldest first)
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Find positions of our test sessions
+    session1_pos = next(i for i, item in enumerate(data["items"]) if item["id"] == session1_id)
+    session2_pos = next(i for i, item in enumerate(data["items"]) if item["id"] == session2_id)
+    assert session1_pos < session2_pos  # First session should come before second
+    
+    # Test 2: Reverse order (newest first)
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={},
+        params={"reverse": True},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Find positions of our test sessions in reverse order
+    session1_pos_rev = next(i for i, item in enumerate(data["items"]) if item["id"] == session1_id)
+    session2_pos_rev = next(i for i, item in enumerate(data["items"]) if item["id"] == session2_id)
+    assert session2_pos_rev < session1_pos_rev  # Second session should come before first in reverse
+
+
+@pytest.mark.asyncio
+async def test_get_sessions_combined_filters(client, db_session, sample_data):
+    """Test combining filter, is_active, and reverse parameters"""
+    test_app, test_user = sample_data
+    
+    # Create sessions with specific metadata
+    session1_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"project": "alpha", "status": "completed"}},
+    )
+    assert session1_response.status_code == 200
+    session1_id = session1_response.json()["id"]
+    
+    session2_response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
+        json={"metadata": {"project": "alpha", "status": "active"}},
+    )
+    assert session2_response.status_code == 200
+    session2_id = session2_response.json()["id"]
+    
+    # Delete first session to make it inactive
+    delete_response = client.delete(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{session1_id}"
+    )
+    assert delete_response.status_code == 200
+    
+    # Test: Filter by project + active sessions only + reverse order
+    response = client.post(
+        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/list",
+        json={"filter": {"project": "alpha"}, "is_active": True},
+        params={"reverse": True},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    
+    # Should only return the active session with project "alpha"
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == session2_id
+    assert data["items"][0]["is_active"] is True
+    assert data["items"][0]["metadata"]["project"] == "alpha"
+
+
+@pytest.mark.asyncio
 async def test_empty_update_session(client, db_session, sample_data):
     test_app, test_user = sample_data
     # Create a test session

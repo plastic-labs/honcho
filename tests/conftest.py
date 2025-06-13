@@ -3,6 +3,18 @@ import os
 import jwt
 from nanoid import generate as generate_nanoid
 from unittest.mock import patch, MagicMock, AsyncMock
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Patch CONNECTION_URI before any imports to use test database
+os.environ["CONNECTION_URI"] = os.getenv(
+    "TEST_CONNECTION_URI",
+    os.getenv(
+        "CONNECTION_URI",
+        "postgresql+psycopg://testuser:testpwd@127.0.0.1:5432/honcho",
+    ),
+)
 
 import pytest
 import pytest_asyncio
@@ -47,8 +59,11 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 # TODO use environment variable
 CONNECTION_URI = make_url(
     os.getenv(
-        "CONNECTION_URI",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
+        "TEST_CONNECTION_URI",
+        os.getenv(
+            "CONNECTION_URI",
+            "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
+        ),
     )
 )
 TEST_DB_URL = CONNECTION_URI.set(database="test_db")
@@ -115,13 +130,17 @@ async def setup_test_database(db_url):
 
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
+    # Always drop and recreate the test database for a clean slate
+    try:
+        drop_database(TEST_DB_URL)
+    except Exception:
+        pass  # Database might not exist
+
     create_test_database(TEST_DB_URL)
     engine = await setup_test_database(TEST_DB_URL)
 
-    # Drop all tables first to ensure clean state
+    # Create all tables with current models
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-        # Then create all tables with current models
         await conn.run_sync(Base.metadata.create_all)
 
     yield engine
@@ -141,7 +160,7 @@ async def db_session(db_engine):
 
 
 @pytest.fixture(scope="function")
-async def client(db_session):
+async def client(db_session, db_engine):
     """Create a FastAPI TestClient for the scope of a single test function"""
 
     # Register exception handlers for tests
@@ -155,12 +174,21 @@ async def client(db_session):
     async def override_get_db():
         yield db_session
 
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as c:
-        if USE_AUTH:
-            # give the test client the admin JWT
-            c.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
-        yield c
+    # Override SessionLocal to use test database engine
+    test_session_local = async_sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        expire_on_commit=False,
+        bind=db_engine,
+    )
+
+    with patch("src.db.SessionLocal", test_session_local):
+        app.dependency_overrides[get_db] = override_get_db
+        with TestClient(app) as c:
+            if USE_AUTH:
+                # give the test client the admin JWT
+                c.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
+            yield c
 
 
 def create_invalid_jwt() -> str:
