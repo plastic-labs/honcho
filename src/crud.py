@@ -819,7 +819,6 @@ async def _add_peers_to_session(
 
 
 async def search(
-    db: AsyncSession,
     query: str,
     *,
     workspace_id: str,

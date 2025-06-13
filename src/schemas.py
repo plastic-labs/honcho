@@ -173,4 +173,4 @@ class DialecticResponse(BaseModel):
 class MessageBatchCreate(BaseModel):
     """Schema for batch message creation with a max of 100 messages"""
 
-    messages: list[MessageCreate] = Field(..., max_length=100)
+    messages: list[MessageCreate] = Field(..., min_length=1, max_length=100)

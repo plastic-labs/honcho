@@ -416,8 +416,6 @@ async def search_session(
     db=db,
 ):
     """Search a Session"""
-    stmt = await crud.search(
-        db, query, workspace_id=workspace_id, session_id=session_id
-    )
+    stmt = await crud.search(query, workspace_id=workspace_id, session_id=session_id)
 
     return await paginate(db, stmt)

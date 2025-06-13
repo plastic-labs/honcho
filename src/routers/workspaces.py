@@ -108,6 +108,6 @@ async def search_workspace(
     db=db,
 ):
     """Search a Workspace"""
-    stmt = await crud.search(db, query, workspace_id=workspace_id)
+    stmt = await crud.search(query, workspace_id=workspace_id)
 
     return await paginate(db, stmt)

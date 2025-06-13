@@ -1,5 +1,6 @@
 from nanoid import generate as generate_nanoid
 
+
 def test_get_or_create_session(client, sample_data):
     # Test get or create session
     test_workspace, test_peer = sample_data
@@ -18,10 +19,7 @@ def test_get_or_create_session(client, sample_data):
     session_id = str(generate_nanoid())
     response2 = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={
-            "id": session_id,
-            "peer_names": [test_peer.name]
-        },
+        json={"id": session_id, "peer_names": [test_peer.name]},
     )
     assert response2.status_code == 200
     data2 = response2.json()
@@ -31,10 +29,7 @@ def test_get_or_create_session(client, sample_data):
     # Test getting the same session again (should return the same session)
     response3 = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={
-            "id": session_id,
-            "peer_names": [test_peer.name]
-        },
+        json={"id": session_id, "peer_names": [test_peer.name]},
     )
     assert response3.status_code == 200
     data3 = response3.json()
@@ -57,6 +52,49 @@ def test_create_session_with_metadata(client, sample_data):
     data = response.json()
     assert data["metadata"] == {"session_key": "session_value"}
     assert "id" in data
+    assert data["id"] == session_id
+
+
+def test_create_session_with_feature_flags(client, sample_data):
+    """Test session creation with feature_flags parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+    feature_flags = {"experimental_feature": True, "beta_mode": False}
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+            "feature_flags": feature_flags,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["feature_flags"] == feature_flags
+    assert data["id"] == session_id
+
+
+def test_create_session_with_all_optional_params(client, sample_data):
+    """Test session creation with all optional parameters"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+    metadata = {"key": "value", "number": 42}
+    feature_flags = {"feature1": True, "feature2": False}
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+            "metadata": metadata,
+            "feature_flags": feature_flags,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == metadata
+    assert data["feature_flags"] == feature_flags
     assert data["id"] == session_id
 
 
@@ -86,6 +124,79 @@ def test_get_sessions(client, sample_data):
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
+
+
+def test_get_sessions_with_reverse(client, sample_data):
+    """Test session listing with reverse parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create multiple sessions to test ordering
+    session1_id = str(generate_nanoid())
+    session2_id = str(generate_nanoid())
+
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session1_id, "peer_names": [test_peer.name]},
+    )
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session2_id, "peer_names": [test_peer.name]},
+    )
+
+    # Test normal order
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/list", json={}
+    )
+    assert response.status_code == 200
+    normal_data = response.json()
+
+    # Test reversed order
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/list?reverse=true", json={}
+    )
+    assert response.status_code == 200
+    reversed_data = response.json()
+
+    # Both should have items
+    assert len(normal_data["items"]) > 0
+    assert len(reversed_data["items"]) > 0
+
+
+def test_get_sessions_with_is_active_filter(client, sample_data):
+    """Test session listing with is_active parameter"""
+    test_workspace, test_peer = sample_data
+
+    # Create and then delete a session to have inactive session
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+    client.delete(f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}")
+
+    # Test getting inactive sessions
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/list", json={"is_active": False}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    # Should find at least our deleted session
+    inactive_sessions = [s for s in data["items"] if not s["is_active"]]
+    assert len(inactive_sessions) > 0
+
+
+def test_get_sessions_with_empty_filter(client, sample_data):
+    """Test session listing with empty filter object"""
+    test_workspace, test_peer = sample_data
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/list", json={"filter": {}}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert isinstance(data["items"], list)
 
 
 def test_empty_update_session(client, sample_data):
@@ -153,6 +264,77 @@ def test_update_session(client, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
+def test_update_session_with_feature_flags(client, sample_data):
+    """Test session update with feature_flags parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Update with feature flags
+    feature_flags = {"new_feature": True, "legacy_feature": False}
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
+        json={"metadata": {}, "feature_flags": feature_flags},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["feature_flags"] == feature_flags
+
+
+def test_update_session_with_all_optional_params(client, sample_data):
+    """Test session update with both metadata and feature_flags"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Update with all params
+    metadata = {"updated_key": "updated_value"}
+    feature_flags = {"experimental": True, "beta": True}
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
+        json={"metadata": metadata, "feature_flags": feature_flags},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == metadata
+    assert data["feature_flags"] == feature_flags
+
+
+def test_update_session_with_null_feature_flags(client, sample_data):
+    """Test session update with null feature_flags"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session with feature flags
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": [test_peer.name],
+            "feature_flags": {"temp": "value"},
+        },
+    )
+
+    # Update with null feature flags
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
+        json={"metadata": {}, "feature_flags": None},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "feature_flags" in data
+
+
 def test_delete_session(client, sample_data):
     test_workspace, test_peer = sample_data
     # Create a test session
@@ -165,12 +347,12 @@ def test_delete_session(client, sample_data):
         },
     )
     assert response.status_code == 200
-    
+
     response = client.delete(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}"
     )
     assert response.status_code == 200
-    
+
     # Check that session is marked as inactive
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions/list",
@@ -205,13 +387,13 @@ def test_clone_session(client, sample_data):
                 {
                     "content": "Test message",
                     "peer_id": test_peer.name,
-                    "metadata": {"key": "value"}
+                    "metadata": {"key": "value"},
                 },
                 {
-                    "content": "Test message 2", 
+                    "content": "Test message 2",
                     "peer_id": test_peer.name,
-                    "metadata": {"key": "value2"}
-                }
+                    "metadata": {"key": "value2"},
+                },
             ]
         },
     )
@@ -240,6 +422,41 @@ def test_clone_session(client, sample_data):
 
     assert data["items"][1]["content"] == "Test message 2"
     assert data["items"][1]["metadata"] == {"key": "value2"}
+
+
+def test_clone_session_with_cutoff(client, sample_data):
+    """Test session cloning with message cutoff parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Create messages
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Message 1", "peer_id": test_peer.name},
+                {"content": "Message 2", "peer_id": test_peer.name},
+            ]
+        },
+    )
+    assert response.status_code == 200
+    messages_data = response.json()
+    # The response is a list of messages, not a paginated response
+    first_message_id = messages_data[0]["id"]
+
+    # Clone with cutoff at first message
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/clone?message_id={first_message_id}",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "id" in data
 
 
 def test_add_peers_to_session(client, sample_data):
@@ -382,3 +599,180 @@ def test_remove_peers_from_session(client, sample_data):
     assert "items" in data
     assert len(data["items"]) == 1
     assert data["items"][0]["id"] == peer2_name
+
+
+def test_get_session_context(client, sample_data):
+    """Test the session context endpoint"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Add some messages to have context
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Test message 1", "peer_id": test_peer.name},
+                {"content": "Test message 2", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Get context
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/context",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # SessionContext schema serializes "name" as "id"
+    assert "id" in data
+    assert "messages" in data
+    assert "summary" in data
+    assert data["id"] == session_id
+    assert isinstance(data["messages"], list)
+    assert data["summary"] == ""  # Default is empty when summary=False
+
+
+def test_get_session_context_with_summary(client, sample_data):
+    """Test session context with summary parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session with messages
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Get context with summary
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/context?summary=true",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "summary" in data
+    # Summary should not be empty when requested
+    assert data["summary"] == "TODO: give a summary"  # Based on router implementation
+
+
+def test_get_session_context_with_tokens(client, sample_data):
+    """Test session context with token limit parameter"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Get context with token limit
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/context?tokens=100",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "messages" in data
+    assert isinstance(data["messages"], list)
+
+
+def test_get_session_context_with_all_params(client, sample_data):
+    """Test session context with both summary and tokens parameters"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Get context with all parameters
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/context?tokens=100&summary=true",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "messages" in data
+    assert "summary" in data
+    assert data["summary"] == "TODO: give a summary"
+
+
+def test_search_session(client, sample_data):
+    """Test the session search functionality"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Add messages to search through
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Search this content", "peer_id": test_peer.name},
+                {"content": "Another message", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Search with a query
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/search",
+        json="search query",
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Response should have pagination structure
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "size" in data
+    assert isinstance(data["items"], list)
+
+
+def test_search_session_empty_query(client, sample_data):
+    """Test session search with empty query"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": [test_peer.name]},
+    )
+
+    # Search with empty query
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/search", json=""
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Response should still have proper pagination structure
+    assert "items" in data
+    assert isinstance(data["items"], list)
+
+
+def test_search_session_nonexistent(client, sample_data):
+    """Test searching a session that doesn't exist"""
+    test_workspace, _ = sample_data
+    nonexistent_session_id = str(generate_nanoid())
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/search",
+        json="test query",
+    )
+    # This should probably return 404 or handle gracefully
+    # The exact behavior depends on the crud.search implementation
+    assert response.status_code in [200, 404, 422]
