@@ -336,9 +336,9 @@ async def get_sessions_for_peer(
     stmt = (
         select(models.Session)
         .join(
-            models.SessionPeer, 
-            (models.Session.name == models.SessionPeer.session_name) & 
-            (models.Session.workspace_name == models.SessionPeer.workspace_name)
+            models.SessionPeer,
+            (models.Session.name == models.SessionPeer.session_name)
+            & (models.Session.workspace_name == models.SessionPeer.workspace_name),
         )
         .where(models.SessionPeer.peer_name == peer_name)
         .where(models.Session.workspace_name == workspace_name)
@@ -623,9 +623,9 @@ async def clone_session(
     session_peers = result.scalars().all()
     for session_peer in session_peers:
         new_session_peer = models.SessionPeer(
-            session_name=new_session.name, 
+            session_name=new_session.name,
             peer_name=session_peer.peer_name,
-            workspace_name=workspace_name
+            workspace_name=workspace_name,
         )
         db.add(new_session_peer)
 
@@ -845,32 +845,50 @@ async def create_messages(
     workspace_name: str,
     session_name: str,
 ) -> list[models.Message]:
-    """Bulk create messages for a session while maintaining order"""
-    # Verify session exists
-    peer_names = set([message.peer_name for message in messages])
-    honcho_session = await get_or_create_session(
-        db,
-        schemas.SessionCreate(name=session_name, peer_names=peer_names),
-        workspace_name=workspace_name,
-    )
+    """
+    Bulk create messages for a session while maintaining order.
 
-    # Create list of message objects (this will trigger the before_insert event)
-    message_objects = [
-        models.Message(
-            session_name=honcho_session.name,
-            peer_name=message.peer_name,
-            content=message.content,
-            h_metadata=message.metadata or {},
-            workspace_name=workspace_name,
-        )
-        for message in messages
-    ]
+    Args:
+        db: Database session
+        messages: List of messages to create
+        workspace_name: Name of the workspace
+        session_name: Name of the session to create messages in
 
-    # Add all messages and commit
-    db.add_all(message_objects)
-    await db.commit()
+    Returns:
+        List of created message objects
 
-    return message_objects
+    Raises:
+        ResourceNotFoundException: If the session or any peer does not exist in the workspace
+    """
+    try:
+        # Create list of message objects (this will trigger the before_insert event)
+        message_objects = [
+            models.Message(
+                session_name=session_name,
+                peer_name=message.peer_name,
+                content=message.content,
+                h_metadata=message.metadata or {},
+                workspace_name=workspace_name,
+            )
+            for message in messages
+        ]
+
+        # Add all messages and commit
+        db.add_all(message_objects)
+        await db.commit()
+
+        return message_objects
+    except IntegrityError as e:
+        await db.rollback()
+        if "fk_messages_peer_name_peers" in str(e):
+            raise ResourceNotFoundException(
+                f"One or more peers not found in workspace '{workspace_name}'"
+            ) from e
+        if "fk_messages_session_name_sessions" in str(e):
+            raise ResourceNotFoundException(
+                f"Session '{session_name}' not found in workspace '{workspace_name}'"
+            ) from e
+        raise
 
 
 async def create_messages_for_peer(
@@ -884,24 +902,44 @@ async def create_messages_for_peer(
     Note that session_name for messages created this way will be None
     and peer_name will be the provided peer_name for each message,
     regardless of the peer_name in the individual message(s).
+
+    Args:
+        db: Database session
+        messages: List of messages to create
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer to create messages for
+
+    Returns:
+        List of created message objects
+
+    Raises:
+        ResourceNotFoundException: If the peer does not exist in the workspace
     """
-    # Create list of message objects (this will trigger the before_insert event)
-    message_objects = [
-        models.Message(
-            session_name=None,
-            peer_name=peer_name,
-            content=message.content,
-            h_metadata=message.metadata or {},
-            workspace_name=workspace_name,
-        )
-        for message in messages
-    ]
+    try:
+        # Create list of message objects (this will trigger the before_insert event)
+        message_objects = [
+            models.Message(
+                session_name=None,
+                peer_name=peer_name,
+                content=message.content,
+                h_metadata=message.metadata or {},
+                workspace_name=workspace_name,
+            )
+            for message in messages
+        ]
 
-    # Add all messages and commit
-    db.add_all(message_objects)
-    await db.commit()
+        # Add all messages and commit
+        db.add_all(message_objects)
+        await db.commit()
 
-    return message_objects
+        return message_objects
+    except IntegrityError as e:
+        await db.rollback()
+        if "fk_messages_peer_name_peers" in str(e):
+            raise ResourceNotFoundException(
+                f"Peer '{peer_name}' not found in workspace '{workspace_name}'"
+            ) from e
+        raise
 
 
 async def get_messages(
