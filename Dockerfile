@@ -17,15 +17,11 @@ ENV UV_COMPILE_BYTECODE=1
 # Copy from the cache instead of linking since it's a mounted volume
 ENV UV_LINK_MODE=copy
 
-# Install the project's dependencies using the lockfile and settings
-RUN npm install
-
 # Copy only requirements to cache them in docker layer
 COPY uv.lock pyproject.toml /app/
 
-# Sync the project
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+# Install dependencies (no cache mount)
+RUN uv sync --frozen --no-dev
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
@@ -39,4 +35,3 @@ EXPOSE 8000
 
 # https://stackoverflow.com/questions/29663459/python-app-does-not-print-anything-when-running-detached-in-docker
 CMD ["fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
-
