@@ -47,6 +47,15 @@ load_dotenv()
 #
 # TODO: Re-enable all Langfuse decorators when compatibility issue is resolved
 
+# ---------------------------------------------------------------------------
+# LLM model constants for Dialectic components
+# ---------------------------------------------------------------------------
+
+# Model used for dialectic_call and dialectic_stream
+DIALECTIC_CALL_MODEL = "gpt-4o-mini"
+
+# Model used for semantic query generation
+DIALECTIC_QUERY_GEN_MODEL = "gpt-4o-mini"
 
 @prompt_template()
 def dialectic_prompt(query: str, working_representation: str, additional_context: str) -> str:
@@ -237,7 +246,7 @@ def _format_observation_list(observations: list) -> list[str]:
 @ai_track("Dialectic Call")
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
-@llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219")
+@llm.call(provider="openai", model=DIALECTIC_CALL_MODEL)
 async def dialectic_call(query: str, working_representation: str, additional_context: str):
     # Generate the prompt and log it
     prompt_result = dialectic_prompt(query, working_representation, additional_context)
@@ -259,7 +268,7 @@ async def dialectic_call(query: str, working_representation: str, additional_con
 @ai_track("Dialectic Stream")
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
-@llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219", stream=True)
+@llm.call(provider="openai", model=DIALECTIC_CALL_MODEL, stream=True)
 async def dialectic_stream(query: str, working_representation: str, additional_context: str):
     # Generate the prompt and log it
     prompt_result = dialectic_prompt(query, working_representation, additional_context)
@@ -567,7 +576,7 @@ def query_generation_prompt(query: str) -> str:
 
 
 # @with_langfuse()
-@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
+@llm.call(provider="openai", model=DIALECTIC_QUERY_GEN_MODEL, response_model=SemanticQueries)
 async def generate_semantic_queries(query: str):
     return query_generation_prompt(query)
 

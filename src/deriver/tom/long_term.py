@@ -9,6 +9,13 @@ from sentry_sdk.ai.monitoring import ai_track
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# LLM model constants for TOM long-term utilities
+# ---------------------------------------------------------------------------
+
+LONG_TERM_USER_REPR_MODEL = "gpt-4o-mini"
+FACT_EXTRACTION_MODEL = "gpt-4o-mini"
+
 
 class PotentialSurprise(BaseModel):
     content: str
@@ -28,7 +35,7 @@ class UserRepresentation(BaseModel):
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="groq", model="llama-3.3-70b-versatile", response_model=UserRepresentation
+    provider="openai", model=LONG_TERM_USER_REPR_MODEL, response_model=UserRepresentation
 )
 async def get_user_representation_long_term(
     chat_history: str,
@@ -108,7 +115,7 @@ class FactExtraction(BaseModel):
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="google", model="gemini-2.0-flash-lite", response_model=FactExtraction
+    provider="openai", model=FACT_EXTRACTION_MODEL, response_model=FactExtraction
 )
 async def extract_facts_long_term(chat_history: str):
     return c(

@@ -156,10 +156,18 @@ class UserRepresentationOutput(BaseModel):
     updates: UpdateSection
 
 
+# ---------------------------------------------------------------------------
+# LLM model constants for TOM single-prompt utilities
+# ---------------------------------------------------------------------------
+
+TOM_INFERENCE_MODEL = "gpt-4o-mini"
+USER_REPR_INFERENCE_MODEL = "gpt-4o-mini"
+
+
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="groq", model="llama-3.3-70b-versatile", response_model=TomInferenceOutput
+    provider="openai", model=TOM_INFERENCE_MODEL, response_model=TomInferenceOutput
 )
 async def tom_inference(
     chat_history: str,
@@ -218,8 +226,8 @@ async def get_tom_inference_single_prompt(
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="groq",
-    model="llama-3.3-70b-versatile",
+    provider="openai",
+    model=USER_REPR_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
 )
 async def user_representation_inference(

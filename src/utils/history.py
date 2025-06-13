@@ -181,11 +181,18 @@ async def get_messages_since_message(
     return messages
 
 
+# ---------------------------------------------------------------------------
+# LLM model constants for History summarization
+# ---------------------------------------------------------------------------
+
+SUMMARY_MODEL = "gpt-4o-mini"
+
+
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="google",
-    model="gemini-2.0-flash-lite",
+    provider="openai",
+    model=SUMMARY_MODEL,
     call_params={"max_tokens": 1000},
 )
 async def create_short_summary(
@@ -224,8 +231,8 @@ async def create_short_summary(
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="google",
-    model="gemini-2.0-flash-lite",
+    provider="openai",
+    model=SUMMARY_MODEL,
     call_params={"max_tokens": 2000},
 )
 async def create_long_summary(

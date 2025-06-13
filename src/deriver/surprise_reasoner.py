@@ -36,12 +36,14 @@ from src.utils.logging import (
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
+# Add model constant for critical_analysis_call
+CRITICAL_ANALYSIS_CALL_MODEL = "gpt-4o-mini"
 
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="anthropic",
-    model="claude-sonnet-4-20250514",
+    provider="openai",
+    model=CRITICAL_ANALYSIS_CALL_MODEL,
     response_model=ReasoningResponse,
     call_params={"max_tokens": 2500, "temperature": 0.7},
     json_mode=True,
