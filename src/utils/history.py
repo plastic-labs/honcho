@@ -2,37 +2,37 @@ import logging
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Union, cast
-
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from inspect import cleandoc as c
+from typing import cast
 
 from mirascope import llm
-from mirascope.integrations.langfuse import with_langfuse
-
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .. import models
 
 logger = logging.getLogger(__name__)
 
 
-def parse_session_date_from_metadata(metadata: dict, fallback_to_created_at: bool = True) -> Optional[str]:
+def parse_session_date_from_metadata(
+    metadata: dict, fallback_to_created_at: bool = True
+) -> str | None:
     """
     Parse session date from metadata that might contain formats like:
     "1:56 pm on 8 May, 2023" or other date strings.
-    
+
     Returns formatted date string (YYYY-MM-DD) or None if not found/parseable.
     """
     # Check for session_date in metadata
     session_date_str = metadata.get("session_date")
     if not session_date_str:
         return None
-    
+
     try:
         # Handle format like "1:56 pm on 8 May, 2023"
         # Extract the date part after "on"
-        date_match = re.search(r'on\s+(\d{1,2}\s+\w+,?\s+\d{4})', session_date_str)
+        date_match = re.search(r"on\s+(\d{1,2}\s+\w+,?\s+\d{4})", session_date_str)
         if date_match:
             date_part = date_match.group(1)
             # Try to parse various date formats
@@ -42,7 +42,7 @@ def parse_session_date_from_metadata(metadata: dict, fallback_to_created_at: boo
                     return parsed_date.strftime("%Y-%m-%d")
                 except ValueError:
                     continue
-        
+
         # Try other common formats
         for fmt in ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"]:
             try:
@@ -50,11 +50,12 @@ def parse_session_date_from_metadata(metadata: dict, fallback_to_created_at: boo
                 return parsed_date.strftime("%Y-%m-%d")
             except ValueError:
                 continue
-                
+
     except Exception as e:
         logger.debug(f"Could not parse session date '{session_date_str}': {e}")
-    
+
     return None
+
 
 # Export the public functions
 __all__ = [
@@ -89,7 +90,7 @@ async def get_session_summaries(
     session_id: str,
     summary_type: SummaryType = SummaryType.SHORT,
     only_latest: bool = False,
-) -> Union[list[models.Metamessage], Optional[models.Metamessage]]:
+) -> list[models.Metamessage] | models.Metamessage | None:
     """
     Get summaries for a given session.
 
@@ -103,8 +104,10 @@ async def get_session_summaries(
         If only_latest is True: The most recent summary metamessage, or None if none exists
         If only_latest is False: A list of all summary metamessages for the session
     """
-    logger.debug(f"[get_session_summaries] Getting summaries for session_id: {session_id}, type: {summary_type.value}")
-    
+    logger.debug(
+        f"[get_session_summaries] Getting summaries for session_id: {session_id}, type: {summary_type.value}"
+    )
+
     # Determine the metamessage type based on summary_type
     label = (
         SummaryType.SHORT.value
@@ -124,7 +127,9 @@ async def get_session_summaries(
         result = await db.execute(stmt)
         # Always return a metamessage instance or None
         summary = result.scalar_one_or_none()
-        logger.debug(f"[get_session_summaries] Found latest summary: {summary.id if summary else None}")
+        logger.debug(
+            f"[get_session_summaries] Found latest summary: {summary.id if summary else None}"
+        )
         return summary
     else:
         result = await db.execute(stmt)
@@ -134,7 +139,7 @@ async def get_session_summaries(
 
 
 async def get_messages_since_message(
-    db: AsyncSession, session_id: str, message_id: Optional[str] = None
+    db: AsyncSession, session_id: str, message_id: str | None = None
 ) -> list[models.Message]:
     """
     Get all messages since a specific message.
@@ -147,8 +152,10 @@ async def get_messages_since_message(
     Returns:
         List of messages after the reference message or all messages if message_id is None
     """
-    logger.debug(f"[get_messages_since_message] Getting messages for session_id: {session_id}, since message_id: {message_id}")
-    
+    logger.debug(
+        f"[get_messages_since_message] Getting messages for session_id: {session_id}, since message_id: {message_id}"
+    )
+
     # Base query for messages in this session
     query = (
         select(models.Message)
@@ -171,16 +178,24 @@ async def get_messages_since_message(
     # Execute query
     result = await db.execute(query)
     messages = list(result.scalars().all())
-    
-    logger.debug(f"[get_messages_since_message] Found {len(messages)} messages for session_id: {session_id}")
+
+    logger.debug(
+        f"[get_messages_since_message] Found {len(messages)} messages for session_id: {session_id}"
+    )
     if messages:
         # Log first few messages to verify they belong to correct session
         for i, msg in enumerate(messages[:3]):
-            logger.debug(f"[get_messages_since_message] Message {i}: session_id={msg.session_id}, is_user={msg.is_user}, content={msg.content[:30]}...")
-    
+            logger.debug(
+                f"[get_messages_since_message] Message {i}: session_id={msg.session_id}, is_user={msg.is_user}, content={msg.content[:30]}..."
+            )
+
     return messages
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
@@ -190,7 +205,7 @@ async def get_messages_since_message(
 )
 async def create_short_summary(
     messages: list[models.Message],
-    previous_summary: Optional[str] = None,
+    previous_summary: str | None = None,
 ):
     return c(
         f"""
@@ -221,6 +236,10 @@ async def create_short_summary(
     )
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
@@ -230,7 +249,7 @@ async def create_short_summary(
 )
 async def create_long_summary(
     messages: list[models.Message],
-    previous_summary: Optional[str] = None,
+    previous_summary: str | None = None,
 ):
     return c(
         f"""
@@ -263,7 +282,7 @@ async def create_long_summary(
 
 async def create_summary(
     messages: list[models.Message],
-    previous_summary: Optional[str] = None,
+    previous_summary: str | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
 ):
     if summary_type == SummaryType.SHORT:
@@ -332,8 +351,11 @@ async def get_full_history(
 
 
 async def get_summarized_history(
-    db: AsyncSession, session_id: str, summary_type: SummaryType = SummaryType.SHORT, fallback_to_created_at: bool = True
-) -> tuple[str, list[models.Message], Optional[models.Metamessage]]:
+    db: AsyncSession,
+    session_id: str,
+    summary_type: SummaryType = SummaryType.SHORT,
+    fallback_to_created_at: bool = True,
+) -> tuple[str, list[models.Message], models.Metamessage | None]:
     """
     Get a summarized version of the chat history by combining the latest summary
     with all messages since that summary.
@@ -349,18 +371,24 @@ async def get_summarized_history(
         - List of messages since the latest summary
         - The latest summary metamessage, or None if no summary exists
     """
-    logger.debug(f"[get_summarized_history] Getting history for session_id: {session_id}")
-    
+    logger.debug(
+        f"[get_summarized_history] Getting history for session_id: {session_id}"
+    )
+
     # Get session creation date for temporal context
     session_stmt = select(models.Session).where(models.Session.public_id == session_id)
     session_result = await db.execute(session_stmt)
     session = session_result.scalar_one_or_none()
-    
+
     if session:
-        logger.debug(f"[get_summarized_history] Found session: {session.public_id}, created_at: {session.created_at}")
+        logger.debug(
+            f"[get_summarized_history] Found session: {session.public_id}, created_at: {session.created_at}"
+        )
     else:
-        logger.warning(f"[get_summarized_history] No session found for session_id: {session_id}")
-    
+        logger.warning(
+            f"[get_summarized_history] No session found for session_id: {session_id}"
+        )
+
     if session:
         # Try to get session date from metadata first
         metadata_date = parse_session_date_from_metadata(session.h_metadata)
@@ -377,11 +405,17 @@ async def get_summarized_history(
     messages, latest_summary = await get_messages_since_latest_summary(
         db, session_id, summary_type
     )
-    
-    logger.debug(f"[get_summarized_history] Retrieved {len(messages)} messages for session_id: {session_id}")
+
+    logger.debug(
+        f"[get_summarized_history] Retrieved {len(messages)} messages for session_id: {session_id}"
+    )
     if messages:
-        logger.debug(f"[get_summarized_history] First message session_id: {messages[0].session_id}, is_user: {messages[0].is_user}, content: {messages[0].content[:50]}...")
-        logger.debug(f"[get_summarized_history] Last message session_id: {messages[-1].session_id}, is_user: {messages[-1].is_user}, content: {messages[-1].content[:50]}...")
+        logger.debug(
+            f"[get_summarized_history] First message session_id: {messages[0].session_id}, is_user: {messages[0].is_user}, content: {messages[0].content[:50]}..."
+        )
+        logger.debug(
+            f"[get_summarized_history] Last message session_id: {messages[-1].session_id}, is_user: {messages[-1].is_user}, content: {messages[-1].content[:50]}..."
+        )
 
     # Format messages
     messages_text = format_messages(messages)
@@ -404,8 +438,12 @@ async def get_summarized_history(
 
 
 async def get_summarized_history_before_message(
-    db: AsyncSession, session_id: str, before_message_id: str, summary_type: SummaryType = SummaryType.SHORT, fallback_to_created_at: bool = True
-) -> tuple[str, list[models.Message], Optional[models.Metamessage]]:
+    db: AsyncSession,
+    session_id: str,
+    before_message_id: str,
+    summary_type: SummaryType = SummaryType.SHORT,
+    fallback_to_created_at: bool = True,
+) -> tuple[str, list[models.Message], models.Metamessage | None]:
     """
     Get a summarized version of the chat history UP TO but NOT INCLUDING a specific message.
     This is used during deriver processing to get the context that existed before the message being processed.
@@ -426,7 +464,7 @@ async def get_summarized_history_before_message(
     session_stmt = select(models.Session).where(models.Session.public_id == session_id)
     session_result = await db.execute(session_stmt)
     session = session_result.scalar_one_or_none()
-    
+
     if session:
         # Try to get session date from metadata first
         metadata_date = parse_session_date_from_metadata(session.h_metadata)
@@ -466,7 +504,7 @@ async def get_summarized_history_before_message(
 
 async def get_messages_since_latest_summary(
     db: AsyncSession, session_id: str, summary_type: SummaryType = SummaryType.SHORT
-) -> tuple[list[models.Message], Optional[models.Metamessage]]:
+) -> tuple[list[models.Message], models.Metamessage | None]:
     """
     Get all messages since the latest summary for a session.
 
@@ -491,7 +529,7 @@ async def get_messages_since_latest_summary(
     )
 
     # Type narrowing - summary is now either None or a Metamessage instance
-    latest_summary = cast(Optional[models.Metamessage], summary)
+    latest_summary = cast(models.Metamessage | None, summary)
 
     # Check if we have a valid summary with a message_id
     if latest_summary is not None:
@@ -505,8 +543,11 @@ async def get_messages_since_latest_summary(
 
 
 async def get_messages_since_latest_summary_before_message(
-    db: AsyncSession, session_id: str, before_message_id: str, summary_type: SummaryType = SummaryType.SHORT
-) -> tuple[list[models.Message], Optional[models.Metamessage]]:
+    db: AsyncSession,
+    session_id: str,
+    before_message_id: str,
+    summary_type: SummaryType = SummaryType.SHORT,
+) -> tuple[list[models.Message], models.Metamessage | None]:
     """
     Get all messages since the latest summary for a session, but stop before a specific message.
     This is used during deriver processing to get the context that existed before the message being processed.
@@ -529,7 +570,7 @@ async def get_messages_since_latest_summary_before_message(
     )
 
     # Type narrowing - summary is now either None or a Metamessage instance
-    latest_summary = cast(Optional[models.Metamessage], summary)
+    latest_summary = cast(models.Metamessage | None, summary)
 
     # Get messages since the summary but before the specified message
     if latest_summary is not None:
@@ -543,17 +584,23 @@ async def get_messages_since_latest_summary_before_message(
 
     # Filter out messages that come at or after the specified message
     # We need to get the database ID of the before_message_id to compare properly
-    before_message_stmt = select(models.Message.id).where(models.Message.public_id == before_message_id)
+    before_message_stmt = select(models.Message.id).where(
+        models.Message.public_id == before_message_id
+    )
     before_message_result = await db.execute(before_message_stmt)
     before_message_db_id = before_message_result.scalar_one_or_none()
 
     if before_message_db_id is not None:
         # Simply exclude the current message - keep all messages with lower IDs
-        filtered_messages = [msg for msg in messages_since_summary if msg.id < before_message_db_id]
+        filtered_messages = [
+            msg for msg in messages_since_summary if msg.id < before_message_db_id
+        ]
         return filtered_messages, latest_summary
     else:
         # If we can't find the before_message, return all messages (fallback behavior)
-        logger.warning(f"Could not find message {before_message_id} to filter before, returning all messages")
+        logger.warning(
+            f"Could not find message {before_message_id} to filter before, returning all messages"
+        )
         return messages_since_summary, latest_summary
 
 
@@ -563,7 +610,7 @@ async def get_messages_since_latest_summary_before_message(
 
 async def should_create_summary(
     db: AsyncSession, session_id: str, summary_type: SummaryType = SummaryType.SHORT
-) -> tuple[bool, list[models.Message], Optional[models.Metamessage]]:
+) -> tuple[bool, list[models.Message], models.Metamessage | None]:
     """
     Determine if a new summary should be created for this session.
 
@@ -597,22 +644,22 @@ def format_messages(messages: list[models.Message]) -> str:
     """
     if len(messages) == 0:
         return ""
-    
+
     formatted_lines = []
     current_date = None
-    
+
     for msg in messages:
-        msg_date = msg.created_at.strftime('%Y-%m-%d')
-        msg_time = msg.created_at.strftime('%H:%M:%S')
-        
+        msg_date = msg.created_at.strftime("%Y-%m-%d")
+        msg_time = msg.created_at.strftime("%H:%M:%S")
+
         # Add date header if we're on a new day
         if current_date != msg_date:
             if current_date is not None:  # Don't add header for first message
                 formatted_lines.append(f"\n--- {msg_date} ---")
             current_date = msg_date
-        
+
         # Format message with HMS timestamp
-        role = 'user' if msg.is_user else 'assistant'
+        role = "user" if msg.is_user else "assistant"
         formatted_lines.append(f"{msg_time} {role}: {msg.content}")
-    
+
     return "\n".join(formatted_lines)

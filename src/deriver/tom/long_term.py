@@ -2,9 +2,9 @@ import logging
 from inspect import cleandoc as c
 
 from mirascope import llm
-from mirascope.integrations.langfuse import with_langfuse
 from pydantic import BaseModel
 from sentry_sdk.ai.monitoring import ai_track
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -24,6 +24,10 @@ class UserRepresentation(BaseModel):
     updates: list[str]
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 @ai_track("User Representation")
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
@@ -104,6 +108,10 @@ class FactExtraction(BaseModel):
     facts: list[str]
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 @ai_track("Fact Extraction")
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()

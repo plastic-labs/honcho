@@ -3,8 +3,8 @@ from enum import Enum
 from inspect import cleandoc as c
 
 from mirascope import llm
-from mirascope.integrations.langfuse import with_langfuse
 from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +156,10 @@ class UserRepresentationOutput(BaseModel):
     updates: UpdateSection
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
@@ -215,6 +219,10 @@ async def get_tom_inference_single_prompt(
     return inference.model_dump_json()
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(

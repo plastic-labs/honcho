@@ -475,7 +475,7 @@ dependencies = [
     { name = "greenlet" },
     { name = "httpx" },
     { name = "langfuse" },
-    { name = "mirascope", extra = ["anthropic", "google", "groq"] },
+    { name = "mirascope", extra = ["anthropic", "google", "groq", "tenacity"] },
     { name = "nanoid" },
     { name = "openai" },
     { name = "pgvector" },
@@ -509,7 +509,7 @@ requires-dist = [
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "langfuse", specifier = "<3" },
-    { name = "mirascope", extras = ["anthropic", "google", "groq"], specifier = ">=1.25.0" },
+    { name = "mirascope", extras = ["anthropic", "google", "groq", "tenacity"], specifier = ">=1.25.0" },
     { name = "nanoid", specifier = ">=2.0.0" },
     { name = "openai", specifier = ">=1.43.0" },
     { name = "pgvector", specifier = ">=0.2.5" },
@@ -852,6 +852,9 @@ google = [
 ]
 groq = [
     { name = "groq" },
+]
+tenacity = [
+    { name = "tenacity" },
 ]
 
 [[package]]
@@ -1583,6 +1586,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ec/fe/802052aecb21e3797b8f7902564ab6ea0d60ff8ca23952079064155d1ae1/tabulate-0.9.0.tar.gz", hash = "sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c", size = 81090 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/40/44/4a5f08c96eb108af5cb50b41f76142f0afa346dfa99d5296fe7202a11854/tabulate-0.9.0-py3-none-any.whl", hash = "sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f", size = 35252 },
+]
+
+[[package]]
+name = "tenacity"
+version = "8.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/a3/4d/6a19536c50b849338fcbe9290d562b52cbdcf30d8963d3588a68a4107df1/tenacity-8.5.0.tar.gz", hash = "sha256:8bc6c0c8a09b31e6cad13c47afbed1a567518250a9a171418582ed8d9c20ca78", size = 47309 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/3f/8ba87d9e287b9d385a02a7114ddcef61b26f86411e121c9003eb509a1773/tenacity-8.5.0-py3-none-any.whl", hash = "sha256:b594c2a5945830c267ce6b79a166228323ed52718f30302c1359836112346687", size = 28165 },
 ]
 
 [[package]]
