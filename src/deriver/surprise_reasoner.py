@@ -1,14 +1,13 @@
+import datetime
 import logging
 import time
 from inspect import cleandoc as c
-import datetime
-import asyncio
-import os
 
 from langfuse.decorators import observe
 from mirascope import llm
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy.ext.asyncio import AsyncSession
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.deriver.models import (
     ObservationContext,
@@ -37,6 +36,10 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
@@ -376,8 +379,8 @@ class SurpriseReasoner:
             f"CRITICAL ANALYSIS: current_time='{current_time}', formatted_new_turn='{formatted_new_turn}'"
         )
 
-        # Call the standalone LLM function with retries & rich error logging
-        return await self._critical_analysis_with_retry(
+        # Call the standalone LLM function (now with Tenacity retries)
+        return await critical_analysis_call(
             current_time=current_time,
             context=formatted_context,
             history=history,
@@ -410,11 +413,20 @@ class SurpriseReasoner:
         try:
             # Run recursive reasoning
             final_observations = await self.recursive_reason(
-                db, context, history, new_turn, message_id, session_id, current_time, message_created_at
+                db,
+                context,
+                history,
+                new_turn,
+                message_id,
+                session_id,
+                current_time,
+                message_created_at,
             )
 
             # Build obs dict with timestamps for trace
-            final_obs_with_dates = self._attach_created_at(final_observations, message_created_at)
+            final_obs_with_dates = self._attach_created_at(
+                final_observations, message_created_at
+            )
 
             # Finalize trace
             total_duration_ms = int((time.time() - start_time) * 1000)
@@ -563,7 +575,12 @@ class SurpriseReasoner:
 
             # Save only the NEW observations that weren't in the original context
             await self._save_new_observations(
-                db, context, reasoning_response, message_id, session_id, message_created_at
+                db,
+                context,
+                reasoning_response,
+                message_id,
+                session_id,
+                message_created_at,
             )
 
             # Display observations in a tree structure and performance metrics
@@ -727,92 +744,3 @@ class SurpriseReasoner:
             "inductive": [structured_item(o) for o in observations.inductive],
             "abductive": [structured_item(o) for o in observations.abductive],
         }
-
-    # ------------------------------------------------------------------
-    # Lightweight retry logic for LLM call with rich error logging
-    # ------------------------------------------------------------------
-
-    async def _critical_analysis_with_retry(
-        self,
-        *,
-        current_time: str,
-        context: str,
-        history: str,
-        new_turn: str,
-    ) -> ReasoningResponse:
-        """Call ``critical_analysis_call`` with simple exponential-backoff retries.
-
-        The maximum number of retries can be configured with the ``LLM_MAX_RETRIES``
-        environment variable (defaults to 3).  Failures are logged and stored in
-        the deriver trace (``llm_errors`` list) including input/output token counts
-        when Mirascope attaches a ``_response`` object to the exception.
-        """
-
-        max_retries = int(os.getenv("LLM_MAX_RETRIES", 3))
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                return await critical_analysis_call(
-                    current_time=current_time,
-                    context=context,
-                    history=history,
-                    new_turn=new_turn,
-                )
-            except Exception as e:  # noqa: BLE001
-                # Log and record the failure; re-raise if final attempt
-                self._log_llm_error(e, attempt, max_retries)
-
-                if attempt >= max_retries:
-                    raise
-
-                # Simple exponential backoff: 1s, 2s, 4s, ...
-                await asyncio.sleep(2 ** (attempt - 1))
-
-        # This line is never reached due to raise above, but keeps mypy happy
-        raise RuntimeError("_critical_analysis_with_retry exhausted without return")
-
-    def _log_llm_error(self, exc: Exception, attempt: int, max_retries: int) -> None:  # noqa: D401
-        """Log rich info about an LLM exception and append to trace."""
-
-        # Basic info
-        logger.warning(
-            f"[LLM retry {attempt}/{max_retries}] {type(exc).__name__}: {exc}",
-            extra={"markup": False},
-        )
-
-        # Extract response if Mirascope attached it
-        resp = getattr(exc, "_response", None)
-
-        error_record: dict[str, object] = {
-            "attempt": attempt,
-            "max_retries": max_retries,
-            "error_type": type(exc).__name__,
-            "error_message": str(exc),
-        }
-
-        try:
-            if resp is not None:
-                error_record.update(
-                    {
-                        "provider": getattr(resp, "provider", None),
-                        "model": getattr(resp, "model", None),
-                        "input_tokens": getattr(resp, "input_tokens", None),
-                        "output_tokens": getattr(resp, "output_tokens", None),
-                        "cached_tokens": getattr(resp, "cached_tokens", None),
-                        "cost": getattr(resp, "cost", None),
-                        "max_tokens": getattr(resp.call_params, "max_tokens", None)
-                        if hasattr(resp, "call_params")
-                        else None,
-                        "temperature": getattr(resp.call_params, "temperature", None)
-                        if hasattr(resp, "call_params")
-                        else None,
-                        "message_count": len(getattr(resp, "messages", [])),
-                    }
-                )
-        except Exception as inner_exc:  # noqa: BLE001
-            # Ensure logging itself never blows up
-            logger.debug(f"Failed to enrich LLM error metadata: {inner_exc}")
-
-        # Store in trace
-        if self.trace is not None:
-            self.trace.setdefault("llm_errors", []).append(error_record)

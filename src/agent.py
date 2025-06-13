@@ -5,20 +5,19 @@ from inspect import cleandoc as c
 
 from dotenv import load_dotenv
 from mirascope import llm, prompt_template
-from mirascope.integrations.langfuse import with_langfuse
 from sentry_sdk.ai.monitoring import ai_track
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src import crud, models
 from src.dependencies import tracked_db
-from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.models import SemanticQueries
+from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.utils.deriver import (
-    format_structured_observation,
-    format_premises_for_display,
     format_datetime_simple,
+    format_premises_for_display,
+    format_structured_observation,
 )
 
 # Configure logging
@@ -29,7 +28,7 @@ USER_REPRESENTATION_METAMESSAGE_TYPE = "honcho_user_representation"
 load_dotenv()
 
 # NOTE: Temporarily disabled @with_langfuse() decorators across multiple functions
-# due to compatibility issue between Mirascope 1.25.0 and Langfuse 2.60.8 where 
+# due to compatibility issue between Mirascope 1.25.0 and Langfuse 2.60.8 where
 # BaseMessageParam objects don't have a .get() method. The Langfuse integration
 # expects message_param to be a dict but it's a Pydantic model.
 # Error: AttributeError: 'BaseMessageParam' object has no attribute 'get'
@@ -39,7 +38,7 @@ load_dotenv()
 #
 # AFFECTED FUNCTIONS (all temporarily have @with_langfuse() commented out):
 # - src/agent.py: dialectic_call, dialectic_stream
-# - src/utils/history.py: create_short_summary, create_long_summary  
+# - src/utils/history.py: create_short_summary, create_long_summary
 # - src/deriver/surprise_reasoner.py: critical_analysis_call
 # - src/deriver/tom/long_term.py: get_user_representation_long_term, extract_facts_long_term
 # - src/deriver/tom/single_prompt.py: tom_inference, user_representation_inference
@@ -49,7 +48,9 @@ load_dotenv()
 
 
 @prompt_template()
-def dialectic_prompt(query: str, working_representation: str, additional_context: str) -> str:
+def dialectic_prompt(
+    query: str, working_representation: str, additional_context: str
+) -> str:
     return c(
         f"""
         You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant observations into coherent, actionable insights that directly and explicitly address what the application needs to know.
@@ -155,23 +156,27 @@ def dialectic_prompt(query: str, working_representation: str, additional_context
     )
 
 
-async def get_working_representation_from_trace(session_id: str, db: AsyncSession) -> str:
+async def get_working_representation_from_trace(
+    session_id: str, db: AsyncSession
+) -> str:
     """Extract working representation from most recent deriver trace in session."""
     trace_metamessage = await _get_latest_deriver_trace(session_id, db)
     if not trace_metamessage:
         logger.warning(f"No deriver trace found for session: {session_id}")
         return ""
-    
+
     try:
         trace_data = json.loads(trace_metamessage.content)
         final_observations = trace_data.get("final_observations", {})
-        
+
         if not final_observations:
-            logger.warning(f"No final_observations found in trace data. Available keys: {list(trace_data.keys())}")
+            logger.warning(
+                f"No final_observations found in trace data. Available keys: {list(trace_data.keys())}"
+            )
             return ""
-        
+
         return _format_observations_by_level(final_observations)
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse JSON in deriver trace: {e}")
         return ""
@@ -180,7 +185,9 @@ async def get_working_representation_from_trace(session_id: str, db: AsyncSessio
         return ""
 
 
-async def _get_latest_deriver_trace(session_id: str, db: AsyncSession) -> models.Metamessage | None:
+async def _get_latest_deriver_trace(
+    session_id: str, db: AsyncSession
+) -> models.Metamessage | None:
     """Get the most recent deriver trace metamessage for a session."""
     stmt = (
         select(models.Metamessage)
@@ -196,14 +203,14 @@ async def _get_latest_deriver_trace(session_id: str, db: AsyncSession) -> models
 def _format_observations_by_level(final_observations: dict) -> str:
     """Format final observations into structured text by level."""
     formatted_sections = []
-    
-    for level in ['explicit', 'deductive', 'inductive', 'abductive']:
+
+    for level in ["explicit", "deductive", "inductive", "abductive"]:
         observations = final_observations.get(level, [])
         if observations:
             formatted_sections.append(f"{level.upper()} OBSERVATIONS:")
             formatted_sections.extend(_format_observation_list(observations))
             formatted_sections.append("")
-    
+
     return "\n".join(formatted_sections) if formatted_sections else ""
 
 
@@ -213,16 +220,16 @@ def _format_observation_list(observations: list) -> list[str]:
     for obs in observations:
         if isinstance(obs, dict):
             # Determine core content and premises
-            if 'conclusion' in obs:
-                content = obs['conclusion']
-                premises = obs.get('premises', [])
+            if "conclusion" in obs:
+                content = obs["conclusion"]
+                premises = obs.get("premises", [])
                 formatted_obs = format_structured_observation(content, premises)
             else:
-                content = obs.get('content', str(obs))
+                content = obs.get("content", str(obs))
                 formatted_obs = content
 
             # Prepend timestamp if available
-            ts_raw = obs.get('created_at')
+            ts_raw = obs.get("created_at")
             if ts_raw:
                 ts = format_datetime_simple(ts_raw)
                 formatted_obs = f"{ts}: {formatted_obs}"
@@ -234,47 +241,59 @@ def _format_observation_list(observations: list) -> list[str]:
     return formatted
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 @ai_track("Dialectic Call")
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219")
-async def dialectic_call(query: str, working_representation: str, additional_context: str):
+async def dialectic_call(
+    query: str, working_representation: str, additional_context: str
+):
     # Generate the prompt and log it
     prompt_result = dialectic_prompt(query, working_representation, additional_context)
-    
+
     # Pretty print the prompt content
     if isinstance(prompt_result, list) and len(prompt_result) > 0:
         # Extract content from the first BaseMessageParam
         prompt_content = prompt_result[0].content
     else:
         prompt_content = str(prompt_result)
-    
+
     logger.info("=== DIALECTIC PROMPT ===")
     logger.info(prompt_content)
     logger.info("=== END DIALECTIC PROMPT ===")
-    
+
     return prompt_result
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 @ai_track("Dialectic Stream")
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219", stream=True)
-async def dialectic_stream(query: str, working_representation: str, additional_context: str):
+async def dialectic_stream(
+    query: str, working_representation: str, additional_context: str
+):
     # Generate the prompt and log it
     prompt_result = dialectic_prompt(query, working_representation, additional_context)
-    
+
     # Pretty print the prompt content
     if isinstance(prompt_result, list) and len(prompt_result) > 0:
         # Extract content from the first BaseMessageParam
         prompt_content = prompt_result[0].content
     else:
         prompt_content = str(prompt_result)
-    
+
     logger.info("=== DIALECTIC PROMPT (STREAM) ===")
     logger.info(prompt_content)
     logger.info("=== END DIALECTIC PROMPT ===")
-    
+
     return prompt_result
 
 
@@ -304,12 +323,16 @@ async def chat(
 
     # 1. Working representation (short-term) -----------------------------------
     async with tracked_db("chat.get_working_representation") as db:
-        working_representation = await get_working_representation_from_trace(session_id, db)
+        working_representation = await get_working_representation_from_trace(
+            session_id, db
+        )
     logger.debug(f"Working representation length: {len(working_representation)}")
 
     # 2. Additional context (long-term semantic search) ------------------------
     async with tracked_db("chat.get_additional_context") as db:
-        collection = await crud.get_or_create_user_protected_collection(db, app_id, user_id)
+        collection = await crud.get_or_create_user_protected_collection(
+            db, app_id, user_id
+        )
         embedding_store = CollectionEmbeddingStore(
             db=db,
             app_id=app_id,
@@ -317,31 +340,36 @@ async def chat(
             collection_id=collection.public_id,
         )
         additional_context = await get_observations(
-            final_query, 
-            embedding_store, 
-            include_premises=True,
-            session_id=session_id
+            final_query, embedding_store, include_premises=True, session_id=session_id
         )
-        logger.debug(f"Retrieved additional context: {len(additional_context)} characters")
+        logger.debug(
+            f"Retrieved additional context: {len(additional_context)} characters"
+        )
 
     # 3. Dialectic call --------------------------------------------------------
     if stream:
-        return await dialectic_stream(final_query, working_representation, additional_context)
+        return await dialectic_stream(
+            final_query, working_representation, additional_context
+        )
     else:
-        response = await dialectic_call(final_query, working_representation, additional_context)
+        response = await dialectic_call(
+            final_query, working_representation, additional_context
+        )
         elapsed = asyncio.get_event_loop().time() - start_time
         logger.debug(f"Dialectic answered in {elapsed:.2f}s")
         return response
 
 
 async def get_observations(
-    query: str, embedding_store: CollectionEmbeddingStore, include_premises: bool = False, 
-    session_id: str | None = None
+    query: str,
+    embedding_store: CollectionEmbeddingStore,
+    include_premises: bool = False,
+    session_id: str | None = None,
 ) -> str:
     """
     Generate queries based on the dialectic query and retrieve relevant observations.
-    
-    Uses semantic search to find additional relevant historical context beyond 
+
+    Uses semantic search to find additional relevant historical context beyond
     what's already in the working representation.
 
     Args:
@@ -354,128 +382,155 @@ async def get_observations(
         String containing additional relevant observations from semantic search
     """
     logger.info(f"Starting observation retrieval for query: {query}")
-    
+
     # Generate search queries and execute them in parallel
     search_queries_result = await generate_semantic_queries(query)
     search_queries = search_queries_result.queries
-    logger.info(f"Generated {len(search_queries)} search queries: \n{json.dumps(search_queries, indent=2)}")
-    
+    logger.info(
+        f"Generated {len(search_queries)} search queries: \n{json.dumps(search_queries, indent=2)}"
+    )
+
     # Execute all queries in parallel
     tasks = [_execute_single_query(q, embedding_store) for q in search_queries]
     all_results = await asyncio.gather(*tasks)
-    
+
     # Combine and deduplicate results
     unique_observations = _deduplicate_observations(all_results)
-    logger.info(f"Retrieved {len(unique_observations)} unique observations before filtering")
-    
+    logger.info(
+        f"Retrieved {len(unique_observations)} unique observations before filtering"
+    )
+
     # Filter out current session observations to get only historical context
     if session_id:
-        filtered_observations = _filter_current_session_observations(unique_observations, session_id)
-        logger.info(f"After session filtering: {len(filtered_observations)} observations (removed {len(unique_observations) - len(filtered_observations)} current session observations)")
+        filtered_observations = _filter_current_session_observations(
+            unique_observations, session_id
+        )
+        logger.info(
+            f"After session filtering: {len(filtered_observations)} observations (removed {len(unique_observations) - len(filtered_observations)} current session observations)"
+        )
         unique_observations = filtered_observations
-    
+
     # Format observations
     if not unique_observations:
         logger.info("No unique historical observations found after filtering")
         return "No additional relevant context found."
-    
+
     # Log a summary of what was retrieved
-    logger.info(f"Final retrieval summary: {len(unique_observations)} observations retrieved across search queries: \n{json.dumps(unique_observations, indent=2)}")
-    
+    logger.info(
+        f"Final retrieval summary: {len(unique_observations)} observations retrieved across search queries: \n{json.dumps(unique_observations, indent=2)}"
+    )
+
     return _format_observations(unique_observations, include_premises)
 
 
-async def _execute_single_query(query: str, embedding_store: CollectionEmbeddingStore) -> list[tuple[str, str, dict]]:
+async def _execute_single_query(
+    query: str, embedding_store: CollectionEmbeddingStore
+) -> list[tuple[str, str, dict]]:
     """Execute a single semantic search query and return formatted results."""
     documents = await embedding_store.get_relevant_observations(
         query, top_k=10, max_distance=0.85
     )
-    
+
     # Extract data to avoid DetachedInstanceError
     return [
-        (doc.content, doc.created_at.strftime("%Y-%m-%d-%H:%M:%S"), doc.h_metadata or {})
+        (
+            doc.content,
+            doc.created_at.strftime("%Y-%m-%d-%H:%M:%S"),
+            doc.h_metadata or {},
+        )
         for doc in documents
     ]
 
 
-def _deduplicate_observations(all_results: list[list[tuple[str, str, dict]]]) -> list[tuple[str, str, dict]]:
+def _deduplicate_observations(
+    all_results: list[list[tuple[str, str, dict]]],
+) -> list[tuple[str, str, dict]]:
     """Deduplicate observations based on content."""
     unique_observations = []
     seen_content = set()
-    
+
     for results in all_results:
         for content, timestamp, metadata in results:
             if content not in seen_content:
                 unique_observations.append((content, timestamp, metadata))
                 seen_content.add(content)
-    
+
     return unique_observations
 
 
-def _format_observations(observations: list[tuple[str, str, dict]], include_premises: bool) -> str:
+def _format_observations(
+    observations: list[tuple[str, str, dict]], include_premises: bool
+) -> str:
     """Format observations grouped by level and date, including access metadata."""
     grouped = {}
-    
+
     for content, timestamp, metadata in observations:
-        level = metadata.get('level', 'unknown')
+        level = metadata.get("level", "unknown")
         date_str = timestamp[:10]  # Extract YYYY-MM-DD
-        
+
         if level not in grouped:
             grouped[level] = {}
         if date_str not in grouped[level]:
             grouped[level][date_str] = []
-        
+
         # Build formatted content with premises and access metadata
         formatted_content = content
-        
+
         # Add premises if requested and available
-        if include_premises and metadata.get('premises'):
-            premises_text = format_premises_for_display(metadata['premises'])
+        if include_premises and metadata.get("premises"):
+            premises_text = format_premises_for_display(metadata["premises"])
             formatted_content = f"{content}{premises_text}"
-        
+
         # Prefix with full timestamp for clarity
         if timestamp:
             formatted_content = f"{timestamp}: {formatted_content}"
-        
+
         # Add access metadata if available
         access_parts = []
-        access_count = metadata.get('access_count', 0)
-        last_accessed = metadata.get('last_accessed')
-        
+        access_count = metadata.get("access_count", 0)
+        last_accessed = metadata.get("last_accessed")
+
         if access_count > 0:
             access_parts.append(f"accessed {access_count}x")
-        
+
         if last_accessed:
             # Format the last_accessed datetime for display
             try:
                 from datetime import datetime
+
                 if isinstance(last_accessed, str):
                     # Parse ISO format datetime string
-                    dt = datetime.fromisoformat(last_accessed.replace('Z', '+00:00'))
+                    dt = datetime.fromisoformat(last_accessed.replace("Z", "+00:00"))
                     formatted_last_accessed = dt.strftime("%Y-%m-%d %H:%M")
                     access_parts.append(f"last accessed {formatted_last_accessed}")
             except (ValueError, AttributeError):
                 # If parsing fails, just show the raw value
                 access_parts.append(f"last accessed {last_accessed}")
-        
+
         # Append access metadata to the formatted content
         if access_parts:
             access_info = ", ".join(access_parts)
             formatted_content = f"{formatted_content} [{access_info}]"
-        
+
         grouped[level][date_str].append(formatted_content)
-    
+
     # Build output
     parts = []
     for level in sorted(grouped.keys()):
-        header = f"\n{level.upper()} OBSERVATIONS:" if level != 'unknown' else "\nOBSERVATIONS:"
+        header = (
+            f"\n{level.upper()} OBSERVATIONS:"
+            if level != "unknown"
+            else "\nOBSERVATIONS:"
+        )
         parts.append(header)
-        
-        for date_str in sorted(grouped[level].keys(), reverse=True):  # Most recent first
+
+        for date_str in sorted(
+            grouped[level].keys(), reverse=True
+        ):  # Most recent first
             parts.append(f"\n{date_str}:")
             for obs in grouped[level][date_str]:
                 parts.append(f"  • {obs}")
-    
+
     return "\n".join(parts).strip()
 
 
@@ -566,27 +621,34 @@ def query_generation_prompt(query: str) -> str:
     )
 
 
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=4, max=10),
+)
 # @with_langfuse()
 @llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
 async def generate_semantic_queries(query: str):
     return query_generation_prompt(query)
 
 
-def _filter_current_session_observations(observations: list[tuple[str, str, dict]], session_id: str) -> list[tuple[str, str, dict]]:
+def _filter_current_session_observations(
+    observations: list[tuple[str, str, dict]], session_id: str
+) -> list[tuple[str, str, dict]]:
     """Filter out observations from the current session."""
     filtered = []
     current_session_count = 0
-    
+
     for content, timestamp, metadata in observations:
-        obs_session_id = metadata.get('session_id')
+        obs_session_id = metadata.get("session_id")
         if obs_session_id != session_id:
             filtered.append((content, timestamp, metadata))
         else:
             current_session_count += 1
             logger.debug(f"Filtered out current session observation: {content[:50]}...")
-    
-    if current_session_count > 0:
-        logger.info(f"Filtered out {current_session_count} observations from current session {session_id}")
-    
-    return filtered
 
+    if current_session_count > 0:
+        logger.info(
+            f"Filtered out {current_session_count} observations from current session {session_id}"
+        )
+
+    return filtered
