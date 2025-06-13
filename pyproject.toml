@@ -25,7 +25,12 @@ dependencies = [
     "langfuse>=2.57.1",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
+    "uvicorn[standard]>=0.29.0"  # Added for deployment
 ]
+
+[project.scripts]
+honcho-api = "honcho.main:app"  # Update this if your app is in a different path
+
 [tool.uv]
 dev-dependencies = [
     "pytest>=8.2.2",
@@ -38,20 +43,13 @@ dev-dependencies = [
 ]
 
 [tool.ruff.lint]
-# from https://docs.astral.sh/ruff/linter/#rule-selection example
 select = [
-    # pycodestyle
-    "E",
-    # Pyflakes
-    "F",
-    # pyupgrade
-    "UP",
-    # flake8-bugbear
-    "B",
-    # flake8-simplify
-    "SIM",
-    # isort
-    "I",
+    "E",    # pycodestyle
+    "F",    # Pyflakes
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "I",    # isort
 ]
 ignore = ["E501", "B008"]
 
@@ -61,3 +59,7 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
