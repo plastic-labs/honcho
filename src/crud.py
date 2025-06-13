@@ -5,7 +5,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, delete, insert, select
+from sqlalchemy import Select, cast, delete, func, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -419,7 +419,6 @@ async def get_or_create_session(
         result = await db.execute(stmt)
 
         honcho_session = result.scalar_one_or_none()
-        peer_names: set[str] = session.peer_names or set()
 
         # Check if session already exists
         if honcho_session is None:
@@ -432,8 +431,11 @@ async def get_or_create_session(
                 feature_flags=session.feature_flags,
             )
             db.add(honcho_session)
+            # Flush to ensure session exists in DB before adding peers
+            await db.flush()
 
         # Get or create peers
+        peer_names: set[str] = session.peer_names or set()
         await get_or_create_peers(
             db,
             workspace_name=workspace_name,
@@ -681,7 +683,6 @@ async def remove_peers_from_session(
 
 
 async def get_peers_from_session(
-    db: AsyncSession,
     workspace_name: str,
     session_name: str,
 ) -> Select:
@@ -695,24 +696,7 @@ async def get_peers_from_session(
 
     Returns:
         Paginated list of Peer objects in the session
-
-    Raises:
-        ResourceNotFoundException: If the session does not exist
     """
-    # Verify session exists
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
-    )
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-
-    if session is None:
-        raise ResourceNotFoundException(
-            f"Session {session_name} not found in workspace {workspace_name}"
-        )
-
     # Get all peers in the session
     stmt = (
         select(models.Peer)
@@ -834,6 +818,49 @@ async def _add_peers_to_session(
     return list(result.scalars().all())
 
 
+async def search(
+    db: AsyncSession,
+    query: str,
+    *,
+    workspace_id: str,
+    session_id: Optional[str] = None,
+    peer_id: Optional[str] = None,
+) -> Select:
+    """
+    Search across message content. If a session or peer is provided,
+    the search will be scoped to that session or peer. Otherwise, it will
+    search across all messages in the workspace.
+
+    Args:
+        query: Search query to match against message content
+        workspace_id: ID of the workspace
+        session_id: Optional ID of the session
+        peer_id: Optional ID of the peer
+
+    Returns:
+        List of messages that match the search query
+    """
+    if session_id is not None:
+        stmt = select(models.Message).where(
+            models.Message.session_name == session_id,
+            models.Message.workspace_name == workspace_id,
+            models.Message.content.ilike(f"%{query}%"),
+        )
+    elif peer_id is not None:
+        stmt = select(models.Message).where(
+            models.Message.peer_name == peer_id,
+            models.Message.workspace_name == workspace_id,
+            models.Message.content.ilike(f"%{query}%"),
+        )
+    else:
+        stmt = select(models.Message).where(
+            models.Message.workspace_name == workspace_id,
+            models.Message.content.ilike(f"%{query}%"),
+        )
+
+    return stmt
+
+
 ########################################################
 # Message Methods
 ########################################################
@@ -856,11 +883,19 @@ async def create_messages(
 
     Returns:
         List of created message objects
-
-    Raises:
-        ResourceNotFoundException: If the session or any peer does not exist in the workspace
     """
     try:
+        # Get or create session with peers in messages list
+        peers = set([message.peer_name for message in messages])
+        await get_or_create_session(
+            db,
+            session=schemas.SessionCreate(
+                name=session_name,
+                peer_names=peers,
+            ),
+            workspace_name=workspace_name,
+        )
+
         # Create list of message objects (this will trigger the before_insert event)
         message_objects = [
             models.Message(
@@ -947,20 +982,91 @@ async def get_messages(
     session_name: str,
     reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
+    token_limit: Optional[int] = None,
+    message_count_limit: Optional[int] = None,
 ) -> Select:
-    stmt = (
-        select(models.Message)
-        .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.session_name == session_name)
-    )
+    """
+    Get messages from a session. If token_limit is provided, the n most recent messages
+    with token count adding up to the limit will be returned. If message_count_limit is provided,
+    the n most recent messages will be returned. If both are provided, message_count_limit will be
+    used.
 
+    Args:
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        reverse: Whether to reverse the order of messages
+        filter: Filter to apply to the messages
+        token_limit: Maximum number of tokens to include in the messages
+        message_count_limit: Maximum number of messages to include
+
+    Returns:
+        Select statement for the messages
+    """
+    # Base query with workspace and session filters
+    base_conditions = [
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == session_name,
+    ]
+
+    # Add metadata filter if provided
     if filter is not None:
-        stmt = stmt.where(models.Message.h_metadata.contains(filter))
+        base_conditions.append(models.Message.h_metadata.contains(filter))
 
-    if reverse:
-        stmt = stmt.order_by(models.Message.id.desc())
+    # Apply message count limit first (takes precedence over token limit)
+    if message_count_limit is not None:
+        stmt = select(models.Message).where(*base_conditions)
+        # For message count limit, we want the most recent N messages
+        # So we order by id desc to get most recent, then apply limit
+        stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
+
+        # Apply final ordering based on reverse parameter
+        if reverse:
+            stmt = stmt.order_by(models.Message.id.desc())
+        else:
+            stmt = stmt.order_by(models.Message.id.asc())
+
+    elif token_limit is not None:
+        # Apply token limit logic
+        # Create a subquery that calculates running sum of tokens for most recent messages
+        token_subquery = select(
+            models.Message.id,
+            models.Message.workspace_name,
+            models.Message.session_name,
+            models.Message.public_id,
+            models.Message.content,
+            models.Message.h_metadata,
+            models.Message.token_count,
+            models.Message.created_at,
+            models.Message.peer_name,
+            func.sum(models.Message.token_count)
+            .over(order_by=models.Message.id.desc())
+            .label("running_token_sum"),
+        ).where(*base_conditions)
+
+        token_subquery = token_subquery.subquery()
+
+        # Now select messages where running sum doesn't exceed token_limit
+        stmt = select(models.Message).where(
+            models.Message.id.in_(
+                select(token_subquery.c.id).where(
+                    token_subquery.c.running_token_sum <= token_limit
+                )
+            )
+        )
+
+        # Apply final ordering based on reverse parameter
+        if reverse:
+            stmt = stmt.order_by(models.Message.id.desc())
+        else:
+            stmt = stmt.order_by(models.Message.id.asc())
+
     else:
-        stmt = stmt.order_by(models.Message.id)
+        # Default case - no limits applied
+        stmt = select(models.Message).where(*base_conditions)
+        if reverse:
+            stmt = stmt.order_by(models.Message.id.desc())
+        else:
+            stmt = stmt.order_by(models.Message.id.asc())
 
     return stmt
 

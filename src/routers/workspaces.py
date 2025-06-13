@@ -95,3 +95,19 @@ async def update_workspace(
         db, workspace_name=workspace_id, workspace=workspace
     )
     return honcho_workspace
+
+
+@router.post(
+    "/{workspace_id}/search",
+    response_model=Page[schemas.Message],
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def search_workspace(
+    workspace_id: str = Path(..., description="ID of the workspace to search"),
+    query: str = Body(..., description="Search query"),
+    db=db,
+):
+    """Search a Workspace"""
+    stmt = await crud.search(db, query, workspace_id=workspace_id)
+
+    return await paginate(db, stmt)

@@ -12,13 +12,13 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
     Table,
     UniqueConstraint,
     event,
-    ForeignKeyConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -65,9 +65,7 @@ session_peers_table = Table(
         primary_key=True,
         nullable=False,
     ),
-    Column(
-        "peer_name", TEXT, primary_key=True, nullable=False
-    ),
+    Column("peer_name", TEXT, primary_key=True, nullable=False),
     # Composite foreign key constraint for sessions
     ForeignKeyConstraint(
         ["session_name", "workspace_name"],
@@ -167,9 +165,7 @@ class Message(Base):
     public_id: Mapped[str] = mapped_column(
         TEXT, index=True, unique=True, default=generate_nanoid
     )
-    session_name: Mapped[str | None] = mapped_column(
-        index=True, nullable=True
-    )
+    session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -258,9 +254,7 @@ class Document(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
 
-    collection_name: Mapped[str] = mapped_column(
-        TEXT, index=True
-    )
+    collection_name: Mapped[str] = mapped_column(TEXT, index=True)
     peer_name: Mapped[str] = mapped_column(index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True

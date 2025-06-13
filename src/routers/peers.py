@@ -268,3 +268,90 @@ async def get_messages_for_peer(
     except ValueError as e:
         logger.warning(f"Failed to get messages for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer not found") from e
+
+
+@router.post(
+    "/{peer_id}/representation",
+    response_model=dict[str, object],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def get_peer_representation(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    session_id: Optional[str] = Query(
+        None, description="ID of the session to scope the representation to"
+    ),
+    db=db,
+):
+    """Get a peer's working representation, optionally scoped to a session"""
+
+    stub = {
+        "final_observations": {
+            "explicit": [
+                {
+                    "content": "User said: 'Hey Mel!' - addressing someone named Mel",
+                    "created_at": "2023-05-08T13:56:00+00:00",
+                },
+                {
+                    "content": "User said: 'Good to see you!' - expressing positive sentiment about seeing this person",
+                    "created_at": "2023-05-08T13:56:00+00:00",
+                },
+                {
+                    "content": "User said: 'How have you been?' - asking about the other person's recent state or experiences",
+                    "created_at": "2023-05-08T13:56:00+00:00",
+                },
+            ],
+            "deductive": [
+                {
+                    "conclusion": "The user believes they have encountered 'Mel' before",
+                    "premises": [
+                        "User said 'Good to see you!' which implies previous encounters"
+                    ],
+                    "created_at": "2023-05-08T13:56:00+00:00",
+                },
+                {
+                    "conclusion": "The user is initiating a conversational exchange",
+                    "premises": [
+                        "User said 'Hey Mel!' as a greeting",
+                        "User asked 'How have you been?' which is a conversation starter",
+                    ],
+                    "created_at": "2023-05-08T13:56:00+00:00",
+                },
+            ],
+            "inductive": [],
+            "abductive": [
+                {
+                    "conclusion": "The user believes they have an established relationship or familiarity with 'Mel'",
+                    "premises": [
+                        "Casual greeting format 'Hey Mel!'",
+                        "Familiar expression 'Good to see you!'",
+                        "Personal inquiry about wellbeing",
+                    ],
+                    "created_at": "2023-05-08T13:56:00+00:00",
+                }
+            ],
+        },
+    }
+
+    return stub
+
+
+@router.post(
+    "/{peer_id}/search",
+    response_model=Page[schemas.Message],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def search_peer(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    query: str = Body(..., description="Search query"),
+    db=db,
+):
+    """Search a Peer"""
+    stmt = await crud.search(db, query, workspace_id=workspace_id, peer_id=peer_id)
+
+    return await paginate(db, stmt)

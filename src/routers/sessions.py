@@ -359,7 +359,7 @@ async def get_session_peers(
     try:
         session_name = session_id
         peers_query = await crud.get_peers_from_session(
-            db, workspace_name=workspace_id, session_name=session_name
+            workspace_name=workspace_id, session_name=session_name
         )
         return await paginate(db, peers_query)
     except ValueError as e:
@@ -387,18 +387,37 @@ async def get_session_context(
     ),  # default to false
     db=db,
 ):
+    messages_stmt = await crud.get_messages(
+        workspace_name=workspace_id,
+        session_name=session_id,
+        token_limit=tokens,
+    )
+    result = await db.execute(messages_stmt)
+    messages = list(result.scalars().all())
+
     return schemas.SessionContext(
         name=session_id,
-        messages=[],
-        summary="",
+        messages=messages,
+        summary="TODO: give a summary" if summary else "",
     )
-    # """Get context from a session"""
-    # try:
-    #     # TODO: Implement crud.get_session_context
-    #     context = await crud.get_session_context(
-    #         db, workspace_name=workspace_id, session_name=session_id
-    #     )
-    #     return context
-    # except ValueError as e:
-    #     logger.warning(f"Failed to get context from session {session_id}: {str(e)}")
-    #     raise ResourceNotFoundException("Session not found") from e
+
+
+@router.post(
+    "/{session_id}/search",
+    response_model=Page[schemas.Message],
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+    ],
+)
+async def search_session(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    query: str = Body(..., description="Search query"),
+    db=db,
+):
+    """Search a Session"""
+    stmt = await crud.search(
+        db, query, workspace_id=workspace_id, session_id=session_id
+    )
+
+    return await paginate(db, stmt)
