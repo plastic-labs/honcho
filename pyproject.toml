@@ -5,6 +5,7 @@ description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
 ]
+package-mode = false
 readme = "README.md"
 requires-python =">=3.9,<4.0"
 dependencies = [
