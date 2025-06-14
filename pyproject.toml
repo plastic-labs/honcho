@@ -3,57 +3,45 @@ name = "honcho"
 version = "1.1.0"
 description = "Honcho Server"
 authors = [
-  {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
+  { name = "Plastic Labs", email = "hello@plasticlabs.ai" }
 ]
-package-mode = false
 readme = "README.md"
-requires-python =">=3.9,<4.0"
+requires-python = ">=3.9,<4.0"
 dependencies = [
-    "fastapi[standard]>=0.111.0",
-    "python-dotenv>=1.0.0",
-    "sqlalchemy>=2.0.30",
-    "fastapi-pagination>=0.12.24",
-    "pgvector>=0.2.5",
-    "sentry-sdk[anthropic,fastapi,sqlalchemy]>=2.3.1",
-    "greenlet>=3.0.3",
-    "psycopg[binary]>=3.1.19",
-    "httpx>=0.27.0",
-    "rich>=13.7.1",
-    "openai>=1.43.0",
-    "anthropic>=0.36.0",
-    "nanoid>=2.0.0",
-    "alembic>=1.14.0",
-    "langfuse>=2.57.1",
-    "pyjwt>=2.10.0",
-    "google-genai>=1.10.0",
+  "fastapi[standard]>=0.111.0",
+  "python-dotenv>=1.0.0",
+  "sqlalchemy>=2.0.30",
+  "fastapi-pagination>=0.12.24",
+  "pgvector>=0.2.5",
+  "sentry-sdk[anthropic,fastapi,sqlalchemy]>=2.3.1",
+  "greenlet>=3.0.3",
+  "psycopg[binary]>=3.1.19",
+  "httpx>=0.27.0",
+  "rich>=13.7.1",
+  "openai>=1.43.0",
+  "anthropic>=0.36.0",
+  "nanoid>=2.0.0",
+  "alembic>=1.14.0",
+  "langfuse>=2.57.1",
+  "pyjwt>=2.10.0",
+  "google-genai>=1.10.0"
 ]
+# ✅ Disable packaging
+package-mode = false
+
 [tool.uv]
 dev-dependencies = [
-    "pytest>=8.2.2",
-    "sqlalchemy-utils>=0.41.2",
-    "pytest-asyncio>=0.23.7",
-    "coverage>=7.6.0",
-    "interrogate>=1.7.0",
-    "py-spy>=0.3.14",
-    "ruff>=0.11.2",
+  "pytest>=8.2.2",
+  "sqlalchemy-utils>=0.41.2",
+  "pytest-asyncio>=0.23.7",
+  "coverage>=7.6.0",
+  "interrogate>=1.7.0",
+  "py-spy>=0.3.14",
+  "ruff>=0.11.2"
 ]
 
 [tool.ruff.lint]
-# from https://docs.astral.sh/ruff/linter/#rule-selection example
-select = [
-    # pycodestyle
-    "E",
-    # Pyflakes
-    "F",
-    # pyupgrade
-    "UP",
-    # flake8-bugbear
-    "B",
-    # flake8-simplify
-    "SIM",
-    # isort
-    "I",
-]
+select = ["E", "F", "UP", "B", "SIM", "I"]
 ignore = ["E501", "B008"]
 
 [tool.ruff.lint.flake8-bugbear]
