@@ -22,7 +22,7 @@ dependencies = [
     "anthropic>=0.36.0",
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
-    "langfuse>=2.57.1",
+    "langfuse>=2.63.0",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
 ]
