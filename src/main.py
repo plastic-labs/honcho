@@ -128,7 +128,7 @@ origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
