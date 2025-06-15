@@ -46,7 +46,7 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
     provider="anthropic",
     model="claude-sonnet-4-20250514",
     response_model=ReasoningResponse,
-    call_params={"max_tokens": 1500, "temperature": 0.7},
+    call_params={"max_tokens": 2500, "temperature": 0.7},
     json_mode=True,
 )
 async def critical_analysis_call(
