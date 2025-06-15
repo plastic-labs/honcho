@@ -40,8 +40,8 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 # TODO: Re-enable when Mirascope-Langfuse compatibility issue is fixed
 # @with_langfuse()
 @llm.call(
-    provider="anthropic",
-    model="claude-sonnet-4-20250514",
+    provider="google",
+    model="gemini-2.0-flash-lite",
     response_model=ReasoningResponse,
     call_params={"max_tokens": 2500, "temperature": 0.7},
     json_mode=True,
@@ -410,11 +410,20 @@ class SurpriseReasoner:
         try:
             # Run recursive reasoning
             final_observations = await self.recursive_reason(
-                db, context, history, new_turn, message_id, session_id, current_time, message_created_at
+                db,
+                context,
+                history,
+                new_turn,
+                message_id,
+                session_id,
+                current_time,
+                message_created_at,
             )
 
             # Build obs dict with timestamps for trace
-            final_obs_with_dates = self._attach_created_at(final_observations, message_created_at)
+            final_obs_with_dates = self._attach_created_at(
+                final_observations, message_created_at
+            )
 
             # Finalize trace
             total_duration_ms = int((time.time() - start_time) * 1000)
@@ -563,7 +572,12 @@ class SurpriseReasoner:
 
             # Save only the NEW observations that weren't in the original context
             await self._save_new_observations(
-                db, context, reasoning_response, message_id, session_id, message_created_at
+                db,
+                context,
+                reasoning_response,
+                message_id,
+                session_id,
+                message_created_at,
             )
 
             # Display observations in a tree structure and performance metrics
@@ -771,7 +785,9 @@ class SurpriseReasoner:
         # This line is never reached due to raise above, but keeps mypy happy
         raise RuntimeError("_critical_analysis_with_retry exhausted without return")
 
-    def _log_llm_error(self, exc: Exception, attempt: int, max_retries: int) -> None:  # noqa: D401
+    def _log_llm_error(
+        self, exc: Exception, attempt: int, max_retries: int
+    ) -> None:  # noqa: D401
         """Log rich info about an LLM exception and append to trace."""
 
         # Basic info
@@ -800,12 +816,16 @@ class SurpriseReasoner:
                         "output_tokens": getattr(resp, "output_tokens", None),
                         "cached_tokens": getattr(resp, "cached_tokens", None),
                         "cost": getattr(resp, "cost", None),
-                        "max_tokens": getattr(resp.call_params, "max_tokens", None)
-                        if hasattr(resp, "call_params")
-                        else None,
-                        "temperature": getattr(resp.call_params, "temperature", None)
-                        if hasattr(resp, "call_params")
-                        else None,
+                        "max_tokens": (
+                            getattr(resp.call_params, "max_tokens", None)
+                            if hasattr(resp, "call_params")
+                            else None
+                        ),
+                        "temperature": (
+                            getattr(resp.call_params, "temperature", None)
+                            if hasattr(resp, "call_params")
+                            else None
+                        ),
                         "message_count": len(getattr(resp, "messages", [])),
                     }
                 )
