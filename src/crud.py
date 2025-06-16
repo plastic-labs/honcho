@@ -434,30 +434,26 @@ async def get_or_create_session(
             # Flush to ensure session exists in DB before adding peers
             await db.flush()
 
-        # Get or create peers
-        peer_names: set[tuple[str, schemas.SessionPeerConfig]] = (
-            session.peer_names or set()
-        )
-        await get_or_create_peers(
-            db,
-            workspace_name=workspace_name,
-            peers=[
-                schemas.PeerCreate(name=peer_name) for peer_name, _config in peer_names
-            ],
-        )
-
         # Add all peers to session
-        if peer_names:
+        if session.peer_names:
+            await get_or_create_peers(
+                db,
+                workspace_name=workspace_name,
+                peers=[
+                    schemas.PeerCreate(name=peer_name)
+                    for peer_name in session.peer_names
+                ],
+            )
             await _add_peers_to_session(
                 db,
                 workspace_name=workspace_name,
                 session_name=session.name,
-                peer_names=peer_names,
+                peer_names=session.peer_names,
             )
 
         await db.commit()
         logger.info(
-            f"Session {session.name} updated successfully in workspace {workspace_name} with {len(peer_names)} peers"
+            f"Session {session.name} updated successfully in workspace {workspace_name} with {len(session.peer_names or [])} peers"
         )
         return honcho_session
     except Exception as e:
@@ -716,7 +712,7 @@ async def set_peers_for_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: set[tuple[str, schemas.SessionPeerConfig]],
+    peer_names: dict[str, schemas.SessionPeerConfig],
 ) -> list[models.SessionPeer]:
     """
     Set peers for a session, overwriting any existing peers.
@@ -758,7 +754,7 @@ async def set_peers_for_session(
     await get_or_create_peers(
         db,
         workspace_name=workspace_name,
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name, _config in peer_names],
+        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
     )
 
     # Add new peers to session
@@ -774,7 +770,7 @@ async def _add_peers_to_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: set[tuple[str, schemas.SessionPeerConfig]],
+    peer_names: dict[str, schemas.SessionPeerConfig],
 ) -> list[models.SessionPeer]:
     """
     Add multiple peers to an existing session. If a peer already exists in the session,
@@ -803,8 +799,9 @@ async def _add_peers_to_session(
                 "session_name": session_name,
                 "peer_name": peer_name,
                 "workspace_name": workspace_name,
+                "feature_flags": feature_flags.model_dump(),
             }
-            for peer_name in peer_names
+            for peer_name, feature_flags in peer_names.items()
         ]
     )
 
@@ -972,9 +969,7 @@ async def create_messages(
     """
     try:
         # Get or create session with peers in messages list
-        peers = set(
-            [(message.peer_name, schemas.SessionPeerConfig()) for message in messages]
-        )
+        peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
         await get_or_create_session(
             db,
             session=schemas.SessionCreate(

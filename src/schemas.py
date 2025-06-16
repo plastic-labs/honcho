@@ -130,7 +130,7 @@ class SessionPeerConfig(BaseModel):
 class SessionCreate(SessionBase):
     name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
     metadata: dict = {}
-    peer_names: set[tuple[str, SessionPeerConfig]] | None = None
+    peer_names: dict[str, SessionPeerConfig] | None = None
     feature_flags: dict = {}
 
     model_config = ConfigDict(populate_by_name=True)

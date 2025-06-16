@@ -19,7 +19,9 @@ def test_workspace_validations_api(client):
     assert error["type"] == "string_too_long"
 
     # Test invalid metadata type
-    response = client.post("/v1/workspaces", json={"name": "test", "metadata": "not a dict"})
+    response = client.post(
+        "/v1/workspaces", json={"name": "test", "metadata": "not a dict"}
+    )
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert error["loc"] == ["body", "metadata"]
@@ -41,7 +43,8 @@ def test_peer_validations_api(client, sample_data):
 
     # Test name too long
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers", json={"name": "a" * 101, "metadata": {}}
+        f"/v1/workspaces/{test_workspace.name}/peers",
+        json={"name": "a" * 101, "metadata": {}},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -56,7 +59,7 @@ def test_message_validations_api(client, sample_data):
     session_id = str(generate_nanoid())
     session_response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 200
 
@@ -64,11 +67,9 @@ def test_message_validations_api(client, sample_data):
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
-            "messages": [{
-                "content": "a" * 50001, 
-                "peer_id": test_peer.name, 
-                "metadata": {}
-            }]
+            "messages": [
+                {"content": "a" * 50001, "peer_id": test_peer.name, "metadata": {}}
+            ]
         },
     )
     assert response.status_code == 422
@@ -84,7 +85,7 @@ def test_session_validations_api(client, sample_data):
     session_id = str(generate_nanoid())
     session_response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 200
 
@@ -112,7 +113,7 @@ def test_agent_query_validations_api(client, sample_data):
     session_id = str(generate_nanoid())
     session_response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 200
 
@@ -181,7 +182,7 @@ def test_required_field_validations_api(client, sample_data):
     session_id = str(generate_nanoid())
     session_response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 200
 
@@ -212,7 +213,7 @@ def test_filter_validations_api(client, sample_data):
     session_id = str(generate_nanoid())
     session_response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert session_response.status_code == 200
 

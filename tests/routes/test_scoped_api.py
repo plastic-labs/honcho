@@ -66,9 +66,7 @@ def test_get_workspace_with_auth(auth_client, sample_data):
             f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
-    response = auth_client.post(
-        "/v1/workspaces", json={"name": test_workspace.name}
-    )
+    response = auth_client.post("/v1/workspaces", json={"name": test_workspace.name})
 
     # Admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
@@ -158,7 +156,7 @@ def test_get_peer_by_name_with_auth(auth_client, sample_data):
     # Use POST /list endpoint to get peers
     response = auth_client.post(
         f"/v1/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"name": test_peer.name}}
+        json={"filter": {"name": test_peer.name}},
     )
 
     # Admin JWT or JWT with matching workspace should be allowed
@@ -175,8 +173,7 @@ def test_get_peer_by_name_with_auth(auth_client, sample_data):
 
         # Get specific peer using get_or_create endpoint
         response = auth_client.post(
-            f"/v1/workspaces/{test_workspace.name}/peers",
-            json={"name": test_peer.name}
+            f"/v1/workspaces/{test_workspace.name}/peers", json={"name": test_peer.name}
         )
 
         assert response.status_code == 200
@@ -232,7 +229,7 @@ def test_create_session_with_auth(auth_client, sample_data):
     session_name = str(generate_nanoid())
     response = auth_client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"name": session_name, "peer_names": [test_peer.name]},
+        json={"name": session_name, "peer_names": {test_peer.name: {}}},
     )
 
     # Only admin JWT or JWT with matching workspace should be allowed
@@ -250,7 +247,7 @@ def test_create_session_with_auth(auth_client, sample_data):
         session_name2 = str(generate_nanoid())
         response = auth_client.post(
             f"/v1/workspaces/{test_workspace.name}/sessions",
-            json={"name": session_name2, "peer_names": [test_peer.name]},
+            json={"name": session_name2, "peer_names": {test_peer.name: {}}},
         )
 
         assert response.status_code == 200
@@ -268,7 +265,7 @@ def test_get_session_by_name_with_auth(auth_client, sample_data):
     session_name = str(generate_nanoid())
     create_response = auth_client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"name": session_name, "peer_names": [test_peer.name]},
+        json={"name": session_name, "peer_names": {test_peer.name: {}}},
     )
 
     if auth_client.auth_type not in ["admin", "empty"]:
@@ -279,8 +276,7 @@ def test_get_session_by_name_with_auth(auth_client, sample_data):
 
     # Test with workspace scoped JWT - get the same session
     response = auth_client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"name": session_name}
+        f"/v1/workspaces/{test_workspace.name}/sessions", json={"name": session_name}
     )
     assert response.status_code == 200
 
@@ -292,7 +288,7 @@ def test_get_session_by_name_with_auth(auth_client, sample_data):
 
         response = auth_client.post(
             f"/v1/workspaces/{test_workspace.name}/sessions",
-            json={"name": session_name}
+            json={"name": session_name},
         )
         assert response.status_code == 200
 
@@ -300,7 +296,7 @@ def test_get_session_by_name_with_auth(auth_client, sample_data):
         assert (
             auth_client.post(
                 f"/v1/workspaces/{test_workspace.name}/sessions",
-                json={"name": generate_nanoid()}
+                json={"name": generate_nanoid()},
             ).status_code
             == 401
         )
@@ -313,7 +309,7 @@ def test_get_session_by_name_with_auth(auth_client, sample_data):
         assert (
             auth_client.post(
                 f"/v1/workspaces/{test_workspace.name}/sessions",
-                json={"name": session_name}
+                json={"name": session_name},
             ).status_code
             == 200
         )
@@ -326,7 +322,7 @@ def test_get_session_by_name_with_auth(auth_client, sample_data):
         assert (
             auth_client.post(
                 f"/v1/workspaces/{test_workspace.name}/sessions",
-                json={"name": session_name}
+                json={"name": session_name},
             ).status_code
             == 200
         )
