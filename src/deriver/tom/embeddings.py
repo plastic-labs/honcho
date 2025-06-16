@@ -1,7 +1,5 @@
 import logging
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from ... import crud, schemas
 from ...dependencies import tracked_db
 
@@ -9,10 +7,10 @@ logger = logging.getLogger(__name__)
 
 
 class CollectionEmbeddingStore:
-    def __init__(self, app_id: str, user_id: str, collection_id: str):
-        self.app_id = app_id
-        self.user_id = user_id
-        self.collection_id = collection_id
+    def __init__(self, workspace_name: str, peer_name: str, collection_name: str):
+        self.workspace_name = workspace_name
+        self.peer_name = peer_name
+        self.collection_name = collection_name
 
     async def save_facts(
         self,
@@ -38,9 +36,9 @@ class CollectionEmbeddingStore:
                     await crud.create_document(
                         db,
                         document=schemas.DocumentCreate(content=fact, metadata=metadata),
-                        app_id=self.app_id,
-                        user_id=self.user_id,
-                        collection_id=self.collection_id,
+                        workspace_name=self.workspace_name,
+                        peer_name=self.peer_name,
+                        collection_name=self.collection_name,
                         duplicate_threshold=1
                         - similarity_threshold,  # Convert similarity to distance
                     )
@@ -64,9 +62,9 @@ class CollectionEmbeddingStore:
         async with tracked_db("embedding_store.get_relevant_facts") as db:
             documents = await crud.query_documents(
                 db,
-                app_id=self.app_id,
-                user_id=self.user_id,
-                collection_id=self.collection_id,
+                workspace_name=self.workspace_name,
+                peer_name=self.peer_name,
+                collection_name=self.collection_name,
                 query=query,
                 max_distance=max_distance,
                 top_k=top_k,
@@ -94,9 +92,9 @@ class CollectionEmbeddingStore:
                     # Check for duplicates using the crud function
                     duplicates = await crud.get_duplicate_documents(
                         db,
-                        app_id=self.app_id,
-                        user_id=self.user_id,
-                        collection_id=self.collection_id,
+                        workspace_name=self.workspace_name,
+                        peer_name=self.peer_name,
+                        collection_name=self.collection_name,
                         content=fact,
                         similarity_threshold=similarity_threshold,
                     )

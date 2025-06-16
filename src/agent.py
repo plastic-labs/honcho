@@ -189,7 +189,7 @@ async def chat(
     # Run short-term inference and long-term facts in parallel
     async def fetch_long_term():
         async with tracked_db("chat.get_collection") as db_embed:
-            collection = await crud.get_or_create_user_protected_collection(
+            collection = await crud.get_or_create_peer_protected_collection(
                 db_embed, app_id, user_id
             )
             collection_id = (

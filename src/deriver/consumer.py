@@ -115,13 +115,13 @@ async def process_user_message(
 
     # Save the facts to the collection
     logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
-    collection = await crud.get_or_create_user_protected_collection(
-        db=db, app_id=app_id, user_id=user_id
+    collection = await crud.get_or_create_peer_protected_collection(
+        db=db, workspace_name=workspace_name, peer_name=peer_name
     )
     embedding_store = CollectionEmbeddingStore(
-        app_id=app_id,
-        user_id=user_id,
-        collection_id=collection.public_id,  # type: ignore
+        workspace_name=workspace_name,
+        peer_name=peer_name,
+        collection_name=collection.name,  # type: ignore
     )
 
     # Filter out facts that are duplicates of existing facts in the vector store
