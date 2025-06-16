@@ -65,6 +65,16 @@ class Peer(PeerBase):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class PeerRepresentationGet(BaseModel):
+    session_id: str = Field(
+        ..., description="Get the working representation within this session"
+    )
+    target: Optional[str] = Field(
+        None,
+        description="Optional peer ID to get the representation for, from the perspective of this peer",
+    )
+
+
 class MessageBase(BaseModel):
     pass
 
@@ -96,14 +106,31 @@ class Message(MessageBase):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+class MessageBatchCreate(BaseModel):
+    """Schema for batch message creation with a max of 100 messages"""
+
+    messages: list[MessageCreate] = Field(..., min_length=1, max_length=100)
+
+
 class SessionBase(BaseModel):
     pass
+
+
+class SessionPeerConfig(BaseModel):
+    observe_others: bool = Field(
+        default=False,
+        description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
+    )
+    observe_me: bool = Field(
+        default=True,
+        description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
+    )
 
 
 class SessionCreate(SessionBase):
     name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
     metadata: dict = {}
-    peer_names: set[str] | None = None
+    peer_names: set[tuple[str, SessionPeerConfig]] | None = None
     feature_flags: dict = {}
 
     model_config = ConfigDict(populate_by_name=True)
@@ -175,19 +202,3 @@ class DialecticOptions(BaseModel):
 
 class DialecticResponse(BaseModel):
     content: str
-
-
-class MessageBatchCreate(BaseModel):
-    """Schema for batch message creation with a max of 100 messages"""
-
-    messages: list[MessageCreate] = Field(..., min_length=1, max_length=100)
-
-
-class PeerRepresentationGet(BaseModel):
-    session_id: str = Field(
-        ..., description="Get the working representation within this session"
-    )
-    target: Optional[str] = Field(
-        None,
-        description="Optional peer ID to get the representation for, from the perspective of this peer",
-    )

@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -250,7 +250,9 @@ async def clone_session(
 async def add_peers_to_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    peers: list[str] = Body(..., description="List of peer IDs to add to the session"),
+    peers: list[tuple[str, schemas.SessionPeerConfig]] = Body(
+        ..., description="List of peer IDs to add to the session"
+    ),
     db=db,
 ):
     """Add peers to a session"""
@@ -281,7 +283,9 @@ async def add_peers_to_session(
 async def set_session_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    peers: list[str] = Body(..., description="List of peer IDs to set for the session"),
+    peers: list[tuple[str, schemas.SessionPeerConfig]] = Body(
+        ..., description="List of peer IDs to set for the session"
+    ),
     db=db,
 ):
     """Set the peers in a session"""
@@ -340,6 +344,61 @@ async def remove_peers_from_session(
         return session
     except ValueError as e:
         logger.warning(f"Failed to remove peers from session {session_name}: {str(e)}")
+        raise ResourceNotFoundException("Session not found") from e
+
+
+@router.get(
+    "/{session_id}/peers/{peer_id}/config",
+    response_model=schemas.SessionPeerConfig,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+    ],
+)
+async def get_peer_config(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    db=db,
+):
+    """Get the configuration for a peer in a session"""
+    return await crud.get_peer_config(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+        peer_id=peer_id,
+    )
+
+
+@router.post(
+    "/{session_id}/peers/{peer_id}/config",
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+    ],
+)
+async def set_peer_config(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    config: schemas.SessionPeerConfig = Body(..., description="Peer configuration"),
+    db=db,
+):
+    """Set the configuration for a peer in a session"""
+    try:
+        await crud.set_peer_config(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
+            peer_id=peer_id,
+            config=config,
+        )
+        logger.info(
+            f"Set peer config for {peer_id} in session {session_id} successfully"
+        )
+        return Response(status_code=200)
+    except ValueError as e:
+        logger.warning(
+            f"Failed to set peer config for {peer_id} in session {session_id}: {str(e)}"
+        )
         raise ResourceNotFoundException("Session not found") from e
 
 

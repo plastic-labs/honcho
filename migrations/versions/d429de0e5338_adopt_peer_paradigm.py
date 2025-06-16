@@ -335,6 +335,12 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
             sa.Column("workspace_name", sa.TEXT(), nullable=False),
             sa.Column("session_name", sa.TEXT(), nullable=False),
             sa.Column("peer_name", sa.TEXT(), nullable=False),
+            sa.Column(
+                "feature_flags",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default="{}",
+            ),
             sa.ForeignKeyConstraint(
                 ["peer_name", "workspace_name"],
                 ["peers.name", "peers.workspace_name"],
@@ -812,7 +818,6 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
         for old_id, new_id in sessions_mapping:
             session_id_mapping[old_id] = new_id
 
-
     # Update queue table
     if table_exists("queue", inspector) and session_id_mapping:
         # Get current session_id values in queue table
@@ -822,7 +827,13 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             )
         ).fetchall()
 
-        op.alter_column("queue", "session_id", type_=sa.Text(), existing_type=sa.BigInteger(), postgresql_using="session_id::text")
+        op.alter_column(
+            "queue",
+            "session_id",
+            type_=sa.Text(),
+            existing_type=sa.BigInteger(),
+            postgresql_using="session_id::text",
+        )
         # Convert session_id values in queue table
         for (session_id,) in queue_session_ids:
             if session_id in session_id_mapping:
@@ -836,14 +847,19 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
 
     # Update active_queue_sessions table
     if table_exists("active_queue_sessions", inspector) and session_id_mapping:
-
         active_queue_session_ids = connection.execute(
             sa.text(
                 f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
             )
         ).fetchall()
 
-        op.alter_column("active_queue_sessions", "session_id", type_=sa.Text(), existing_type=sa.BigInteger(), postgresql_using="session_id::text")
+        op.alter_column(
+            "active_queue_sessions",
+            "session_id",
+            type_=sa.Text(),
+            existing_type=sa.BigInteger(),
+            postgresql_using="session_id::text",
+        )
         # Convert session_id values in active_queue_sessions table
         for (session_id,) in active_queue_session_ids:
             if session_id in session_id_mapping:
@@ -854,6 +870,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
                     ),
                     {"new_id": str(new_id), "old_id": str(session_id)},
                 )
+
 
 def _count_tokens(text: str) -> int:
     """Count tokens in a text string using tiktoken."""
@@ -958,8 +975,9 @@ def restore_app_user_columns(schema: str, inspector) -> None:
                 )
             """)
         )
-                
+
         op.alter_column("sessions", "user_id", nullable=False, schema=schema)
+
 
 def restore_documents_table(schema: str, inspector) -> None:
     """Restore documents table to pre-peer paradigm state."""
@@ -970,7 +988,7 @@ def restore_documents_table(schema: str, inspector) -> None:
             sa.Column("temp_id", sa.BigInteger(), nullable=True),
             schema=schema,
         )
-    
+
     op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.documents_id_seq")
 
     op.execute(f"""
@@ -979,20 +997,15 @@ def restore_documents_table(schema: str, inspector) -> None:
         WHERE temp_id IS NULL
     """)
 
-    op.alter_column(
-        "documents",
-        "temp_id", 
-        nullable=False,
-        schema=schema
-    )
+    op.alter_column("documents", "temp_id", nullable=False, schema=schema)
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("documents", "pk_documents", inspector):
         op.drop_constraint("pk_documents", "documents", type_="primary", schema=schema)
-    
+
     op.alter_column("documents", "id", new_column_name="public_id", schema=schema)
     op.alter_column("documents", "temp_id", new_column_name="id", schema=schema)
-    
+
     op.create_primary_key("pk_documents", "documents", ["id"], schema=schema)
 
     op.alter_column(
@@ -1000,10 +1013,12 @@ def restore_documents_table(schema: str, inspector) -> None:
         "id",
         nullable=False,
         server_default=sa.text(f"nextval('{schema}.documents_id_seq')"),
-        schema=schema
+        schema=schema,
     )
 
-    op.execute(f"ALTER SEQUENCE {schema}.documents_id_seq OWNED BY {schema}.documents.id")
+    op.execute(
+        f"ALTER SEQUENCE {schema}.documents_id_seq OWNED BY {schema}.documents.id"
+    )
 
     # Add back user_id and app_id columns
     if not column_exists("documents", "user_id", inspector):
@@ -1037,7 +1052,6 @@ def restore_documents_table(schema: str, inspector) -> None:
             """)
         )
         op.alter_column("documents", "app_id", nullable=False, schema=schema)
-
 
     # Drop new foreign keys
     if fk_exists("documents", "fk_documents_collection_name_collections", inspector):
@@ -1114,20 +1128,17 @@ def restore_collections_table(schema: str, inspector) -> None:
         WHERE temp_id IS NULL
     """)
 
-    op.alter_column(
-        "collections",
-        "temp_id", 
-        nullable=False,
-        schema=schema
-    )
+    op.alter_column("collections", "temp_id", nullable=False, schema=schema)
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("collections", "pk_collections", inspector):
-        op.drop_constraint("pk_collections", "collections", type_="primary", schema=schema)
-    
+        op.drop_constraint(
+            "pk_collections", "collections", type_="primary", schema=schema
+        )
+
     op.alter_column("collections", "id", new_column_name="public_id", schema=schema)
     op.alter_column("collections", "temp_id", new_column_name="id", schema=schema)
-    
+
     op.create_primary_key("pk_collections", "collections", ["id"], schema=schema)
 
     op.alter_column(
@@ -1135,10 +1146,12 @@ def restore_collections_table(schema: str, inspector) -> None:
         "id",
         nullable=False,
         server_default=sa.text(f"nextval('{schema}.collections_id_seq')"),
-        schema=schema
+        schema=schema,
     )
 
-    op.execute(f"ALTER SEQUENCE {schema}.collections_id_seq OWNED BY {schema}.collections.id")
+    op.execute(
+        f"ALTER SEQUENCE {schema}.collections_id_seq OWNED BY {schema}.collections.id"
+    )
 
     # Add back user_id and app_id columns
     if not column_exists("collections", "user_id", inspector):
@@ -1216,7 +1229,10 @@ def restore_collections_table(schema: str, inspector) -> None:
         "public_id_length", "collections", "length(public_id) = 21", schema=schema
     )
     op.create_check_constraint(
-        "public_id_format", "collections", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+        "public_id_format",
+        "collections",
+        "public_id ~ '^[A-Za-z0-9_-]+$'",
+        schema=schema,
     )
 
 
@@ -1316,7 +1332,9 @@ def restore_messages_table(schema: str, inspector) -> None:
     if index_exists("messages", "ix_messages_peer_name", inspector):
         op.drop_index("ix_messages_peer_name", table_name="messages", schema=schema)
     if index_exists("messages", "ix_messages_workspace_name", inspector):
-        op.drop_index("ix_messages_workspace_name", table_name="messages", schema=schema)
+        op.drop_index(
+            "ix_messages_workspace_name", table_name="messages", schema=schema
+        )
 
     # Drop new columns
     op.drop_column("messages", "peer_name", schema=schema)
@@ -1356,10 +1374,10 @@ def restore_sessions_table(schema: str, inspector) -> None:
     # Drop current primary key and rename columns
     if primary_constraint_exists("sessions", "pk_sessions", inspector):
         op.drop_constraint("pk_sessions", "sessions", type_="primary", schema=schema)
-    
+
     op.alter_column("sessions", "id", new_column_name="public_id", schema=schema)
     op.alter_column("sessions", "temp_id", new_column_name="id", schema=schema)
-    
+
     op.create_primary_key("pk_sessions", "sessions", ["id"], schema=schema)
 
     op.alter_column(
@@ -1367,7 +1385,7 @@ def restore_sessions_table(schema: str, inspector) -> None:
         "id",
         nullable=False,
         server_default=sa.text(f"nextval('{schema}.sessions_id_seq')"),
-        schema=schema
+        schema=schema,
     )
 
     op.execute(f"ALTER SEQUENCE {schema}.sessions_id_seq OWNED BY {schema}.sessions.id")
@@ -1382,15 +1400,12 @@ def restore_sessions_table(schema: str, inspector) -> None:
         )
 
     # Drop new unique constraint
-    op.drop_constraint(
-        "unique_session_name", "sessions", type_="unique", schema=schema
-    )
+    op.drop_constraint("unique_session_name", "sessions", type_="unique", schema=schema)
 
     # Drop new columns
     op.drop_column("sessions", "name", schema=schema)
     op.drop_column("sessions", "workspace_name", schema=schema)
     op.drop_column("sessions", "feature_flags", schema=schema)
-
 
     # Restore old constraint names
     if check_constraint_exists("sessions", "id_length", inspector):
@@ -1427,7 +1442,7 @@ def restore_peers_table(schema: str, inspector) -> None:
     # Drop current primary key and rename columns
     if primary_constraint_exists("peers", "pk_peers", inspector):
         op.drop_constraint("pk_peers", "peers", type_="primary", schema=schema)
-    
+
     op.alter_column("peers", "id", new_column_name="public_id", schema=schema)
     op.alter_column("peers", "temp_id", new_column_name="id", schema=schema)
 
@@ -1436,16 +1451,19 @@ def restore_peers_table(schema: str, inspector) -> None:
         "id",
         nullable=False,
         server_default=sa.text(f"nextval('{schema}.peers_id_seq')"),
-        schema=schema
+        schema=schema,
     )
-    
+
     op.execute(f"ALTER SEQUENCE {schema}.peers_id_seq OWNED BY {schema}.peers.id")
     op.create_primary_key("pk_users", "peers", ["id"], schema=schema)
 
     # Drop new foreign keys
     if fk_exists("peers", "fk_peers_workspace_name_workspaces", inspector):
         op.drop_constraint(
-            "fk_peers_workspace_name_workspaces", "peers", type_="foreignkey", schema=schema
+            "fk_peers_workspace_name_workspaces",
+            "peers",
+            type_="foreignkey",
+            schema=schema,
         )
 
     # Drop new unique constraint and index
@@ -1499,11 +1517,13 @@ def restore_workspaces_table(schema: str, inspector) -> None:
 
     # Drop current primary key and rename columns
     if primary_constraint_exists("workspaces", "pk_workspaces", inspector):
-        op.drop_constraint("pk_workspaces", "workspaces", type_="primary", schema=schema)
-    
+        op.drop_constraint(
+            "pk_workspaces", "workspaces", type_="primary", schema=schema
+        )
+
     op.alter_column("workspaces", "id", new_column_name="public_id", schema=schema)
     op.alter_column("workspaces", "temp_id", new_column_name="id", schema=schema)
-    
+
     op.create_primary_key("pk_apps", "workspaces", ["id"], schema=schema)
 
     op.alter_column(
@@ -1511,9 +1531,11 @@ def restore_workspaces_table(schema: str, inspector) -> None:
         "id",
         nullable=False,
         server_default=sa.text(f"nextval('{schema}.workspaces_id_seq')"),
-        schema=schema
+        schema=schema,
     )
-    op.execute(f"ALTER SEQUENCE {schema}.workspaces_id_seq OWNED BY {schema}.workspaces.id")
+    op.execute(
+        f"ALTER SEQUENCE {schema}.workspaces_id_seq OWNED BY {schema}.workspaces.id"
+    )
 
     # Drop new columns
     op.drop_column("workspaces", "feature_flags", schema=schema)
@@ -1528,14 +1550,18 @@ def restore_workspaces_table(schema: str, inspector) -> None:
         "public_id_length", "workspaces", "length(public_id) = 21", schema=schema
     )
     op.create_check_constraint(
-        "public_id_format", "workspaces", "public_id ~ '^[A-Za-z0-9_-]+$'", schema=schema
+        "public_id_format",
+        "workspaces",
+        "public_id ~ '^[A-Za-z0-9_-]+$'",
+        schema=schema,
     )
+
 
 def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> None:
     """Restore queue and active_queue_sessions tables to pre-peer paradigm state."""
-    
+
     connection = op.get_bind()
-    
+
     # Create reverse mapping from session.public_id (text) back to session.id (BigInteger)
     # At this point in downgrade, sessions table still has both id (BigInteger) and public_id (text)
     session_id_reverse_mapping = {}
@@ -1543,10 +1569,10 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
         sessions_mapping = connection.execute(
             sa.text(f"SELECT id, public_id FROM {schema}.sessions")
         ).fetchall()
-        
+
         for big_int_id, text_id in sessions_mapping:
             session_id_reverse_mapping[text_id] = big_int_id
-    
+
     # Update queue table
     if table_exists("queue", inspector) and session_id_reverse_mapping:
         # Get current session_id values in queue table (they are text now)
@@ -1555,7 +1581,7 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
                 f"SELECT DISTINCT session_id FROM {schema}.queue WHERE session_id IS NOT NULL"
             )
         ).fetchall()
-        
+
         # Convert session_id values back to BigInteger
         for (session_id,) in queue_session_ids:
             if session_id in session_id_reverse_mapping:
@@ -1566,10 +1592,16 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
                     ),
                     {"old_id": str(old_id), "new_id": str(session_id)},
                 )
-        
+
         # Change column type back to BigInteger
-        op.alter_column("queue", "session_id", type_=sa.BigInteger(), existing_type=sa.Text(), postgresql_using="session_id::bigint")
-    
+        op.alter_column(
+            "queue",
+            "session_id",
+            type_=sa.BigInteger(),
+            existing_type=sa.Text(),
+            postgresql_using="session_id::bigint",
+        )
+
     # Update active_queue_sessions table
     if table_exists("active_queue_sessions", inspector) and session_id_reverse_mapping:
         # Get current session_id values in active_queue_sessions table (they are text now)
@@ -1578,7 +1610,7 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
                 f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
             )
         ).fetchall()
-        
+
         # Convert session_id values back to BigInteger
         for (session_id,) in active_queue_session_ids:
             if session_id in session_id_reverse_mapping:
@@ -1589,30 +1621,37 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
                     ),
                     {"old_id": str(old_id), "new_id": str(session_id)},
                 )
-        
+
         # Change column type back to BigInteger
-        op.alter_column("active_queue_sessions", "session_id", type_=sa.BigInteger(), existing_type=sa.Text(), postgresql_using="session_id::bigint")
-    
+        op.alter_column(
+            "active_queue_sessions",
+            "session_id",
+            type_=sa.BigInteger(),
+            existing_type=sa.Text(),
+            postgresql_using="session_id::bigint",
+        )
+
     # Restore foreign key constraints
     if table_exists("queue", inspector):
         op.create_foreign_key(
             "fk_queue_session_id_sessions",
             "queue",
-            "sessions", 
+            "sessions",
             ["session_id"],
             ["id"],
             referent_schema=schema,
         )
-    
+
     if table_exists("active_queue_sessions", inspector):
         op.create_foreign_key(
             "fk_active_queue_sessions_session_id_sessions",
             "active_queue_sessions",
             "sessions",
-            ["session_id"], 
+            ["session_id"],
             ["id"],
             referent_schema=schema,
         )
+
 
 def restore_table_names(schema: str, inspector) -> None:
     """Restore table names: workspaces->apps and peers->users."""
@@ -1620,6 +1659,7 @@ def restore_table_names(schema: str, inspector) -> None:
         op.rename_table("workspaces", "apps", schema=schema)
     if inspector.has_table("peers", schema=schema):
         op.rename_table("peers", "users", schema=schema)
+
 
 def restore_foreign_keys(schema: str) -> None:
     op.create_foreign_key(
@@ -1637,7 +1677,7 @@ def restore_foreign_keys(schema: str) -> None:
         "apps",
         ["app_id"],
         ["public_id"],
-        referent_schema=schema
+        referent_schema=schema,
     )
     op.create_foreign_key(
         "fk_collections_user_id_users",
@@ -1671,7 +1711,7 @@ def restore_foreign_keys(schema: str) -> None:
         ["public_id"],
         referent_schema=schema,
     )
-    op.create_foreign_key( 
+    op.create_foreign_key(
         "fk_sessions_app_id_apps",
         "sessions",
         "apps",

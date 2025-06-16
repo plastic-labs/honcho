@@ -66,6 +66,7 @@ session_peers_table = Table(
         nullable=False,
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
+    Column("feature_flags", JSONB, default={}),
     # Composite foreign key constraint for sessions
     ForeignKeyConstraint(
         ["session_name", "workspace_name"],

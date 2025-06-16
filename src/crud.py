@@ -435,11 +435,15 @@ async def get_or_create_session(
             await db.flush()
 
         # Get or create peers
-        peer_names: set[str] = session.peer_names or set()
+        peer_names: set[tuple[str, schemas.SessionPeerConfig]] = (
+            session.peer_names or set()
+        )
         await get_or_create_peers(
             db,
             workspace_name=workspace_name,
-            peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
+            peers=[
+                schemas.PeerCreate(name=peer_name) for peer_name, _config in peer_names
+            ],
         )
 
         # Add all peers to session
@@ -712,7 +716,7 @@ async def set_peers_for_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: set[str],
+    peer_names: set[tuple[str, schemas.SessionPeerConfig]],
 ) -> list[models.SessionPeer]:
     """
     Set peers for a session, overwriting any existing peers.
@@ -754,7 +758,7 @@ async def set_peers_for_session(
     await get_or_create_peers(
         db,
         workspace_name=workspace_name,
-        peers=[schemas.PeerCreate(name=peer_name) for peer_name in peer_names],
+        peers=[schemas.PeerCreate(name=peer_name) for peer_name, _config in peer_names],
     )
 
     # Add new peers to session
@@ -770,7 +774,7 @@ async def _add_peers_to_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_names: set[str],
+    peer_names: set[tuple[str, schemas.SessionPeerConfig]],
 ) -> list[models.SessionPeer]:
     """
     Add multiple peers to an existing session. If a peer already exists in the session,
@@ -816,6 +820,89 @@ async def _add_peers_to_session(
     )
     result = await db.execute(select_stmt)
     return list(result.scalars().all())
+
+
+async def get_peer_config(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_id: str,
+) -> schemas.SessionPeerConfig:
+    """
+    Get the configuration for a peer in a session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_id: Name of the peer
+
+    Returns:
+        Configuration for the peer
+
+    Raises:
+        ResourceNotFoundException: If the session or peer does not exist
+    """
+    # Get row from session_peer table
+    stmt = select(models.SessionPeer).where(
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.peer_name == peer_id,
+    )
+    result = await db.execute(stmt)
+    session_peer = result.scalar_one_or_none()
+
+    if session_peer is None:
+        raise ResourceNotFoundException(
+            f"Session peer {peer_id} not found in session {session_name} in workspace {workspace_name}"
+        )
+
+    return schemas.SessionPeerConfig(**session_peer.feature_flags)
+
+
+async def set_peer_config(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_id: str,
+    config: schemas.SessionPeerConfig,
+) -> None:
+    """
+    Set the configuration for a peer in a session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        peer_id: Name of the peer
+        config: Configuration for the peer
+
+    Returns:
+        True if the peer config was set successfully
+
+    Raises:
+        ResourceNotFoundException: If the session or peer does not exist
+    """
+    # Get row from session_peer table
+    stmt = select(models.SessionPeer).where(
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.peer_name == peer_id,
+    )
+    result = await db.execute(stmt)
+    session_peer = result.scalar_one_or_none()
+
+    if session_peer is None:
+        raise ResourceNotFoundException(
+            f"Session peer {peer_id} not found in session {session_name} in workspace {workspace_name}"
+        )
+
+    # Update peer config
+    session_peer.feature_flags["observe_others"] = config.observe_others
+    session_peer.feature_flags["observe_me"] = config.observe_me
+
+    await db.commit()
+    return
 
 
 async def search(
@@ -885,7 +972,9 @@ async def create_messages(
     """
     try:
         # Get or create session with peers in messages list
-        peers = set([message.peer_name for message in messages])
+        peers = set(
+            [(message.peer_name, schemas.SessionPeerConfig()) for message in messages]
+        )
         await get_or_create_session(
             db,
             session=schemas.SessionCreate(
