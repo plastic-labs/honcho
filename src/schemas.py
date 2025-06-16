@@ -1,5 +1,5 @@
 import datetime
-from typing import Annotated
+from typing import Annotated, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -148,6 +148,13 @@ class DocumentCreate(DocumentBase):
 
 
 class DialecticOptions(BaseModel):
+    session_id: Optional[str] = Field(
+        None, description="ID of the session to scope the representation to"
+    )
+    target: Optional[str] = Field(
+        None,
+        description="Optional peer to get the representation for, from the perspective of this peer",
+    )
     queries: str | list[str]
     stream: bool = False
 
@@ -174,3 +181,13 @@ class MessageBatchCreate(BaseModel):
     """Schema for batch message creation with a max of 100 messages"""
 
     messages: list[MessageCreate] = Field(..., min_length=1, max_length=100)
+
+
+class PeerRepresentationGet(BaseModel):
+    session_id: str = Field(
+        ..., description="Get the working representation within this session"
+    )
+    target: Optional[str] = Field(
+        None,
+        description="Optional peer ID to get the representation for, from the perspective of this peer",
+    )

@@ -165,16 +165,12 @@ async def get_sessions_for_peer(
 async def chat(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    session_id: Optional[str] = Query(
-        None, description="ID of the session to chat with"
-    ),
-    target: Optional[str] = Query(None, description="ID of the target peer"),
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
 ):
     return schemas.DialecticResponse(
-        content=f"Hello, {peer_id}! You are chatting with {target} in {session_id} in workspace {workspace_id} with options {options}",
+        content=f"Hello, {peer_id}! You are chatting with {options.target} in {options.session_id} in workspace {workspace_id} with options {options}",
     )
 
 
@@ -277,15 +273,18 @@ async def get_messages_for_peer(
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
 )
-async def get_peer_representation(
+async def get_working_representation(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    session_id: Optional[str] = Query(
-        None, description="ID of the session to scope the representation to"
+    options: schemas.PeerRepresentationGet = Body(
+        ..., description="Options for getting the peer representation"
     ),
     db=db,
 ):
-    """Get a peer's working representation, optionally scoped to a session"""
+    """Get a peer's working representation for a session.
+
+    If peer_id is provided in body, the representation is of that peer, from our perspective.
+    """
 
     stub = {
         "final_observations": {
