@@ -250,7 +250,7 @@ async def clone_session(
 async def add_peers_to_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    peers: list[tuple[str, schemas.SessionPeerConfig]] = Body(
+    peers: dict[str, schemas.SessionPeerConfig] = Body(
         ..., description="List of peer IDs to add to the session"
     ),
     db=db,
@@ -262,7 +262,7 @@ async def add_peers_to_session(
             db,
             session=schemas.SessionCreate(
                 name=session_name,
-                peer_names=set(peers),
+                peer_names=peers,
             ),
             workspace_name=workspace_name,
         )
@@ -283,7 +283,7 @@ async def add_peers_to_session(
 async def set_session_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    peers: list[tuple[str, schemas.SessionPeerConfig]] = Body(
+    peers: dict[str, schemas.SessionPeerConfig] = Body(
         ..., description="List of peer IDs to set for the session"
     ),
     db=db,
@@ -295,7 +295,7 @@ async def set_session_peers(
             db,
             workspace_name=workspace_name,
             session_name=session_name,
-            peer_names=set(peers),
+            peer_names=peers,
         )
         # Get the session to return
         session = await crud.get_or_create_session(

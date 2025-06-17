@@ -19,7 +19,7 @@ def test_get_or_create_session(client, sample_data):
     session_id = str(generate_nanoid())
     response2 = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert response2.status_code == 200
     data2 = response2.json()
@@ -29,7 +29,7 @@ def test_get_or_create_session(client, sample_data):
     # Test getting the same session again (should return the same session)
     response3 = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     assert response3.status_code == 200
     data3 = response3.json()
@@ -44,7 +44,7 @@ def test_create_session_with_metadata(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "metadata": {"session_key": "session_value"},
         },
     )
@@ -65,7 +65,7 @@ def test_create_session_with_feature_flags(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "feature_flags": feature_flags,
         },
     )
@@ -86,7 +86,7 @@ def test_create_session_with_all_optional_params(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "metadata": metadata,
             "feature_flags": feature_flags,
         },
@@ -106,7 +106,7 @@ def test_get_sessions(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "metadata": {"test_key": "test_value"},
         },
     )
@@ -136,11 +136,11 @@ def test_get_sessions_with_reverse(client, sample_data):
 
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session1_id, "peer_names": [test_peer.name]},
+        json={"id": session1_id, "peer_names": {test_peer.name: {}}},
     )
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session2_id, "peer_names": [test_peer.name]},
+        json={"id": session2_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Test normal order
@@ -170,7 +170,7 @@ def test_get_sessions_with_is_active_filter(client, sample_data):
     session_id = str(generate_nanoid())
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
     client.delete(f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}")
 
@@ -207,7 +207,7 @@ def test_empty_update_session(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
         },
     )
     assert response.status_code == 200
@@ -227,7 +227,7 @@ def test_update_delete_metadata(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "metadata": {"default": "value"},
         },
     )
@@ -250,7 +250,7 @@ def test_update_session(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
         },
     )
     assert response.status_code == 200
@@ -272,7 +272,7 @@ def test_update_session_with_feature_flags(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Update with feature flags
@@ -294,7 +294,7 @@ def test_update_session_with_all_optional_params(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Update with all params
@@ -320,7 +320,7 @@ def test_update_session_with_null_feature_flags(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "feature_flags": {"temp": "value"},
         },
     )
@@ -343,7 +343,7 @@ def test_delete_session(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
         },
     )
     assert response.status_code == 200
@@ -373,7 +373,7 @@ def test_clone_session(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
             "metadata": {"test": "key"},
         },
     )
@@ -432,7 +432,7 @@ def test_clone_session_with_cutoff(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Create messages
@@ -475,7 +475,7 @@ def test_add_peers_to_session(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
         },
     )
     assert response.status_code == 200
@@ -483,7 +483,7 @@ def test_add_peers_to_session(client, sample_data):
     # Add another peer to the session
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
-        json=[peer2_name],
+        json={peer2_name: {}},
     )
     assert response.status_code == 200
 
@@ -504,7 +504,7 @@ def test_get_session_peers(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name, peer2_name],
+            "peer_names": {test_peer.name: {}, peer2_name: {}},
         },
     )
     assert response.status_code == 200
@@ -538,7 +538,7 @@ def test_set_session_peers(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name],
+            "peer_names": {test_peer.name: {}},
         },
     )
     assert response.status_code == 200
@@ -546,7 +546,7 @@ def test_set_session_peers(client, sample_data):
     # Set peers for the session (should replace existing peers)
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
-        json=[peer2_name],
+        json={peer2_name: {}},
     )
     assert response.status_code == 200
 
@@ -577,7 +577,7 @@ def test_remove_peers_from_session(client, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
-            "peer_names": [test_peer.name, peer2_name],
+            "peer_names": {test_peer.name: {}, peer2_name: {}},
         },
     )
     assert response.status_code == 200
@@ -609,7 +609,7 @@ def test_get_session_context(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Add some messages to have context
@@ -646,7 +646,7 @@ def test_get_session_context_with_summary(client, sample_data):
     # Create session with messages
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Get context with summary
@@ -668,7 +668,7 @@ def test_get_session_context_with_tokens(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Get context with token limit
@@ -689,7 +689,7 @@ def test_get_session_context_with_all_params(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Get context with all parameters
@@ -711,7 +711,7 @@ def test_search_session(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Add messages to search through
@@ -749,7 +749,7 @@ def test_search_session_empty_query(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Search with empty query

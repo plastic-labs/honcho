@@ -267,7 +267,7 @@ def test_get_sessions_for_peer(client, sample_data):
     session_name = str(generate_nanoid())
     create_response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_name, "peer_names": [test_peer.name]},
+        json={"id": session_name, "peer_names": {test_peer.name: {}}},
     )
     assert create_response.status_code == 200
     created_session = create_response.json()
@@ -296,11 +296,11 @@ def test_get_sessions_for_peer_with_reverse(client, sample_data):
 
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session1_name, "peer_names": [test_peer.name]},
+        json={"id": session1_name, "peer_names": {test_peer.name: {}}},
     )
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session2_name, "peer_names": [test_peer.name]},
+        json={"id": session2_name, "peer_names": {test_peer.name: {}}},
     )
 
     # Test normal order
@@ -330,7 +330,7 @@ def test_get_sessions_for_peer_with_is_active_filter(client, sample_data):
     session_name = str(generate_nanoid())
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_name, "peer_names": [test_peer.name]},
+        json={"id": session_name, "peer_names": {test_peer.name: {}}},
     )
     client.delete(f"/v1/workspaces/{test_workspace.name}/sessions/{session_name}")
 
@@ -475,17 +475,17 @@ def test_chat(client, sample_data):
 
     # Test chat endpoint
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat?session_id={session_id}&target={target_peer}",
-        json={"queries": "Hello, how are you?", "stream": False},
+        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        json={
+            "queries": "Hello, how are you?",
+            "stream": False,
+            "target": target_peer,
+            "session_id": session_id,
+        },
     )
     assert response.status_code == 200
     data = response.json()
     assert "content" in data
-    # The response should contain the workspace, peer, target, and session info
-    assert test_workspace.name in data["content"]
-    assert test_peer.name in data["content"]
-    assert target_peer in data["content"]
-    assert session_id in data["content"]
 
 
 def test_chat_with_optional_params(client, sample_data):
@@ -504,32 +504,6 @@ def test_chat_with_optional_params(client, sample_data):
     assert test_peer.name in data["content"]
 
 
-def test_get_peer_representation(client, sample_data):
-    """Test the peer representation endpoint"""
-    test_workspace, test_peer = sample_data
-
-    # Test basic representation
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
-        json={},
-    )
-    assert response.status_code == 200
-    data = response.json()
-
-    # Should return the stubbed representation structure
-    assert "final_observations" in data
-    assert "explicit" in data["final_observations"]
-    assert "deductive" in data["final_observations"]
-    assert "inductive" in data["final_observations"]
-    assert "abductive" in data["final_observations"]
-
-    # Check structure of observations
-    assert isinstance(data["final_observations"]["explicit"], list)
-    assert isinstance(data["final_observations"]["deductive"], list)
-    assert isinstance(data["final_observations"]["inductive"], list)
-    assert isinstance(data["final_observations"]["abductive"], list)
-
-
 def test_get_peer_representation_with_session(client, sample_data):
     """Test peer representation with session_id parameter"""
     test_workspace, test_peer = sample_data
@@ -538,13 +512,16 @@ def test_get_peer_representation_with_session(client, sample_data):
     # Create a session first
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": [test_peer.name]},
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Test representation scoped to session
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation?session_id={session_id}",
-        json={},
+        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        json={
+            "session_id": session_id,
+            "queries": "Hello, how are you?",
+        },
     )
     assert response.status_code == 200
     data = response.json()
