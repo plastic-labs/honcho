@@ -203,7 +203,7 @@ def test_update_peer_with_auth(auth_client, sample_data):
     # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
+            f"Bearer {create_jwt(JWTParams(p=test_peer.name, w=test_workspace.name))}"
         )
 
         response = auth_client.put(

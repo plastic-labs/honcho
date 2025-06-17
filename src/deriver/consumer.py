@@ -3,6 +3,7 @@ import os
 
 import sentry_sdk
 from langfuse.decorators import observe
+from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,62 +15,73 @@ from .tom.long_term import extract_facts_long_term
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
-# Add a handler with DEBUG level for this specific logger
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    # Prevent propagation to avoid duplicate messages if root logger also shows DEBUG
-    logger.propagate = False
-
-
 console = Console(markup=False)
 
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
 
 
+class PayloadSchema(BaseModel):
+    """
+    Schema for validating payload data in process_item function.
+    Ensures all required fields are present with correct types and prevents injection risks.
+    """
+
+    content: str
+    workspace_name: str
+    peer_name: str
+    session_name: str | None
+    message_id: int
+    task_type: str
+
+    class Config:
+        # Forbid extra fields to prevent injection of unexpected data
+        extra = "forbid"
+
+
 async def process_item(db: AsyncSession, payload: dict):
+    # Validate payload structure and types before processing
+    try:
+        validated_payload = PayloadSchema(**payload)
+    except ValidationError as e:
+        logger.error("Invalid payload received: %s. Payload: %s", str(e), payload)
+        raise ValueError(f"Invalid payload structure: {str(e)}") from e
+
     logger.debug(
         "process_item received payload for message %s in session %s",
-        payload["message_id"],
-        payload["session_name"],
+        validated_payload.message_id,
+        validated_payload.session_name,
     )
-    # TODO: validate these strings and whatnot
+
     processing_args = [
-        payload["content"],
-        payload["workspace_name"],
-        payload["peer_name"],
-        payload["session_name"],
-        payload["message_id"],
+        validated_payload.content,
+        validated_payload.workspace_name,
+        validated_payload.peer_name,
+        validated_payload.session_name,
+        validated_payload.message_id,
         db,
     ]
-    if payload["task_type"] == "representation":
+    if validated_payload.task_type == "representation":
         logger.debug(
             "Processing message %s in %s",
-            payload["message_id"],
-            payload["session_name"],
+            validated_payload.message_id,
+            validated_payload.session_name,
         )
         await process_message(*processing_args)
         logger.debug(
             "Finished processing message %s in %s %s",
-            payload["message_id"],
-            "session" if payload["session_name"] else "peer",
-            payload["session_name"]
-            if payload["session_name"]
-            else payload["peer_name"],
+            validated_payload.message_id,
+            "session" if validated_payload.session_name else "peer",
+            validated_payload.session_name
+            if validated_payload.session_name
+            else validated_payload.peer_name,
         )
     await summarize_if_needed(
         db,
-        payload["workspace_name"],
-        payload["session_name"],
-        payload["peer_name"],
-        payload["message_id"],
+        validated_payload.workspace_name,
+        validated_payload.session_name,
+        validated_payload.peer_name,
+        validated_payload.message_id,
     )
     return
 

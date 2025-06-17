@@ -185,10 +185,14 @@ async def auth(
 
     # For session level access
     if session_name and jwt_params.s == session_name:
+        if workspace_name and jwt_params.w != workspace_name:
+            raise AuthenticationException("JWT not permissioned for this resource")
         return jwt_params
 
     # For peer level access
     if peer_name and jwt_params.p == peer_name:
+        if workspace_name and jwt_params.w != workspace_name:
+            raise AuthenticationException("JWT not permissioned for this resource")
         return jwt_params
 
     # For workspace level access - can access all peers/sessions under this workspace

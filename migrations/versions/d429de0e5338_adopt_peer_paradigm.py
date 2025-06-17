@@ -819,7 +819,6 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
 
     connection = op.get_bind()
 
-    # TODO: add downgrade for this (and re-add FK?)
     # Get the mapping of old session.id (integer) to new session.id (text, which is public_id)
     # At this point, sessions table still has both id (integer) and public_id (text) columns
     session_id_mapping = {}
@@ -949,7 +948,7 @@ def _count_tokens(text: str) -> int:
 
 
 def backfill_token_counts(schema: str) -> None:
-    """Backfill token counts for existing messages."""
+    """Backfill token counts for existing messages using batch updates."""
     connection = op.get_bind()
 
     # Get all messages in batches to handle large datasets
@@ -968,14 +967,26 @@ def backfill_token_counts(schema: str) -> None:
         if not messages:
             break
 
-        # Update each message with calculated token count
+        # Calculate token counts for all messages in the batch
+        batch_updates = []
         for message_id, content in messages:
             token_count = _count_tokens(content)
+            batch_updates.append({"id": message_id, "token_count": token_count})
+
+        # Perform bulk update using VALUES clause for better performance
+        if batch_updates:
+            values_clause = ", ".join(
+                f"('{update['id']}', {update['token_count']})"
+                for update in batch_updates
+            )
+
             connection.execute(
-                text(
-                    f"UPDATE {schema}.messages SET token_count = :token_count WHERE id = :id"
-                ),
-                {"token_count": token_count, "id": message_id},
+                text(f"""
+                    UPDATE {schema}.messages 
+                    SET token_count = batch_data.token_count::integer
+                    FROM (VALUES {values_clause}) AS batch_data(id, token_count)
+                    WHERE messages.id = batch_data.id
+                """)
             )
 
         offset += batch_size
@@ -1350,7 +1361,6 @@ def restore_messages_table(schema: str, inspector) -> None:
         )
         op.alter_column("messages", "app_id", nullable=False, schema=schema)
 
-    # TODO: Review this
     if not column_exists("messages", "is_user", inspector):
         op.add_column(
             "messages",

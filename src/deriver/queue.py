@@ -182,9 +182,7 @@ class QueueManager:
                 target_name_expr,
                 task_type_expr,
             )
-            .limit(
-                1
-            )  # Process multiple work units in parallel -- XX this was 1 before -- why?
+            .limit(self.workers)  # Process multiple work units in parallel
         )
 
         rows = result.fetchall()

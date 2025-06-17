@@ -3,13 +3,18 @@ from typing import Annotated, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
+
 
 class WorkspaceBase(BaseModel):
     pass
 
 
 class WorkspaceCreate(WorkspaceBase):
-    name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
+    name: Annotated[
+        str,
+        Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+    ]
     metadata: dict = {}
     feature_flags: dict = {}
 
@@ -39,7 +44,10 @@ class PeerBase(BaseModel):
 
 
 class PeerCreate(PeerBase):
-    name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
+    name: Annotated[
+        str,
+        Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+    ]
     metadata: dict = {}
     feature_flags: dict = {}
 
@@ -73,6 +81,7 @@ class PeerRepresentationGet(BaseModel):
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
     )
+
 
 class PeerConfig(BaseModel):
     observe_me: bool = Field(
@@ -134,7 +143,10 @@ class SessionPeerConfig(BaseModel):
 
 
 class SessionCreate(SessionBase):
-    name: Annotated[str, Field(alias="id", min_length=1, max_length=100)]
+    name: Annotated[
+        str,
+        Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
+    ]
     metadata: dict = {}
     peer_names: dict[str, SessionPeerConfig] | None = None
     feature_flags: dict = {}

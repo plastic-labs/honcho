@@ -77,9 +77,10 @@ async def get_tom_inference_conversational(
             messages=messages,
         )
         # skip blocks that are not text and return the first text block
-        return next(
-            block.text for block in message.content if isinstance(block, TextBlock)
-        )
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                return block.text
+        raise RuntimeError("No text block returned by LLM")
 
 
 @ai_track("User Representation")
@@ -150,6 +151,7 @@ async def get_user_representation_conversational(
             messages=messages,
         )
         # skip blocks that are not text and return the first text block
-        return next(
-            block.text for block in message.content if isinstance(block, TextBlock)
-        )
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                return block.text
+        raise RuntimeError("No text block returned by LLM")

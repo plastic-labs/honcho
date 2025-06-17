@@ -194,7 +194,7 @@ async def get_or_create_peers(
         for p in peers_to_create
     ]
     db.add_all(new_peers)
-    await db.commit()
+    await db.flush()
 
     # Return combined list of existing and new peers
     return existing_peers + new_peers
@@ -812,12 +812,15 @@ async def set_peers_for_session(
     )
 
     # Add new peers to session
-    return await _add_peers_to_session(
+    peers = await _add_peers_to_session(
         db,
         workspace_name=workspace_name,
         session_name=session_name,
         peer_names=peer_names,
     )
+
+    await db.commit()
+    return peers
 
 
 async def _add_peers_to_session(
@@ -872,7 +875,6 @@ async def _add_peers_to_session(
         },
     )
     await db.execute(stmt)
-    await db.commit()
 
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
@@ -1178,30 +1180,22 @@ async def get_messages(
     elif token_limit is not None:
         # Apply token limit logic
         # Create a subquery that calculates running sum of tokens for most recent messages
-        token_subquery = select(
-            models.Message.id,
-            models.Message.workspace_name,
-            models.Message.session_name,
-            models.Message.public_id,
-            models.Message.content,
-            models.Message.h_metadata,
-            models.Message.token_count,
-            models.Message.created_at,
-            models.Message.peer_name,
-            func.sum(models.Message.token_count)
-            .over(order_by=models.Message.id.desc())
-            .label("running_token_sum"),
-        ).where(*base_conditions)
-
-        token_subquery = token_subquery.subquery()
-
-        # Now select messages where running sum doesn't exceed token_limit
-        stmt = select(models.Message).where(
-            models.Message.id.in_(
-                select(token_subquery.c.id).where(
-                    token_subquery.c.running_token_sum <= token_limit
-                )
+        token_subquery = (
+            select(
+                models.Message.id,
+                func.sum(models.Message.token_count)
+                .over(order_by=models.Message.id.desc())
+                .label("running_token_sum"),
             )
+            .where(*base_conditions)
+            .subquery()
+        )
+
+        # Select Message objects where running sum doesn't exceed token_limit
+        stmt = (
+            select(models.Message)
+            .join(token_subquery, models.Message.id == token_subquery.c.id)
+            .where(token_subquery.c.running_token_sum <= token_limit)
         )
 
         # Apply final ordering based on reverse parameter

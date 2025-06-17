@@ -34,14 +34,14 @@ async def get_or_create_session(
     """
     Get a specific session in a workspace.
 
-    If peer_id is provided as a query parameter, it verifies the peer is in the session.
-    Otherwise, it uses the peer_id from the JWT token for verification.
+    If session_id is provided as a query parameter, it verifies the session is in the workspace.
+    Otherwise, it uses the session_id from the JWT token for verification.
     """
     # Verify JWT has access to the requested resource
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
-    # Use peer_id from JWT if not provided in query
+    # Use session from JWT if not provided in query
     if session.name:
         if (
             not jwt_params.ad
@@ -113,7 +113,6 @@ async def update_session(
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
     ),
-    peer_id: Optional[str] = Query(None, description="Peer ID to verify access"),
     db=db,
 ):
     """Update the metadata of a Session"""
@@ -149,65 +148,6 @@ async def delete_session(
     except ValueError as e:
         logger.warning(f"Failed to delete session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
-
-
-# TODO: Update chat endpoint to work with new workspace/peer paradigm
-# This endpoint needs significant rework for multi-peer sessions
-# @router.post(
-#     "/{session_id}/chat",
-#     response_model=schemas.DialecticResponse,
-#     responses={
-#         200: {
-#             "description": "Response to a question informed by Honcho's User Representation",
-#             "content": {"text/event-stream": {}},
-#         },
-#     },
-#     dependencies=[
-#         Depends(
-#             require_auth(app_id="workspace_id", session_id="session_id")
-#         )
-#     ],
-# )
-# async def chat(
-#     workspace_id: str = Path(..., description="ID of the workspace"),
-#     session_id: str = Path(..., description="ID of the session"),
-#     peer_id: str = Query(..., description="ID of the peer making the request"),
-#     options: schemas.DialecticOptions = Body(
-#         ..., description="Dialectic Endpoint Parameters"
-#     ),
-# ):
-
-#     """Chat with the Dialectic API"""
-#     # TODO: Update agent.chat to work with workspace_id/peer_id instead of app_id/user_id
-#     if not options.stream:
-#         return await agent.chat(
-#             app_id=workspace_id,  # Temporary mapping
-#             user_id=peer_id,      # Temporary mapping
-#             session_id=session_id,
-#             queries=options.queries,
-#         )
-#     else:
-
-#         async def parse_stream():
-#             try:
-#                 stream = await agent.chat(
-#                     app_id=workspace_id,  # Temporary mapping
-#                     user_id=peer_id,      # Temporary mapping
-#                     session_id=session_id,
-#                     queries=options.queries,
-#                     stream=True,
-#                 )
-#                 if type(stream) is AsyncMessageStreamManager:
-#                     async with stream as stream_manager:
-#                         async for text in stream_manager.text_stream:
-#                             yield text
-#             except Exception as e:
-#                 logger.error(f"Error in stream: {str(e)}")
-#                 raise HTTPException(status_code=500, detail=str(e)) from e
-
-#         return StreamingResponse(
-#             content=parse_stream(), media_type="text/event-stream", status_code=200
-#         )
 
 
 @router.get(

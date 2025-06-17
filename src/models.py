@@ -66,7 +66,7 @@ session_peers_table = Table(
         nullable=False,
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
-    Column("feature_flags", JSONB, default={}),
+    Column("feature_flags", JSONB, default=dict),
     Column(
         "joined_at",
         DateTime(timezone=True),
@@ -99,8 +99,8 @@ class Workspace(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -113,14 +113,14 @@ class Peer(Base):
     __tablename__ = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
+    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship(
@@ -145,7 +145,7 @@ class Session(Base):
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -153,7 +153,7 @@ class Session(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default={})
+    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     peers = relationship(
         "Peer", secondary=session_peers_table, back_populates="sessions"
@@ -179,7 +179,7 @@ class Message(Base):
     )
     session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
     content: Mapped[str] = mapped_column(TEXT)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -231,7 +231,7 @@ class Collection(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
@@ -259,7 +259,7 @@ class Collection(Base):
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default={})
+    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
     content: Mapped[str] = mapped_column(TEXT)
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(

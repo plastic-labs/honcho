@@ -11,19 +11,6 @@ from .. import crud, models, schemas
 
 logger = logging.getLogger(__name__)
 
-# Add a handler with DEBUG level for this specific logger
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    # Prevent propagation to avoid duplicate messages if root logger also shows DEBUG
-    logger.propagate = False
-
 
 # TypedDict definitions for summary data
 class Summary(TypedDict):

@@ -508,6 +508,8 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
                 db, workspace_name, session_name, message_id
             )
             if message:
+                if message.h_metadata is None:
+                    message.h_metadata = {}
                 message.h_metadata[USER_REPRESENTATION_METADATA_KEY] = representation
                 await db.commit()
                 save_time = asyncio.get_event_loop().time() - save_start

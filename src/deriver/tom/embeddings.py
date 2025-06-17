@@ -31,7 +31,7 @@ class CollectionEmbeddingStore:
                 # Create document with duplicate checking
                 try:
                     metadata = {}
-                    if message_id:
+                    if message_id is not None:
                         metadata["message_id"] = message_id
                     await crud.create_document(
                         db,
