@@ -976,8 +976,7 @@ def backfill_token_counts(schema: str) -> None:
         # Perform bulk update using VALUES clause for better performance
         if batch_updates:
             values_clause = ", ".join(
-                f"('{update['id']}', {update['token_count']})"
-                for update in batch_updates
+                f"({update['id']}, {update['token_count']})" for update in batch_updates
             )
 
             connection.execute(
