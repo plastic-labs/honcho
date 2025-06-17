@@ -96,11 +96,7 @@ async def process_user_message(
 
     # Get chat history and append current message
     logger.debug(f"Retrieving chat history for session: {session_id}")
-    (
-        short_history_text,
-        short_history_messages,
-        latest_short_summary,
-    ) = await history.get_summarized_history(
+    short_history_text = await history.get_summarized_history(
         db, session_id, summary_type=history.SummaryType.SHORT
     )
     chat_history_str = f"{short_history_text}\nhuman: {content}"

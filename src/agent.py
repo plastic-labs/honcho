@@ -176,7 +176,7 @@ async def chat(
         latest_message_id = latest_message.public_id if latest_message else None
         logger.debug(f"Latest user message ID: {latest_message_id}")
 
-        chat_history, _, _ = await history.get_summarized_history(
+        chat_history = await history.get_summarized_history(
             db_history, session_id, summary_type=history.SummaryType.SHORT
         )
         if not chat_history:

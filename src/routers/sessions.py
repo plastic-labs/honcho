@@ -9,6 +9,7 @@ from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
+from src.utils import history
 
 logger = logging.getLogger(__name__)
 
@@ -446,18 +447,65 @@ async def get_session_context(
     ),  # default to false
     db=db,
 ):
+    """
+    Produce a context object from the session. The caller provides a token limit which the entire context must fit into.
+    To do this, we allocate 40% of the token limit to the summary, and 60% to recent messages -- as many as can fit.
+    If the caller does not want a summary, we allocate all the tokens to recent messages.
+    The default token limit if not provided is 2048. (TODO: make this configurable)
+    """
+    token_limit = tokens or 2048
+    summary_tokens = int(token_limit * 0.4) if summary else 0
+    messages_tokens = token_limit - summary_tokens
+
+    # Get the messages to return verbatim
     messages_stmt = await crud.get_messages(
         workspace_name=workspace_id,
         session_name=session_id,
-        token_limit=tokens,
+        token_limit=messages_tokens,
     )
     result = await db.execute(messages_stmt)
     messages = list(result.scalars().all())
 
+    # Get the most recently created summary for the session
+    last_summary = await history.get_summary(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+    )
+
+    # Get messages between the last summary and the first message we'll return verbatim, if any
+    messages_before = await crud.get_messages_id_range(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+        start_id=last_summary["message_id"] if last_summary else 0,
+        end_id=messages[0].id,
+    )
+
+    # Make a summary if the user wants one
+    if summary_tokens > 0:
+        # Make a *new* summary if there are unsummarized messages between the last summary and the ones
+        # we'll return verbatim, or if the last summary is too many tokens -- otherwise, just use the last summary
+        if (
+            not last_summary
+            or len(messages_before) > 0
+            or last_summary["token_count"] > summary_tokens
+        ):
+            new_summary = await history.create_summary(
+                messages=messages_before,
+                max_tokens=summary_tokens,
+            )
+            summary_content = new_summary["content"]
+        else:
+            summary_content = last_summary["content"]
+            summary_tokens = last_summary["token_count"]
+    else:
+        summary_content = ""
+
     return schemas.SessionContext(
         name=session_id,
         messages=messages,
-        summary="TODO: give a summary" if summary else "",
+        summary=summary_content,
     )
 
 

@@ -392,6 +392,8 @@ async def get_or_create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
     workspace_name: str,
+    *,
+    create: bool = True,
 ) -> models.Session:
     """
     Get or create a session in a workspace with specified peers.
@@ -402,12 +404,15 @@ async def get_or_create_session(
         session: Session creation schema
         workspace_name: Name of the workspace
         peer_names: List of peer names to add to the session
+        create: Whether to create the session if it doesn't exist. If false,
+                this will raise a ResourceNotFoundException if the session
+                does not exist.
 
     Returns:
         The created session
 
     Raises:
-        ResourceNotFoundException: If any peer does not exist
+        ResourceNotFoundException: If the session does not exist and create is false
     """
     try:
         stmt = (
@@ -422,6 +427,11 @@ async def get_or_create_session(
 
         # Check if session already exists
         if honcho_session is None:
+            if not create:
+                raise ResourceNotFoundException(
+                    f"Session {session.name} not found in workspace {workspace_name}"
+                )
+
             # Create honcho session
 
             honcho_session = models.Session(
@@ -732,7 +742,7 @@ async def get_session_peer_feature_flags(
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.feature_flags.label("peer_feature_flags"),
-            models.SessionPeer.feature_flags.label("session_peer_feature_flags")
+            models.SessionPeer.feature_flags.label("session_peer_feature_flags"),
         )
         .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
         .where(models.SessionPeer.session_name == session_name)
@@ -1080,7 +1090,9 @@ async def create_messages_for_peer(
         ResourceNotFoundException: If the peer does not exist in the workspace
     """
     try:
-        await get_or_create_peer(db, workspace_name=workspace_name, peer=schemas.PeerCreate(name=peer_name))
+        await get_or_create_peer(
+            db, workspace_name=workspace_name, peer=schemas.PeerCreate(name=peer_name)
+        )
         # Create list of message objects (this will trigger the before_insert event)
         message_objects = [
             models.Message(
@@ -1199,6 +1211,39 @@ async def get_messages(
             stmt = stmt.order_by(models.Message.id.asc())
 
     return stmt
+
+
+async def get_messages_id_range(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    start_id: int = 0,
+    end_id: Optional[int] = None,
+) -> list[models.Message]:
+    """
+    Get messages from a session by primary key ID range.
+    If end_id is not provided, all messages after start_id will be returned.
+    If start_id is not provided, start will be beginning of session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        start_id: Primary key ID of the first message to return
+        end_id: Primary key ID of the last message to return
+
+    Returns:
+        List of messages
+    """
+    if end_id is not None and start_id >= end_id:
+        return []
+    stmt = select(models.Message).where(
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == session_name,
+        models.Message.id.between(start_id, end_id),
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def get_messages_for_peer(
