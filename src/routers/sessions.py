@@ -478,8 +478,9 @@ async def get_session_context(
         db,
         workspace_name=workspace_id,
         session_name=session_id,
+        peer_name=None,
         start_id=last_summary["message_id"] if last_summary else 0,
-        end_id=messages[0].id,
+        end_id=messages[0].id if messages else None,
     )
 
     # Make a summary if the user wants one

@@ -202,7 +202,11 @@ async def get_or_create_peers(
 
 
 async def get_or_create_peer(
-    db: AsyncSession, workspace_name: str, peer: schemas.PeerCreate
+    db: AsyncSession,
+    workspace_name: str,
+    peer: schemas.PeerCreate,
+    *,
+    create: bool = True,
 ) -> models.Peer:
     """
     Get an existing peer or create a new one if it doesn't exist.
@@ -231,6 +235,11 @@ async def get_or_create_peer(
         # Peer already exists
         logger.debug(f"Found existing peer: {peer.name} for workspace {workspace_name}")
         return existing_peer
+
+    if not create:
+        raise ResourceNotFoundException(
+            f"Peer {peer.name} not found in workspace {workspace_name}"
+        )
 
     # Peer doesn't exist, create a new one
     try:
@@ -1216,32 +1225,50 @@ async def get_messages(
 async def get_messages_id_range(
     db: AsyncSession,
     workspace_name: str,
-    session_name: str,
+    session_name: str | None,
+    peer_name: str | None,
     start_id: int = 0,
     end_id: Optional[int] = None,
 ) -> list[models.Message]:
     """
-    Get messages from a session by primary key ID range.
-    If end_id is not provided, all messages after start_id will be returned.
+    Get messages from a session or peer by primary key ID range.
+    If end_id is not provided, all messages after and including start_id will be returned.
     If start_id is not provided, start will be beginning of session.
+
+    Note: list is exclusive of the end_id message.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
+        peer_name: Name of the peer
         start_id: Primary key ID of the first message to return
-        end_id: Primary key ID of the last message to return
+        end_id: Primary key ID of the last message (exclusive)
 
     Returns:
         List of messages
+
+    Raises:
+        ValueError: If both session_name and peer_name are not provided
     """
-    if end_id is not None and start_id >= end_id:
+    if end_id is not None and (start_id >= end_id or end_id <= 1):
         return []
     stmt = select(models.Message).where(
         models.Message.workspace_name == workspace_name,
-        models.Message.session_name == session_name,
-        models.Message.id.between(start_id, end_id),
     )
+    if end_id:
+        stmt = stmt.where(models.Message.id.between(start_id, end_id - 1))
+    else:
+        stmt = stmt.where(models.Message.id >= start_id)
+
+    if session_name:
+        stmt = stmt.where(models.Message.session_name == session_name)
+    elif peer_name:
+        stmt = stmt.where(models.Message.peer_name == peer_name).where(
+            models.Message.session_name.is_(None)
+        )
+    else:
+        raise ValueError("Either session_name or peer_name must be provided")
     result = await db.execute(stmt)
     return list(result.scalars().all())
 

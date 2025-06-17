@@ -356,7 +356,6 @@ async def test_get_filtered_messages(client, db_session, sample_data):
     )
     assert response.status_code == 200
     data = response.json()
-    print(data)
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["content"] == "Test message 2"
@@ -507,8 +506,6 @@ async def test_update_message_empty_metadata(client, db_session, sample_data):
         json={"metadata": None},
     )
     assert response.status_code == 422
-    data = response.json()
-    print(data)
 
 
 @pytest.mark.asyncio

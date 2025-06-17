@@ -17,7 +17,7 @@ class CollectionEmbeddingStore:
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
-        message_id: str | None = None,
+        message_id: int | None = None,
     ) -> None:
         """Save facts to the collection.
 

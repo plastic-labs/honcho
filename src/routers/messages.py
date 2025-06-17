@@ -103,14 +103,10 @@ async def enqueue(payload: list[dict]):
             )
 
             # Check if deriver is disabled for this session
-            if (
+            deriver_disabled = (
                 session.h_metadata.get("deriver_disabled") is not None
                 and session.h_metadata.get("deriver_disabled") is not False
-            ):
-                logger.info(
-                    f"Deriver is disabled for session {session.name}, skipping enqueue"
-                )
-                return
+            )
 
             feature_flags_query = await crud.get_session_peer_feature_flags(
                 workspace_name=workspace_name, session_name=session_name
@@ -128,6 +124,23 @@ async def enqueue(payload: list[dict]):
             queue_records = []
 
             for message in payload:
+                if deriver_disabled:
+                    # still create a summary queue item for the session
+                    processed_payload = {
+                        k: str(v) if isinstance(v, str) else v
+                        for k, v in message.items()
+                    }
+                    processed_payload["sender_name"] = None
+                    processed_payload["target_name"] = None
+                    processed_payload["task_type"] = "summary"
+                    queue_records.append(
+                        {
+                            "payload": processed_payload,
+                            "session_id": session.id,
+                        }
+                    )
+                    continue
+
                 sender_name = message["peer_name"]
 
                 sender_session_peer_config = (
@@ -142,23 +155,6 @@ async def enqueue(payload: list[dict]):
                     if peers_with_feature_flags[sender_name][0]
                     else schemas.PeerConfig()
                 )
-
-                should_summarize = session.feature_flags.get("summarize", True)
-                if should_summarize:
-                    # Create summary queue item for this message
-                    processed_payload = {
-                        k: str(v) if isinstance(v, str) else v
-                        for k, v in message.items()
-                    }
-                    processed_payload["sender_name"] = None
-                    processed_payload["target_name"] = None
-                    processed_payload["task_type"] = "summary"
-                    queue_records.append(
-                        {
-                            "payload": processed_payload,
-                            "session_id": session.id,
-                        }
-                    )
 
                 observe_me = (
                     sender_session_peer_config.observe_me
@@ -215,14 +211,15 @@ async def enqueue(payload: list[dict]):
 
             logger.debug(f"Inserting {len(queue_records)} queue records")
 
-            # Use insert to maintain order
-            stmt = insert(QueueItem).returning(QueueItem)
-            await db_session.execute(stmt, queue_records)
-            await db_session.commit()
+            if len(queue_records) > 0:
+                # Use insert to maintain order
+                stmt = insert(QueueItem).returning(QueueItem)
+                await db_session.execute(stmt, queue_records)
+                await db_session.commit()
 
-            logger.info(
-                f"Successfully enqueued {len(payload)} messages with {len(queue_records)} total queue items"
-            )
+                logger.info(
+                    f"Successfully enqueued {len(payload)} messages with {len(queue_records)} total queue items"
+                )
 
         except Exception as e:
             logger.error(f"Failed to enqueue messages: {str(e)}", exc_info=True)
@@ -257,7 +254,7 @@ async def create_messages_for_session(
             {
                 "workspace_name": workspace_name,
                 "session_name": session_name,
-                "message_id": message.public_id,
+                "message_id": message.id,
                 "content": message.content,
                 "metadata": message.h_metadata,
                 "peer_name": message.peer_name,

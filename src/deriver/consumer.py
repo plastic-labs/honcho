@@ -14,6 +14,20 @@ from .tom.long_term import extract_facts_long_term
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
+# Add a handler with DEBUG level for this specific logger
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    # Prevent propagation to avoid duplicate messages if root logger also shows DEBUG
+    logger.propagate = False
+
+
 console = Console(markup=False)
 
 TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
@@ -26,6 +40,7 @@ async def process_item(db: AsyncSession, payload: dict):
         payload["message_id"],
         payload["session_name"],
     )
+    # TODO: validate these strings and whatnot
     processing_args = [
         payload["content"],
         payload["workspace_name"],
@@ -34,13 +49,27 @@ async def process_item(db: AsyncSession, payload: dict):
         payload["message_id"],
         db,
     ]
-    logger.debug("Processing message %s", payload["message_id"])
-    await process_message(*processing_args)
-    logger.debug("Finished processing message %s", payload["message_id"])
+    if payload["task_type"] == "representation":
+        logger.debug(
+            "Processing message %s in %s",
+            payload["message_id"],
+            payload["session_name"],
+        )
+        await process_message(*processing_args)
+        logger.debug(
+            "Finished processing message %s in %s %s",
+            payload["message_id"],
+            "session" if payload["session_name"] else "peer",
+            payload["session_name"]
+            if payload["session_name"]
+            else payload["peer_name"],
+        )
     await summarize_if_needed(
         db,
         payload["workspace_name"],
         payload["session_name"],
+        payload["peer_name"],
+        payload["message_id"],
     )
     return
 
@@ -51,8 +80,8 @@ async def process_message(
     content: str,
     workspace_name: str,
     peer_name: str,
-    session_name: str,
-    message_id: str,
+    session_name: str | None,
+    message_id: int,
     db: AsyncSession,
 ):
     """
@@ -61,14 +90,32 @@ async def process_message(
     """
     console.print(f"Processing User Message: {content}", style="orange1")
     process_start = os.times()[4]  # Get current CPU time
-    logger.debug(f"Starting fact extraction for user message {message_id}")
-
-    # Get chat history and append current message
-    logger.debug(f"Retrieving chat history for session {session_name}")
-    short_history_text = await history.get_summarized_history(
-        db, workspace_name, session_name, summary_type=history.SummaryType.SHORT
+    logger.debug(
+        "Starting fact extraction for user message %s in %s %s",
+        message_id,
+        "session" if session_name else "peer",
+        session_name if session_name else peer_name,
     )
-    chat_history_str = f"{short_history_text}\nhuman: {content}"
+
+    if session_name:
+        # Get chat history and append current message
+        logger.debug(
+            "Retrieving chat history for %s %s",
+            "session" if session_name else "peer",
+            session_name if session_name else peer_name,
+        )
+        short_history_text = await history.get_summarized_history(
+            db,
+            workspace_name,
+            session_name,
+            peer_name,
+            cutoff=message_id,
+            summary_type=history.SummaryType.SHORT,
+        )
+
+        chat_history_str = f"{short_history_text}\nuser: {content}"
+    else:
+        chat_history_str = f"user: {content}"
 
     # Extract facts from chat history
     logger.debug("Extracting facts from chat history")
@@ -119,10 +166,15 @@ async def process_message(
 async def summarize_if_needed(
     db: AsyncSession,
     workspace_name: str,
-    session_name: str,
+    session_name: str | None,
+    peer_name: str,
+    message_id: int,
 ):
+    if not session_name:
+        return
+
     summary_start = os.times()[4]
-    logger.debug("Checking if summaries should be created")
+    logger.debug("Checking if summaries should be created for session %s", session_name)
 
     # STEP 1: First check if we need a short summary (every 10 messages)
     (
@@ -130,7 +182,12 @@ async def summarize_if_needed(
         short_messages,
         _,
     ) = await history.should_create_summary(
-        db, workspace_name, session_name, summary_type=history.SummaryType.SHORT
+        db,
+        workspace_name,
+        session_name,
+        peer_name,
+        message_id,
+        summary_type=history.SummaryType.SHORT,
     )
 
     if should_create_short:
@@ -142,7 +199,12 @@ async def summarize_if_needed(
             long_messages,
             latest_long_summary,
         ) = await history.should_create_summary(
-            db, workspace_name, session_name, summary_type=history.SummaryType.LONG
+            db,
+            workspace_name,
+            session_name,
+            peer_name,
+            message_id,
+            summary_type=history.SummaryType.LONG,
         )
 
         # STEP 3: If we need a long summary, create it first before creating the short summary

@@ -11,6 +11,19 @@ from .. import crud, models, schemas
 
 logger = logging.getLogger(__name__)
 
+# Add a handler with DEBUG level for this specific logger
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    # Prevent propagation to avoid duplicate messages if root logger also shows DEBUG
+    logger.propagate = False
+
 
 # TypedDict definitions for summary data
 class Summary(TypedDict):
@@ -21,7 +34,7 @@ class Summary(TypedDict):
         content: The summary text.
         message_count: The number of messages covered by this summary.
         summary_type: The type of summary (short or long).
-        created_at: The timestamp of when the summary was created.
+        created_at: The timestamp of when the summary was created (ISO format string).
         message_id: The primary key ID of the message that triggered this summary.
         token_count: The number of tokens in the summary text.
     """
@@ -29,7 +42,7 @@ class Summary(TypedDict):
     content: str
     message_count: int
     summary_type: str
-    created_at: datetime.datetime
+    created_at: str
     message_id: int
     token_count: int
 
@@ -69,7 +82,7 @@ async def get_summary(
     summary_type: SummaryType = SummaryType.SHORT,
 ) -> Optional[Summary]:
     """
-    Get summary for a given session.
+    Get summary for a given session or peer.
 
     Args:
         db: Database session
@@ -188,8 +201,8 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
         return Summary(
             content=summary_text,
             message_count=len(messages),
-            summary_type=summary_type.name,
-            created_at=datetime.datetime.now(datetime.timezone.utc),
+            summary_type=summary_type.value,
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             message_id=messages[-1].id,
             # cheating: just use the max tokens instead of counting
             # tokens in response. in the future we can update client
@@ -201,12 +214,14 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
         # Fallback to a basic summary in case of error
         # Do not save this failed summary to the session metadata.
         return Summary(
-            content=f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}...",
+            content=f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+            if messages
+            else "No messages to summarize!",
             message_count=0,
-            summary_type=summary_type.name,
-            created_at=datetime.datetime.now(datetime.timezone.utc),
-            message_id=messages[-1].id,
-            token_count=0,
+            summary_type=summary_type.value,
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            message_id=messages[-1].id if messages else 0,
+            token_count=50,
         )
 
 
@@ -215,7 +230,7 @@ async def save_summary(
     summary: Summary,
     workspace_name: str,
     session_name: str,
-) -> models.Session:
+) -> None:
     """
     Save a summary as metadata on a session.
 
@@ -242,34 +257,41 @@ async def save_summary(
     existing_summaries = session.h_metadata.get("summaries", {})
     existing_summaries[label_value] = summary
 
-    # Update the session metadata
-    session.h_metadata.update({"summaries": existing_summaries})
+    # Update the object metadata - create new dict to ensure SQLAlchemy detects the change
+    updated_metadata = session.h_metadata.copy()
+    updated_metadata["summaries"] = existing_summaries
+    session.h_metadata = updated_metadata
 
     await db.commit()
 
     logger.info(
-        "Saved %s summary for session %s covering %s messages",
+        "Saved %s for session %s covering %s messages",
         summary["summary_type"],
         session_name,
         summary["message_count"],
     )
-    return session
 
 
 async def get_summarized_history(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
+    peer_name: str,
+    cutoff: int | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
 ) -> str:
     """
     Get a summarized version of the chat history by combining the latest summary
     with all messages since that summary.
 
+    Note: history is exclusive of the cutoff message.
+
     Args:
         db: Database session
         workspace_name: The workspace name
         session_name: The session name
+        peer_name: The peer name
+        cutoff: (Optional) message ID to cutoff at
         summary_type: Type of summary to get ("short" or "long")
 
     Returns:
@@ -277,7 +299,7 @@ async def get_summarized_history(
     """
     # Get messages since the latest summary and the summary itself
     messages, latest_summary = await get_latest_summary_and_messages_since(
-        db, workspace_name, session_name, summary_type
+        db, workspace_name, session_name, peer_name, cutoff, summary_type
     )
 
     # Format messages
@@ -295,22 +317,28 @@ async def get_latest_summary_and_messages_since(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
+    peer_name: str,
+    cutoff: int | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
 ) -> tuple[list[models.Message], Optional[Summary]]:
     """
-    Get all messages since the latest summary for a session.
+    Get all messages since the latest summary for a session or peer.
 
     This is a convenience method that combines:
-    1. Getting the latest summary for the session
+    1. Getting the latest summary for the session or peer
     2. Getting all messages since that summary
 
     Note that if the latest summary is not found, this will return all messages
     since the start of the session.
 
+    Note: history is exclusive of the cutoff message.
+
     Args:
         db: Database session
         workspace_name: The workspace name
         session_name: The session name
+        peer_name: The peer name
+        cutoff: (Optional) message ID to cutoff at
         summary_type: Type of summary to get ("short" or "long")
 
     Returns:
@@ -319,21 +347,23 @@ async def get_latest_summary_and_messages_since(
         - The latest summary data, or None if no summary exists
     """
     # Get the latest summary
-    summary = await get_summary(
-        db,
-        workspace_name=workspace_name,
-        session_name=session_name,
-        summary_type=summary_type,
-    )
+    summary = await get_summary(db, workspace_name, session_name, summary_type)
 
     # Check if we have a valid summary with a message_id
     if summary:
         messages = await crud.get_messages_id_range(
-            db, workspace_name, session_name, start_id=summary["message_id"]
+            db,
+            workspace_name,
+            session_name,
+            peer_name,
+            start_id=summary["message_id"],
+            end_id=cutoff,
         )
         return messages, summary
     else:
-        messages = await crud.get_messages_id_range(db, workspace_name, session_name)
+        messages = await crud.get_messages_id_range(
+            db, workspace_name, session_name, peer_name, end_id=cutoff
+        )
         return messages, None
 
 
@@ -341,14 +371,17 @@ async def should_create_summary(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
+    peer_name: str,
+    message_id: int,
     summary_type: SummaryType = SummaryType.SHORT,
 ) -> tuple[bool, list[models.Message], Optional[Summary]]:
     """
-    Determine if a new summary should be created for this session.
+    Determine if a new summary should be created for this object (peer or session).
 
     Args:
         db: Database session
-        session_id: The session ID
+        workspace_name: The workspace name
+        session_name: The session name
         summary_type: Type of summary to check for ("short" or "long")
 
     Returns:
@@ -358,7 +391,12 @@ async def should_create_summary(
         - The latest summary of the requested type, or None if no summary exists
     """
     messages, latest_summary = await get_latest_summary_and_messages_since(
-        db, workspace_name, session_name, summary_type
+        db,
+        workspace_name,
+        session_name,
+        peer_name,
+        cutoff=message_id,
+        summary_type=summary_type,
     )
     threshold = (
         MESSAGES_PER_SHORT_SUMMARY
@@ -366,6 +404,12 @@ async def should_create_summary(
         else MESSAGES_PER_LONG_SUMMARY
     )
     should_create = len(messages) >= threshold
+    logger.debug(
+        "Should create summary: %s, messages: %s, threshold: %s",
+        should_create,
+        len(messages),
+        threshold,
+    )
     return should_create, messages, latest_summary
 
 

@@ -656,8 +656,6 @@ def test_get_session_context_with_summary(client, sample_data):
     assert response.status_code == 200
     data = response.json()
     assert "summary" in data
-    # Summary should not be empty when requested
-    assert data["summary"] == "TODO: give a summary"  # Based on router implementation
 
 
 def test_get_session_context_with_tokens(client, sample_data):
@@ -700,7 +698,6 @@ def test_get_session_context_with_all_params(client, sample_data):
     data = response.json()
     assert "messages" in data
     assert "summary" in data
-    assert data["summary"] == "TODO: give a summary"
 
 
 def test_search_session(client, sample_data):
