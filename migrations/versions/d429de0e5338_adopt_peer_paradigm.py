@@ -844,7 +844,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             type_=sa.Text(),
             existing_type=sa.BigInteger(),
             postgresql_using="session_id::text",
-            nullable=True
+            nullable=True,
         )
         # Convert session_id values in queue table
         for (session_id,) in queue_session_ids:
@@ -858,17 +858,51 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
                 )
 
     # Update active_queue_sessions table
-    if table_exists("active_queue_sessions", inspector) and session_id_mapping:
+    print("Updating active_queue_sessions table")
+    print(
+        f"table_exists('active_queue_sessions', inspector): {table_exists('active_queue_sessions', inspector)}"
+    )
+    print(f"session_id_mapping: {session_id_mapping}")
+    if table_exists("active_queue_sessions", inspector):
         active_queue_session_ids = connection.execute(
             sa.text(
                 f"SELECT DISTINCT session_id FROM {schema}.active_queue_sessions WHERE session_id IS NOT NULL"
             )
         ).fetchall()
 
+        if primary_constraint_exists(
+            "active_queue_sessions", "pk_active_queue_sessions", inspector
+        ):
+            op.drop_constraint(
+                "pk_active_queue_sessions",
+                "active_queue_sessions",
+                type_="primary",
+                schema=schema,
+            )
+
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column(
+                "id",
+                sa.TEXT(),
+                nullable=False,
+                default=generate_nanoid,
+            ),
+            schema=schema,
+        )
+
+        op.create_primary_key(
+            "pk_active_queue_sessions",
+            "active_queue_sessions",
+            ["id"],
+            schema=schema,
+        )
+
         op.alter_column(
             "active_queue_sessions",
             "session_id",
             type_=sa.Text(),
+            nullable=True,
             existing_type=sa.BigInteger(),
             postgresql_using="session_id::text",
         )
@@ -882,6 +916,29 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
                     ),
                     {"new_id": str(new_id), "old_id": str(session_id)},
                 )
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("sender_name", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("target_name", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+        op.add_column(
+            "active_queue_sessions",
+            sa.Column("task_type", sa.TEXT(), nullable=False),
+            schema=schema,
+        )
+        op.create_unique_constraint(
+            "unique_active_queue_session",
+            "active_queue_sessions",
+            ["session_id", "sender_name", "target_name", "task_type"],
+            schema=schema,
+        )
+
+        print("active_queue_sessions table updated -- added columns")
 
 
 def _count_tokens(text: str) -> int:
@@ -1623,6 +1680,16 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
             )
         ).fetchall()
 
+        if primary_constraint_exists(
+            "active_queue_sessions", "pk_active_queue_sessions", inspector
+        ):
+            op.drop_constraint(
+                "pk_active_queue_sessions",
+                "active_queue_sessions",
+                type_="primary",
+                schema=schema,
+            )
+
         # Convert session_id values back to BigInteger
         for (session_id,) in active_queue_session_ids:
             if session_id in session_id_reverse_mapping:
@@ -1642,6 +1709,25 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
             existing_type=sa.Text(),
             postgresql_using="session_id::bigint",
         )
+
+        op.create_primary_key(
+            "pk_active_queue_sessions",
+            "active_queue_sessions",
+            ["session_id"],
+            schema=schema,
+        )
+
+        op.drop_constraint(
+            "unique_active_queue_session",
+            "active_queue_sessions",
+            type_="unique",
+            schema=schema,
+        )
+
+        op.drop_column("active_queue_sessions", "id", schema=schema)
+        op.drop_column("active_queue_sessions", "sender_name", schema=schema)
+        op.drop_column("active_queue_sessions", "target_name", schema=schema)
+        op.drop_column("active_queue_sessions", "task_type", schema=schema)
 
     # Restore foreign key constraints
     if table_exists("queue", inspector):
