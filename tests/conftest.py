@@ -209,7 +209,9 @@ async def sample_data(db_session):
     await db_session.flush()
 
     # Create test user
-    test_peer = models.Peer(name=str(generate_nanoid()), workspace_name=test_workspace.name)
+    test_peer = models.Peer(
+        name=str(generate_nanoid()), workspace_name=test_workspace.name
+    )
     db_session.add(test_peer)
     await db_session.flush()
 
@@ -254,3 +256,17 @@ def mock_openai_embeddings():
         mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
         mock_create.return_value = mock_response
         yield mock_create
+
+
+@pytest.fixture(autouse=True)
+def mock_model_client():
+    """Mock ModelClient to avoid needing API keys during tests"""
+    with patch("src.utils.history.ModelClient") as mock_client_class:
+        # Create a mock instance
+        mock_client_instance = MagicMock()
+        mock_client_instance.generate = AsyncMock(return_value="Test summary content")
+
+        # Make the class constructor return our mock instance
+        mock_client_class.return_value = mock_client_instance
+
+        yield mock_client_class
