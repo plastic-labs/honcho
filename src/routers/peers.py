@@ -351,6 +351,6 @@ async def search_peer(
     db=db,
 ):
     """Search a Peer"""
-    stmt = await crud.search(query, workspace_id=workspace_id, peer_id=peer_id)
+    stmt = await crud.search(query, workspace_name=workspace_id, peer_name=peer_id)
 
     return await paginate(db, stmt)

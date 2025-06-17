@@ -105,7 +105,6 @@ UPDATES:
 @observe()
 async def get_tom_inference_single_prompt(
     chat_history: str,
-    session_id: str,
     user_representation: Optional[str] = None,
     **kwargs,
 ) -> str:
@@ -153,7 +152,6 @@ async def get_tom_inference_single_prompt(
 @observe()
 async def get_user_representation_single_prompt(
     chat_history: str,
-    session_id: str,
     user_representation: Optional[str] = None,
     tom_inference: Optional[str] = None,
     **kwargs,

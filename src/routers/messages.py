@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional, Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
@@ -46,42 +46,59 @@ async def enqueue(payload: list[dict]):
             # Case 1: session_name is None — only create representation for peer
             if session_name is None:
                 peer_name = payload[0]["peer_name"]
-                logger.info("Session name is None, creating single representation queue items")
-                peer = await crud.get_or_create_peer(db_session, workspace_name=workspace_name, peer=schemas.PeerCreate(name=peer_name))
-                
+                logger.info(
+                    "Session name is None, creating single representation queue items"
+                )
+                peer = await crud.get_or_create_peer(
+                    db_session,
+                    workspace_name=workspace_name,
+                    peer=schemas.PeerCreate(name=peer_name),
+                )
+
                 # Cast feature_flags to PeerConfig and check observe_me
-                peer_config = schemas.PeerConfig(**peer.feature_flags) if peer.feature_flags else schemas.PeerConfig()
+                peer_config = (
+                    schemas.PeerConfig(**peer.feature_flags)
+                    if peer.feature_flags
+                    else schemas.PeerConfig()
+                )
                 if not peer_config.observe_me:
-                    logger.info(f"Peer {peer_name} has observe_me=False, skipping enqueue")
+                    logger.info(
+                        f"Peer {peer_name} has observe_me=False, skipping enqueue"
+                    )
                     return
-                
+
                 queue_records: list[dict[str, Any]] = []
-                
+
                 for message in payload:
                     processed_payload = {
-                        k: str(v) if isinstance(v, str) else v for k, v in message.items()
+                        k: str(v) if isinstance(v, str) else v
+                        for k, v in message.items()
                     }
                     processed_payload["sender_name"] = message["peer_name"]
                     processed_payload["target_name"] = message["peer_name"]
                     processed_payload["task_type"] = "representation"
-                    queue_records.append({
-                        "payload": processed_payload,
-                        "session_id": None,
-                    })
-                
-                logger.debug(f"Inserting {len(queue_records)} queue records for None session")
+                    queue_records.append(
+                        {
+                            "payload": processed_payload,
+                            "session_id": None,
+                        }
+                    )
+
+                logger.debug(
+                    f"Inserting {len(queue_records)} queue records for None session"
+                )
                 stmt = insert(QueueItem).returning(QueueItem)
                 await db_session.execute(stmt, queue_records)
                 await db_session.commit()
-                logger.info(f"Successfully enqueued {len(queue_records)} messages with None session")
+                logger.info(
+                    f"Successfully enqueued {len(queue_records)} messages with None session"
+                )
                 return
 
             # Case 2: Normal session processing
             session = await crud.get_or_create_session(
                 db_session,
-                session=schemas.SessionCreate(
-                    name=session_name
-                ),
+                session=schemas.SessionCreate(name=session_name),
                 workspace_name=workspace_name,
             )
 
@@ -90,47 +107,67 @@ async def enqueue(payload: list[dict]):
                 session.h_metadata.get("deriver_disabled") is not None
                 and session.h_metadata.get("deriver_disabled") is not False
             ):
-                logger.info(f"Deriver is disabled for session {session.name}, skipping enqueue")
+                logger.info(
+                    f"Deriver is disabled for session {session.name}, skipping enqueue"
+                )
                 return
 
             feature_flags_query = await crud.get_session_peer_feature_flags(
-                workspace_name=workspace_name,
-                session_name=session_name
+                workspace_name=workspace_name, session_name=session_name
             )
-            peers_with_feature_flags_result = await db_session.execute(feature_flags_query)
+            peers_with_feature_flags_result = await db_session.execute(
+                feature_flags_query
+            )
             peers_with_feature_flags_list = peers_with_feature_flags_result.all()
             peers_with_feature_flags = {
                 row.peer_name: [row.peer_feature_flags, row.session_peer_feature_flags]
                 for row in peers_with_feature_flags_list
             }
-            
+
             # Process all payloads - create multiple queue items per message
             queue_records = []
-            
+
             for message in payload:
                 sender_name = message["peer_name"]
-                
-                sender_session_peer_config = schemas.SessionPeerConfig(**peers_with_feature_flags[sender_name][1]) if peers_with_feature_flags[sender_name][1] else None
-                sender_peer_config = schemas.PeerConfig(**peers_with_feature_flags[sender_name][0]) if peers_with_feature_flags[sender_name][0] else schemas.PeerConfig()
-                
+
+                sender_session_peer_config = (
+                    schemas.SessionPeerConfig(
+                        **peers_with_feature_flags[sender_name][1]
+                    )
+                    if peers_with_feature_flags[sender_name][1]
+                    else None
+                )
+                sender_peer_config = (
+                    schemas.PeerConfig(**peers_with_feature_flags[sender_name][0])
+                    if peers_with_feature_flags[sender_name][0]
+                    else schemas.PeerConfig()
+                )
+
                 should_summarize = session.feature_flags.get("summarize", True)
                 if should_summarize:
                     # Create summary queue item for this message
                     processed_payload = {
-                        k: str(v) if isinstance(v, str) else v for k, v in message.items()
+                        k: str(v) if isinstance(v, str) else v
+                        for k, v in message.items()
                     }
                     processed_payload["sender_name"] = None
                     processed_payload["target_name"] = None
                     processed_payload["task_type"] = "summary"
-                    queue_records.append({
-                        "payload": processed_payload,
-                        "session_id": session.id,
-                    })
+                    queue_records.append(
+                        {
+                            "payload": processed_payload,
+                            "session_id": session.id,
+                        }
+                    )
 
-                observe_me = sender_session_peer_config.observe_me if sender_session_peer_config else sender_peer_config.observe_me
+                observe_me = (
+                    sender_session_peer_config.observe_me
+                    if sender_session_peer_config
+                    else sender_peer_config.observe_me
+                )
                 if not observe_me:
                     continue
-                    
+
                 # Handle working representation for sender
                 processed_payload = {
                     k: str(v) if isinstance(v, str) else v for k, v in message.items()
@@ -138,41 +175,55 @@ async def enqueue(payload: list[dict]):
                 processed_payload["sender_name"] = sender_name
                 processed_payload["target_name"] = sender_name
                 processed_payload["task_type"] = "representation"
-                
-                queue_records.append({
-                    "payload": processed_payload,
-                    "session_id": session.id,
-                })
+
+                queue_records.append(
+                    {
+                        "payload": processed_payload,
+                        "session_id": session.id,
+                    }
+                )
                 for peer_name, feature_flags in peers_with_feature_flags.items():
-                    session_peer_config = schemas.SessionPeerConfig(**feature_flags[1]) if feature_flags[1] else None
-        
-                    if peer_name != sender_name:    
+                    session_peer_config = (
+                        schemas.SessionPeerConfig(**feature_flags[1])
+                        if feature_flags[1]
+                        else None
+                    )
+
+                    if peer_name != sender_name:
                         # Handle local representation for other peers
-                        if session_peer_config is None or not session_peer_config.observe_others:
+                        if (
+                            session_peer_config is None
+                            or not session_peer_config.observe_others
+                        ):
                             continue
                         else:
                             # Create local representation for peer
                             processed_payload = {
-                                k: str(v) if isinstance(v, str) else v for k, v in message.items()
+                                k: str(v) if isinstance(v, str) else v
+                                for k, v in message.items()
                             }
                             processed_payload["sender_name"] = sender_name
                             processed_payload["target_name"] = peer_name
                             processed_payload["task_type"] = "representation"
-                            
-                            queue_records.append({
-                                "payload": processed_payload,
-                                "session_id": session.id,
-                            })
-                                
+
+                            queue_records.append(
+                                {
+                                    "payload": processed_payload,
+                                    "session_id": session.id,
+                                }
+                            )
+
             logger.debug(f"Inserting {len(queue_records)} queue records")
 
             # Use insert to maintain order
             stmt = insert(QueueItem).returning(QueueItem)
             await db_session.execute(stmt, queue_records)
             await db_session.commit()
-            
-            logger.info(f"Successfully enqueued {len(payload)} messages with {len(queue_records)} total queue items")
-            
+
+            logger.info(
+                f"Successfully enqueued {len(payload)} messages with {len(queue_records)} total queue items"
+            )
+
         except Exception as e:
             logger.error(f"Failed to enqueue messages: {str(e)}", exc_info=True)
             if os.getenv("SENTRY_ENABLED", "False").lower() == "true":

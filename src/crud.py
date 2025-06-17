@@ -961,9 +961,9 @@ async def set_peer_config(
 async def search(
     query: str,
     *,
-    workspace_id: str,
-    session_id: Optional[str] = None,
-    peer_id: Optional[str] = None,
+    workspace_name: str,
+    session_name: Optional[str] = None,
+    peer_name: Optional[str] = None,
 ) -> Select:
     """
     Search across message content. If a session or peer is provided,
@@ -972,28 +972,28 @@ async def search(
 
     Args:
         query: Search query to match against message content
-        workspace_id: ID of the workspace
-        session_id: Optional ID of the session
-        peer_id: Optional ID of the peer
+        workspace_name: Name of the workspace
+        session_name: Optional name of the session
+        peer_name: Optional name of the peer
 
     Returns:
         List of messages that match the search query
     """
-    if session_id is not None:
+    if session_name is not None:
         stmt = select(models.Message).where(
-            models.Message.session_name == session_id,
-            models.Message.workspace_name == workspace_id,
+            models.Message.session_name == session_name,
+            models.Message.workspace_name == workspace_name,
             models.Message.content.ilike(f"%{query}%"),
         )
-    elif peer_id is not None:
+    elif peer_name is not None:
         stmt = select(models.Message).where(
-            models.Message.peer_name == peer_id,
-            models.Message.workspace_name == workspace_id,
+            models.Message.peer_name == peer_name,
+            models.Message.workspace_name == workspace_name,
             models.Message.content.ilike(f"%{query}%"),
         )
     else:
         stmt = select(models.Message).where(
-            models.Message.workspace_name == workspace_id,
+            models.Message.workspace_name == workspace_name,
             models.Message.content.ilike(f"%{query}%"),
         )
 

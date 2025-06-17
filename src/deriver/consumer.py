@@ -20,17 +20,6 @@ TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
 USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
 
 
-# FIXME see if this is SAFE
-# async def add_metamessage(db, message_id, metamessage_type, content):
-# metamessage = models.Metamessage(
-#     message_id=message_id,
-#     metamessage_type=metamessage_type,
-#     content=content,
-#     h_metadata={},
-# )
-# db.add(metamessage)
-
-
 async def process_item(db: AsyncSession, payload: dict):
     logger.debug(
         f"process_item received payload: {payload['message_id']} is_user={payload['is_user']}"

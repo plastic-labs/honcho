@@ -17,7 +17,7 @@ class CollectionEmbeddingStore:
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
-        message_id: str = None,
+        message_id: str | None = None,
     ) -> None:
         """Save facts to the collection.
 
@@ -35,7 +35,9 @@ class CollectionEmbeddingStore:
                         metadata["message_id"] = message_id
                     await crud.create_document(
                         db,
-                        document=schemas.DocumentCreate(content=fact, metadata=metadata),
+                        document=schemas.DocumentCreate(
+                            content=fact, metadata=metadata
+                        ),
                         workspace_name=self.workspace_name,
                         peer_name=self.peer_name,
                         collection_name=self.collection_name,
