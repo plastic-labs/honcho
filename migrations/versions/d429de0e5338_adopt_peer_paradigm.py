@@ -18,11 +18,10 @@ from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 from migrations.utils import (
-    check_constraint_exists,
     column_exists,
+    constraint_exists,
     fk_exists,
     index_exists,
-    primary_constraint_exists,
     table_exists,
 )
 
@@ -140,17 +139,17 @@ def update_workspaces_table(schema: str, inspector) -> None:
     )
 
     # Update constraint names
-    if check_constraint_exists("workspaces", "public_id_length", inspector):
+    if constraint_exists("workspaces", "public_id_length", "check", inspector):
         op.drop_constraint(
             "public_id_length", "workspaces", type_="check", schema=schema
         )
-    if check_constraint_exists("workspaces", "public_id_format", inspector):
+    if constraint_exists("workspaces", "public_id_format", "check", inspector):
         op.drop_constraint(
             "public_id_format", "workspaces", type_="check", schema=schema
         )
 
     # Rename public_id to id and make it the primary key
-    if primary_constraint_exists("workspaces", "pk_apps", inspector):
+    if constraint_exists("workspaces", "pk_apps", "primary", inspector):
         op.drop_constraint("pk_apps", "workspaces", type_="primary", schema=schema)
     if column_exists("workspaces", "id", inspector):
         op.drop_column("workspaces", "id", schema=schema)
@@ -192,13 +191,13 @@ def update_peers_table(schema: str, inspector) -> None:
     )
 
     # Update constraints and indexes
-    if check_constraint_exists("peers", "public_id_length", inspector):
+    if constraint_exists("peers", "public_id_length", "check", inspector):
         op.drop_constraint("public_id_length", "peers", type_="check", schema=schema)
-    if check_constraint_exists("peers", "public_id_format", inspector):
+    if constraint_exists("peers", "public_id_format", "check", inspector):
         op.drop_constraint("public_id_format", "peers", type_="check", schema=schema)
 
     # Update primary key
-    if primary_constraint_exists("peers", "pk_users", inspector):
+    if constraint_exists("peers", "pk_users", "primary", inspector):
         op.drop_constraint("pk_users", "peers", type_="primary", schema=schema)
     op.drop_column("peers", "id", schema=schema)
     op.alter_column("peers", "public_id", new_column_name="id", schema=schema)
@@ -224,7 +223,10 @@ def update_peers_table(schema: str, inspector) -> None:
     )
 
     # Update unique constraint
-    op.drop_constraint("unique_name_app_user", "peers", type_="unique", schema=schema)
+    if constraint_exists("peers", "unique_name_app_user", "unique", inspector):
+        op.drop_constraint(
+            "unique_name_app_user", "peers", type_="unique", schema=schema
+        )
     op.create_unique_constraint(
         "unique_name_workspace_peer", "peers", ["name", "workspace_name"], schema=schema
     )
@@ -280,13 +282,13 @@ def update_sessions_table(schema: str, inspector) -> None:
     )
 
     # Update constraints and indexes
-    if check_constraint_exists("sessions", "public_id_length", inspector):
+    if constraint_exists("sessions", "public_id_length", "check", inspector):
         op.drop_constraint("public_id_length", "sessions", type_="check", schema=schema)
-    if check_constraint_exists("sessions", "public_id_format", inspector):
+    if constraint_exists("sessions", "public_id_format", "check", inspector):
         op.drop_constraint("public_id_format", "sessions", type_="check", schema=schema)
 
     # Update sessions table primary key and foreign keys
-    if primary_constraint_exists("sessions", "pk_sessions", inspector):
+    if constraint_exists("sessions", "pk_sessions", "primary", inspector):
         op.drop_constraint("pk_sessions", "sessions", type_="primary", schema=schema)
 
     op.drop_column("sessions", "id", schema=schema)
@@ -584,7 +586,7 @@ def update_collections_table(schema: str, inspector) -> None:
     op.alter_column("collections", "workspace_name", nullable=False, schema=schema)
 
     # Update primary key structure
-    if primary_constraint_exists("collections", "pk_collections", inspector):
+    if constraint_exists("collections", "pk_collections", "primary", inspector):
         op.drop_constraint(
             "pk_collections", "collections", type_="primary", schema=schema
         )
@@ -648,11 +650,11 @@ def update_collections_table(schema: str, inspector) -> None:
     )
 
     # Update constraint names
-    if check_constraint_exists("collections", "public_id_length", inspector):
+    if constraint_exists("collections", "public_id_length", "check", inspector):
         op.drop_constraint(
             "public_id_length", "collections", type_="check", schema=schema
         )
-    if check_constraint_exists("collections", "public_id_format", inspector):
+    if constraint_exists("collections", "public_id_format", "check", inspector):
         op.drop_constraint(
             "public_id_format", "collections", type_="check", schema=schema
         )
@@ -743,7 +745,7 @@ def update_documents_table(schema: str, inspector) -> None:
     op.alter_column("documents", "workspace_name", nullable=False, schema=schema)
 
     # Update primary key structure
-    if primary_constraint_exists("documents", "pk_documents", inspector):
+    if constraint_exists("documents", "pk_documents", "primary", inspector):
         op.drop_constraint("pk_documents", "documents", type_="primary", schema=schema)
     if column_exists("documents", "id", inspector):
         op.drop_column("documents", "id", schema=schema)
@@ -772,11 +774,11 @@ def update_documents_table(schema: str, inspector) -> None:
     )
 
     # Update constraint names
-    if check_constraint_exists("documents", "public_id_length", inspector):
+    if constraint_exists("documents", "public_id_length", "check", inspector):
         op.drop_constraint(
             "public_id_length", "documents", type_="check", schema=schema
         )
-    if check_constraint_exists("documents", "public_id_format", inspector):
+    if constraint_exists("documents", "public_id_format", "check", inspector):
         op.drop_constraint(
             "public_id_format", "documents", type_="check", schema=schema
         )
@@ -865,8 +867,8 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             )
         ).fetchall()
 
-        if primary_constraint_exists(
-            "active_queue_sessions", "pk_active_queue_sessions", inspector
+        if constraint_exists(
+            "active_queue_sessions", "pk_active_queue_sessions", "primary", inspector
         ):
             op.drop_constraint(
                 "pk_active_queue_sessions",
@@ -1062,7 +1064,7 @@ def restore_documents_table(schema: str, inspector) -> None:
     op.alter_column("documents", "temp_id", nullable=False, schema=schema)
 
     # Drop current primary key and rename columns
-    if primary_constraint_exists("documents", "pk_documents", inspector):
+    if constraint_exists("documents", "pk_documents", "primary", inspector):
         op.drop_constraint("pk_documents", "documents", type_="primary", schema=schema)
 
     op.alter_column("documents", "id", new_column_name="public_id", schema=schema)
@@ -1159,9 +1161,9 @@ def restore_documents_table(schema: str, inspector) -> None:
     )
 
     # Restore old constraint names
-    if check_constraint_exists("documents", "id_length", inspector):
+    if constraint_exists("documents", "id_length", "check", inspector):
         op.drop_constraint("id_length", "documents", type_="check", schema=schema)
-    if check_constraint_exists("documents", "id_format", inspector):
+    if constraint_exists("documents", "id_format", "check", inspector):
         op.drop_constraint("id_format", "documents", type_="check", schema=schema)
 
     op.create_check_constraint(
@@ -1193,7 +1195,7 @@ def restore_collections_table(schema: str, inspector) -> None:
     op.alter_column("collections", "temp_id", nullable=False, schema=schema)
 
     # Drop current primary key and rename columns
-    if primary_constraint_exists("collections", "pk_collections", inspector):
+    if constraint_exists("collections", "pk_collections", "primary", inspector):
         op.drop_constraint(
             "pk_collections", "collections", type_="primary", schema=schema
         )
@@ -1282,9 +1284,9 @@ def restore_collections_table(schema: str, inspector) -> None:
     )
 
     # Restore old constraint names
-    if check_constraint_exists("collections", "id_length", inspector):
+    if constraint_exists("collections", "id_length", "check", inspector):
         op.drop_constraint("id_length", "collections", type_="check", schema=schema)
-    if check_constraint_exists("collections", "id_format", inspector):
+    if constraint_exists("collections", "id_format", "check", inspector):
         op.drop_constraint("id_format", "collections", type_="check", schema=schema)
 
     op.create_check_constraint(
@@ -1434,7 +1436,7 @@ def restore_sessions_table(schema: str, inspector) -> None:
     """)
 
     # Drop current primary key and rename columns
-    if primary_constraint_exists("sessions", "pk_sessions", inspector):
+    if constraint_exists("sessions", "pk_sessions", "primary", inspector):
         op.drop_constraint("pk_sessions", "sessions", type_="primary", schema=schema)
 
     op.alter_column("sessions", "id", new_column_name="public_id", schema=schema)
@@ -1470,9 +1472,9 @@ def restore_sessions_table(schema: str, inspector) -> None:
     op.drop_column("sessions", "feature_flags", schema=schema)
 
     # Restore old constraint names
-    if check_constraint_exists("sessions", "id_length", inspector):
+    if constraint_exists("sessions", "id_length", "check", inspector):
         op.drop_constraint("id_length", "sessions", type_="check", schema=schema)
-    if check_constraint_exists("sessions", "id_format", inspector):
+    if constraint_exists("sessions", "id_format", "check", inspector):
         op.drop_constraint("id_format", "sessions", type_="check", schema=schema)
 
     op.create_check_constraint(
@@ -1502,7 +1504,7 @@ def restore_peers_table(schema: str, inspector) -> None:
     """)
 
     # Drop current primary key and rename columns
-    if primary_constraint_exists("peers", "pk_peers", inspector):
+    if constraint_exists("peers", "pk_peers", "primary", inspector):
         op.drop_constraint("pk_peers", "peers", type_="primary", schema=schema)
 
     op.alter_column("peers", "id", new_column_name="public_id", schema=schema)
@@ -1529,9 +1531,10 @@ def restore_peers_table(schema: str, inspector) -> None:
         )
 
     # Drop new unique constraint and index
-    op.drop_constraint(
-        "unique_name_workspace_peer", "peers", type_="unique", schema=schema
-    )
+    if constraint_exists("peers", "unique_name_workspace_peer", "unique", inspector):
+        op.drop_constraint(
+            "unique_name_workspace_peer", "peers", type_="unique", schema=schema
+        )
     if index_exists("peers", "idx_peers_workspace_lookup", inspector):
         op.drop_index("idx_peers_workspace_lookup", table_name="peers", schema=schema)
 
@@ -1546,9 +1549,9 @@ def restore_peers_table(schema: str, inspector) -> None:
     op.drop_column("peers", "feature_flags", schema=schema)
 
     # Restore old constraint names
-    if check_constraint_exists("peers", "id_length", inspector):
+    if constraint_exists("peers", "id_length", "check", inspector):
         op.drop_constraint("id_length", "peers", type_="check", schema=schema)
-    if check_constraint_exists("peers", "id_format", inspector):
+    if constraint_exists("peers", "id_format", "check", inspector):
         op.drop_constraint("id_format", "peers", type_="check", schema=schema)
 
     op.create_check_constraint(
@@ -1578,7 +1581,7 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     """)
 
     # Drop current primary key and rename columns
-    if primary_constraint_exists("workspaces", "pk_workspaces", inspector):
+    if constraint_exists("workspaces", "pk_workspaces", "primary", inspector):
         op.drop_constraint(
             "pk_workspaces", "workspaces", type_="primary", schema=schema
         )
@@ -1603,9 +1606,9 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     op.drop_column("workspaces", "feature_flags", schema=schema)
 
     # Restore old constraint names
-    if check_constraint_exists("workspaces", "id_length", inspector):
+    if constraint_exists("workspaces", "id_length", "check", inspector):
         op.drop_constraint("id_length", "workspaces", type_="check", schema=schema)
-    if check_constraint_exists("workspaces", "id_format", inspector):
+    if constraint_exists("workspaces", "id_format", "check", inspector):
         op.drop_constraint("id_format", "workspaces", type_="check", schema=schema)
 
     op.create_check_constraint(
@@ -1673,8 +1676,8 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
             )
         ).fetchall()
 
-        if primary_constraint_exists(
-            "active_queue_sessions", "pk_active_queue_sessions", inspector
+        if constraint_exists(
+            "active_queue_sessions", "pk_active_queue_sessions", "primary", inspector
         ):
             op.drop_constraint(
                 "pk_active_queue_sessions",
@@ -1710,17 +1713,27 @@ def restore_queue_and_active_queue_sessions_tables(schema: str, inspector) -> No
             schema=schema,
         )
 
-        op.drop_constraint(
-            "unique_active_queue_session",
+        if constraint_exists(
             "active_queue_sessions",
-            type_="unique",
-            schema=schema,
-        )
+            "unique_active_queue_session",
+            "unique",
+            inspector,
+        ):
+            op.drop_constraint(
+                "unique_active_queue_session",
+                "active_queue_sessions",
+                type_="unique",
+                schema=schema,
+            )
 
-        op.drop_column("active_queue_sessions", "id", schema=schema)
-        op.drop_column("active_queue_sessions", "sender_name", schema=schema)
-        op.drop_column("active_queue_sessions", "target_name", schema=schema)
-        op.drop_column("active_queue_sessions", "task_type", schema=schema)
+        if column_exists("active_queue_sessions", "id", inspector):
+            op.drop_column("active_queue_sessions", "id", schema=schema)
+        if column_exists("active_queue_sessions", "sender_name", inspector):
+            op.drop_column("active_queue_sessions", "sender_name", schema=schema)
+        if column_exists("active_queue_sessions", "target_name", inspector):
+            op.drop_column("active_queue_sessions", "target_name", schema=schema)
+        if column_exists("active_queue_sessions", "task_type", inspector):
+            op.drop_column("active_queue_sessions", "task_type", schema=schema)
 
     # Restore foreign key constraints
     if table_exists("queue", inspector):
