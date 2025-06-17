@@ -830,7 +830,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             session_id_mapping[old_id] = new_id
 
     # Update queue table
-    if table_exists("queue", inspector) and session_id_mapping:
+    if table_exists("queue", inspector):
         # Get current session_id values in queue table
         queue_session_ids = connection.execute(
             sa.text(
@@ -858,11 +858,6 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
                 )
 
     # Update active_queue_sessions table
-    print("Updating active_queue_sessions table")
-    print(
-        f"table_exists('active_queue_sessions', inspector): {table_exists('active_queue_sessions', inspector)}"
-    )
-    print(f"session_id_mapping: {session_id_mapping}")
     if table_exists("active_queue_sessions", inspector):
         active_queue_session_ids = connection.execute(
             sa.text(
@@ -937,8 +932,6 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             ["session_id", "sender_name", "target_name", "task_type"],
             schema=schema,
         )
-
-        print("active_queue_sessions table updated -- added columns")
 
 
 def _count_tokens(text: str) -> int:
