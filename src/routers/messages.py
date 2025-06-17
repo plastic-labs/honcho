@@ -113,44 +113,6 @@ async def enqueue(payload: list[dict]):
                 sender_session_peer_config = schemas.SessionPeerConfig(**peers_with_feature_flags[sender_name][1]) if peers_with_feature_flags[sender_name][1] else None
                 sender_peer_config = schemas.PeerConfig(**peers_with_feature_flags[sender_name][0]) if peers_with_feature_flags[sender_name][0] else schemas.PeerConfig()
                 
-                observe_me = sender_session_peer_config.observe_me if sender_session_peer_config else sender_peer_config.observe_me
-                if not observe_me:
-                    continue
-
-                    
-                # Handle working representation for sender
-                processed_payload = {
-                    k: str(v) if isinstance(v, str) else v for k, v in message.items()
-                }
-                processed_payload["sender_name"] = sender_name
-                processed_payload["target_name"] = sender_name
-                processed_payload["task_type"] = "representation"
-                
-                queue_records.append({
-                    "payload": processed_payload,
-                    "session_id": session.id,
-                })
-                for session_peer in peers_with_feature_flags:
-                    session_peer_config = schemas.SessionPeerConfig(**session_peer.session_peer_feature_flags) if session_peer.session_peer_feature_flags else None
-        
-                    if session_peer.peer_name != sender_name:    
-                        # Handle local representation for other peers
-                        if session_peer_config is None or not session_peer_config.observe_others:
-                            continue
-                        else:
-                            # Create local representation for peer
-                            processed_payload = {
-                                k: str(v) if isinstance(v, str) else v for k, v in message.items()
-                            }
-                            processed_payload["sender_name"] = sender_name
-                            processed_payload["target_name"] = session_peer.peer_name
-                            processed_payload["task_type"] = "representation"
-                            
-                            queue_records.append({
-                                "payload": processed_payload,
-                                "session_id": session.id,
-                            })
-                                
                 should_summarize = session.feature_flags.get("summarize", True)
                 if should_summarize:
                     # Create summary queue item for this message
@@ -165,6 +127,43 @@ async def enqueue(payload: list[dict]):
                         "session_id": session.id,
                     })
 
+                observe_me = sender_session_peer_config.observe_me if sender_session_peer_config else sender_peer_config.observe_me
+                if not observe_me:
+                    continue
+                    
+                # Handle working representation for sender
+                processed_payload = {
+                    k: str(v) if isinstance(v, str) else v for k, v in message.items()
+                }
+                processed_payload["sender_name"] = sender_name
+                processed_payload["target_name"] = sender_name
+                processed_payload["task_type"] = "representation"
+                
+                queue_records.append({
+                    "payload": processed_payload,
+                    "session_id": session.id,
+                })
+                for peer_name, feature_flags in peers_with_feature_flags.items():
+                    session_peer_config = schemas.SessionPeerConfig(**feature_flags[1]) if feature_flags[1] else None
+        
+                    if peer_name != sender_name:    
+                        # Handle local representation for other peers
+                        if session_peer_config is None or not session_peer_config.observe_others:
+                            continue
+                        else:
+                            # Create local representation for peer
+                            processed_payload = {
+                                k: str(v) if isinstance(v, str) else v for k, v in message.items()
+                            }
+                            processed_payload["sender_name"] = sender_name
+                            processed_payload["target_name"] = peer_name
+                            processed_payload["task_type"] = "representation"
+                            
+                            queue_records.append({
+                                "payload": processed_payload,
+                                "session_id": session.id,
+                            })
+                                
             logger.debug(f"Inserting {len(queue_records)} queue records")
 
             # Use insert to maintain order

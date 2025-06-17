@@ -844,6 +844,7 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             type_=sa.Text(),
             existing_type=sa.BigInteger(),
             postgresql_using="session_id::text",
+            nullable=True
         )
         # Convert session_id values in queue table
         for (session_id,) in queue_session_ids:
