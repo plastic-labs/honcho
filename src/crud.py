@@ -5,7 +5,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, delete, func, insert, select
+from sqlalchemy import Select, cast, delete, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -675,12 +675,17 @@ async def remove_peers_from_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Delete specified session peers
-    delete_stmt = delete(models.SessionPeer).where(
-        models.SessionPeer.session_name == session_name,
-        models.SessionPeer.peer_name.in_(peer_names),
+    # Soft delete specified session peers by setting left_at timestamp
+    update_stmt = (
+        update(models.SessionPeer)
+        .where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name.in_(peer_names),
+            models.SessionPeer.left_at.is_(None),  # Only update active peers
+        )
+        .values(left_at=func.now())
     )
-    result = await db.execute(delete_stmt)
+    result = await db.execute(update_stmt)
 
     await db.commit()
     return True
@@ -701,12 +706,43 @@ async def get_peers_from_session(
     Returns:
         Paginated list of Peer objects in the session
     """
-    # Get all peers in the session
+    # Get all active peers in the session (where left_at is NULL)
     stmt = (
         select(models.Peer)
         .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
+        .where(models.SessionPeer.left_at.is_(None))  # Only active peers
+    )
+
+    return stmt
+
+
+async def get_session_peer_feature_flags(
+    workspace_name: str,
+    session_name: str,
+) -> Select:
+    """
+    Get feature flags from both SessionPeer and Peer tables for active peers in a session.
+
+    Args:
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+
+    Returns:
+        Select statement returning peer_name, peer_feature_flags, and session_peer_feature_flags
+    """
+    stmt = (
+        select(
+            models.Peer.name.label("peer_name"),
+            models.Peer.feature_flags.label("peer_feature_flags"),
+            models.SessionPeer.feature_flags.label("session_peer_feature_flags")
+        )
+        .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.left_at.is_(None))  # Only active peers
     )
 
     return stmt
@@ -788,28 +824,37 @@ async def _add_peers_to_session(
     Returns:
         List of all SessionPeer objects (both existing and newly created)
     """
-    # If no peers to add, skip the insert and just return existing session peers
+    # If no peers to add, skip the insert and just return existing active session peers
     if not peer_names:
         select_stmt = select(models.SessionPeer).where(
             models.SessionPeer.session_name == session_name,
             models.SessionPeer.workspace_name == workspace_name,
+            models.SessionPeer.left_at.is_(None),  # Only active peers
         )
         result = await db.execute(select_stmt)
         return list(result.scalars().all())
 
+    # Use upsert to handle both new peers and rejoining peers
     stmt = pg_insert(models.SessionPeer).values(
         [
             {
                 "session_name": session_name,
                 "peer_name": peer_name,
                 "workspace_name": workspace_name,
+                "joined_at": func.now(),
+                "left_at": None,
             }
             for peer_name in peer_names
         ]
     )
 
-    stmt = stmt.on_conflict_do_nothing(
-        index_elements=["session_name", "peer_name", "workspace_name"]
+    # On conflict, update joined_at and clear left_at (rejoin scenario)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["session_name", "peer_name", "workspace_name"],
+        set_={
+            "joined_at": func.now(),
+            "left_at": None,
+        },
     )
     await db.execute(stmt)
     await db.commit()
@@ -817,6 +862,7 @@ async def _add_peers_to_session(
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.left_at.is_(None),  # Only active peers
     )
     result = await db.execute(select_stmt)
     return list(result.scalars().all())
@@ -1039,6 +1085,7 @@ async def create_messages_for_peer(
         ResourceNotFoundException: If the peer does not exist in the workspace
     """
     try:
+        await get_or_create_peer(db, workspace_name=workspace_name, peer=schemas.PeerCreate(name=peer_name))
         # Create list of message objects (this will trigger the before_insert event)
         message_objects = [
             models.Message(

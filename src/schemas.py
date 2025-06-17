@@ -74,6 +74,12 @@ class PeerRepresentationGet(BaseModel):
         description="Optional peer ID to get the representation for, from the perspective of this peer",
     )
 
+class PeerConfig(BaseModel):
+    observe_me: bool = Field(
+        default=True,
+        description="Whether honcho should form a global theory-of-mind representation of this peer",
+    )
+
 
 class MessageBase(BaseModel):
     pass

@@ -341,6 +341,17 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
                 nullable=False,
                 server_default="{}",
             ),
+            sa.Column(
+                "joined_at",
+                sa.DateTime(timezone=True),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "left_at",
+                sa.DateTime(timezone=True),
+                nullable=True,
+            ),
             sa.ForeignKeyConstraint(
                 ["peer_name", "workspace_name"],
                 ["peers.name", "peers.workspace_name"],

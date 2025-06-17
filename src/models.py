@@ -67,6 +67,17 @@ session_peers_table = Table(
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
     Column("feature_flags", JSONB, default={}),
+    Column(
+        "joined_at",
+        DateTime(timezone=True),
+        nullable=False,
+        default=func.now(),
+    ),
+    Column(
+        "left_at",
+        DateTime(timezone=True),
+        nullable=True,
+    ),
     # Composite foreign key constraint for sessions
     ForeignKeyConstraint(
         ["session_name", "workspace_name"],
