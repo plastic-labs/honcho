@@ -207,7 +207,6 @@ async def create_messages_for_peer(
                 "workspace_name": workspace_name,
                 "session_name": None,
                 "message_id": message.public_id,
-                "is_user": True,
                 "content": message.content,
                 "metadata": message.h_metadata,
                 "peer_name": message.peer_name,

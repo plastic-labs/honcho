@@ -22,7 +22,9 @@ USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term"
 
 async def process_item(db: AsyncSession, payload: dict):
     logger.debug(
-        f"process_item received payload: {payload['message_id']} is_user={payload['is_user']}"
+        "process_item received payload for message %s in session %s",
+        payload["message_id"],
+        payload["session_name"],
     )
     processing_args = [
         payload["content"],
@@ -32,9 +34,9 @@ async def process_item(db: AsyncSession, payload: dict):
         payload["message_id"],
         db,
     ]
-    logger.debug(f"Processing message {payload['message_id']}")
+    logger.debug("Processing message %s", payload["message_id"])
     await process_message(*processing_args)
-    logger.debug(f"Finished processing message {payload['message_id']}")
+    logger.debug("Finished processing message %s", payload["message_id"])
     await summarize_if_needed(
         db,
         payload["workspace_name"],
