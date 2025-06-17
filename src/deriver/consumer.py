@@ -26,52 +26,30 @@ async def process_item(db: AsyncSession, payload: dict):
     )
     processing_args = [
         payload["content"],
-        payload["app_id"],
-        payload["user_id"],
-        payload["session_id"],
+        payload["workspace_name"],
+        payload["peer_name"],
+        payload["session_name"],
         payload["message_id"],
         db,
     ]
-    if payload["is_user"]:
-        logger.debug(f"Processing user message: {payload['message_id']}")
-        await process_user_message(*processing_args)
-    else:
-        logger.debug(f"Processing AI message: {payload['message_id']}")
-        await process_ai_message(*processing_args)
-    logger.debug(f"Finished processing message: {payload['message_id']}")
+    logger.debug(f"Processing message {payload['message_id']}")
+    await process_message(*processing_args)
+    logger.debug(f"Finished processing message {payload['message_id']}")
     await summarize_if_needed(
         db,
-        payload["app_id"],
-        payload["session_id"],
-        payload["user_id"],
-        payload["message_id"],
+        payload["workspace_name"],
+        payload["session_name"],
     )
     return
 
 
 @sentry_sdk.trace
-# @observe()
-async def process_ai_message(
-    content: str,
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    message_id: str,
-    db: AsyncSession,
-):
-    """
-    Process an AI message. Make a prediction about what the user is going to say to it.
-    """
-    console.print(f"Processing AI message: {content}", style="bright_magenta")
-
-
-@sentry_sdk.trace
 @observe()
-async def process_user_message(
+async def process_message(
     content: str,
-    app_id: str,
-    user_id: str,
-    session_id: str,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str,
     message_id: str,
     db: AsyncSession,
 ):
@@ -81,12 +59,12 @@ async def process_user_message(
     """
     console.print(f"Processing User Message: {content}", style="orange1")
     process_start = os.times()[4]  # Get current CPU time
-    logger.debug(f"Starting fact extraction for user message: {message_id}")
+    logger.debug(f"Starting fact extraction for user message {message_id}")
 
     # Get chat history and append current message
-    logger.debug(f"Retrieving chat history for session: {session_id}")
+    logger.debug(f"Retrieving chat history for session {session_name}")
     short_history_text = await history.get_summarized_history(
-        db, session_id, summary_type=history.SummaryType.SHORT
+        db, workspace_name, session_name, summary_type=history.SummaryType.SHORT
     )
     chat_history_str = f"{short_history_text}\nhuman: {content}"
 
@@ -99,14 +77,16 @@ async def process_user_message(
     logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
 
     # Save the facts to the collection
-    logger.debug(f"Setting up embedding store for app: {app_id}, user: {user_id}")
+    logger.debug(
+        f"Setting up embedding store for workspace: {workspace_name}, peer: {peer_name}"
+    )
     collection = await crud.get_or_create_peer_protected_collection(
-        db=db, workspace_name=workspace_name, peer_name=peer_name
+        db, workspace_name, peer_name
     )
     embedding_store = CollectionEmbeddingStore(
         workspace_name=workspace_name,
         peer_name=peer_name,
-        collection_name=collection.name,  # type: ignore
+        collection_name=collection.name,
     )
 
     # Filter out facts that are duplicates of existing facts in the vector store
@@ -135,7 +115,9 @@ async def process_user_message(
 
 
 async def summarize_if_needed(
-    db: AsyncSession, app_id: str, session_id: str, user_id: str, message_id: str
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
 ):
     summary_start = os.times()[4]
     logger.debug("Checking if summaries should be created")
@@ -144,9 +126,9 @@ async def summarize_if_needed(
     (
         should_create_short,
         short_messages,
-        latest_short_summary,
+        _,
     ) = await history.should_create_summary(
-        db, session_id, summary_type=history.SummaryType.SHORT
+        db, workspace_name, session_name, summary_type=history.SummaryType.SHORT
     )
 
     if should_create_short:
@@ -158,7 +140,7 @@ async def summarize_if_needed(
             long_messages,
             latest_long_summary,
         ) = await history.should_create_summary(
-            db, session_id, summary_type=history.SummaryType.LONG
+            db, workspace_name, session_name, summary_type=history.SummaryType.LONG
         )
 
         # STEP 3: If we need a long summary, create it first before creating the short summary
@@ -168,26 +150,23 @@ async def summarize_if_needed(
             )
             try:
                 # Get previous long summary context if available
-                previous_long_summary = (
-                    latest_long_summary.content if latest_long_summary else None
+                previous_long_summary_text = (
+                    latest_long_summary["content"] if latest_long_summary else None
                 )
 
                 # Create a new long summary
-                long_summary_text = await history.create_summary(
+                new_long_summary = await history.create_summary(
                     messages=long_messages,
-                    previous_summary=previous_long_summary,
+                    previous_summary_text=previous_long_summary_text,
                     summary_type=history.SummaryType.LONG,
                 )
-                # Save the long summary as a metamessage and capture the returned object
-                latest_long_summary = await history.save_summary_metamessage(
-                    db=db,
-                    app_id=app_id,
-                    user_id=user_id,
-                    session_id=session_id,
-                    message_id=message_id,
-                    summary_content=long_summary_text,
-                    message_count=len(long_messages),
-                    summary_type=history.SummaryType.LONG,
+
+                # Save the long summary
+                await history.save_summary(
+                    db,
+                    new_long_summary,
+                    workspace_name,
+                    session_name,
                 )
                 logger.debug("Long summary created and saved successfully")
             except Exception as e:
@@ -202,25 +181,23 @@ async def summarize_if_needed(
             f"Creating new short summary covering {len(short_messages)} messages"
         )
         try:
-            previous_summary = (
-                latest_long_summary.content if latest_long_summary else None
+            previous_long_summary_text = (
+                latest_long_summary["content"] if latest_long_summary else None
             )
+
             # Create a new short summary
-            short_summary_text = await history.create_summary(
+            new_short_summary = await history.create_summary(
                 messages=short_messages,
-                previous_summary=previous_summary,
+                previous_summary_text=previous_long_summary_text,
                 summary_type=history.SummaryType.SHORT,
             )
-            # Save the short summary as a metamessage
-            await history.save_summary_metamessage(
-                db=db,
-                app_id=app_id,
-                user_id=user_id,
-                session_id=session_id,
-                message_id=message_id,
-                summary_content=short_summary_text,
-                message_count=len(short_messages),
-                summary_type=history.SummaryType.SHORT,
+
+            # Save the short summary
+            await history.save_summary(
+                db,
+                new_short_summary,
+                workspace_name,
+                session_name,
             )
             logger.debug("Short summary created and saved successfully")
         except Exception as e:
