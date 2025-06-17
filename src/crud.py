@@ -99,7 +99,6 @@ async def get_all_workspaces(
     return stmt
 
 
-# TODO: Why do we get or create a workspace here?
 async def update_workspace(
     db: AsyncSession, workspace_name: str, workspace: schemas.WorkspaceUpdate
 ) -> models.Workspace:
