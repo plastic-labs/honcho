@@ -212,7 +212,6 @@ async def create_messages_for_peer(
                 "session_name": None,
                 "message_id": message.id,
                 "content": message.content,
-                "metadata": message.h_metadata,
                 "peer_name": message.peer_name,
             }
             for message in created_messages
