@@ -204,8 +204,9 @@ async def chat(
     # Run short-term inference and long-term facts in parallel
     async def fetch_long_term():
         async with tracked_db("chat.get_collection") as db_embed:
-            collection = await crud.get_or_create_peer_protected_collection(
-                db_embed, workspace_name, peer_name
+            name = "global_representation" if session_name is None else ""
+            collection = await crud.get_or_create_collection(
+                db_embed, workspace_name, peer_name, collection_name=name
             )
             collection_name = collection.name  # Extract the ID while session is active
         facts = await get_long_term_facts(

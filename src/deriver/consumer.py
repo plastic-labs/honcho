@@ -95,7 +95,7 @@ async def process_message(
     content: str,
     workspace_name: str,
     peer_name: str,
-    target_name: str,  # Not used at the moment but can be in the future
+    target_name: str,
     session_name: str | None,
     message_id: int,
     db: AsyncSession,
@@ -145,8 +145,13 @@ async def process_message(
     logger.debug(
         f"Setting up embedding store for workspace: {workspace_name}, peer: {peer_name}"
     )
-    collection = await crud.get_or_create_peer_protected_collection(
-        db, workspace_name, peer_name
+    collection_name = (
+        crud.construct_collection_name(peer_name, target_name)
+        if peer_name != target_name
+        else "global_representation"
+    )
+    collection = await crud.get_or_create_collection(
+        db, workspace_name, peer_name, collection_name
     )
     embedding_store = CollectionEmbeddingStore(
         workspace_name=workspace_name,

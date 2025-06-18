@@ -20,8 +20,6 @@ openai_client = AsyncOpenAI()
 
 logger = getLogger(__name__)
 
-DEF_PROTECTED_COLLECTION_NAME = "honcho"
-
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
 
 SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
@@ -1439,21 +1437,22 @@ async def get_collection(
     return collection
 
 
-async def get_or_create_peer_protected_collection(
+async def get_or_create_collection(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
+    collection_name: str,
 ) -> models.Collection:
     try:
         honcho_collection = await get_collection(
-            db, workspace_name, peer_name, DEF_PROTECTED_COLLECTION_NAME
+            db, workspace_name, peer_name, collection_name
         )
         return honcho_collection
     except ResourceNotFoundException:
         honcho_collection = models.Collection(
             workspace_name=workspace_name,
             peer_name=peer_name,
-            name=DEF_PROTECTED_COLLECTION_NAME,
+            name=collection_name,
         )
         db.add(honcho_collection)
         await db.commit()
@@ -1616,3 +1615,7 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+def construct_collection_name(peer_name: str, target_name: str) -> str:
+    return f"{peer_name}_{target_name}"

@@ -298,8 +298,8 @@ def mock_crud_collection_operations():
 
     from src import models
 
-    async def mock_get_or_create_peer_protected_collection(
-        db, workspace_name, peer_name
+    async def mock_get_or_create_collection(
+        db, workspace_name, peer_name, collection_name
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
@@ -311,8 +311,8 @@ def mock_crud_collection_operations():
         return mock_collection
 
     with patch(
-        "src.crud.get_or_create_peer_protected_collection",
-        mock_get_or_create_peer_protected_collection,
+        "src.crud.get_or_create_collection",
+        mock_get_or_create_collection,
     ):
         yield
 
