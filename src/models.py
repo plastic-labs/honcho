@@ -19,6 +19,7 @@ from sqlalchemy import (
     Table,
     UniqueConstraint,
     event,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -224,6 +225,12 @@ class Message(Base):
             "session_name",
             "id",
             postgresql_include=["id", "created_at"],
+        ),
+        # Full text search index on content column
+        Index(
+            "idx_messages_content_gin",
+            text("to_tsvector('english', content)"),
+            postgresql_using="gin",
         ),
     )
 

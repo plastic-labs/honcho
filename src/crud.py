@@ -981,9 +981,12 @@ async def search(
     peer_name: Optional[str] = None,
 ) -> Select:
     """
-    Search across message content. If a session or peer is provided,
-    the search will be scoped to that session or peer. Otherwise, it will
-    search across all messages in the workspace.
+    Search across message content using a hybrid approach:
+    - Uses PostgreSQL full text search for natural language queries
+    - Falls back to exact string matching for queries with special characters
+
+    If a session or peer is provided, the search will be scoped to that
+    session or peer. Otherwise, it will search across all messages in the workspace.
 
     Args:
         query: Search query to match against message content
@@ -992,25 +995,64 @@ async def search(
         peer_name: Optional name of the peer
 
     Returns:
-        List of messages that match the search query
+        List of messages that match the search query, ordered by relevance
     """
-    if session_name is not None:
-        stmt = select(models.Message).where(
-            models.Message.session_name == session_name,
-            models.Message.workspace_name == workspace_name,
-            models.Message.content.ilike(f"%{query}%"),
-        )
-    elif peer_name is not None:
-        stmt = select(models.Message).where(
-            models.Message.peer_name == peer_name,
-            models.Message.workspace_name == workspace_name,
-            models.Message.content.ilike(f"%{query}%"),
+    import re
+
+    from sqlalchemy import func, or_
+
+    # Check if query contains special characters that FTS might not handle well
+    has_special_chars = bool(
+        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
+    )
+
+    # Base query conditions
+    base_conditions = [models.Message.workspace_name == workspace_name]
+
+    if has_special_chars:
+        # For queries with special characters, use exact string matching (ILIKE)
+        # This ensures we can find exact matches like "~special-uuid~"
+        search_condition = models.Message.content.ilike(f"%{query}%")
+
+        base_query = (
+            select(models.Message)
+            .where(*base_conditions, search_condition)
+            .order_by(models.Message.created_at.desc())
         )
     else:
-        stmt = select(models.Message).where(
-            models.Message.workspace_name == workspace_name,
-            models.Message.content.ilike(f"%{query}%"),
+        # For natural language queries, use full text search with ranking
+        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
+            func.plainto_tsquery("english", query)
         )
+
+        # Combine FTS with ILIKE as fallback for better coverage
+        combined_condition = or_(
+            fts_condition, models.Message.content.ilike(f"%{query}%")
+        )
+
+        base_query = (
+            select(models.Message)
+            .where(*base_conditions, combined_condition)
+            .order_by(
+                # Order by FTS relevance first, then by creation time
+                func.coalesce(
+                    func.ts_rank(
+                        func.to_tsvector("english", models.Message.content),
+                        func.plainto_tsquery("english", query),
+                    ),
+                    0,
+                ).desc(),
+                models.Message.created_at.desc(),
+            )
+        )
+
+    # Add additional filters based on parameters
+    if session_name is not None:
+        stmt = base_query.where(models.Message.session_name == session_name)
+    elif peer_name is not None:
+        stmt = base_query.where(models.Message.peer_name == peer_name)
+    else:
+        stmt = base_query
 
     return stmt
 
