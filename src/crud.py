@@ -1532,8 +1532,20 @@ async def get_deriver_status(
     # Verify peer exists
     await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
 
-    # Build the query
-    stmt = _build_queue_status_query(workspace_name, peer_name, session_name, include_sender)
+    # Resolve session_name to session_id if provided
+    resolved_session_id = None
+    if session_name:
+        session_stmt = select(models.Session.id).where(
+            models.Session.name == session_name,
+            models.Session.workspace_name == workspace_name
+        )
+        session_result = await db.execute(session_stmt)
+        resolved_session_id = session_result.scalar_one_or_none()
+        if resolved_session_id is None:
+            raise ResourceNotFoundException(f"Session {session_name} not found")
+
+    # Build the query (pass resolved ID, but keep parameter name for compatibility)
+    stmt = _build_queue_status_query(workspace_name, peer_name, resolved_session_id, include_sender)
     result = await db.execute(stmt)
     rows = result.fetchall()
 
@@ -1583,10 +1595,8 @@ def _build_queue_status_query(
     else:
         stmt = stmt.where(target_name_expr == peer_name)
 
-    # Add session filter if provided
+    # Add session filter if provided (session_name is actually resolved session_id at this point)
     if session_name:
-        # We'd need to resolve session_name to session.id here if needed
-        # For now, assuming session_name is the actual ID
         stmt = stmt.where(models.QueueItem.session_id == session_name)
 
     return stmt
@@ -1637,21 +1647,21 @@ def _build_status_response(peer_name: str, session_name: Optional[str], counts: 
             session_id=session_name,
             **base_response
         )
-    else:
-        # Multi-session response
-        sessions = {}
-        for session_id, data in counts["sessions"].items():
-            total = data["completed"] + data["in_progress"] + data["pending"]
-            sessions[session_id] = schemas.DeriverStatus(
-                peer_id=peer_name,
-                session_id=session_id,
-                total_work_units=total,
-                completed_work_units=data["completed"],
-                in_progress_work_units=data["in_progress"],
-                pending_work_units=data["pending"],
-            )
-
-        return schemas.DeriverStatus(
-            sessions=sessions if sessions else None,
-            **base_response
+    
+    # Multi-session response
+    sessions = {}
+    for session_id, data in counts["sessions"].items():
+        total = data["completed"] + data["in_progress"] + data["pending"]
+        sessions[session_id] = schemas.DeriverStatus(
+            peer_id=peer_name,
+            session_id=session_id,
+            total_work_units=total,
+            completed_work_units=data["completed"],
+            in_progress_work_units=data["in_progress"],
+            pending_work_units=data["pending"],
         )
+
+    return schemas.DeriverStatus(
+        sessions=sessions if sessions else None,
+        **base_response
+    )

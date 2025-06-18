@@ -362,7 +362,7 @@ async def search_peer(
 async def get_deriver_status(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    session_id: Optional[str] = Query(None, description="Optional session ID to filter by"),
+    session_name: Optional[str] = Query(None, description="Optional session name to filter by"),
     include_sender: bool = Query(False, description="Include work units triggered by this peer"),
     db=db,
 ):
@@ -372,7 +372,7 @@ async def get_deriver_status(
             db,
             workspace_name=workspace_id,
             peer_name=peer_id,
-            session_name=session_id,
+            session_name=session_name,
             include_sender=include_sender,
         )
     except ResourceNotFoundException as e:
