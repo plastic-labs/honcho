@@ -59,23 +59,23 @@ def test_create_session_with_metadata(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
 
 
-def test_create_session_with_feature_flags(client, sample_data):
-    """Test session creation with feature_flags parameter"""
+def test_create_session_with_configuration(client, sample_data):
+    """Test session creation with configuration parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
-    feature_flags = {"experimental_feature": True, "beta_mode": False}
+    configuration = {"experimental_feature": True, "beta_mode": False}
 
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
             "peer_names": {test_peer.name: {}},
-            "feature_flags": feature_flags,
+            "configuration": configuration,
         },
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
     assert data["id"] == session_id
     assert data["workspace_id"] == test_workspace.name
 
@@ -85,7 +85,7 @@ def test_create_session_with_all_optional_params(client, sample_data):
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
     metadata = {"key": "value", "number": 42}
-    feature_flags = {"feature1": True, "feature2": False}
+    configuration = {"feature1": True, "feature2": False}
 
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
@@ -93,13 +93,13 @@ def test_create_session_with_all_optional_params(client, sample_data):
             "id": session_id,
             "peer_names": {test_peer.name: {}},
             "metadata": metadata,
-            "feature_flags": feature_flags,
+            "configuration": configuration,
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"] == metadata
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
     assert data["id"] == session_id
     assert data["workspace_id"] == test_workspace.name
 
@@ -253,8 +253,8 @@ def test_update_session(client, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-def test_update_session_with_feature_flags(client, sample_data):
-    """Test session update with feature_flags parameter"""
+def test_update_session_with_configuration(client, sample_data):
+    """Test session update with configuration parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -264,19 +264,19 @@ def test_update_session_with_feature_flags(client, sample_data):
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
-    # Update with feature flags
-    feature_flags = {"new_feature": True, "legacy_feature": False}
+    # Update with configuration
+    configuration = {"new_feature": True, "legacy_feature": False}
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
-        json={"metadata": {}, "feature_flags": feature_flags},
+        json={"metadata": {}, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_update_session_with_all_optional_params(client, sample_data):
-    """Test session update with both metadata and feature_flags"""
+    """Test session update with both metadata and configuration"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -288,40 +288,40 @@ def test_update_session_with_all_optional_params(client, sample_data):
 
     # Update with all params
     metadata = {"updated_key": "updated_value"}
-    feature_flags = {"experimental": True, "beta": True}
+    configuration = {"experimental": True, "beta": True}
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
-        json={"metadata": metadata, "feature_flags": feature_flags},
+        json={"metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"] == metadata
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
-def test_update_session_with_null_feature_flags(client, sample_data):
-    """Test session update with null feature_flags"""
+def test_update_session_with_null_configuration(client, sample_data):
+    """Test session update with null configuration"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
-    # Create session with feature flags
+    # Create session with configuration
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
             "id": session_id,
             "peer_names": {test_peer.name: {}},
-            "feature_flags": {"temp": "value"},
+            "configuration": {"temp": "value"},
         },
     )
 
-    # Update with null feature flags
+    # Update with null configuration
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
-        json={"metadata": {}, "feature_flags": None},
+        json={"metadata": {}, "configuration": None},
     )
     assert response.status_code == 200
     data = response.json()
-    assert "feature_flags" in data
+    assert "configuration" in data
 
 
 def test_delete_session(client, sample_data):

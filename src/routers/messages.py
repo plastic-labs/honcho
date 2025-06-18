@@ -55,10 +55,10 @@ async def enqueue(payload: list[dict]):
                     peer=schemas.PeerCreate(name=peer_name),
                 )
 
-                # Cast feature_flags to PeerConfig and check observe_me
+                # Cast configuration to PeerConfig and check observe_me
                 peer_config = (
-                    schemas.PeerConfig(**peer.feature_flags)
-                    if peer.feature_flags
+                    schemas.PeerConfig(**peer.configuration)
+                    if peer.configuration
                     else schemas.PeerConfig()
                 )
                 if not peer_config.observe_me:
@@ -108,16 +108,16 @@ async def enqueue(payload: list[dict]):
                 and session.h_metadata.get("deriver_disabled") is not False
             )
 
-            feature_flags_query = await crud.get_session_peer_feature_flags(
+            configuration_query = await crud.get_session_peer_configuration(
                 workspace_name=workspace_name, session_name=session_name
             )
-            peers_with_feature_flags_result = await db_session.execute(
-                feature_flags_query
+            peers_with_configuration_result = await db_session.execute(
+                configuration_query
             )
-            peers_with_feature_flags_list = peers_with_feature_flags_result.all()
-            peers_with_feature_flags = {
-                row.peer_name: [row.peer_feature_flags, row.session_peer_feature_flags]
-                for row in peers_with_feature_flags_list
+            peers_with_configuration_list = peers_with_configuration_result.all()
+            peers_with_configuration = {
+                row.peer_name: [row.peer_configuration, row.session_peer_configuration]
+                for row in peers_with_configuration_list
             }
 
             # Process all payloads - create multiple queue items per message
@@ -145,14 +145,14 @@ async def enqueue(payload: list[dict]):
 
                 sender_session_peer_config = (
                     schemas.SessionPeerConfig(
-                        **peers_with_feature_flags[sender_name][1]
+                        **peers_with_configuration[sender_name][1]
                     )
-                    if peers_with_feature_flags[sender_name][1]
+                    if peers_with_configuration[sender_name][1]
                     else None
                 )
                 sender_peer_config = (
-                    schemas.PeerConfig(**peers_with_feature_flags[sender_name][0])
-                    if peers_with_feature_flags[sender_name][0]
+                    schemas.PeerConfig(**peers_with_configuration[sender_name][0])
+                    if peers_with_configuration[sender_name][0]
                     else schemas.PeerConfig()
                 )
 
@@ -178,10 +178,10 @@ async def enqueue(payload: list[dict]):
                         "session_id": session.id,
                     }
                 )
-                for peer_name, feature_flags in peers_with_feature_flags.items():
+                for peer_name, configuration in peers_with_configuration.items():
                     session_peer_config = (
-                        schemas.SessionPeerConfig(**feature_flags[1])
-                        if feature_flags[1]
+                        schemas.SessionPeerConfig(**configuration[1])
+                        if configuration[1]
                         else None
                     )
 

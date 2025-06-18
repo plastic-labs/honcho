@@ -61,7 +61,7 @@ async def get_or_create_workspace(
         honcho_workspace = models.Workspace(
             name=workspace.name,
             h_metadata=workspace.metadata,
-            feature_flags=workspace.feature_flags,
+            configuration=workspace.configuration,
         )
         db.add(honcho_workspace)
         await db.commit()
@@ -129,8 +129,8 @@ async def update_workspace(
         if workspace.metadata is not None:
             honcho_workspace.h_metadata = workspace.metadata
 
-        if workspace.feature_flags is not None:
-            honcho_workspace.feature_flags = workspace.feature_flags
+        if workspace.configuration is not None:
+            honcho_workspace.configuration = workspace.configuration
 
         await db.commit()
         logger.info(f"Workspace with id {honcho_workspace.id} updated successfully")
@@ -157,7 +157,7 @@ async def get_or_create_peers(
 ) -> list[models.Peer]:
     """
     Get an existing list of peers or create new peers if they don't exist.
-    Updates existing peers with metadata and feature flags if provided.
+    Updates existing peers with metadata and configuration if provided.
 
     Args:
         db: Database session
@@ -179,16 +179,16 @@ async def get_or_create_peers(
     # Create a mapping of peer names to peer schemas for easy lookup
     peer_schema_map = {p.name: p for p in peers}
 
-    # Update existing peers with metadata and feature flags if provided
+    # Update existing peers with metadata and configuration if provided
     for existing_peer in existing_peers:
         peer_schema = peer_schema_map[existing_peer.name]
 
-        # Update with metadata and feature flags if provided
+        # Update with metadata and configuration if provided
         if peer_schema.metadata is not None:
             existing_peer.h_metadata = peer_schema.metadata
 
-        if peer_schema.feature_flags is not None:
-            existing_peer.feature_flags = peer_schema.feature_flags
+        if peer_schema.configuration is not None:
+            existing_peer.configuration = peer_schema.configuration
 
     # Find which peers need to be created
     existing_names = {p.name for p in existing_peers}
@@ -200,7 +200,7 @@ async def get_or_create_peers(
             workspace_name=workspace_name,
             name=p.name,
             h_metadata=p.metadata,
-            feature_flags=p.feature_flags,
+            configuration=p.configuration,
         )
         for p in peers_to_create
     ]
@@ -246,12 +246,12 @@ async def get_or_create_peer(
         # Peer already exists
         logger.debug(f"Found existing peer: {peer.name} for workspace {workspace_name}")
 
-        # Update with metadata and feature flags if provided
+        # Update with metadata and configuration if provided
         if peer.metadata is not None:
             existing_peer.h_metadata = peer.metadata
 
-        if peer.feature_flags is not None:
-            existing_peer.feature_flags = peer.feature_flags
+        if peer.configuration is not None:
+            existing_peer.configuration = peer.configuration
 
         await db.commit()
         return existing_peer
@@ -267,7 +267,7 @@ async def get_or_create_peer(
             workspace_name=workspace_name,
             name=peer.name,
             h_metadata=peer.metadata or {},
-            feature_flags=peer.feature_flags or {},
+            configuration=peer.configuration or {},
         )
         db.add(honcho_peer)
         await db.commit()
@@ -327,8 +327,8 @@ async def update_peer(
         if peer.metadata is not None:
             honcho_peer.h_metadata = peer.metadata
 
-        if peer.feature_flags is not None:
-            honcho_peer.feature_flags = peer.feature_flags
+        if peer.configuration is not None:
+            honcho_peer.configuration = peer.configuration
 
         await db.commit()
         logger.info(f"Peer {peer_name} updated successfully")
@@ -466,17 +466,17 @@ async def get_or_create_session(
                 workspace_name=workspace_name,
                 name=session.name,
                 h_metadata=session.metadata or {},
-                feature_flags=session.feature_flags or {},
+                configuration=session.configuration or {},
             )
             db.add(honcho_session)
             # Flush to ensure session exists in DB before adding peers
             await db.flush()
         else:
-            # Update existing session with metadata and feature flags if provided
+            # Update existing session with metadata and configuration if provided
             if session.metadata is not None:
                 honcho_session.h_metadata = session.metadata
-            if session.feature_flags is not None:
-                honcho_session.feature_flags = session.feature_flags
+            if session.configuration is not None:
+                honcho_session.configuration = session.configuration
 
         # Add all peers to session
         if session.peer_names:
@@ -534,8 +534,8 @@ async def update_session(
     if session.metadata is not None:
         honcho_session.h_metadata = session.metadata
 
-    if session.feature_flags is not None:
-        honcho_session.feature_flags = session.feature_flags
+    if session.configuration is not None:
+        honcho_session.configuration = session.configuration
 
     await db.commit()
     logger.info(f"Session {session_name} updated successfully")
@@ -759,25 +759,25 @@ async def get_peers_from_session(
     return stmt
 
 
-async def get_session_peer_feature_flags(
+async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
 ) -> Select:
     """
-    Get feature flags from both SessionPeer and Peer tables for active peers in a session.
+    Get configuration from both SessionPeer and Peer tables for active peers in a session.
 
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session
 
     Returns:
-        Select statement returning peer_name, peer_feature_flags, and session_peer_feature_flags
+        Select statement returning peer_name, peer_configuration, and session_peer_configuration
     """
     stmt = (
         select(
             models.Peer.name.label("peer_name"),
-            models.Peer.feature_flags.label("peer_feature_flags"),
-            models.SessionPeer.feature_flags.label("session_peer_feature_flags"),
+            models.Peer.configuration.label("peer_configuration"),
+            models.SessionPeer.configuration.label("session_peer_configuration"),
         )
         .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
         .where(models.SessionPeer.session_name == session_name)
@@ -893,9 +893,9 @@ async def _add_peers_to_session(
                 "workspace_name": workspace_name,
                 "joined_at": func.now(),
                 "left_at": None,
-                "feature_flags": feature_flags.model_dump(),
+                "configuration": configuration.model_dump(),
             }
-            for peer_name, feature_flags in peer_names.items()
+            for peer_name, configuration in peer_names.items()
         ]
     )
 
@@ -953,7 +953,7 @@ async def get_peer_config(
             f"Session peer {peer_id} not found in session {session_name} in workspace {workspace_name}"
         )
 
-    return schemas.SessionPeerConfig(**session_peer.feature_flags)
+    return schemas.SessionPeerConfig(**session_peer.configuration)
 
 
 async def set_peer_config(
@@ -994,8 +994,8 @@ async def set_peer_config(
         )
 
     # Update peer config
-    session_peer.feature_flags["observe_others"] = config.observe_others
-    session_peer.feature_flags["observe_me"] = config.observe_me
+    session_peer.configuration["observe_others"] = config.observe_others
+    session_peer.configuration["observe_me"] = config.observe_me
 
     await db.commit()
     return

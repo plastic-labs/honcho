@@ -89,7 +89,7 @@ def test_session_validations_api(client, sample_data):
             "id": session_id,
             "peer_names": {test_peer.name: {}},
             "metadata": {"test_key": "test_value"},
-            "feature_flags": {"test_flag": "test_value"},
+            "configuration": {"test_flag": "test_value"},
         },
     )
     assert session_response.status_code == 200
@@ -105,14 +105,14 @@ def test_session_validations_api(client, sample_data):
     assert error["type"] == "dict_type"
 
     # Test empty update
-    # This should work but not change the session's metadata or feature flags
+    # This should work but not change the session's metadata or configuration
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
         json={},
     )
     assert response.status_code == 200
 
-    # Test that the session's metadata and feature flags are not changed
+    # Test that the session's metadata and configuration are not changed
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
         json={
@@ -122,7 +122,7 @@ def test_session_validations_api(client, sample_data):
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"] == {"test_key": "test_value"}
-    assert data["feature_flags"] == {"test_flag": "test_value"}
+    assert data["configuration"] == {"test_flag": "test_value"}
 
 
 def test_agent_query_validations_api(client, sample_data):

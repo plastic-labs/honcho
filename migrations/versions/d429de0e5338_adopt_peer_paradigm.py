@@ -127,11 +127,11 @@ def rename_tables(schema: str, inspector) -> None:
 def update_workspaces_table(schema: str, inspector) -> None:
     """Update workspaces table (formerly apps)."""
 
-    # Add feature flags column
+    # Add configuration column
     op.add_column(
         "workspaces",
         sa.Column(
-            "feature_flags",
+            "configuration",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default="{}",
@@ -169,11 +169,11 @@ def update_workspaces_table(schema: str, inspector) -> None:
 def update_peers_table(schema: str, inspector) -> None:
     """Update peers table (formerly users)."""
 
-    # Add feature flags column
+    # Add configuration column
     op.add_column(
         "peers",
         sa.Column(
-            "feature_flags",
+            "configuration",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default="{}",
@@ -249,11 +249,11 @@ def update_peers_table(schema: str, inspector) -> None:
 def update_sessions_table(schema: str, inspector) -> None:
     """Update sessions table."""
 
-    # Add feature flags column
+    # Add configuration column
     op.add_column(
         "sessions",
         sa.Column(
-            "feature_flags",
+            "configuration",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default="{}",
@@ -339,7 +339,7 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
             sa.Column("session_name", sa.TEXT(), nullable=False),
             sa.Column("peer_name", sa.TEXT(), nullable=False),
             sa.Column(
-                "feature_flags",
+                "configuration",
                 postgresql.JSONB(astext_type=sa.Text()),
                 nullable=False,
                 server_default="{}",
@@ -1516,7 +1516,7 @@ def restore_sessions_table(schema: str, inspector) -> None:
     # Drop new columns
     op.drop_column("sessions", "name", schema=schema)
     op.drop_column("sessions", "workspace_name", schema=schema)
-    op.drop_column("sessions", "feature_flags", schema=schema)
+    op.drop_column("sessions", "configuration", schema=schema)
 
     # Restore old constraint names
     if constraint_exists("sessions", "id_length", "check", inspector):
@@ -1593,7 +1593,7 @@ def restore_peers_table(schema: str, inspector) -> None:
 
     # Drop new columns
     op.drop_column("peers", "workspace_name", schema=schema)
-    op.drop_column("peers", "feature_flags", schema=schema)
+    op.drop_column("peers", "configuration", schema=schema)
 
     # Restore old constraint names
     if constraint_exists("peers", "id_length", "check", inspector):
@@ -1650,7 +1650,7 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     )
 
     # Drop new columns
-    op.drop_column("workspaces", "feature_flags", schema=schema)
+    op.drop_column("workspaces", "configuration", schema=schema)
 
     # Restore old constraint names
     if constraint_exists("workspaces", "id_length", "check", inspector):

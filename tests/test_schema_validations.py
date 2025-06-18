@@ -2,11 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from src.schemas import (
-    WorkspaceCreate,
-    PeerCreate,
     DocumentCreate,
     MessageCreate,
+    PeerCreate,
     SessionCreate,
+    WorkspaceCreate,
 )
 
 
@@ -41,11 +41,11 @@ class TestPeerValidations:
         assert peer.name == "test"
         assert peer.metadata == {}
 
-    def test_valid_peer_create_feature_flags(self):
-        peer = PeerCreate(name="test", metadata={}, feature_flags={"test": True})
+    def test_valid_peer_create_configuration(self):
+        peer = PeerCreate(name="test", metadata={}, configuration={"test": True})
         assert peer.name == "test"
         assert peer.metadata == {}
-        assert peer.feature_flags == {"test": True}
+        assert peer.configuration == {"test": True}
 
     def test_peer_name_too_short(self):
         with pytest.raises(ValidationError) as exc_info:
@@ -58,6 +58,7 @@ class TestPeerValidations:
             PeerCreate(name="a" * 101, metadata={})
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"
+
 
 class TestSessionValidations:
     def test_valid_session_create(self):

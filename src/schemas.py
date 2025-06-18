@@ -16,7 +16,7 @@ class WorkspaceCreate(WorkspaceBase):
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: dict = {}
-    feature_flags: dict = {}
+    configuration: dict = {}
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -27,13 +27,13 @@ class WorkspaceGet(WorkspaceBase):
 
 class WorkspaceUpdate(WorkspaceBase):
     metadata: dict | None = None
-    feature_flags: dict | None = None
+    configuration: dict | None = None
 
 
 class Workspace(WorkspaceBase):
     name: str = Field(serialization_alias="id")
     h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
-    feature_flags: dict = Field(default_factory=dict)
+    configuration: dict = Field(default_factory=dict)
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -49,7 +49,7 @@ class PeerCreate(PeerBase):
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: dict | None = None
-    feature_flags: dict | None = None
+    configuration: dict | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -60,7 +60,7 @@ class PeerGet(PeerBase):
 
 class PeerUpdate(PeerBase):
     metadata: dict | None = None
-    feature_flags: dict | None = None
+    configuration: dict | None = None
 
 
 class Peer(PeerBase):
@@ -68,7 +68,7 @@ class Peer(PeerBase):
     workspace_name: str = Field(serialization_alias="workspace_id")
     created_at: datetime.datetime
     h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
-    feature_flags: dict = Field(default_factory=dict)
+    configuration: dict = Field(default_factory=dict)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -149,7 +149,7 @@ class SessionCreate(SessionBase):
     ]
     metadata: dict | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
-    feature_flags: dict | None = None
+    configuration: dict | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -161,7 +161,7 @@ class SessionGet(SessionBase):
 
 class SessionUpdate(SessionBase):
     metadata: dict | None = None
-    feature_flags: dict | None = None
+    configuration: dict | None = None
 
 
 class Session(SessionBase):
@@ -169,7 +169,7 @@ class Session(SessionBase):
     is_active: bool
     workspace_name: str = Field(serialization_alias="workspace_id")
     h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
-    feature_flags: dict = Field(default_factory=dict)
+    configuration: dict = Field(default_factory=dict)
     created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

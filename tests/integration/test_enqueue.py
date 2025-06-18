@@ -106,7 +106,7 @@ class TestEnqueueFunction:
 
         test_workspace, test_peer = sample_data
 
-        test_peer.feature_flags = {"observe_me": False}
+        test_peer.configuration = {"observe_me": False}
         await db_session.commit()
 
         payload = self.create_sample_payload(
@@ -173,7 +173,7 @@ class TestEnqueueFunction:
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peer_names={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
+                peers={test_peer.name: schemas.SessionPeerConfig(observe_me=True)},
             ),
             test_workspace.name,
         )
@@ -221,7 +221,7 @@ class TestEnqueueFunction:
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peer_names={
+                peers={
                     test_peer1.name: schemas.SessionPeerConfig(),
                     test_peer2.name: schemas.SessionPeerConfig(),
                 },
@@ -297,7 +297,7 @@ class TestEnqueueFunction:
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peer_names={
+                peers={
                     test_peer1.name: schemas.SessionPeerConfig(),
                     test_peer2.name: schemas.SessionPeerConfig(observe_others=True),
                 },
@@ -386,7 +386,7 @@ class TestEnqueueFunction:
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peer_names={
+                peers={
                     test_peer1.name: schemas.SessionPeerConfig(observe_me=True),
                     observing_peer.name: schemas.SessionPeerConfig(observe_others=True),
                     unobserving_peer.name: schemas.SessionPeerConfig(),
@@ -463,17 +463,15 @@ class TestEnqueueFunction:
 
         test_workspace, test_peer = sample_data
 
-        # Set peer feature flags to observe_me=False
-        test_peer.feature_flags = {"observe_me": True}
+        # Set peer configuration to observe_me=True
+        test_peer.configuration = {"observe_me": True}
 
         # Create session
         test_session = await crud.get_or_create_session(
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peer_names={
-                    test_peer.name: schemas.SessionPeerConfig(observe_me=False)
-                },
+                peers={test_peer.name: schemas.SessionPeerConfig(observe_me=False)},
             ),
             test_workspace.name,
         )
@@ -524,7 +522,7 @@ class TestEnqueueFunction:
             db_session,
             schemas.SessionCreate(
                 name=str(generate_nanoid()),
-                peer_names={
+                peers={
                     test_peer1.name: schemas.SessionPeerConfig(),
                     additional_sender_peer.name: schemas.SessionPeerConfig(),
                     observer_peer.name: schemas.SessionPeerConfig(observe_others=True),

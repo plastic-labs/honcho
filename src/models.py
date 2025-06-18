@@ -66,7 +66,7 @@ session_peers_table = Table(
         nullable=False,
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
-    Column("feature_flags", JSONB, default=dict),
+    Column("configuration", JSONB, default=dict),
     Column(
         "joined_at",
         DateTime(timezone=True),
@@ -100,7 +100,7 @@ class Workspace(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -120,7 +120,7 @@ class Peer(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship(
@@ -137,7 +137,7 @@ class Peer(Base):
     )
 
     def __repr__(self) -> str:
-        return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, feature_flags={self.feature_flags})"
+        return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, configuration={self.configuration})"
 
 
 class Session(Base):
@@ -153,7 +153,7 @@ class Session(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    feature_flags: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     peers = relationship(
         "Peer", secondary=session_peers_table, back_populates="sessions"

@@ -15,20 +15,20 @@ def test_get_or_create_peer(client, sample_data):
     assert "id" in data
 
 
-def test_get_or_create_peer_with_feature_flags(client, sample_data):
-    """Test peer creation with feature_flags parameter"""
+def test_get_or_create_peer_with_configuration(client, sample_data):
+    """Test peer creation with configuration parameter"""
     test_workspace, _ = sample_data
     name = str(generate_nanoid())
-    feature_flags = {"experimental": True, "beta": False}
+    configuration = {"experimental": True, "beta": False}
 
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/peers",
-        json={"name": name, "feature_flags": feature_flags},
+        json={"name": name, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == name
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_get_or_create_peer_with_all_optional_params(client, sample_data):
@@ -36,17 +36,17 @@ def test_get_or_create_peer_with_all_optional_params(client, sample_data):
     test_workspace, _ = sample_data
     name = str(generate_nanoid())
     metadata = {"key": "value", "number": 42}
-    feature_flags = {"feature1": True, "feature2": False}
+    configuration = {"feature1": True, "feature2": False}
 
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/peers",
-        json={"name": name, "metadata": metadata, "feature_flags": feature_flags},
+        json={"name": name, "metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == name
     assert data["metadata"] == metadata
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_get_or_create_existing_peer(client, sample_data):
@@ -184,34 +184,34 @@ def test_update_peer(client, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-def test_update_peer_with_feature_flags(client, sample_data):
-    """Test peer update with feature_flags parameter"""
+def test_update_peer_with_configuration(client, sample_data):
+    """Test peer update with configuration parameter"""
     test_workspace, test_peer = sample_data
-    feature_flags = {"new_feature": True, "legacy_feature": False}
+    configuration = {"new_feature": True, "legacy_feature": False}
 
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
-        json={"feature_flags": feature_flags},
+        json={"configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_update_peer_with_all_optional_params(client, sample_data):
-    """Test peer update with both metadata and feature_flags"""
+    """Test peer update with both metadata and configuration"""
     test_workspace, test_peer = sample_data
     metadata = {"updated_key": "updated_value", "count": 100}
-    feature_flags = {"experimental": True, "beta": True}
+    configuration = {"experimental": True, "beta": True}
 
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
-        json={"metadata": metadata, "feature_flags": feature_flags},
+        json={"metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"] == metadata
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_update_peer_with_null_metadata(client, sample_data):
@@ -234,17 +234,17 @@ def test_update_peer_with_null_metadata(client, sample_data):
     assert "metadata" in data
 
 
-def test_update_peer_with_null_feature_flags(client, sample_data):
-    """Test peer update with null feature_flags"""
+def test_update_peer_with_null_configuration(client, sample_data):
+    """Test peer update with null configuration"""
     test_workspace, test_peer = sample_data
 
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
-        json={"feature_flags": None},
+        json={"configuration": None},
     )
     assert response.status_code == 200
     data = response.json()
-    assert "feature_flags" in data
+    assert "configuration" in data
 
 
 def test_get_sessions_for_peer_no_sessions(client, sample_data):

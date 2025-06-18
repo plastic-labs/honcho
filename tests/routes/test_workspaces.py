@@ -13,35 +13,35 @@ def test_get_or_create_workspace(client):
     assert "id" in data
 
 
-def test_get_or_create_workspace_with_feature_flags(client):
-    """Test workspace creation with feature_flags parameter"""
+def test_get_or_create_workspace_with_configuration(client):
+    """Test workspace creation with configuration parameter"""
     name = str(generate_nanoid())
-    feature_flags = {"feature1": True, "feature2": False}
+    configuration = {"feature1": True, "feature2": False}
 
     response = client.post(
-        "/v1/workspaces", json={"name": name, "feature_flags": feature_flags}
+        "/v1/workspaces", json={"name": name, "configuration": configuration}
     )
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == name
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_get_or_create_workspace_with_all_optional_params(client):
     """Test workspace creation with all optional parameters"""
     name = str(generate_nanoid())
     metadata = {"key": "value", "number": 42}
-    feature_flags = {"experimental": True, "beta": False}
+    configuration = {"experimental": True, "beta": False}
 
     response = client.post(
         "/v1/workspaces",
-        json={"name": name, "metadata": metadata, "feature_flags": feature_flags},
+        json={"name": name, "metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == name
     assert data["metadata"] == metadata
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_get_or_create_existing_workspace(client):
@@ -159,33 +159,33 @@ def test_update_workspace(client, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-def test_update_workspace_with_feature_flags(client, sample_data):
-    """Test workspace update with feature_flags parameter"""
+def test_update_workspace_with_configuration(client, sample_data):
+    """Test workspace update with configuration parameter"""
     test_workspace, _ = sample_data
-    feature_flags = {"new_feature": True, "legacy_feature": False}
+    configuration = {"new_feature": True, "legacy_feature": False}
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}", json={"feature_flags": feature_flags}
+        f"/v1/workspaces/{test_workspace.name}", json={"configuration": configuration}
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_update_workspace_with_all_optional_params(client, sample_data):
-    """Test workspace update with both metadata and feature_flags"""
+    """Test workspace update with both metadata and configuration"""
     test_workspace, _ = sample_data
     metadata = {"updated_key": "updated_value", "count": 100}
-    feature_flags = {"experimental": True, "beta": True}
+    configuration = {"experimental": True, "beta": True}
 
     response = client.put(
         f"/v1/workspaces/{test_workspace.name}",
-        json={"metadata": metadata, "feature_flags": feature_flags},
+        json={"metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
     data = response.json()
     assert data["metadata"] == metadata
-    assert data["feature_flags"] == feature_flags
+    assert data["configuration"] == configuration
 
 
 def test_update_workspace_with_null_metadata(client, sample_data):
@@ -208,16 +208,16 @@ def test_update_workspace_with_null_metadata(client, sample_data):
     assert "metadata" in data
 
 
-def test_update_workspace_with_null_feature_flags(client, sample_data):
-    """Test workspace update with null feature_flags"""
+def test_update_workspace_with_null_configuration(client, sample_data):
+    """Test workspace update with null configuration"""
     test_workspace, _ = sample_data
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}", json={"feature_flags": None}
+        f"/v1/workspaces/{test_workspace.name}", json={"configuration": None}
     )
     assert response.status_code == 200
     data = response.json()
-    assert "feature_flags" in data
+    assert "configuration" in data
 
 
 def test_create_duplicate_workspace_name(client):
