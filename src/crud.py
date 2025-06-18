@@ -1480,7 +1480,7 @@ async def create_document(
         peer_name=peer_name,
         collection_name=collection_name,
         content=document.content,
-        h_metadata=document.metadata,
+        internal_metadata=document.metadata,
         embedding=embedding,
     )
     db.add(honcho_document)

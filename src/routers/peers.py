@@ -12,7 +12,7 @@ from fastapi import (
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
-from src import crud, schemas
+from src import agent, crud, schemas
 from src.dependencies import db
 from src.exceptions import (
     AuthenticationException,
@@ -165,10 +165,17 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
+    db=db,
 ):
-    return schemas.DialecticResponse(
-        content=f"Hello, {peer_id}! You are chatting with {options.target} in {options.session_id} in workspace {workspace_id} with options {options}",
+    # Get or create the peer to ensure it exists
+    await crud.get_or_create_peers(
+        db, workspace_name=workspace_id, peers=[schemas.PeerCreate(name=peer_id)]
     )
+
+    response = await agent.chat(
+        workspace_id, peer_id, options.session_id, options.queries, options.stream
+    )
+    return response
 
 
 @router.post(

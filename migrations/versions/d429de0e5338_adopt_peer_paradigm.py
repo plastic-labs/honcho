@@ -138,6 +138,17 @@ def update_workspaces_table(schema: str, inspector) -> None:
         ),
         schema=schema,
     )
+    # Add internal_metadata column
+    op.add_column(
+        "workspaces",
+        sa.Column(
+            "internal_metadata",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default="{}",
+        ),
+        schema=schema,
+    )
 
     # Update constraint names
     if constraint_exists("workspaces", "public_id_length", "check", inspector):
@@ -174,6 +185,18 @@ def update_peers_table(schema: str, inspector) -> None:
         "peers",
         sa.Column(
             "configuration",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default="{}",
+        ),
+        schema=schema,
+    )
+
+    # Add internal_metadata column
+    op.add_column(
+        "peers",
+        sa.Column(
+            "internal_metadata",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default="{}",
@@ -254,6 +277,18 @@ def update_sessions_table(schema: str, inspector) -> None:
         "sessions",
         sa.Column(
             "configuration",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default="{}",
+        ),
+        schema=schema,
+    )
+
+    # Add internal_metadata column
+    op.add_column(
+        "sessions",
+        sa.Column(
+            "internal_metadata",
             postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default="{}",
@@ -343,6 +378,12 @@ def create_and_populate_session_peers_table(schema: str, inspector) -> None:
             sa.Column("peer_name", sa.TEXT(), nullable=False),
             sa.Column(
                 "configuration",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default="{}",
+            ),
+            sa.Column(
+                "internal_metadata",
                 postgresql.JSONB(astext_type=sa.Text()),
                 nullable=False,
                 server_default="{}",
@@ -554,6 +595,16 @@ def update_messages_table(schema: str, inspector) -> None:
         sa.Column("token_count", sa.Integer(), nullable=False, server_default="0"),
         schema=schema,
     )
+    op.add_column(
+        "messages",
+        sa.Column(
+            "internal_metadata",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default="{}",
+        ),
+        schema=schema,
+    )
 
     # Backfill token counts for existing messages
     backfill_token_counts(schema)
@@ -573,6 +624,17 @@ def update_collections_table(schema: str, inspector) -> None:
         op.add_column(
             "collections",
             sa.Column("workspace_name", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
+    if not column_exists("collections", "internal_metadata", inspector):
+        op.add_column(
+            "collections",
+            sa.Column(
+                "internal_metadata",
+                postgresql.JSONB(astext_type=sa.Text()),
+                nullable=False,
+                server_default="{}",
+            ),
             schema=schema,
         )
 
@@ -728,6 +790,14 @@ def update_documents_table(schema: str, inspector) -> None:
             new_column_name="collection_name",
             schema=schema,
         )
+
+    # rename metadata to internal_metadata
+    op.alter_column(
+        "documents",
+        "metadata",
+        new_column_name="internal_metadata",
+        schema=schema,
+    )
 
     # Convert collection_id references to collection names
     # (collection_id contains old collection IDs, we need to get the collection names)
@@ -1120,6 +1190,9 @@ def restore_documents_table(schema: str, inspector) -> None:
 
     op.alter_column("documents", "id", new_column_name="public_id", schema=schema)
     op.alter_column("documents", "temp_id", new_column_name="id", schema=schema)
+    op.alter_column(
+        "documents", "internal_metadata", new_column_name="metadata", schema=schema
+    )
 
     op.create_primary_key("pk_documents", "documents", ["id"], schema=schema)
 
@@ -1325,6 +1398,7 @@ def restore_collections_table(schema: str, inspector) -> None:
     # Drop new columns
     op.drop_column("collections", "peer_name", schema=schema)
     op.drop_column("collections", "workspace_name", schema=schema)
+    op.drop_column("collections", "internal_metadata", schema=schema)
 
     # Restore old unique constraint
     op.create_unique_constraint(
@@ -1455,6 +1529,7 @@ def restore_messages_table(schema: str, inspector) -> None:
     op.drop_column("messages", "workspace_name", schema=schema)
     op.drop_column("messages", "session_name", schema=schema)
     op.drop_column("messages", "token_count", schema=schema)
+    op.drop_column("messages", "internal_metadata", schema=schema)
 
     # Restore old foreign keys (only fk_ format)
     op.create_foreign_key(
@@ -1520,6 +1595,7 @@ def restore_sessions_table(schema: str, inspector) -> None:
     op.drop_column("sessions", "name", schema=schema)
     op.drop_column("sessions", "workspace_name", schema=schema)
     op.drop_column("sessions", "configuration", schema=schema)
+    op.drop_column("sessions", "internal_metadata", schema=schema)
 
     # Restore old constraint names
     if constraint_exists("sessions", "id_length", "check", inspector):
@@ -1599,6 +1675,7 @@ def restore_peers_table(schema: str, inspector) -> None:
     # Drop new columns
     op.drop_column("peers", "workspace_name", schema=schema)
     op.drop_column("peers", "configuration", schema=schema)
+    op.drop_column("peers", "internal_metadata", schema=schema)
 
     # Restore old constraint names
     if constraint_exists("peers", "id_length", "check", inspector):
@@ -1656,6 +1733,7 @@ def restore_workspaces_table(schema: str, inspector) -> None:
 
     # Drop new columns
     op.drop_column("workspaces", "configuration", schema=schema)
+    op.drop_column("workspaces", "internal_metadata", schema=schema)
 
     # Restore old constraint names
     if constraint_exists("workspaces", "id_length", "check", inspector):

@@ -401,7 +401,6 @@ def test_get_messages_for_peer_with_null_filter(client, sample_data):
 def test_chat(client, sample_data):
     test_workspace, test_peer = sample_data
     target_peer = str(generate_nanoid())
-    session_id = str(generate_nanoid())
 
     # Test chat endpoint
     response = client.post(
@@ -410,7 +409,6 @@ def test_chat(client, sample_data):
             "queries": "Hello, how are you?",
             "stream": False,
             "target": target_peer,
-            "session_id": session_id,
         },
     )
     assert response.status_code == 200
@@ -422,16 +420,26 @@ def test_chat_with_optional_params(client, sample_data):
     """Test chat endpoint with optional parameters"""
     test_workspace, test_peer = sample_data
 
+    session_id = str(generate_nanoid())
+
+    # Create a session first
+    client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
     # Test chat without optional parameters
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
-        json={"queries": "Hello, how are you?", "stream": False},
+        json={
+            "queries": "Hello, how are you?",
+            "stream": False,
+            "session_id": session_id,
+        },
     )
     assert response.status_code == 200
     data = response.json()
     assert "content" in data
-    assert test_workspace.name in data["content"]
-    assert test_peer.name in data["content"]
 
 
 def test_get_peer_representation_with_session(client, sample_data):

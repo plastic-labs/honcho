@@ -9,7 +9,7 @@ from anthropic import MessageStreamManager
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -132,7 +132,7 @@ class Dialectic:
 async def chat(
     workspace_name: str,
     peer_name: str,
-    session_name: str,
+    session_name: str | None,
     queries: str | list[str],
     stream: bool = False,
 ) -> schemas.DialecticResponse | MessageStreamManager:
@@ -151,7 +151,7 @@ async def chat(
     Args:
         workspace_name: The workspace name
         peer_name: The peer name
-        session_name: The session name
+        session_name: The session name. If None, this queries the global representation.
         queries: The queries to ask the Dialectic API
         stream: Whether to stream the response
 
@@ -175,30 +175,33 @@ async def chat(
             select(models.Message)
             .where(models.Message.workspace_name == workspace_name)
             .where(models.Message.peer_name == peer_name)
-            .where(models.Message.session_name == session_name)
             .order_by(models.Message.id.desc())
             .limit(1)
         )
+        if session_name:
+            stmt = stmt.where(models.Message.session_name == session_name)
         latest_messages = await db_history.execute(stmt)
         latest_message = latest_messages.scalar_one_or_none()
         latest_message_id = latest_message.public_id if latest_message else None
-        logger.debug(f"Latest user message ID: {latest_message_id}")
-
-        chat_history = await history.get_summarized_history(
-            db_history,
-            workspace_name,
-            session_name,
-            peer_name,
-            summary_type=history.SummaryType.SHORT,
-        )
-        if not chat_history:
-            logger.warning(f"No chat history found for session {session_name}")
-            chat_history = f"someone asked this about the user's message: {final_query}"
-        logger.debug(
-            f"Workspace: {workspace_name}, Peer: {peer_name}, Session: {session_name}"
-        )
-        message_count = len(chat_history.split("\n"))
-        logger.debug(f"Retrieved chat history: {message_count} messages")
+        if session_name:
+            chat_history = await history.get_summarized_history(
+                db_history,
+                workspace_name,
+                session_name,
+                peer_name,
+                summary_type=history.SummaryType.SHORT,
+            )
+            if not chat_history:
+                logger.warning(f"No chat history found for session {session_name}")
+                chat_history = (
+                    f"someone asked this about the user's message: {final_query}"
+                )
+            logger.debug(
+                f"Workspace: {workspace_name}, Peer: {peer_name}, Session: {session_name}"
+            )
+        else:
+            chat_history = ""
+        logger.debug("Retrieved chat history: %s lines", len(chat_history.split("\n")))
 
     # Run short-term inference and long-term facts in parallel
     async def fetch_long_term():
@@ -274,7 +277,10 @@ async def chat(
 
 
 async def get_long_term_facts(
-    query: str, workspace_name: str, peer_name: str, collection_name: str
+    query: str,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
 ) -> list[str]:
     """
     Generate queries based on the dialectic query and retrieve relevant facts.
@@ -424,7 +430,7 @@ async def generate_semantic_queries(query: str) -> list[str]:
 async def generate_user_representation(
     workspace_name: str,
     peer_name: str,
-    session_name: str,
+    session_name: str | None,
     chat_history: str,
     tom_inference: str,
     facts: list[str],
@@ -434,8 +440,9 @@ async def generate_user_representation(
 ) -> str:
     """
     Generate a user representation by combining long-term facts and short-term context.
-    Optionally save it as message metadata if message_id is provided.
-    Only uses existing representations from the same session for continuity.
+    Save it to peer metadata if no session is provided (global-level), or save it to
+    session-peers table metadata if a session is provided (local-level).
+    If session-level, uses existing representations from the same session for continuity.
 
     Returns:
         The generated user representation.
@@ -444,26 +451,48 @@ async def generate_user_representation(
     rep_start_time = asyncio.get_event_loop().time()
 
     if with_inference:
-        # Fetch the latest user representation from the same session
-        logger.debug(f"Fetching latest representation for session {session_name}")
-        latest_representation_stmt = (
-            select(models.Message)
-            .where(models.Message.workspace_name == workspace_name)
-            .where(models.Message.peer_name == peer_name)
-            .where(models.Message.session_name == session_name)
-            .where(
-                models.Message.h_metadata.contains({USER_REPRESENTATION_METADATA_KEY})
+        if session_name:
+            # Fetch the latest user representation from the same session
+            logger.debug(f"Fetching latest representation for session {session_name}")
+            latest_representation_stmt = (
+                select(models.SessionPeer)
+                .where(models.SessionPeer.workspace_name == workspace_name)
+                .where(models.SessionPeer.peer_name == peer_name)
+                .where(models.SessionPeer.session_name == session_name)
+                .where(
+                    models.SessionPeer.internal_metadata.contains(
+                        {USER_REPRESENTATION_METADATA_KEY}
+                    )
+                )
+                .limit(1)
             )
-            .order_by(models.Message.id.desc())
-            .limit(1)
-        )
-        result = await db.execute(latest_representation_stmt)
-        latest_representation_obj = result.scalar_one_or_none()
-        latest_representation = (
-            latest_representation_obj.h_metadata[USER_REPRESENTATION_METADATA_KEY]
-            if latest_representation_obj
-            else "No user representation available."
-        )
+            result = await db.execute(latest_representation_stmt)
+            latest_representation_obj = result.scalar_one_or_none()
+            latest_representation = (
+                latest_representation_obj.internal_metadata[
+                    USER_REPRESENTATION_METADATA_KEY
+                ]
+                if latest_representation_obj
+                else "No user representation available."
+            )
+        else:
+            # Fetch the latest global level user representation
+            logger.debug("Fetching latest global level user representation")
+            latest_representation_stmt = (
+                select(models.Peer)
+                .where(models.Peer.workspace_name == workspace_name)
+                .where(models.Peer.name == peer_name)
+            )
+            result = await db.execute(latest_representation_stmt)
+            latest_representation_obj = result.scalar_one_or_none()
+            latest_representation = (
+                latest_representation_obj.internal_metadata[
+                    USER_REPRESENTATION_METADATA_KEY
+                ]
+                if latest_representation_obj
+                else "No user representation available."
+            )
+
         logger.debug(
             f"Found previous representation: {len(latest_representation)} characters"
         )
@@ -504,17 +533,37 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
         logger.debug(f"Saving representation to message_id: {message_id}")
         save_start = asyncio.get_event_loop().time()
         try:
-            # Get message and update its metadata with the representation
-            message = await crud.get_message(
-                db, workspace_name, session_name, message_id
-            )
-            if message:
-                if message.h_metadata is None:
-                    message.h_metadata = {}
-                message.h_metadata[USER_REPRESENTATION_METADATA_KEY] = representation
+            if session_name:
+                # Get session peer and update its metadata with the representation
+                stmt = (
+                    update(models.SessionPeer)
+                    .where(models.SessionPeer.workspace_name == workspace_name)
+                    .where(models.SessionPeer.peer_name == peer_name)
+                    .where(models.SessionPeer.session_name == session_name)
+                    .values(
+                        internal_metadata={
+                            USER_REPRESENTATION_METADATA_KEY: representation
+                        }
+                    )
+                )
+                await db.execute(stmt)
                 await db.commit()
-                save_time = asyncio.get_event_loop().time() - save_start
-                logger.debug(f"Representation saved in {save_time:.2f}s")
+            else:
+                # Get peer and update its metadata with the representation
+                stmt = (
+                    update(models.Peer)
+                    .where(models.Peer.workspace_name == workspace_name)
+                    .where(models.Peer.name == peer_name)
+                    .values(
+                        internal_metadata={
+                            USER_REPRESENTATION_METADATA_KEY: representation
+                        }
+                    )
+                )
+                await db.execute(stmt)
+                await db.commit()
+            save_time = asyncio.get_event_loop().time() - save_start
+            logger.debug(f"Representation saved in {save_time:.2f}s")
         except Exception as e:
             logger.error(f"Error during save DB operation: {str(e)}")
             await db.rollback()

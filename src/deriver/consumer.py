@@ -30,7 +30,8 @@ class PayloadSchema(BaseModel):
 
     content: str
     workspace_name: str
-    peer_name: str
+    sender_name: str
+    target_name: str
     session_name: str | None
     message_id: int
     task_type: Literal["representation", "summary"]
@@ -57,7 +58,8 @@ async def process_item(db: AsyncSession, payload: dict):
     processing_args = [
         validated_payload.content,
         validated_payload.workspace_name,
-        validated_payload.peer_name,
+        validated_payload.sender_name,
+        validated_payload.target_name,
         validated_payload.session_name,
         validated_payload.message_id,
         db,
@@ -75,13 +77,13 @@ async def process_item(db: AsyncSession, payload: dict):
             "session" if validated_payload.session_name else "peer",
             validated_payload.session_name
             if validated_payload.session_name
-            else validated_payload.peer_name,
+            else validated_payload.sender_name,
         )
     await summarize_if_needed(
         db,
         validated_payload.workspace_name,
         validated_payload.session_name,
-        validated_payload.peer_name,
+        validated_payload.sender_name,
         validated_payload.message_id,
     )
     return
@@ -93,6 +95,7 @@ async def process_message(
     content: str,
     workspace_name: str,
     peer_name: str,
+    target_name: str,  # Not used at the moment but can be in the future
     session_name: str | None,
     message_id: int,
     db: AsyncSession,

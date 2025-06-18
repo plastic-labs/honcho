@@ -101,9 +101,11 @@ def test_unsupported_provider_initialization():
 
 def test_missing_api_key_initialization():
     """Test initialization without required API key."""
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(ValueError, match="API key is required"):
-            ModelClient()
+    with (
+        patch.dict(os.environ, {}, clear=True),
+        pytest.raises(ValueError, match="API key is required"),
+    ):
+        ModelClient()
 
 
 # Message Creation Tests
