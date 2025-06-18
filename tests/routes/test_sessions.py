@@ -14,6 +14,7 @@ def test_get_or_create_session(client, sample_data):
     data = response.json()
     assert isinstance(data["id"], str)
     assert data["metadata"] == {}
+    assert data["workspace_id"] == test_workspace.name
 
     # Test creating a session with a specific id and peer_names (should get or create)
     session_id = str(generate_nanoid())
@@ -25,6 +26,7 @@ def test_get_or_create_session(client, sample_data):
     data2 = response2.json()
     assert data2["id"] == session_id
     assert data2["metadata"] == {}
+    assert data2["workspace_id"] == test_workspace.name
 
     # Test getting the same session again (should return the same session)
     response3 = client.post(
@@ -35,6 +37,7 @@ def test_get_or_create_session(client, sample_data):
     data3 = response3.json()
     assert data3["id"] == session_id
     assert data3["metadata"] == {}
+    assert data3["workspace_id"] == test_workspace.name
 
 
 def test_create_session_with_metadata(client, sample_data):
@@ -53,6 +56,7 @@ def test_create_session_with_metadata(client, sample_data):
     assert data["metadata"] == {"session_key": "session_value"}
     assert "id" in data
     assert data["id"] == session_id
+    assert data["workspace_id"] == test_workspace.name
 
 
 def test_create_session_with_feature_flags(client, sample_data):
@@ -73,6 +77,7 @@ def test_create_session_with_feature_flags(client, sample_data):
     data = response.json()
     assert data["feature_flags"] == feature_flags
     assert data["id"] == session_id
+    assert data["workspace_id"] == test_workspace.name
 
 
 def test_create_session_with_all_optional_params(client, sample_data):
@@ -96,6 +101,7 @@ def test_create_session_with_all_optional_params(client, sample_data):
     assert data["metadata"] == metadata
     assert data["feature_flags"] == feature_flags
     assert data["id"] == session_id
+    assert data["workspace_id"] == test_workspace.name
 
 
 def test_get_sessions(client, sample_data):
@@ -114,7 +120,7 @@ def test_get_sessions(client, sample_data):
     data = response.json()
     assert data["metadata"] == {"test_key": "test_value"}
     assert "id" in data
-
+    assert data["workspace_id"] == test_workspace.name
     response = client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions/list",
         json={"filter": {"test_key": "test_value"}},
@@ -124,6 +130,7 @@ def test_get_sessions(client, sample_data):
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
+    assert data["items"][0]["workspace_id"] == test_workspace.name
 
 
 def test_get_sessions_with_reverse(client, sample_data):
@@ -156,6 +163,8 @@ def test_get_sessions_with_reverse(client, sample_data):
     )
     assert response.status_code == 200
     reversed_data = response.json()
+    assert normal_data["items"][0]["workspace_id"] == test_workspace.name
+    assert reversed_data["items"][0]["workspace_id"] == test_workspace.name
 
     # Both should have items
     assert len(normal_data["items"]) > 0
@@ -609,7 +618,7 @@ def test_get_session_context(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Add some messages to have context
@@ -646,7 +655,7 @@ def test_get_session_context_with_summary(client, sample_data):
     # Create session with messages
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Get context with summary
@@ -666,7 +675,7 @@ def test_get_session_context_with_tokens(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Get context with token limit
@@ -687,7 +696,7 @@ def test_get_session_context_with_all_params(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Get context with all parameters
@@ -708,7 +717,7 @@ def test_search_session(client, sample_data):
     # Create session
     client.post(
         f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Add messages to search through

@@ -65,7 +65,7 @@ class PeerUpdate(PeerBase):
 
 class Peer(PeerBase):
     name: str = Field(serialization_alias="id")
-    workspace_name: str
+    workspace_name: str = Field(serialization_alias="workspace_id")
     created_at: datetime.datetime
     h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
     feature_flags: dict = Field(default_factory=dict)
@@ -111,11 +111,11 @@ class MessageUpdate(MessageBase):
 class Message(MessageBase):
     public_id: str = Field(serialization_alias="id")
     content: str
-    peer_id: str = Field(alias="peer_name")
-    session_id: str | None = Field(alias="session_name")
+    peer_name: str = Field(serialization_alias="peer_id")
+    session_name: str | None = Field(serialization_alias="session_id")
     h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
     created_at: datetime.datetime
-    workspace_name: str
+    workspace_name: str = Field(serialization_alias="workspace_id")
     token_count: int
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -148,7 +148,7 @@ class SessionCreate(SessionBase):
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
     metadata: dict = {}
-    peer_names: dict[str, SessionPeerConfig] | None = None
+    peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
     feature_flags: dict = {}
 
     model_config = ConfigDict(populate_by_name=True)
@@ -167,7 +167,7 @@ class SessionUpdate(SessionBase):
 class Session(SessionBase):
     name: str = Field(serialization_alias="id")
     is_active: bool
-    workspace_name: str
+    workspace_name: str = Field(serialization_alias="workspace_id")
     h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
     feature_flags: dict = Field(default_factory=dict)
     created_at: datetime.datetime

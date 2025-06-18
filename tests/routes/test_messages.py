@@ -32,7 +32,8 @@ async def test_create_message(client, db_session, sample_data):
     assert len(data) == 1
     message = data[0]
     assert message["content"] == "Test message"
-    assert message["peer_name"] == test_peer.name
+    assert message["peer_id"] == test_peer.name
+    assert message["session_id"] == test_session.name
     assert message["metadata"] == {"message_key": "message_value"}
     assert "id" in message
 
@@ -171,7 +172,8 @@ async def test_get_messages(client, db_session, sample_data):
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["peer_name"] == test_peer.name
+    assert data["items"][0]["peer_id"] == test_peer.name
+    assert data["items"][0]["session_id"] == test_session.name
     assert data["items"][0]["metadata"] == {}
 
 
@@ -359,7 +361,8 @@ async def test_get_filtered_messages(client, db_session, sample_data):
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["content"] == "Test message 2"
-    assert data["items"][0]["peer_name"] == test_peer.name
+    assert data["items"][0]["peer_id"] == test_peer.name
+    assert data["items"][0]["session_id"] == test_session.name
     assert data["items"][0]["metadata"] == {"key": "value2"}
 
 
@@ -565,7 +568,9 @@ async def test_get_single_message(client, db_session, sample_data):
     assert response.status_code == 200
     data = response.json()
     assert data["content"] == "Test message"
-    assert data["peer_name"] == test_peer.name
+    assert data["peer_id"] == test_peer.name
+    assert data["session_id"] == test_session.name
+    assert data["workspace_id"] == test_workspace.name
     assert data["id"] == test_message.public_id
 
 
@@ -630,6 +635,9 @@ async def test_create_messages_for_nonexistent_session(client, sample_data):
     data = response.json()
     assert len(data) == 1
     assert data[0]["content"] == "Test message"
+    assert data[0]["workspace_id"] == test_workspace.name
+    assert data[0]["session_id"] == nonexistent_session_id
+    assert data[0]["peer_id"] == test_peer.name
 
 
 @pytest.mark.asyncio

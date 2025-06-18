@@ -971,12 +971,31 @@ def backfill_token_counts(schema: str) -> None:
         if not messages:
             break
 
-        # Calculate token counts and update messages in the batch
+        # Calculate token counts and update messages in batches
+        batch_updates = []
         for message_id, content in messages:
             token_count = _count_tokens(content)
+            batch_updates.append((message_id, token_count))
+
+        # Process updates in smaller batches to stay under statement limits
+        update_batch_size = 200
+        for i in range(0, len(batch_updates), update_batch_size):
+            batch_chunk = batch_updates[i : i + update_batch_size]
+
+            # Use unnest arrays for clean batch update
+            ids = [item[0] for item in batch_chunk]
+            token_counts = [item[1] for item in batch_chunk]
+
             connection.execute(
-                text(f"UPDATE {schema}.messages SET token_count = :tc WHERE id = :id"),
-                {"id": message_id, "tc": token_count},
+                text(f"""
+                    UPDATE {schema}.messages 
+                    SET token_count = batch_data.token_count
+                    FROM (
+                        SELECT UNNEST(:ids) as id, UNNEST(:token_counts) as token_count
+                    ) AS batch_data
+                    WHERE messages.id = batch_data.id
+                """),
+                {"ids": ids, "token_counts": token_counts},
             )
 
         offset += batch_size
