@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -56,9 +56,6 @@ async def get_all_workspaces(
     options: Optional[schemas.WorkspaceGet] = Body(
         None, description="Filtering and pagination options for the workspaces list"
     ),
-    reverse: Optional[bool] = Query(
-        False, description="Whether to reverse the order of results"
-    ),
     db=db,
 ):
     """Get all Workspaces"""
@@ -70,10 +67,7 @@ async def get_all_workspaces(
 
     return await paginate(
         db,
-        await crud.get_all_workspaces(
-            reverse=reverse,
-            filter=filter_param,
-        ),
+        await crud.get_all_workspaces(filter=filter_param),
     )
 
 

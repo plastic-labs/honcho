@@ -39,7 +39,6 @@ async def get_peers(
     options: Optional[schemas.PeerGet] = Body(
         None, description="Filtering options for the peers list"
     ),
-    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get All Peers for a Workspace"""
@@ -51,9 +50,7 @@ async def get_peers(
 
     return await paginate(
         db,
-        await crud.get_peers(
-            workspace_name=workspace_id, reverse=reverse, filter=filter_param
-        ),
+        await crud.get_peers(workspace_name=workspace_id, filter=filter_param),
     )
 
 
@@ -124,7 +121,6 @@ async def get_sessions_for_peer(
     options: Optional[schemas.SessionGet] = Body(
         None, description="Filtering options for the sessions list"
     ),
-    reverse: bool = Query(False, description="Whether to reverse the order of results"),
     db=db,
 ):
     """Get All Sessions for a Peer"""
@@ -144,7 +140,6 @@ async def get_sessions_for_peer(
         await crud.get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
-            reverse=reverse,
             is_active=is_active,
             filter=filter_param,
         ),

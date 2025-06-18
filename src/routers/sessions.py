@@ -72,9 +72,6 @@ async def get_sessions(
     options: Optional[schemas.SessionGet] = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
-    reverse: Optional[bool] = Query(
-        False, description="Whether to reverse the order of results"
-    ),
     db=db,
 ):
     """Get All Sessions in a Workspace"""
@@ -93,7 +90,6 @@ async def get_sessions(
         db,
         await crud.get_sessions(
             workspace_name=workspace_id,
-            reverse=reverse,
             is_active=is_active_param,
             filter=filter_param,
         ),

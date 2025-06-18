@@ -65,7 +65,6 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    reverse: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
     """
@@ -73,16 +72,12 @@ async def get_all_workspaces(
 
     Args:
         db: Database session
-        reverse: Whether to reverse the order of the workspaces
         filter: Filter the workspaces by a dictionary of metadata
     """
     stmt = select(models.Workspace)
-    if reverse:
-        stmt = stmt.order_by(models.Workspace.id.desc())
-    else:
-        stmt = stmt.order_by(models.Workspace.id)
     if filter is not None:
         stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
+    stmt = stmt.order_by(models.Workspace.created_at)
     return stmt
 
 
@@ -224,7 +219,6 @@ async def get_peer(
 
 async def get_peers(
     workspace_name: str,
-    reverse: bool = False,
     filter: Optional[dict] = None,
 ) -> Select:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
@@ -232,10 +226,7 @@ async def get_peers(
     if filter is not None:
         stmt = stmt.where(models.Peer.h_metadata.contains(filter))
 
-    if reverse:
-        stmt = stmt.order_by(models.Peer.id.desc())
-    else:
-        stmt = stmt.order_by(models.Peer.id)
+    stmt = stmt.order_by(models.Peer.created_at)
 
     return stmt
 
@@ -280,7 +271,6 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    reverse: bool = False,
     is_active: Optional[bool] = None,
     filter: Optional[dict] = None,
 ) -> Select:
@@ -290,7 +280,6 @@ async def get_sessions_for_peer(
     Args:
         workspace_name: Name of the workspace
         peer_name: Name of the peer
-        reverse: Whether to reverse the order of the sessions
         is_active: Filter by active status (True/False/None for all)
         filter: Filter sessions by metadata
 
@@ -314,10 +303,7 @@ async def get_sessions_for_peer(
     if filter is not None:
         stmt = stmt.where(models.Session.h_metadata.contains(filter))
 
-    if reverse:
-        stmt = stmt.order_by(models.Session.id.desc())
-    else:
-        stmt = stmt.order_by(models.Session.id)
+    stmt = stmt.order_by(models.Session.created_at)
 
     return stmt
 
@@ -329,7 +315,6 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    reverse: Optional[bool] = False,
     is_active: Optional[bool] = False,
     filter: Optional[dict] = None,
 ) -> Select:
@@ -344,10 +329,7 @@ async def get_sessions(
     if filter is not None:
         stmt = stmt.where(models.Session.h_metadata.contains(filter))
 
-    if reverse:
-        stmt = stmt.order_by(models.Session.id.desc())
-    else:
-        stmt = stmt.order_by(models.Session.id)
+    stmt = stmt.order_by(models.Session.created_at)
 
     return stmt
 

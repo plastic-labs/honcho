@@ -113,40 +113,6 @@ def test_get_peers(client, sample_data):
     assert data["items"][0]["metadata"]["peer_key"] == "peer_value"
 
 
-def test_get_peers_with_reverse(client, sample_data):
-    """Test peer listing with reverse parameter"""
-    test_workspace, _ = sample_data
-
-    # Create multiple peers to test ordering
-    peer1_name = str(generate_nanoid())
-    peer2_name = str(generate_nanoid())
-
-    client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
-        json={"name": peer1_name},
-    )
-    client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
-        json={"name": peer2_name},
-    )
-
-    # Test normal order
-    response = client.post(f"/v1/workspaces/{test_workspace.name}/peers/list", json={})
-    assert response.status_code == 200
-    normal_data = response.json()
-
-    # Test reversed order
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/list?reverse=true", json={}
-    )
-    assert response.status_code == 200
-    reversed_data = response.json()
-
-    # Both should have items
-    assert len(normal_data["items"]) > 0
-    assert len(reversed_data["items"]) > 0
-
-
 def test_get_peers_with_empty_filter(client, sample_data):
     """Test peer listing with empty filter object"""
     test_workspace, _ = sample_data
@@ -284,42 +250,6 @@ def test_get_sessions_for_peer(client, sample_data):
     session_ids = [item["id"] for item in data["items"]]
     assert session_name in session_ids
     assert len(data["items"]) == 1
-
-
-def test_get_sessions_for_peer_with_reverse(client, sample_data):
-    """Test getting sessions for peer with reverse parameter"""
-    test_workspace, test_peer = sample_data
-
-    # Create multiple sessions to test ordering
-    session1_name = str(generate_nanoid())
-    session2_name = str(generate_nanoid())
-
-    client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session1_name, "peer_names": {test_peer.name: {}}},
-    )
-    client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session2_name, "peer_names": {test_peer.name: {}}},
-    )
-
-    # Test normal order
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions"
-    )
-    assert response.status_code == 200
-    normal_data = response.json()
-
-    # Test reversed order
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions?reverse=true"
-    )
-    assert response.status_code == 200
-    reversed_data = response.json()
-
-    # Both should have items (sessions are active by default)
-    assert len(normal_data["items"]) > 0
-    assert len(reversed_data["items"]) > 0
 
 
 def test_get_sessions_for_peer_with_is_active_filter(client, sample_data):

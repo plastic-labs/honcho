@@ -133,44 +133,6 @@ def test_get_sessions(client, sample_data):
     assert data["items"][0]["workspace_id"] == test_workspace.name
 
 
-def test_get_sessions_with_reverse(client, sample_data):
-    """Test session listing with reverse parameter"""
-    test_workspace, test_peer = sample_data
-
-    # Create multiple sessions to test ordering
-    session1_id = str(generate_nanoid())
-    session2_id = str(generate_nanoid())
-
-    client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session1_id, "peer_names": {test_peer.name: {}}},
-    )
-    client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={"id": session2_id, "peer_names": {test_peer.name: {}}},
-    )
-
-    # Test normal order
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions/list", json={}
-    )
-    assert response.status_code == 200
-    normal_data = response.json()
-
-    # Test reversed order
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions/list?reverse=true", json={}
-    )
-    assert response.status_code == 200
-    reversed_data = response.json()
-    assert normal_data["items"][0]["workspace_id"] == test_workspace.name
-    assert reversed_data["items"][0]["workspace_id"] == test_workspace.name
-
-    # Both should have items
-    assert len(normal_data["items"]) > 0
-    assert len(reversed_data["items"]) > 0
-
-
 def test_get_sessions_with_is_active_filter(client, sample_data):
     """Test session listing with is_active parameter"""
     test_workspace, test_peer = sample_data

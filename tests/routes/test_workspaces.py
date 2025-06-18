@@ -98,36 +98,6 @@ async def test_get_all_workspaces(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_all_workspaces_with_reverse(client, db_session, sample_data):
-    """Test workspace listing with reverse parameter"""
-    # Create multiple workspaces to test ordering
-    workspace1_name = str(generate_nanoid())
-    workspace2_name = str(generate_nanoid())
-
-    # Create workspaces with slight delay to ensure different created_at times
-    client.post("/v1/workspaces", json={"name": workspace1_name})
-    client.post("/v1/workspaces", json={"name": workspace2_name})
-
-    # Test normal order
-    response = client.post("/v1/workspaces/list", json={})
-    assert response.status_code == 200
-    normal_data = response.json()
-
-    # Test reversed order
-    response = client.post("/v1/workspaces/list?reverse=true", json={})
-    assert response.status_code == 200
-    reversed_data = response.json()
-
-    # Both should have items
-    assert len(normal_data["items"]) > 0
-    assert len(reversed_data["items"]) > 0
-
-    # If we have multiple items, order should be different
-    if len(normal_data["items"]) > 1 and len(reversed_data["items"]) > 1:
-        assert normal_data["items"][0]["id"] != reversed_data["items"][0]["id"]
-
-
-@pytest.mark.asyncio
 async def test_get_all_workspaces_with_empty_filter(client, db_session, sample_data):
     """Test workspace listing with empty filter object"""
     response = client.post("/v1/workspaces/list", json={"filter": {}})
