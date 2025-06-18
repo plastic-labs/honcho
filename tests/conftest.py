@@ -259,8 +259,14 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_model_client():
+def mock_model_client(request):
     """Mock ModelClient to avoid needing API keys during tests"""
+    # Skip mocking for ModelClient unit tests
+    if "test_model_client" in request.node.name or "test_model_client.py" in str(
+        request.fspath
+    ):
+        yield None
+        return
     with patch("src.utils.history.ModelClient") as mock_client_class:
         # Create a mock instance
         mock_client_instance = MagicMock()
@@ -270,3 +276,138 @@ def mock_model_client():
         mock_client_class.return_value = mock_client_instance
 
         yield mock_client_class
+
+
+@pytest.fixture(autouse=True)
+def mock_tracked_db(db_session):
+    """Mock tracked_db to use the test database session"""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def mock_tracked_db_context(operation_name=None):
+        yield db_session
+
+    with patch("src.dependencies.tracked_db", mock_tracked_db_context):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_crud_collection_operations():
+    """Mock CRUD operations that try to commit to database during tests"""
+    from nanoid import generate as generate_nanoid
+
+    from src import models
+
+    async def mock_get_or_create_collection(
+        db, workspace_name, peer_name, collection_name
+    ):
+        # Create a mock collection object that doesn't require database commit
+        mock_collection = models.Collection(
+            name="honcho",
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
+        mock_collection.id = generate_nanoid()
+        return mock_collection
+
+    with patch(
+        "src.crud.get_or_create_collection",
+        mock_get_or_create_collection,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_agent_api_calls(request):
+    """Mock API calls made by the agent during tests"""
+    # Skip mocking ModelClient methods for ModelClient unit tests
+    if "test_model_client" in request.node.name or "test_model_client.py" in str(
+        request.fspath
+    ):
+        # Only mock the agent-specific functions, not ModelClient methods
+        with (
+            patch("src.agent.generate_semantic_queries") as mock_generate_queries,
+            patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
+            patch("src.agent.get_user_representation_long_term") as mock_user_rep,
+            patch(
+                "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
+            ) as mock_get_facts,
+            patch("src.agent.Dialectic.call") as mock_dialectic_call,
+            patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
+        ):
+            # Mock semantic query generation
+            mock_generate_queries.return_value = ["test query 1", "test query 2"]
+
+            # Mock ToM inference
+            mock_tom_inference.return_value = (
+                "<prediction>Test prediction about user mental state</prediction>"
+            )
+
+            # Mock user representation generation
+            mock_user_rep.return_value = (
+                "<representation>Test user representation</representation>"
+            )
+
+            # Mock embedding store facts retrieval
+            mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
+
+            # Mock Dialectic API calls
+            mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
+            mock_dialectic_stream.return_value = AsyncMock()
+
+            yield {
+                "generate_queries": mock_generate_queries,
+                "tom_inference": mock_tom_inference,
+                "user_rep": mock_user_rep,
+                "get_facts": mock_get_facts,
+                "dialectic_call": mock_dialectic_call,
+                "dialectic_stream": mock_dialectic_stream,
+            }
+    else:
+        # For non-ModelClient tests, mock everything including ModelClient methods
+        with (
+            patch("src.agent.generate_semantic_queries") as mock_generate_queries,
+            patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
+            patch("src.agent.get_user_representation_long_term") as mock_user_rep,
+            patch(
+                "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
+            ) as mock_get_facts,
+            patch("src.agent.Dialectic.call") as mock_dialectic_call,
+            patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
+            patch("src.utils.model_client.ModelClient.generate") as mock_model_generate,
+            patch("src.utils.model_client.ModelClient.stream") as mock_model_stream,
+        ):
+            # Mock semantic query generation
+            mock_generate_queries.return_value = ["test query 1", "test query 2"]
+
+            # Mock ToM inference
+            mock_tom_inference.return_value = (
+                "<prediction>Test prediction about user mental state</prediction>"
+            )
+
+            # Mock user representation generation
+            mock_user_rep.return_value = (
+                "<representation>Test user representation</representation>"
+            )
+
+            # Mock embedding store facts retrieval
+            mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
+
+            # Mock Dialectic API calls
+            mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
+            mock_dialectic_stream.return_value = AsyncMock()
+
+            # Mock ModelClient API calls
+            mock_model_generate.return_value = "Test response"
+            mock_model_stream.return_value = AsyncMock()
+
+            yield {
+                "generate_queries": mock_generate_queries,
+                "tom_inference": mock_tom_inference,
+                "user_rep": mock_user_rep,
+                "get_facts": mock_get_facts,
+                "dialectic_call": mock_dialectic_call,
+                "dialectic_stream": mock_dialectic_stream,
+                "model_generate": mock_model_generate,
+                "model_stream": mock_model_stream,
+            }

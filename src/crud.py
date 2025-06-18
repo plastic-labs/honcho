@@ -1,3 +1,4 @@
+import os
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Optional
@@ -19,7 +20,9 @@ openai_client = AsyncOpenAI()
 
 logger = getLogger(__name__)
 
-DEF_PROTECTED_COLLECTION_NAME = "honcho"
+USER_REPRESENTATION_METADATA_KEY = "user_representation"
+
+SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
 
 ########################################################
 # workspace methods
@@ -355,6 +358,7 @@ async def get_or_create_session(
     Raises:
         ResourceNotFoundException: If the session does not exist and create is false
     """
+
     stmt = (
         select(models.Session)
         .where(models.Session.workspace_name == workspace_name)
@@ -367,6 +371,11 @@ async def get_or_create_session(
 
     # Check if session already exists
     if honcho_session is None:
+        if session.peer_names and len(session.peer_names) > SESSION_PEERS_LIMIT:
+            raise ValueError(
+                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+            )
+
         # Create honcho session
 
         honcho_session = models.Session(
@@ -394,7 +403,7 @@ async def get_or_create_session(
                 schemas.PeerCreate(name=peer_name) for peer_name in session.peer_names
             ],
         )
-        await _add_peers_to_session(
+        await _get_or_add_peers_to_session(
             db,
             workspace_name=workspace_name,
             session_name=session.name,
@@ -750,6 +759,12 @@ async def set_peers_for_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
+    # Validate peer limit before making any changes
+    if len(peer_names) > SESSION_PEERS_LIMIT:
+        raise ValueError(
+            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+        )
+
     # Verify session exists
     stmt = (
         select(models.Session)
@@ -784,7 +799,7 @@ async def set_peers_for_session(
     )
 
     # Add new peers to session
-    peers = await _add_peers_to_session(
+    peers = await _get_or_add_peers_to_session(
         db,
         workspace_name=workspace_name,
         session_name=session_name,
@@ -795,7 +810,7 @@ async def set_peers_for_session(
     return peers
 
 
-async def _add_peers_to_session(
+async def _get_or_add_peers_to_session(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
@@ -812,6 +827,9 @@ async def _add_peers_to_session(
 
     Returns:
         List of all SessionPeer objects (both existing and newly created)
+
+    Raises:
+        ValueError: If adding peers would exceed the maximum limit
     """
     # If no peers to add, skip the insert and just return existing active session peers
     if not peer_names:
@@ -822,6 +840,21 @@ async def _add_peers_to_session(
         )
         result = await db.execute(select_stmt)
         return list(result.scalars().all())
+
+    # Check current number of active peers and validate limit before upsert
+    current_peers_stmt = select(models.SessionPeer.peer_name).where(
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.left_at.is_(None),  # Only active peers
+    )
+    result = await db.execute(current_peers_stmt)
+    existing_peer_names = result.scalars().all()
+
+    new_peers = [name for name in peer_names if name not in existing_peer_names]
+    if len(new_peers) + len(existing_peer_names) > SESSION_PEERS_LIMIT:
+        raise ValueError(
+            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {SESSION_PEERS_LIMIT} peers per session."
+        )
 
     # Use upsert to handle both new peers and rejoining peers
     stmt = pg_insert(models.SessionPeer).values(
@@ -980,6 +1013,88 @@ async def search(
         )
 
     return stmt
+
+
+async def get_working_representation(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str | None = None,
+) -> str:
+    if session_name:
+        # Fetch the latest user representation from the same session
+        logger.debug(f"Fetching latest representation for session {session_name}")
+        latest_representation_stmt = (
+            select(models.SessionPeer)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.peer_name == peer_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .limit(1)
+        )
+        result = await db.execute(latest_representation_stmt)
+        latest_representation_obj = result.scalar_one_or_none()
+        latest_representation = (
+            latest_representation_obj.internal_metadata.get(
+                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+            )
+            if latest_representation_obj
+            else "No user representation available."
+        )
+    else:
+        # Fetch the latest global level user representation
+        logger.debug("Fetching latest global level user representation")
+        latest_representation_stmt = (
+            select(models.Peer)
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name == peer_name)
+        )
+        result = await db.execute(latest_representation_stmt)
+        latest_representation_obj = result.scalar_one_or_none()
+        latest_representation = (
+            latest_representation_obj.internal_metadata.get(
+                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+            )
+            if latest_representation_obj
+            else "No user representation available."
+        )
+
+    return latest_representation
+
+
+async def set_working_representation(
+    db: AsyncSession,
+    representation: str,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str | None = None,
+) -> None:
+    if session_name:
+        # Get session peer and update its metadata with the representation
+        stmt = (
+            update(models.SessionPeer)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.peer_name == peer_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .values(
+                internal_metadata=models.SessionPeer.internal_metadata.op("||")(
+                    {USER_REPRESENTATION_METADATA_KEY: representation}
+                )
+            )
+        )
+    else:
+        # Get peer and update its metadata with the representation
+        stmt = (
+            update(models.Peer)
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name == peer_name)
+            .values(
+                internal_metadata=models.Peer.internal_metadata.op("||")(
+                    {USER_REPRESENTATION_METADATA_KEY: representation}
+                )
+            )
+        )
+    await db.execute(stmt)
+    await db.commit()
 
 
 ########################################################
@@ -1193,7 +1308,7 @@ async def get_messages_id_range(
     Raises:
         ValueError: If both session_name and peer_name are not provided
     """
-    if end_id is not None and (start_id >= end_id or end_id <= 1):
+    if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 1)):
         return []
     stmt = select(models.Message).where(
         models.Message.workspace_name == workspace_name,
@@ -1322,21 +1437,22 @@ async def get_collection(
     return collection
 
 
-async def get_or_create_peer_protected_collection(
+async def get_or_create_collection(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
+    collection_name: str,
 ) -> models.Collection:
     try:
         honcho_collection = await get_collection(
-            db, workspace_name, peer_name, DEF_PROTECTED_COLLECTION_NAME
+            db, workspace_name, peer_name, collection_name
         )
         return honcho_collection
     except ResourceNotFoundException:
         honcho_collection = models.Collection(
             workspace_name=workspace_name,
             peer_name=peer_name,
-            name=DEF_PROTECTED_COLLECTION_NAME,
+            name=collection_name,
         )
         db.add(honcho_collection)
         await db.commit()
@@ -1447,7 +1563,7 @@ async def create_document(
         peer_name=peer_name,
         collection_name=collection_name,
         content=document.content,
-        h_metadata=document.metadata,
+        internal_metadata=document.metadata,
         embedding=embedding,
     )
     db.add(honcho_document)
@@ -1665,3 +1781,7 @@ def _build_status_response(peer_name: str, session_name: Optional[str], counts: 
         sessions=sessions if sessions else None,
         **base_response
     )
+
+
+def construct_collection_name(peer_name: str, target_name: str) -> str:
+    return f"{peer_name}_{target_name}"

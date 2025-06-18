@@ -12,7 +12,7 @@ from fastapi import (
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
-from src import crud, schemas
+from src import agent, crud, schemas
 from src.dependencies import db
 from src.exceptions import (
     AuthenticationException,
@@ -165,10 +165,17 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
+    db=db,
 ):
-    return schemas.DialecticResponse(
-        content=f"Hello, {peer_id}! You are chatting with {options.target} in {options.session_id} in workspace {workspace_id} with options {options}",
+    # Get or create the peer to ensure it exists
+    await crud.get_or_create_peers(
+        db, workspace_name=workspace_id, peers=[schemas.PeerCreate(name=peer_id)]
     )
+
+    response = await agent.chat(
+        workspace_id, peer_id, options.session_id, options.queries, options.stream
+    )
+    return response
 
 
 @router.post(
@@ -205,7 +212,6 @@ async def create_messages_for_peer(
                 "session_name": None,
                 "message_id": message.id,
                 "content": message.content,
-                "metadata": message.h_metadata,
                 "peer_name": message.peer_name,
             }
             for message in created_messages
@@ -279,58 +285,15 @@ async def get_working_representation(
 ):
     """Get a peer's working representation for a session.
 
-    If peer_id is provided in body, the representation is of that peer, from our perspective.
+    If a session_id is provided in the body, we get the working representation of the peer in that session.
+
+    In the current implementation, we don't offer representations of `target` so that parameter is ignored.
+    Future releases will allow for this.
     """
-
-    stub = {
-        "final_observations": {
-            "explicit": [
-                {
-                    "content": "User said: 'Hey Mel!' - addressing someone named Mel",
-                    "created_at": "2023-05-08T13:56:00+00:00",
-                },
-                {
-                    "content": "User said: 'Good to see you!' - expressing positive sentiment about seeing this person",
-                    "created_at": "2023-05-08T13:56:00+00:00",
-                },
-                {
-                    "content": "User said: 'How have you been?' - asking about the other person's recent state or experiences",
-                    "created_at": "2023-05-08T13:56:00+00:00",
-                },
-            ],
-            "deductive": [
-                {
-                    "conclusion": "The user believes they have encountered 'Mel' before",
-                    "premises": [
-                        "User said 'Good to see you!' which implies previous encounters"
-                    ],
-                    "created_at": "2023-05-08T13:56:00+00:00",
-                },
-                {
-                    "conclusion": "The user is initiating a conversational exchange",
-                    "premises": [
-                        "User said 'Hey Mel!' as a greeting",
-                        "User asked 'How have you been?' which is a conversation starter",
-                    ],
-                    "created_at": "2023-05-08T13:56:00+00:00",
-                },
-            ],
-            "inductive": [],
-            "abductive": [
-                {
-                    "conclusion": "The user believes they have an established relationship or familiarity with 'Mel'",
-                    "premises": [
-                        "Casual greeting format 'Hey Mel!'",
-                        "Familiar expression 'Good to see you!'",
-                        "Personal inquiry about wellbeing",
-                    ],
-                    "created_at": "2023-05-08T13:56:00+00:00",
-                }
-            ],
-        },
-    }
-
-    return stub
+    representation = await crud.get_working_representation(
+        db, workspace_id, peer_id, options.session_id
+    )
+    return {"representation": representation}
 
 
 @router.post(

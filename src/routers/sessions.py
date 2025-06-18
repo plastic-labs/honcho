@@ -7,7 +7,11 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import AuthenticationException, ResourceNotFoundException
+from src.exceptions import (
+    AuthenticationException,
+    ResourceNotFoundException,
+    ValidationException,
+)
 from src.security import JWTParams, require_auth
 from src.utils import history
 
@@ -56,10 +60,14 @@ async def get_or_create_session(
             )
         session.name = jwt_params.s
 
-    # Let crud function handle the ResourceNotFoundException
-    return await crud.get_or_create_session(
-        db, workspace_name=workspace_id, session=session
-    )
+    # Handle session creation with proper error handling
+    try:
+        return await crud.get_or_create_session(
+            db, workspace_name=workspace_id, session=session
+        )
+    except ValueError as e:
+        logger.warning(f"Failed to get or create session {session.name}: {str(e)}")
+        raise ValidationException(str(e)) from e
 
 
 @router.post(
@@ -244,7 +252,7 @@ async def set_session_peers(
         return session
     except ValueError as e:
         logger.warning(f"Failed to set peers for session {session_name}: {str(e)}")
-        raise ResourceNotFoundException("Session not found") from e
+        raise ResourceNotFoundException("Failed to set peers for session") from e
 
 
 @router.delete(

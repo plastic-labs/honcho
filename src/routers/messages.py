@@ -24,6 +24,35 @@ router = APIRouter(
 )
 
 
+def create_processed_payload(
+    message: dict,
+    sender_name: Optional[str],
+    target_name: Optional[str],
+    task_type: str,
+) -> dict:
+    """
+    Create a processed payload from a message for queue processing.
+
+    Args:
+        message: The original message dictionary
+        sender_name: Name of the message sender
+        target_name: Name of the target peer
+        task_type: Type of task ('representation' or 'summary')
+
+    Returns:
+        Processed payload dictionary ready for queue processing
+    """
+    processed_payload = {
+        k: str(v) if isinstance(v, str) else v for k, v in message.items()
+    }
+    # Remove peer_name from payload
+    processed_payload.pop("peer_name", None)  # Use None as default to avoid KeyError
+    processed_payload["sender_name"] = sender_name
+    processed_payload["target_name"] = target_name
+    processed_payload["task_type"] = task_type
+    return processed_payload
+
+
 async def enqueue(payload: list[dict]):
     """
     Add message(s) to the deriver queue for processing.
@@ -71,13 +100,12 @@ async def enqueue(payload: list[dict]):
                 queue_records: list[dict[str, Any]] = []
 
                 for message in payload:
-                    processed_payload = {
-                        k: str(v) if isinstance(v, str) else v
-                        for k, v in message.items()
-                    }
-                    processed_payload["sender_name"] = message["peer_name"]
-                    processed_payload["target_name"] = message["peer_name"]
-                    processed_payload["task_type"] = "representation"
+                    processed_payload = create_processed_payload(
+                        message=message,
+                        sender_name=message["peer_name"],
+                        target_name=message["peer_name"],
+                        task_type="representation",
+                    )
                     queue_records.append(
                         {
                             "payload": processed_payload,
@@ -127,13 +155,12 @@ async def enqueue(payload: list[dict]):
             for message in payload:
                 if deriver_disabled:
                     # still create a summary queue item for the session
-                    processed_payload = {
-                        k: str(v) if isinstance(v, str) else v
-                        for k, v in message.items()
-                    }
-                    processed_payload["sender_name"] = None
-                    processed_payload["target_name"] = None
-                    processed_payload["task_type"] = "summary"
+                    processed_payload = create_processed_payload(
+                        message=message,
+                        sender_name=None,
+                        target_name=None,
+                        task_type="summary",
+                    )
                     queue_records.append(
                         {
                             "payload": processed_payload,
@@ -166,12 +193,12 @@ async def enqueue(payload: list[dict]):
                     continue
 
                 # Handle working representation for sender
-                processed_payload = {
-                    k: str(v) if isinstance(v, str) else v for k, v in message.items()
-                }
-                processed_payload["sender_name"] = sender_name
-                processed_payload["target_name"] = sender_name
-                processed_payload["task_type"] = "representation"
+                processed_payload = create_processed_payload(
+                    message=message,
+                    sender_name=sender_name,
+                    target_name=sender_name,
+                    task_type="representation",
+                )
 
                 queue_records.append(
                     {
@@ -195,13 +222,12 @@ async def enqueue(payload: list[dict]):
                             continue
                         else:
                             # Create local representation for peer
-                            processed_payload = {
-                                k: str(v) if isinstance(v, str) else v
-                                for k, v in message.items()
-                            }
-                            processed_payload["sender_name"] = sender_name
-                            processed_payload["target_name"] = peer_name
-                            processed_payload["task_type"] = "representation"
+                            processed_payload = create_processed_payload(
+                                message=message,
+                                sender_name=sender_name,
+                                target_name=peer_name,
+                                task_type="representation",
+                            )
 
                             queue_records.append(
                                 {
@@ -257,7 +283,6 @@ async def create_messages_for_session(
                 "session_name": session_name,
                 "message_id": message.id,
                 "content": message.content,
-                "metadata": message.h_metadata,
                 "peer_name": message.peer_name,
             }
             for message in created_messages

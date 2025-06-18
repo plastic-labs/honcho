@@ -30,7 +30,8 @@ class PayloadSchema(BaseModel):
 
     content: str
     workspace_name: str
-    peer_name: str
+    sender_name: str
+    target_name: str
     session_name: str | None
     message_id: int
     task_type: Literal["representation", "summary"]
@@ -57,7 +58,8 @@ async def process_item(db: AsyncSession, payload: dict):
     processing_args = [
         validated_payload.content,
         validated_payload.workspace_name,
-        validated_payload.peer_name,
+        validated_payload.sender_name,
+        validated_payload.target_name,
         validated_payload.session_name,
         validated_payload.message_id,
         db,
@@ -75,13 +77,13 @@ async def process_item(db: AsyncSession, payload: dict):
             "session" if validated_payload.session_name else "peer",
             validated_payload.session_name
             if validated_payload.session_name
-            else validated_payload.peer_name,
+            else validated_payload.sender_name,
         )
     await summarize_if_needed(
         db,
         validated_payload.workspace_name,
         validated_payload.session_name,
-        validated_payload.peer_name,
+        validated_payload.sender_name,
         validated_payload.message_id,
     )
     return
@@ -93,6 +95,7 @@ async def process_message(
     content: str,
     workspace_name: str,
     peer_name: str,
+    target_name: str,
     session_name: str | None,
     message_id: int,
     db: AsyncSession,
@@ -142,8 +145,13 @@ async def process_message(
     logger.debug(
         f"Setting up embedding store for workspace: {workspace_name}, peer: {peer_name}"
     )
-    collection = await crud.get_or_create_peer_protected_collection(
-        db, workspace_name, peer_name
+    collection_name = (
+        crud.construct_collection_name(peer_name, target_name)
+        if peer_name != target_name
+        else "global_representation"
+    )
+    collection = await crud.get_or_create_collection(
+        db, workspace_name, peer_name, collection_name
     )
     embedding_store = CollectionEmbeddingStore(
         workspace_name=workspace_name,

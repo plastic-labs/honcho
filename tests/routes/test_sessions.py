@@ -104,6 +104,53 @@ def test_create_session_with_all_optional_params(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
 
 
+def test_create_session_with_too_many_peers(client, sample_data, caplog):
+    test_workspace, test_peer = sample_data
+    # create 10 peers
+    peer_names = [test_peer.name]
+    for _ in range(10):
+        peer_name = str(generate_nanoid())
+        response = client.post(
+            f"/v1/workspaces/{test_workspace.name}/peers",
+            json={"name": peer_name, "metadata": {}},
+        )
+        assert response.status_code == 200
+        peer_names.append(peer_name)
+
+    # create session with 11 peers
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": str(generate_nanoid()),
+            "peer_names": {peer_name: {} for peer_name in peer_names},
+        },
+    )
+    assert response.status_code == 422
+    assert "Failed to get or create session" in caplog.text
+
+    session_response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"name": "test_session"}},
+    )
+    assert session_response.status_code == 200
+    assert len(session_response.json()["items"]) == 0
+
+    # Remove one peer from our list
+    peer_names.pop()
+    # Attempt to create session with same name
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": "test_session",
+            "peer_names": {peer_name: {} for peer_name in peer_names},
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "test_session"
+    assert data["workspace_id"] == test_workspace.name
+
+
 def test_get_sessions(client, sample_data):
     test_workspace, test_peer = sample_data
     # Create a test session
@@ -510,6 +557,40 @@ def test_set_session_peers(client, sample_data):
     assert "items" in data
     assert len(data["items"]) == 1
     assert data["items"][0]["id"] == peer2_name
+
+
+def test_set_session_peers_with_limit(client, sample_data, caplog):
+    test_workspace, test_peer = sample_data
+
+    # Create a test session with multiple peers
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+        },
+    )
+    assert response.status_code == 200
+
+    # create 10 peers
+    peer_names = [test_peer.name]
+    for _ in range(10):
+        peer_name = str(generate_nanoid())
+        response = client.post(
+            f"/v1/workspaces/{test_workspace.name}/peers",
+            json={"name": peer_name, "metadata": {}},
+        )
+        assert response.status_code == 200
+        peer_names.append(peer_name)
+
+    # set peers with 11 peers (as a dict of peer_name: {})
+    peers_dict = {peer_name: {} for peer_name in peer_names}
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=peers_dict,
+    )
+    assert response.status_code == 404
+    assert "Failed to set peers for session" in caplog.text
 
 
 def test_remove_peers_from_session(client, sample_data):

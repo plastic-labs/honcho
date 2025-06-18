@@ -67,6 +67,7 @@ session_peers_table = Table(
     ),
     Column("peer_name", TEXT, primary_key=True, nullable=False),
     Column("configuration", JSONB, default=dict),
+    Column("internal_metadata", JSONB, default=dict),
     Column(
         "joined_at",
         DateTime(timezone=True),
@@ -100,6 +101,9 @@ class Workspace(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict] = mapped_column(
+        "internal_metadata", JSONB, default=dict
+    )
     configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
 
     __table_args__ = (
@@ -114,6 +118,9 @@ class Peer(Base):
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict] = mapped_column(
+        "internal_metadata", JSONB, default=dict
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -146,6 +153,9 @@ class Session(Base):
     name: Mapped[str] = mapped_column(TEXT, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict] = mapped_column(
+        "internal_metadata", JSONB, default=dict
+    )
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -181,6 +191,9 @@ class Message(Base):
     session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict] = mapped_column(
+        "internal_metadata", JSONB, default=dict
+    )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -233,6 +246,9 @@ class Collection(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
     h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict] = mapped_column(
+        "internal_metadata", JSONB, default=dict
+    )
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
@@ -260,7 +276,9 @@ class Collection(Base):
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict] = mapped_column(
+        "internal_metadata", JSONB, default=dict
+    )
     content: Mapped[str] = mapped_column(TEXT)
     embedding = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(

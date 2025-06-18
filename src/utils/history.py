@@ -80,15 +80,21 @@ async def get_summary(
     Returns:
         The summary data dictionary, or None if no summary exists
     """
+    from src.exceptions import ResourceNotFoundException
+
     label = (
         SummaryType.SHORT.value
         if summary_type == SummaryType.SHORT
         else SummaryType.LONG.value
     )
 
-    session = await crud.get_session(db, session_name, workspace_name)
+    try:
+        session = await crud.get_session(db, session_name, workspace_name)
+    except ResourceNotFoundException:
+        # If session doesn't exist, there's no summary to retrieve
+        return None
 
-    summaries = session.h_metadata.get("summaries", {})
+    summaries = session.internal_metadata.get("summaries", {})
     if not summaries or label not in summaries:
         return None
     return summaries[label]
@@ -225,19 +231,28 @@ async def save_summary(
     Returns:
         The updated session
     """
+    from src.exceptions import ResourceNotFoundException
+
     # Get the label value from the enum
     label_value = summary["summary_type"]
 
-    session = await crud.get_session(db, session_name, workspace_name)
+    try:
+        session = await crud.get_session(db, session_name, workspace_name)
+    except ResourceNotFoundException:
+        # If session doesn't exist, we can't save the summary
+        logger.warning(
+            f"Cannot save summary: session {session_name} not found in workspace {workspace_name}"
+        )
+        return
 
     # Get existing summaries or create new dict
-    existing_summaries = session.h_metadata.get("summaries", {})
+    existing_summaries = session.internal_metadata.get("summaries", {})
     existing_summaries[label_value] = summary
 
     # Update the object metadata - create new dict to ensure SQLAlchemy detects the change
-    updated_metadata = session.h_metadata.copy()
+    updated_metadata = session.internal_metadata.copy()
     updated_metadata["summaries"] = existing_summaries
-    session.h_metadata = updated_metadata
+    session.internal_metadata = updated_metadata
 
     await db.commit()
 
