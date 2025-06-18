@@ -882,11 +882,39 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
             sa.Column(
                 "id",
                 sa.TEXT(),
-                nullable=False,
-                default=generate_nanoid,
+                nullable=True,
             ),
             schema=schema,
         )
+
+        # Update existing rows with unique nanoids
+        connection = op.get_bind()
+
+        # Get all rows that need IDs (using session_id as unique identifier)
+        rows_needing_ids = connection.execute(
+            sa.text(
+                f"SELECT session_id FROM {schema}.active_queue_sessions WHERE id IS NULL"
+            )
+        ).fetchall()
+
+        if rows_needing_ids:
+            # Generate nanoids for all rows upfront
+            updates = [
+                {"session_id": row[0], "nanoid": generate_nanoid()}
+                for row in rows_needing_ids
+            ]
+
+            # Batch update using individual queries (still better than while loop)
+            for update in updates:
+                connection.execute(
+                    sa.text(
+                        f"UPDATE {schema}.active_queue_sessions SET id = :nanoid WHERE session_id = :session_id AND id IS NULL"
+                    ),
+                    update,
+                )
+
+        # Make the column non-nullable after populating data
+        op.alter_column("active_queue_sessions", "id", nullable=False, schema=schema)
 
         op.create_primary_key(
             "pk_active_queue_sessions",
