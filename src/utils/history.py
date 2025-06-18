@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.utils.model_client import ModelClient, ModelProvider
 
-from .. import crud, models, schemas
+from .. import crud, models
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +86,7 @@ async def get_summary(
         else SummaryType.LONG.value
     )
 
-    session = await crud.get_or_create_session(
-        db,
-        schemas.SessionCreate(name=session_name),
-        workspace_name,
-        create=False,
-    )
+    session = await crud.get_session(db, session_name, workspace_name)
 
     summaries = session.h_metadata.get("summaries", {})
     if not summaries or label not in summaries:
@@ -233,12 +228,7 @@ async def save_summary(
     # Get the label value from the enum
     label_value = summary["summary_type"]
 
-    session = await crud.get_or_create_session(
-        db,
-        schemas.SessionCreate(name=session_name),
-        workspace_name,
-        create=False,
-    )
+    session = await crud.get_session(db, session_name, workspace_name)
 
     # Get existing summaries or create new dict
     existing_summaries = session.h_metadata.get("summaries", {})

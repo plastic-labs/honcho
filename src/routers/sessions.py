@@ -203,7 +203,7 @@ async def add_peers_to_session(
             db,
             session=schemas.SessionCreate(
                 name=session_name,
-                peer_names=peers,
+                peers=peers,
             ),
             workspace_name=workspace_name,
         )

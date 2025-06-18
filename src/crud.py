@@ -7,15 +7,11 @@ from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from . import models, schemas
-from .exceptions import (
-    ConflictException,
-    ResourceNotFoundException,
-)
+from .exceptions import ResourceNotFoundException
 
 load_dotenv(override=True)
 
@@ -57,24 +53,15 @@ async def get_or_create_workspace(
         return existing_workspace
 
     # Workspace doesn't exist, create a new one
-    try:
-        honcho_workspace = models.Workspace(
-            name=workspace.name,
-            h_metadata=workspace.metadata,
-            configuration=workspace.configuration,
-        )
-        db.add(honcho_workspace)
-        await db.commit()
-        logger.info(f"Workspace created successfully: {workspace.name}")
-        return honcho_workspace
-    except IntegrityError as e:
-        await db.rollback()
-        logger.error(
-            f"IntegrityError creating workspace with name '{workspace.name}': {str(e)}"
-        )
-        raise ConflictException(
-            f"Workspace with name '{workspace.name}' already exists"
-        ) from e
+    honcho_workspace = models.Workspace(
+        name=workspace.name,
+        h_metadata=workspace.metadata,
+        configuration=workspace.configuration,
+    )
+    db.add(honcho_workspace)
+    await db.commit()
+    logger.info(f"Workspace created successfully: {workspace.name}")
+    return honcho_workspace
 
 
 async def get_all_workspaces(
@@ -112,37 +99,24 @@ async def update_workspace(
 
     Returns:
         The updated workspace
-
-    Raises:
-        ResourceNotFoundException: If the workspace does not exist
     """
-    try:
-        honcho_workspace = await get_or_create_workspace(
-            db,
-            schemas.WorkspaceCreate(
-                name=workspace_name,
-                metadata=workspace.metadata
-                or {},  # Provide empty dict if metadata is None
-            ),
-        )
+    honcho_workspace = await get_or_create_workspace(
+        db,
+        schemas.WorkspaceCreate(
+            name=workspace_name,
+            metadata=workspace.metadata or {},  # Provide empty dict if metadata is None
+        ),
+    )
 
-        if workspace.metadata is not None:
-            honcho_workspace.h_metadata = workspace.metadata
+    if workspace.metadata is not None:
+        honcho_workspace.h_metadata = workspace.metadata
 
-        if workspace.configuration is not None:
-            honcho_workspace.configuration = workspace.configuration
+    if workspace.configuration is not None:
+        honcho_workspace.configuration = workspace.configuration
 
-        await db.commit()
-        logger.info(f"Workspace with id {honcho_workspace.id} updated successfully")
-        return honcho_workspace
-    except IntegrityError as e:
-        await db.rollback()
-        logger.error(
-            f"IntegrityError updating workspace {honcho_workspace.id}: {str(e)}"
-        )
-        raise ConflictException(
-            "Workspace update failed - unique constraint violation"
-        ) from e
+    await db.commit()
+    logger.info(f"Workspace with id {honcho_workspace.id} updated successfully")
+    return honcho_workspace
 
 
 ########################################################
@@ -199,8 +173,8 @@ async def get_or_create_peers(
         models.Peer(
             workspace_name=workspace_name,
             name=p.name,
-            h_metadata=p.metadata,
-            configuration=p.configuration,
+            h_metadata=p.metadata or {},
+            configuration=p.configuration or {},
         )
         for p in peers_to_create
     ]
@@ -212,15 +186,13 @@ async def get_or_create_peers(
     return existing_peers + new_peers
 
 
-async def get_or_create_peer(
+async def get_peer(
     db: AsyncSession,
     workspace_name: str,
     peer: schemas.PeerCreate,
-    *,
-    create: bool = True,
 ) -> models.Peer:
     """
-    Get an existing peer or create a new one if it doesn't exist.
+    Get an existing peer.
 
     Args:
         db: Database session
@@ -231,7 +203,7 @@ async def get_or_create_peer(
         The peer if found or created
 
     Raises:
-        ConflictException: If there's an integrity error when creating the peer
+        ResourceNotFoundException: If the peer does not exist
     """
     # Try to get the existing peer
     stmt = (
@@ -243,42 +215,11 @@ async def get_or_create_peer(
     existing_peer = result.scalar_one_or_none()
 
     if existing_peer is not None:
-        # Peer already exists
-        logger.debug(f"Found existing peer: {peer.name} for workspace {workspace_name}")
-
-        # Update with metadata and configuration if provided
-        if peer.metadata is not None:
-            existing_peer.h_metadata = peer.metadata
-
-        if peer.configuration is not None:
-            existing_peer.configuration = peer.configuration
-
-        await db.commit()
         return existing_peer
 
-    if not create:
-        raise ResourceNotFoundException(
-            f"Peer {peer.name} not found in workspace {workspace_name}"
-        )
-
-    # Peer doesn't exist, create a new one
-    try:
-        honcho_peer = models.Peer(
-            workspace_name=workspace_name,
-            name=peer.name,
-            h_metadata=peer.metadata or {},
-            configuration=peer.configuration or {},
-        )
-        db.add(honcho_peer)
-        await db.commit()
-        logger.debug(
-            f"Peer created successfully: {peer.name} for workspace {workspace_name}"
-        )
-        return honcho_peer
-    except IntegrityError as e:
-        await db.rollback()
-        logger.warning(f"Failed to create peer - integrity error: {str(e)}")
-        raise ConflictException("Peer with this name already exists") from e
+    raise ResourceNotFoundException(
+        f"Peer {peer.name} not found in workspace {workspace_name}"
+    )
 
 
 async def get_peers(
@@ -319,26 +260,21 @@ async def update_peer(
         ValidationException: If the update data is invalid
         ConflictException: If the update violates a unique constraint
     """
-    try:
-        honcho_peer = await get_or_create_peer(
-            db, workspace_name, schemas.PeerCreate(name=peer_name)
+    honcho_peer = (
+        await get_or_create_peers(
+            db, workspace_name, [schemas.PeerCreate(name=peer_name)]
         )
+    )[0]
 
-        if peer.metadata is not None:
-            honcho_peer.h_metadata = peer.metadata
+    if peer.metadata is not None:
+        honcho_peer.h_metadata = peer.metadata
 
-        if peer.configuration is not None:
-            honcho_peer.configuration = peer.configuration
+    if peer.configuration is not None:
+        honcho_peer.configuration = peer.configuration
 
-        await db.commit()
-        logger.info(f"Peer {peer_name} updated successfully")
-        return honcho_peer
-    except IntegrityError as e:
-        await db.rollback()
-        logger.warning(f"Peer update failed due to integrity error: {str(e)}")
-        raise ConflictException(
-            "Peer update failed - unique constraint violation"
-        ) from e
+    await db.commit()
+    logger.info(f"Peer {peer_name} updated successfully")
+    return honcho_peer
 
 
 async def get_sessions_for_peer(
@@ -420,8 +356,6 @@ async def get_or_create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
     workspace_name: str,
-    *,
-    create: bool = True,
 ) -> models.Session:
     """
     Get or create a session in a workspace with specified peers.
@@ -432,9 +366,6 @@ async def get_or_create_session(
         session: Session creation schema
         workspace_name: Name of the workspace
         peer_names: List of peer names to add to the session
-        create: Whether to create the session if it doesn't exist. If false,
-                this will raise a ResourceNotFoundException if the session
-                does not exist.
 
     Returns:
         The created session
@@ -442,68 +373,94 @@ async def get_or_create_session(
     Raises:
         ResourceNotFoundException: If the session does not exist and create is false
     """
-    try:
-        stmt = (
-            select(models.Session)
-            .where(models.Session.workspace_name == workspace_name)
-            .where(models.Session.name == session.name)
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session.name)
+    )
+
+    result = await db.execute(stmt)
+
+    honcho_session = result.scalar_one_or_none()
+
+    # Check if session already exists
+    if honcho_session is None:
+        # Create honcho session
+
+        honcho_session = models.Session(
+            workspace_name=workspace_name,
+            name=session.name,
+            h_metadata=session.metadata or {},
+            configuration=session.configuration or {},
+        )
+        db.add(honcho_session)
+        # Flush to ensure session exists in DB before adding peers
+        await db.flush()
+    else:
+        # Update existing session with metadata and feature flags if provided
+        if session.metadata is not None:
+            honcho_session.h_metadata = session.metadata
+        if session.configuration is not None:
+            honcho_session.configuration = session.configuration
+
+    # Add all peers to session
+    if session.peer_names:
+        await get_or_create_peers(
+            db,
+            workspace_name=workspace_name,
+            peers=[
+                schemas.PeerCreate(name=peer_name) for peer_name in session.peer_names
+            ],
+        )
+        await _add_peers_to_session(
+            db,
+            workspace_name=workspace_name,
+            session_name=session.name,
+            peer_names=session.peer_names,
         )
 
-        result = await db.execute(stmt)
+    await db.commit()
+    logger.info(
+        f"Session {session.name} updated successfully in workspace {workspace_name} with {len(session.peer_names or [])} peers"
+    )
+    return honcho_session
 
-        honcho_session = result.scalar_one_or_none()
 
-        # Check if session already exists
-        if honcho_session is None:
-            if not create:
-                raise ResourceNotFoundException(
-                    f"Session {session.name} not found in workspace {workspace_name}"
-                )
+async def get_session(
+    db: AsyncSession,
+    session_name: str,
+    workspace_name: str,
+) -> models.Session:
+    """
+    Get a session in a workspace.
 
-            # Create honcho session
+    Args:
+        db: Database session
+        session_name: Name of the session
+        workspace_name: Name of the workspace
 
-            honcho_session = models.Session(
-                workspace_name=workspace_name,
-                name=session.name,
-                h_metadata=session.metadata or {},
-                configuration=session.configuration or {},
-            )
-            db.add(honcho_session)
-            # Flush to ensure session exists in DB before adding peers
-            await db.flush()
-        else:
-            # Update existing session with metadata and configuration if provided
-            if session.metadata is not None:
-                honcho_session.h_metadata = session.metadata
-            if session.configuration is not None:
-                honcho_session.configuration = session.configuration
+    Returns:
+        The session
 
-        # Add all peers to session
-        if session.peer_names:
-            await get_or_create_peers(
-                db,
-                workspace_name=workspace_name,
-                peers=[
-                    schemas.PeerCreate(name=peer_name)
-                    for peer_name in session.peer_names
-                ],
-            )
-            await _add_peers_to_session(
-                db,
-                workspace_name=workspace_name,
-                session_name=session.name,
-                peer_names=session.peer_names,
-            )
+    Raises:
+        ResourceNotFoundException: If the session does not exist
+    """
+    stmt = (
+        select(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+    )
 
-        await db.commit()
-        logger.info(
-            f"Session {session.name} updated successfully in workspace {workspace_name} with {len(session.peer_names or [])} peers"
+    result = await db.execute(stmt)
+
+    honcho_session = result.scalar_one_or_none()
+
+    if honcho_session is None:
+        raise ResourceNotFoundException(
+            f"Session {session_name} not found in workspace {workspace_name}"
         )
-        return honcho_session
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Error creating session in workspace {workspace_name}: {str(e)}")
-        raise
+
+    return honcho_session
 
 
 async def update_session(
@@ -1066,46 +1023,34 @@ async def create_messages(
     Returns:
         List of created message objects
     """
-    try:
-        # Get or create session with peers in messages list
-        peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
-        await get_or_create_session(
-            db,
-            session=schemas.SessionCreate(
-                name=session_name,
-                peer_names=peers,
-            ),
+    # Get or create session with peers in messages list
+    peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
+    await get_or_create_session(
+        db,
+        session=schemas.SessionCreate(
+            name=session_name,
+            peers=peers,
+        ),
+        workspace_name=workspace_name,
+    )
+
+    # Create list of message objects (this will trigger the before_insert event)
+    message_objects = [
+        models.Message(
+            session_name=session_name,
+            peer_name=message.peer_name,
+            content=message.content,
+            h_metadata=message.metadata or {},
             workspace_name=workspace_name,
         )
+        for message in messages
+    ]
 
-        # Create list of message objects (this will trigger the before_insert event)
-        message_objects = [
-            models.Message(
-                session_name=session_name,
-                peer_name=message.peer_name,
-                content=message.content,
-                h_metadata=message.metadata or {},
-                workspace_name=workspace_name,
-            )
-            for message in messages
-        ]
+    # Add all messages and commit
+    db.add_all(message_objects)
+    await db.commit()
 
-        # Add all messages and commit
-        db.add_all(message_objects)
-        await db.commit()
-
-        return message_objects
-    except IntegrityError as e:
-        await db.rollback()
-        if "fk_messages_peer_name_peers" in str(e):
-            raise ResourceNotFoundException(
-                f"One or more peers not found in workspace '{workspace_name}'"
-            ) from e
-        if "fk_messages_session_name_sessions" in str(e):
-            raise ResourceNotFoundException(
-                f"Session '{session_name}' not found in workspace '{workspace_name}'"
-            ) from e
-        raise
+    return message_objects
 
 
 async def create_messages_for_peer(
@@ -1128,38 +1073,27 @@ async def create_messages_for_peer(
 
     Returns:
         List of created message objects
-
-    Raises:
-        ResourceNotFoundException: If the peer does not exist in the workspace
     """
-    try:
-        await get_or_create_peer(
-            db, workspace_name=workspace_name, peer=schemas.PeerCreate(name=peer_name)
+    await get_or_create_peers(
+        db, workspace_name=workspace_name, peers=[schemas.PeerCreate(name=peer_name)]
+    )
+    # Create list of message objects (this will trigger the before_insert event)
+    message_objects = [
+        models.Message(
+            session_name=None,
+            peer_name=peer_name,
+            content=message.content,
+            h_metadata=message.metadata or {},
+            workspace_name=workspace_name,
         )
-        # Create list of message objects (this will trigger the before_insert event)
-        message_objects = [
-            models.Message(
-                session_name=None,
-                peer_name=peer_name,
-                content=message.content,
-                h_metadata=message.metadata or {},
-                workspace_name=workspace_name,
-            )
-            for message in messages
-        ]
+        for message in messages
+    ]
 
-        # Add all messages and commit
-        db.add_all(message_objects)
-        await db.commit()
+    # Add all messages and commit
+    db.add_all(message_objects)
+    await db.commit()
 
-        return message_objects
-    except IntegrityError as e:
-        await db.rollback()
-        if "fk_messages_peer_name_peers" in str(e):
-            raise ResourceNotFoundException(
-                f"Peer '{peer_name}' not found in workspace '{workspace_name}'"
-            ) from e
-        raise
+    return message_objects
 
 
 async def get_messages(

@@ -49,11 +49,12 @@ async def enqueue(payload: list[dict]):
                 logger.info(
                     "Session name is None, creating single representation queue items"
                 )
-                peer = await crud.get_or_create_peer(
+                peer = await crud.get_or_create_peers(
                     db_session,
                     workspace_name=workspace_name,
-                    peer=schemas.PeerCreate(name=peer_name),
+                    peers=[schemas.PeerCreate(name=peer_name)],
                 )
+                peer = peer[0]
 
                 # Cast configuration to PeerConfig and check observe_me
                 peer_config = (

@@ -85,7 +85,9 @@ async def get_or_create_peer(
         if not jwt_params.p:
             raise AuthenticationException("Peer ID not found in query parameter or JWT")
         peer.name = jwt_params.p
-    peer = await crud.get_or_create_peer(db, workspace_name=workspace_id, peer=peer)
+    peer = (
+        await crud.get_or_create_peers(db, workspace_name=workspace_id, peers=[peer])
+    )[0]
     return peer
 
 
