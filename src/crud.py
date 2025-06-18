@@ -1470,9 +1470,6 @@ async def get_collection(
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
-        logger.warning(
-            f"Collection with name '{collection_name}' not found for peer {peer_name}"
-        )
         raise ResourceNotFoundException(
             "Collection not found or does not belong to peer"
         )
