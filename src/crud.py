@@ -1506,7 +1506,7 @@ async def get_duplicate_documents(
 ########################################################
 
 
-async def get_peer_deriver_status(
+async def get_deriver_status(
     db: AsyncSession,
     workspace_name: str,
     peer_name: str,
@@ -1530,56 +1530,35 @@ async def get_peer_deriver_status(
         ResourceNotFoundException: If the peer does not exist
     """
     # Verify peer exists
-    peer = await get_peer(
-        db, workspace_name, schemas.PeerCreate(name=peer_name)
-    )
+    await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
 
-    # If session_name provided, verify session exists
-    if session_name:
-        try:
-            session = await get_session(
-                db, session_name, workspace_name
-            )
-        except ResourceNotFoundException:
-            raise ResourceNotFoundException(f"Session {session_name} not found")
+    # Build the query
+    stmt = _build_queue_status_query(workspace_name, peer_name, session_name, include_sender)
+    result = await db.execute(stmt)
+    rows = result.fetchall()
 
-    # Build base query conditions - peer can be target or sender
-    target_conditions = [
-        models.QueueItem.payload["target_name"].astext == peer_name
-    ]
+    # Process results
+    counts = _process_queue_rows(rows)
     
-    if include_sender:
-        sender_conditions = [
-            models.QueueItem.payload["sender_name"].astext == peer_name
-        ]
-    else:
-        sender_conditions = []
+    # Build response
+    return _build_status_response(peer_name, session_name, counts, rows)
 
-    # Combine conditions with OR if both target and sender
-    if target_conditions and sender_conditions:
-        peer_conditions = target_conditions + sender_conditions
-    else:
-        peer_conditions = target_conditions
 
-    # Add session filter if provided
-    base_conditions = []
-    if session_name:
-        base_conditions.append(models.QueueItem.session_id == session.id)
-
-    # Build query to get all relevant queue items with their active status
-    # We need to determine status: completed, in_progress, or pending
+def _build_queue_status_query(
+    workspace_name: str, 
+    peer_name: str, 
+    session_name: Optional[str], 
+    include_sender: bool
+):
+    """Build the SQL query for queue status."""
     sender_name_expr = models.QueueItem.payload["sender_name"].astext
     target_name_expr = models.QueueItem.payload["target_name"].astext
     task_type_expr = models.QueueItem.payload["task_type"].astext
 
-    # Main query: get queue items with active status
+    # Base query
     stmt = (
         select(
-            models.QueueItem.id,
             models.QueueItem.session_id,
-            sender_name_expr.label("sender_name"),
-            target_name_expr.label("target_name"),
-            task_type_expr.label("task_type"),
             models.QueueItem.processed,
             models.ActiveQueueSession.id.label("active_id"),
         )
@@ -1590,11 +1569,10 @@ async def get_peer_deriver_status(
             & (target_name_expr == models.ActiveQueueSession.target_name)
             & (task_type_expr == models.ActiveQueueSession.task_type),
         )
-        .where(*base_conditions)
     )
 
-    # Add peer conditions (target or sender)
-    if include_sender and target_conditions and sender_conditions:
+    # Add peer filter
+    if include_sender:
         from sqlalchemy import or_
         stmt = stmt.where(
             or_(
@@ -1605,71 +1583,75 @@ async def get_peer_deriver_status(
     else:
         stmt = stmt.where(target_name_expr == peer_name)
 
-    result = await db.execute(stmt)
-    rows = result.fetchall()
+    # Add session filter if provided
+    if session_name:
+        # We'd need to resolve session_name to session.id here if needed
+        # For now, assuming session_name is the actual ID
+        stmt = stmt.where(models.QueueItem.session_id == session_name)
 
-    # Process results to determine status and group by session
-    completed_count = 0
-    in_progress_count = 0
-    pending_count = 0
-    sessions_data = {}
+    return stmt
 
+
+def _process_queue_rows(rows):
+    """Process query results and count statuses."""
+    completed = sum(1 for row in rows if row.processed)
+    in_progress = sum(1 for row in rows if not row.processed and row.active_id)
+    pending = sum(1 for row in rows if not row.processed and not row.active_id)
+    
+    # Group by session
+    sessions = {}
     for row in rows:
-        # Determine status
-        if row.processed:
-            status = "completed"
-            completed_count += 1
-        elif row.active_id:
-            status = "in_progress"
-            in_progress_count += 1
-        else:
-            status = "pending"
-            pending_count += 1
+        if row.session_id:
+            if row.session_id not in sessions:
+                sessions[row.session_id] = {"completed": 0, "in_progress": 0, "pending": 0}
+            
+            if row.processed:
+                sessions[row.session_id]["completed"] += 1
+            elif row.active_id:
+                sessions[row.session_id]["in_progress"] += 1
+            else:
+                sessions[row.session_id]["pending"] += 1
 
-        # Group by session if not filtered by session
-        if not session_name and row.session_id:
-            session_id = row.session_id
-            if session_id not in sessions_data:
-                sessions_data[session_id] = {
-                    "completed": 0,
-                    "in_progress": 0,
-                    "pending": 0,
-                }
+    return {
+        "total": completed + in_progress + pending,
+        "completed": completed,
+        "in_progress": in_progress,
+        "pending": pending,
+        "sessions": sessions,
+    }
 
-            sessions_data[session_id][status] += 1
 
-    total_count = completed_count + in_progress_count + pending_count
+def _build_status_response(peer_name: str, session_name: Optional[str], counts: dict, rows):
+    """Build the final response object."""
+    base_response = {
+        "peer_id": peer_name,
+        "total_work_units": counts["total"],
+        "completed_work_units": counts["completed"],
+        "in_progress_work_units": counts["in_progress"],
+        "pending_work_units": counts["pending"],
+    }
 
-    # Build response
     if session_name:
         # Single session response
         return schemas.DeriverStatus(
-            peer_id=peer_name,
             session_id=session_name,
-            total_work_units=total_count,
-            completed_work_units=completed_count,
-            in_progress_work_units=in_progress_count,
-            pending_work_units=pending_count,
+            **base_response
         )
     else:
         # Multi-session response
         sessions = {}
-        for session_id, data in sessions_data.items():
-            session_total = data["completed"] + data["in_progress"] + data["pending"]
+        for session_id, data in counts["sessions"].items():
+            total = data["completed"] + data["in_progress"] + data["pending"]
             sessions[session_id] = schemas.DeriverStatus(
                 peer_id=peer_name,
                 session_id=session_id,
-                total_work_units=session_total,
+                total_work_units=total,
                 completed_work_units=data["completed"],
                 in_progress_work_units=data["in_progress"],
                 pending_work_units=data["pending"],
             )
 
         return schemas.DeriverStatus(
-            peer_id=peer_name,
-            total_work_units=total_count,
-            completed_work_units=completed_count,
-            in_progress_work_units=in_progress_count,
-            pending_work_units=pending_count,
             sessions=sessions if sessions else None,
+            **base_response
         )

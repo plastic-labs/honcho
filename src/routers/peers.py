@@ -359,7 +359,7 @@ async def search_peer(
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
 )
-async def get_peer_deriver_status(
+async def get_deriver_status(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
     session_id: Optional[str] = Query(None, description="Optional session ID to filter by"),
@@ -368,7 +368,7 @@ async def get_peer_deriver_status(
 ):
     """Get the deriver processing status for a peer, optionally scoped to a session"""
     try:
-        return await crud.get_peer_deriver_status(
+        return await crud.get_deriver_status(
             db,
             workspace_name=workspace_id,
             peer_name=peer_id,
