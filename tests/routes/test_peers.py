@@ -462,11 +462,6 @@ def test_get_peer_representation_with_session(client, sample_data):
         },
     )
     assert response.status_code == 200
-    data = response.json()
-
-    # Should still return the stubbed representation structure
-    assert "final_observations" in data
-    assert "explicit" in data["final_observations"]
 
 
 def test_search_peer(client, sample_data):

@@ -267,15 +267,31 @@ def mock_model_client(request):
     ):
         yield None
         return
-    with patch("src.utils.history.ModelClient") as mock_client_class:
-        # Create a mock instance
-        mock_client_instance = MagicMock()
-        mock_client_instance.generate = AsyncMock(return_value="Test summary content")
 
-        # Make the class constructor return our mock instance
-        mock_client_class.return_value = mock_client_instance
+    # Create a mock instance
+    mock_client_instance = MagicMock()
+    mock_client_instance.generate = AsyncMock(return_value="Test summary content")
+    mock_client_instance.stream = AsyncMock()
 
-        yield mock_client_class
+    with (
+        patch("src.utils.history.ModelClient") as mock_history_client,
+        patch("src.deriver.tom.single_prompt.ModelClient") as mock_single_prompt_client,
+        patch("src.deriver.tom.long_term.ModelClient") as mock_long_term_client,
+        patch("src.agent.ModelClient") as mock_agent_client,
+    ):
+        # Make all class constructors return our mock instance
+        mock_history_client.return_value = mock_client_instance
+        mock_single_prompt_client.return_value = mock_client_instance
+        mock_long_term_client.return_value = mock_client_instance
+        mock_agent_client.return_value = mock_client_instance
+
+        yield {
+            "history": mock_history_client,
+            "single_prompt": mock_single_prompt_client,
+            "long_term": mock_long_term_client,
+            "agent": mock_agent_client,
+            "instance": mock_client_instance,
+        }
 
 
 @pytest.fixture(autouse=True)
@@ -320,94 +336,42 @@ def mock_crud_collection_operations():
 @pytest.fixture(autouse=True)
 def mock_agent_api_calls(request):
     """Mock API calls made by the agent during tests"""
-    # Skip mocking ModelClient methods for ModelClient unit tests
-    if "test_model_client" in request.node.name or "test_model_client.py" in str(
-        request.fspath
+    # Mock the agent-specific functions
+    with (
+        patch("src.agent.generate_semantic_queries") as mock_generate_queries,
+        patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
+        patch("src.agent.get_user_representation_long_term") as mock_user_rep,
+        patch(
+            "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
+        ) as mock_get_facts,
+        patch("src.agent.Dialectic.call") as mock_dialectic_call,
+        patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
     ):
-        # Only mock the agent-specific functions, not ModelClient methods
-        with (
-            patch("src.agent.generate_semantic_queries") as mock_generate_queries,
-            patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
-            patch("src.agent.get_user_representation_long_term") as mock_user_rep,
-            patch(
-                "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
-            ) as mock_get_facts,
-            patch("src.agent.Dialectic.call") as mock_dialectic_call,
-            patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
-        ):
-            # Mock semantic query generation
-            mock_generate_queries.return_value = ["test query 1", "test query 2"]
+        # Mock semantic query generation
+        mock_generate_queries.return_value = ["test query 1", "test query 2"]
 
-            # Mock ToM inference
-            mock_tom_inference.return_value = (
-                "<prediction>Test prediction about user mental state</prediction>"
-            )
+        # Mock ToM inference
+        mock_tom_inference.return_value = (
+            "<prediction>Test prediction about user mental state</prediction>"
+        )
 
-            # Mock user representation generation
-            mock_user_rep.return_value = (
-                "<representation>Test user representation</representation>"
-            )
+        # Mock user representation generation
+        mock_user_rep.return_value = (
+            "<representation>Test user representation</representation>"
+        )
 
-            # Mock embedding store facts retrieval
-            mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
+        # Mock embedding store facts retrieval
+        mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
 
-            # Mock Dialectic API calls
-            mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
-            mock_dialectic_stream.return_value = AsyncMock()
+        # Mock Dialectic API calls
+        mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
+        mock_dialectic_stream.return_value = AsyncMock()
 
-            yield {
-                "generate_queries": mock_generate_queries,
-                "tom_inference": mock_tom_inference,
-                "user_rep": mock_user_rep,
-                "get_facts": mock_get_facts,
-                "dialectic_call": mock_dialectic_call,
-                "dialectic_stream": mock_dialectic_stream,
-            }
-    else:
-        # For non-ModelClient tests, mock everything including ModelClient methods
-        with (
-            patch("src.agent.generate_semantic_queries") as mock_generate_queries,
-            patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
-            patch("src.agent.get_user_representation_long_term") as mock_user_rep,
-            patch(
-                "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
-            ) as mock_get_facts,
-            patch("src.agent.Dialectic.call") as mock_dialectic_call,
-            patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
-            patch("src.utils.model_client.ModelClient.generate") as mock_model_generate,
-            patch("src.utils.model_client.ModelClient.stream") as mock_model_stream,
-        ):
-            # Mock semantic query generation
-            mock_generate_queries.return_value = ["test query 1", "test query 2"]
-
-            # Mock ToM inference
-            mock_tom_inference.return_value = (
-                "<prediction>Test prediction about user mental state</prediction>"
-            )
-
-            # Mock user representation generation
-            mock_user_rep.return_value = (
-                "<representation>Test user representation</representation>"
-            )
-
-            # Mock embedding store facts retrieval
-            mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
-
-            # Mock Dialectic API calls
-            mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
-            mock_dialectic_stream.return_value = AsyncMock()
-
-            # Mock ModelClient API calls
-            mock_model_generate.return_value = "Test response"
-            mock_model_stream.return_value = AsyncMock()
-
-            yield {
-                "generate_queries": mock_generate_queries,
-                "tom_inference": mock_tom_inference,
-                "user_rep": mock_user_rep,
-                "get_facts": mock_get_facts,
-                "dialectic_call": mock_dialectic_call,
-                "dialectic_stream": mock_dialectic_stream,
-                "model_generate": mock_model_generate,
-                "model_stream": mock_model_stream,
-            }
+        yield {
+            "generate_queries": mock_generate_queries,
+            "tom_inference": mock_tom_inference,
+            "user_rep": mock_user_rep,
+            "get_facts": mock_get_facts,
+            "dialectic_call": mock_dialectic_call,
+            "dialectic_stream": mock_dialectic_stream,
+        }
