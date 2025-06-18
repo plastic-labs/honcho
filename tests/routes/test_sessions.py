@@ -208,26 +208,6 @@ def test_get_sessions_with_empty_filter(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_empty_update_session(client, sample_data):
-    test_workspace, test_peer = sample_data
-    # Create a test session
-    session_id = str(generate_nanoid())
-    response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
-        json={
-            "id": session_id,
-            "peer_names": {test_peer.name: {}},
-        },
-    )
-    assert response.status_code == 200
-
-    response = client.put(
-        f"/v1/workspaces/{test_workspace.name}/sessions/{session_id}",
-        json={},
-    )
-    assert response.status_code == 422
-
-
 def test_update_delete_metadata(client, sample_data):
     test_workspace, test_peer = sample_data
     # Create a test session

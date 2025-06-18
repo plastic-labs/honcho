@@ -48,8 +48,8 @@ class PeerCreate(PeerBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict = {}
-    feature_flags: dict = {}
+    metadata: dict | None = None
+    feature_flags: dict | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -105,7 +105,7 @@ class MessageGet(MessageBase):
 
 
 class MessageUpdate(MessageBase):
-    metadata: dict
+    metadata: dict | None = None
 
 
 class Message(MessageBase):
@@ -147,9 +147,9 @@ class SessionCreate(SessionBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict = {}
+    metadata: dict | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
-    feature_flags: dict = {}
+    feature_flags: dict | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -160,7 +160,7 @@ class SessionGet(SessionBase):
 
 
 class SessionUpdate(SessionBase):
-    metadata: dict
+    metadata: dict | None = None
     feature_flags: dict | None = None
 
 

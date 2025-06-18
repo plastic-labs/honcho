@@ -5,7 +5,7 @@ from typing import Optional
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, delete, func, insert, select, update
+from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,6 +157,7 @@ async def get_or_create_peers(
 ) -> list[models.Peer]:
     """
     Get an existing list of peers or create new peers if they don't exist.
+    Updates existing peers with metadata and feature flags if provided.
 
     Args:
         db: Database session
@@ -175,9 +176,19 @@ async def get_or_create_peers(
     result = await db.execute(stmt)
     existing_peers = list(result.scalars().all())
 
-    # If all peers exist, return them
-    if len(existing_peers) == len(peers):
-        return existing_peers
+    # Create a mapping of peer names to peer schemas for easy lookup
+    peer_schema_map = {p.name: p for p in peers}
+
+    # Update existing peers with metadata and feature flags if provided
+    for existing_peer in existing_peers:
+        peer_schema = peer_schema_map[existing_peer.name]
+
+        # Update with metadata and feature flags if provided
+        if peer_schema.metadata is not None:
+            existing_peer.h_metadata = peer_schema.metadata
+
+        if peer_schema.feature_flags is not None:
+            existing_peer.feature_flags = peer_schema.feature_flags
 
     # Find which peers need to be created
     existing_names = {p.name for p in existing_peers}
@@ -194,7 +205,8 @@ async def get_or_create_peers(
         for p in peers_to_create
     ]
     db.add_all(new_peers)
-    await db.flush()
+
+    await db.commit()
 
     # Return combined list of existing and new peers
     return existing_peers + new_peers
@@ -233,6 +245,15 @@ async def get_or_create_peer(
     if existing_peer is not None:
         # Peer already exists
         logger.debug(f"Found existing peer: {peer.name} for workspace {workspace_name}")
+
+        # Update with metadata and feature flags if provided
+        if peer.metadata is not None:
+            existing_peer.h_metadata = peer.metadata
+
+        if peer.feature_flags is not None:
+            existing_peer.feature_flags = peer.feature_flags
+
+        await db.commit()
         return existing_peer
 
     if not create:
@@ -245,8 +266,8 @@ async def get_or_create_peer(
         honcho_peer = models.Peer(
             workspace_name=workspace_name,
             name=peer.name,
-            h_metadata=peer.metadata,
-            feature_flags=peer.feature_flags,
+            h_metadata=peer.metadata or {},
+            feature_flags=peer.feature_flags or {},
         )
         db.add(honcho_peer)
         await db.commit()
@@ -444,12 +465,18 @@ async def get_or_create_session(
             honcho_session = models.Session(
                 workspace_name=workspace_name,
                 name=session.name,
-                h_metadata=session.metadata,
-                feature_flags=session.feature_flags,
+                h_metadata=session.metadata or {},
+                feature_flags=session.feature_flags or {},
             )
             db.add(honcho_session)
             # Flush to ensure session exists in DB before adding peers
             await db.flush()
+        else:
+            # Update existing session with metadata and feature flags if provided
+            if session.metadata is not None:
+                honcho_session.h_metadata = session.metadata
+            if session.feature_flags is not None:
+                honcho_session.feature_flags = session.feature_flags
 
         # Add all peers to session
         if session.peer_names:
@@ -798,12 +825,17 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    # Delete all existing session peers
-    delete_stmt = delete(models.SessionPeer).where(
-        models.SessionPeer.session_name == session_name,
-        models.SessionPeer.workspace_name == workspace_name,
+    # Soft delete specified session peers by setting left_at timestamp
+    update_stmt = (
+        update(models.SessionPeer)
+        .where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.workspace_name == workspace_name,
+            models.SessionPeer.left_at.is_(None),  # Only update active peers
+        )
+        .values(left_at=func.now())
     )
-    result = await db.execute(delete_stmt)
+    result = await db.execute(update_stmt)
 
     # Get or create peers
     await get_or_create_peers(

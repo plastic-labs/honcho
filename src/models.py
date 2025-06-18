@@ -137,7 +137,7 @@ class Peer(Base):
     )
 
     def __repr__(self) -> str:
-        return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata})"
+        return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, feature_flags={self.feature_flags})"
 
 
 class Session(Base):

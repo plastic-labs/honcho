@@ -486,6 +486,9 @@ async def test_update_message_with_complex_metadata(client, db_session, sample_d
 
 @pytest.mark.asyncio
 async def test_update_message_empty_metadata(client, db_session, sample_data):
+    # note that this should not change the metadata of the message.
+    # this test is to ensure that the metadata is not changed when it is set to None.
+
     test_workspace, test_peer = sample_data
 
     # Create a test session and message
@@ -500,6 +503,7 @@ async def test_update_message_empty_metadata(client, db_session, sample_data):
         content="Test message",
         workspace_name=test_workspace.name,
         peer_name=test_peer.name,
+        h_metadata={"test_key": "test_value"},
     )
     db_session.add(test_message)
     await db_session.commit()
@@ -508,7 +512,15 @@ async def test_update_message_empty_metadata(client, db_session, sample_data):
         f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
         json={"metadata": None},
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
+
+    # now ensure that the metadata is not changed
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == {"test_key": "test_value"}
 
 
 @pytest.mark.asyncio
