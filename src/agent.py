@@ -9,7 +9,7 @@ from anthropic import MessageStreamManager
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -22,8 +22,6 @@ from src.utils.model_client import ModelClient, ModelProvider
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-USER_REPRESENTATION_METADATA_KEY = "user_representation"
 
 DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
 DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
@@ -451,47 +449,9 @@ async def generate_user_representation(
     rep_start_time = asyncio.get_event_loop().time()
 
     if with_inference:
-        if session_name:
-            # Fetch the latest user representation from the same session
-            logger.debug(f"Fetching latest representation for session {session_name}")
-            latest_representation_stmt = (
-                select(models.SessionPeer)
-                .where(models.SessionPeer.workspace_name == workspace_name)
-                .where(models.SessionPeer.peer_name == peer_name)
-                .where(models.SessionPeer.session_name == session_name)
-                .where(
-                    models.SessionPeer.internal_metadata.contains(
-                        {USER_REPRESENTATION_METADATA_KEY}
-                    )
-                )
-                .limit(1)
-            )
-            result = await db.execute(latest_representation_stmt)
-            latest_representation_obj = result.scalar_one_or_none()
-            latest_representation = (
-                latest_representation_obj.internal_metadata[
-                    USER_REPRESENTATION_METADATA_KEY
-                ]
-                if latest_representation_obj
-                else "No user representation available."
-            )
-        else:
-            # Fetch the latest global level user representation
-            logger.debug("Fetching latest global level user representation")
-            latest_representation_stmt = (
-                select(models.Peer)
-                .where(models.Peer.workspace_name == workspace_name)
-                .where(models.Peer.name == peer_name)
-            )
-            result = await db.execute(latest_representation_stmt)
-            latest_representation_obj = result.scalar_one_or_none()
-            latest_representation = (
-                latest_representation_obj.internal_metadata[
-                    USER_REPRESENTATION_METADATA_KEY
-                ]
-                if latest_representation_obj
-                else "No user representation available."
-            )
+        latest_representation = await crud.get_working_representation(
+            db, workspace_name, peer_name, session_name
+        )
 
         logger.debug(
             f"Found previous representation: {len(latest_representation)} characters"
@@ -533,35 +493,13 @@ RELEVANT LONG-TERM FACTS ABOUT THE USER:
         logger.debug(f"Saving representation to message_id: {message_id}")
         save_start = asyncio.get_event_loop().time()
         try:
-            if session_name:
-                # Get session peer and update its metadata with the representation
-                stmt = (
-                    update(models.SessionPeer)
-                    .where(models.SessionPeer.workspace_name == workspace_name)
-                    .where(models.SessionPeer.peer_name == peer_name)
-                    .where(models.SessionPeer.session_name == session_name)
-                    .values(
-                        internal_metadata={
-                            USER_REPRESENTATION_METADATA_KEY: representation
-                        }
-                    )
-                )
-                await db.execute(stmt)
-                await db.commit()
-            else:
-                # Get peer and update its metadata with the representation
-                stmt = (
-                    update(models.Peer)
-                    .where(models.Peer.workspace_name == workspace_name)
-                    .where(models.Peer.name == peer_name)
-                    .values(
-                        internal_metadata={
-                            USER_REPRESENTATION_METADATA_KEY: representation
-                        }
-                    )
-                )
-                await db.execute(stmt)
-                await db.commit()
+            await crud.set_working_representation(
+                db,
+                representation,
+                workspace_name,
+                peer_name,
+                session_name,
+            )
             save_time = asyncio.get_event_loop().time() - save_start
             logger.debug(f"Representation saved in {save_time:.2f}s")
         except Exception as e:

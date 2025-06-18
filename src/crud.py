@@ -22,6 +22,8 @@ logger = getLogger(__name__)
 
 DEF_PROTECTED_COLLECTION_NAME = "honcho"
 
+USER_REPRESENTATION_METADATA_KEY = "user_representation"
+
 SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
 
 ########################################################
@@ -1013,6 +1015,88 @@ async def search(
         )
 
     return stmt
+
+
+async def get_working_representation(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str | None = None,
+) -> str:
+    if session_name:
+        # Fetch the latest user representation from the same session
+        logger.debug(f"Fetching latest representation for session {session_name}")
+        latest_representation_stmt = (
+            select(models.SessionPeer)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.peer_name == peer_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .limit(1)
+        )
+        result = await db.execute(latest_representation_stmt)
+        latest_representation_obj = result.scalar_one_or_none()
+        latest_representation = (
+            latest_representation_obj.internal_metadata.get(
+                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+            )
+            if latest_representation_obj
+            else "No user representation available."
+        )
+    else:
+        # Fetch the latest global level user representation
+        logger.debug("Fetching latest global level user representation")
+        latest_representation_stmt = (
+            select(models.Peer)
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name == peer_name)
+        )
+        result = await db.execute(latest_representation_stmt)
+        latest_representation_obj = result.scalar_one_or_none()
+        latest_representation = (
+            latest_representation_obj.internal_metadata.get(
+                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+            )
+            if latest_representation_obj
+            else "No user representation available."
+        )
+
+    return latest_representation
+
+
+async def set_working_representation(
+    db: AsyncSession,
+    representation: str,
+    workspace_name: str,
+    peer_name: str,
+    session_name: str | None = None,
+) -> None:
+    if session_name:
+        # Get session peer and update its metadata with the representation
+        stmt = (
+            update(models.SessionPeer)
+            .where(models.SessionPeer.workspace_name == workspace_name)
+            .where(models.SessionPeer.peer_name == peer_name)
+            .where(models.SessionPeer.session_name == session_name)
+            .values(
+                internal_metadata=models.SessionPeer.internal_metadata.op("||")(
+                    {USER_REPRESENTATION_METADATA_KEY: representation}
+                )
+            )
+        )
+    else:
+        # Get peer and update its metadata with the representation
+        stmt = (
+            update(models.Peer)
+            .where(models.Peer.workspace_name == workspace_name)
+            .where(models.Peer.name == peer_name)
+            .values(
+                internal_metadata=models.Peer.internal_metadata.op("||")(
+                    {USER_REPRESENTATION_METADATA_KEY: representation}
+                )
+            )
+        )
+    await db.execute(stmt)
+    await db.commit()
 
 
 ########################################################
