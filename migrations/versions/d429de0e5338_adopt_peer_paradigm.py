@@ -7,6 +7,7 @@ Create Date: 2025-06-09 15:16:38.164067
 """
 
 from collections.abc import Sequence
+from contextlib import suppress
 from os import getenv
 from typing import Union
 
@@ -272,7 +273,7 @@ def update_sessions_table(schema: str, inspector) -> None:
 
     op.add_column(
         "sessions",
-        sa.Column("name", sa.TEXT(), nullable=True, server_default=generate_nanoid()),
+        sa.Column("name", sa.TEXT(), nullable=True),
         schema=schema,
     )  # Temporarily nullable
     op.execute(sa.text(f"UPDATE {schema}.sessions SET name = public_id"))
@@ -935,21 +936,24 @@ def update_queue_and_active_queue_sessions_tables(schema: str, inspector) -> Non
         )
 
 
-def _count_tokens(text: str) -> int:
-    """Count tokens in a text string using tiktoken."""
-    if not text:
-        return 0
-    try:
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        return len(tokenizer.encode(text))
-    except Exception:
-        # Fallback: rough estimation (4 chars per token)
-        return len(text) // 4
-
-
 def backfill_token_counts(schema: str) -> None:
     """Backfill token counts for existing messages using batch updates."""
     connection = op.get_bind()
+
+    # Initialize tokenizer once outside the loop for performance
+    tokenizer = None
+    with suppress(Exception):
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+
+    def _count_tokens(text: str) -> int:
+        """Count tokens in a text string using tiktoken."""
+        if not text:
+            return 0
+        if tokenizer:
+            with suppress(Exception):
+                return len(tokenizer.encode(text))
+        # Fallback: rough estimation (4 chars per token)
+        return len(text) // 4
 
     # Get all messages in batches to handle large datasets
     batch_size = 1000
@@ -967,25 +971,12 @@ def backfill_token_counts(schema: str) -> None:
         if not messages:
             break
 
-        # Calculate token counts for all messages in the batch
-        batch_updates = []
+        # Calculate token counts and update messages in the batch
         for message_id, content in messages:
             token_count = _count_tokens(content)
-            batch_updates.append({"id": message_id, "token_count": token_count})
-
-        # Perform bulk update using VALUES clause for better performance
-        if batch_updates:
-            values_clause = ", ".join(
-                f"({update['id']}, {update['token_count']})" for update in batch_updates
-            )
-
             connection.execute(
-                text(f"""
-                    UPDATE {schema}.messages 
-                    SET token_count = batch_data.token_count::integer
-                    FROM (VALUES {values_clause}) AS batch_data(id, token_count)
-                    WHERE messages.id = batch_data.id
-                """)
+                text(f"UPDATE {schema}.messages SET token_count = :tc WHERE id = :id"),
+                {"id": message_id, "tc": token_count},
             )
 
         offset += batch_size

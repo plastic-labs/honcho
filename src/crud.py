@@ -299,7 +299,6 @@ async def update_peer(
         ConflictException: If the update violates a unique constraint
     """
     try:
-        # get_peer will raise ResourceNotFoundException if not found
         honcho_peer = await get_or_create_peer(
             db, workspace_name, schemas.PeerCreate(name=peer_name)
         )
@@ -694,6 +693,7 @@ async def remove_peers_from_session(
         update(models.SessionPeer)
         .where(
             models.SessionPeer.session_name == session_name,
+            models.SessionPeer.workspace_name == workspace_name,
             models.SessionPeer.peer_name.in_(peer_names),
             models.SessionPeer.left_at.is_(None),  # Only update active peers
         )
@@ -800,7 +800,8 @@ async def set_peers_for_session(
 
     # Delete all existing session peers
     delete_stmt = delete(models.SessionPeer).where(
-        models.SessionPeer.session_name == session_name
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
     )
     result = await db.execute(delete_stmt)
 

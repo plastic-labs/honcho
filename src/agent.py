@@ -188,6 +188,7 @@ async def chat(
             db_history,
             workspace_name,
             session_name,
+            peer_name,
             summary_type=history.SummaryType.SHORT,
         )
         if not chat_history:
