@@ -350,3 +350,31 @@ async def search_peer(
     stmt = await crud.search(query, workspace_name=workspace_id, peer_name=peer_id)
 
     return await paginate(db, stmt)
+
+
+@router.get(
+    "/{peer_id}/deriver/status",
+    response_model=schemas.DeriverStatus,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def get_peer_deriver_status(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the peer"),
+    session_id: Optional[str] = Query(None, description="Optional session ID to filter by"),
+    include_sender: bool = Query(False, description="Include work units triggered by this peer"),
+    db=db,
+):
+    """Get the deriver processing status for a peer, optionally scoped to a session"""
+    try:
+        return await crud.get_peer_deriver_status(
+            db,
+            workspace_name=workspace_id,
+            peer_name=peer_id,
+            session_name=session_id,
+            include_sender=include_sender,
+        )
+    except ResourceNotFoundException as e:
+        logger.warning(f"Failed to get deriver status for peer {peer_id}: {str(e)}")
+        raise ResourceNotFoundException("Peer not found") from e

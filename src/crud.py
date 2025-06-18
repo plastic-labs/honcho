@@ -1499,3 +1499,177 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+########################################################
+# deriver queue methods
+########################################################
+
+
+async def get_peer_deriver_status(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    session_name: Optional[str] = None,
+    include_sender: bool = False,
+) -> schemas.DeriverStatus:
+    """
+    Get the deriver processing status for a peer.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        session_name: Optional session to filter by
+        include_sender: Whether to include work units where peer is the sender
+
+    Returns:
+        DeriverStatus: Schema containing processing status
+
+    Raises:
+        ResourceNotFoundException: If the peer does not exist
+    """
+    # Verify peer exists
+    peer = await get_peer(
+        db, workspace_name, schemas.PeerCreate(name=peer_name)
+    )
+
+    # If session_name provided, verify session exists
+    if session_name:
+        try:
+            session = await get_session(
+                db, session_name, workspace_name
+            )
+        except ResourceNotFoundException:
+            raise ResourceNotFoundException(f"Session {session_name} not found")
+
+    # Build base query conditions - peer can be target or sender
+    target_conditions = [
+        models.QueueItem.payload["target_name"].astext == peer_name
+    ]
+    
+    if include_sender:
+        sender_conditions = [
+            models.QueueItem.payload["sender_name"].astext == peer_name
+        ]
+    else:
+        sender_conditions = []
+
+    # Combine conditions with OR if both target and sender
+    if target_conditions and sender_conditions:
+        peer_conditions = target_conditions + sender_conditions
+    else:
+        peer_conditions = target_conditions
+
+    # Add session filter if provided
+    base_conditions = []
+    if session_name:
+        base_conditions.append(models.QueueItem.session_id == session.id)
+
+    # Build query to get all relevant queue items with their active status
+    # We need to determine status: completed, in_progress, or pending
+    sender_name_expr = models.QueueItem.payload["sender_name"].astext
+    target_name_expr = models.QueueItem.payload["target_name"].astext
+    task_type_expr = models.QueueItem.payload["task_type"].astext
+
+    # Main query: get queue items with active status
+    stmt = (
+        select(
+            models.QueueItem.id,
+            models.QueueItem.session_id,
+            sender_name_expr.label("sender_name"),
+            target_name_expr.label("target_name"),
+            task_type_expr.label("task_type"),
+            models.QueueItem.processed,
+            models.ActiveQueueSession.id.label("active_id"),
+        )
+        .outerjoin(
+            models.ActiveQueueSession,
+            (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
+            & (sender_name_expr == models.ActiveQueueSession.sender_name)
+            & (target_name_expr == models.ActiveQueueSession.target_name)
+            & (task_type_expr == models.ActiveQueueSession.task_type),
+        )
+        .where(*base_conditions)
+    )
+
+    # Add peer conditions (target or sender)
+    if include_sender and target_conditions and sender_conditions:
+        from sqlalchemy import or_
+        stmt = stmt.where(
+            or_(
+                target_name_expr == peer_name,
+                sender_name_expr == peer_name,
+            )
+        )
+    else:
+        stmt = stmt.where(target_name_expr == peer_name)
+
+    result = await db.execute(stmt)
+    rows = result.fetchall()
+
+    # Process results to determine status and group by session
+    completed_count = 0
+    in_progress_count = 0
+    pending_count = 0
+    sessions_data = {}
+
+    for row in rows:
+        # Determine status
+        if row.processed:
+            status = "completed"
+            completed_count += 1
+        elif row.active_id:
+            status = "in_progress"
+            in_progress_count += 1
+        else:
+            status = "pending"
+            pending_count += 1
+
+        # Group by session if not filtered by session
+        if not session_name and row.session_id:
+            session_id = row.session_id
+            if session_id not in sessions_data:
+                sessions_data[session_id] = {
+                    "completed": 0,
+                    "in_progress": 0,
+                    "pending": 0,
+                }
+
+            sessions_data[session_id][status] += 1
+
+    total_count = completed_count + in_progress_count + pending_count
+
+    # Build response
+    if session_name:
+        # Single session response
+        return schemas.DeriverStatus(
+            peer_id=peer_name,
+            session_id=session_name,
+            total_work_units=total_count,
+            completed_work_units=completed_count,
+            in_progress_work_units=in_progress_count,
+            pending_work_units=pending_count,
+        )
+    else:
+        # Multi-session response
+        sessions = {}
+        for session_id, data in sessions_data.items():
+            session_total = data["completed"] + data["in_progress"] + data["pending"]
+            sessions[session_id] = schemas.DeriverStatus(
+                peer_id=peer_name,
+                session_id=session_id,
+                total_work_units=session_total,
+                completed_work_units=data["completed"],
+                in_progress_work_units=data["in_progress"],
+                pending_work_units=data["pending"],
+            )
+
+        return schemas.DeriverStatus(
+            peer_id=peer_name,
+            total_work_units=total_count,
+            completed_work_units=completed_count,
+            in_progress_work_units=in_progress_count,
+            pending_work_units=pending_count,
+            sessions=sessions if sessions else None,
+        )
