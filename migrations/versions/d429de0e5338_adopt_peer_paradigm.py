@@ -326,6 +326,9 @@ def update_sessions_table(schema: str, inspector) -> None:
     op.create_check_constraint(
         "id_format", "sessions", "id ~ '^[A-Za-z0-9_-]+$'", schema=schema
     )
+    op.create_check_constraint(
+        "name_length", "sessions", "length(name) <= 512", schema=schema
+    )
 
 
 def create_and_populate_session_peers_table(schema: str, inspector) -> None:
@@ -1523,6 +1526,8 @@ def restore_sessions_table(schema: str, inspector) -> None:
         op.drop_constraint("id_length", "sessions", type_="check", schema=schema)
     if constraint_exists("sessions", "id_format", "check", inspector):
         op.drop_constraint("id_format", "sessions", type_="check", schema=schema)
+    if constraint_exists("sessions", "name_length", "check", inspector):
+        op.drop_constraint("name_length", "sessions", type_="check", schema=schema)
 
     op.create_check_constraint(
         "public_id_length", "sessions", "length(public_id) = 21", schema=schema

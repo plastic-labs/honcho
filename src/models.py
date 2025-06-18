@@ -161,6 +161,7 @@ class Session(Base):
 
     __table_args__ = (
         UniqueConstraint("name", "workspace_name", name="unique_session_name"),
+        CheckConstraint("length(name) <= 512", name="name_length"),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
     )

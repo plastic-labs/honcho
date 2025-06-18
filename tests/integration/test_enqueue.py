@@ -142,7 +142,7 @@ class TestEnqueueFunction:
         test_session = models.Session(
             workspace_name=test_workspace.name,
             name=str(generate_nanoid()),
-            h_metadata={"deriver_disabled": True},
+            configuration={"deriver_disabled": True},
         )
         db_session.add(test_session)
         await db_session.commit()

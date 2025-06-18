@@ -105,8 +105,8 @@ async def enqueue(payload: list[dict]):
 
             # Check if deriver is disabled for this session
             deriver_disabled = (
-                session.h_metadata.get("deriver_disabled") is not None
-                and session.h_metadata.get("deriver_disabled") is not False
+                session.configuration.get("deriver_disabled") is not None
+                and session.configuration.get("deriver_disabled") is not False
             )
 
             configuration_query = await crud.get_session_peer_configuration(

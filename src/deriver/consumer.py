@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Literal
 
 import sentry_sdk
 from langfuse.decorators import observe
@@ -32,7 +33,7 @@ class PayloadSchema(BaseModel):
     peer_name: str
     session_name: str | None
     message_id: int
-    task_type: str
+    task_type: Literal["representation", "summary"]
 
     class Config:
         # Forbid extra fields to prevent injection of unexpected data

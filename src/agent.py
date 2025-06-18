@@ -23,7 +23,7 @@ from src.utils.model_client import ModelClient, ModelProvider
 # Configure logging
 logger = logging.getLogger(__name__)
 
-USER_REPRESENTATION_METADATA_KEY = "honcho_user_representation"
+USER_REPRESENTATION_METADATA_KEY = "user_representation"
 
 DEF_DIALECTIC_PROVIDER = ModelProvider.ANTHROPIC
 DEF_DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
