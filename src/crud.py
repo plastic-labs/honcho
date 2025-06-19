@@ -2,6 +2,7 @@ import os
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Optional
+
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
@@ -10,6 +11,8 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
+
+from src.config import settings
 
 from . import models, schemas
 from .exceptions import (
@@ -21,7 +24,7 @@ from .utils.model_client import ModelClient, ModelProvider
 
 load_dotenv(override=True)
 
-openai_client = AsyncOpenAI()
+openai_client = AsyncOpenAI(api_key=settings.LLM.OPENAI_API_KEY)
 
 logger = getLogger(__name__)
 
