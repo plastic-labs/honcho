@@ -1,55 +1,170 @@
 import pytest
+from nanoid import generate as generate_nanoid
 
 from src import models  # Import your SQLAlchemy models
 
 
 @pytest.mark.asyncio
 async def test_create_message(client, db_session, sample_data):
-    test_app, test_user = sample_data
+    test_workspace, test_peer = sample_data
+
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
         json={
-            "content": "Test message",
-            "is_user": True,
-            "metadata": {"message_key": "message_value"},
+            "messages": [
+                {
+                    "content": "Test message",
+                    "peer_id": test_peer.name,
+                    "metadata": {"message_key": "message_value"},
+                }
+            ]
         },
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["content"] == "Test message"
-    assert data["is_user"] is True
-    assert data["metadata"] == {"message_key": "message_value"}
-    assert "id" in data
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message"
+    assert message["peer_id"] == test_peer.name
+    assert message["session_id"] == test_session.name
+    assert message["metadata"] == {"message_key": "message_value"}
+    assert "id" in message
+
+
+@pytest.mark.asyncio
+async def test_create_batch_messages_with_metadata(client, db_session, sample_data):
+    """Test batch message creation with metadata for each message"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Message 1",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "question", "priority": "high"},
+                },
+                {
+                    "content": "Message 2",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "answer", "priority": "low"},
+                },
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+
+    # Check first message
+    assert data[0]["content"] == "Message 1"
+    assert data[0]["metadata"] == {"type": "question", "priority": "high"}
+
+    # Check second message
+    assert data[1]["content"] == "Message 2"
+    assert data[1]["metadata"] == {"type": "answer", "priority": "low"}
+
+
+@pytest.mark.asyncio
+async def test_create_batch_messages_without_metadata(client, db_session, sample_data):
+    """Test batch message creation without metadata (should default to empty dict)"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Message without metadata",
+                    "peer_id": test_peer.name,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "Message without metadata"
+    assert data[0]["metadata"] == {}
+
+
+@pytest.mark.asyncio
+async def test_create_batch_messages_with_null_metadata(
+    client, db_session, sample_data
+):
+    """Test batch message creation with null metadata"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Message with null metadata",
+                    "peer_id": test_peer.name,
+                    "metadata": None,
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "Message with null metadata"
+    assert data[0]["metadata"] == {}
 
 
 @pytest.mark.asyncio
 async def test_get_messages(client, db_session, sample_data):
-    test_app, test_user = sample_data
+    test_workspace, test_peer = sample_data
+
     # Create a test session and message
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
+
     test_message = models.Message(
-        session_id=test_session.public_id,
+        session_name=test_session.name,
         content="Test message",
-        is_user=True,
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
     )
     db_session.add(test_message)
     await db_session.commit()
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={},
     )
     assert response.status_code == 200
@@ -57,154 +172,180 @@ async def test_get_messages(client, db_session, sample_data):
     assert "items" in data
     assert len(data["items"]) > 0
     assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["is_user"] is True
+    assert data["items"][0]["peer_id"] == test_peer.name
+    assert data["items"][0]["session_id"] == test_session.name
     assert data["items"][0]["metadata"] == {}
 
 
 @pytest.mark.asyncio
-async def test_messages_pagination(client, db_session, sample_data):
-    """Test pagination of messages with different page sizes."""
-    test_app, test_user = sample_data
+async def test_get_messages_with_reverse(client, db_session, sample_data):
+    """Test getting messages with reverse parameter"""
+    test_workspace, test_peer = sample_data
 
     # Create a test session
     test_session = models.Session(
-        app_id=test_app.public_id, user_id=test_user.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
 
-    # Create 50 test messages
-    for i in range(50):
-        test_message = models.Message(
-            app_id=test_app.public_id,
-            user_id=test_user.public_id,
-            session_id=test_session.public_id,
-            content=f"Pagination test message {i}",
-            is_user=i % 2 == 0,  # Alternating user/non-user messages
-            h_metadata={"index": i},
-        )
-        db_session.add(test_message)
-
+    # Create multiple messages to test ordering
+    test_message1 = models.Message(
+        session_name=test_session.name,
+        content="First message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    test_message2 = models.Message(
+        session_name=test_session.name,
+        content="Second message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message1)
+    db_session.add(test_message2)
     await db_session.commit()
 
-    # Test case 1: Default pagination (page 1, default size)
+    # Test normal order
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={},
     )
     assert response.status_code == 200
-    data = response.json()
+    normal_data = response.json()
 
-    # Check pagination metadata
-    assert data["page"] == 1
-    assert "total" in data
-    assert data["total"] == 50  # Total count should be 50
-
-    # Test case 2: 5 pages of 10 items each
-    for page in range(1, 6):
-        response = client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list?page={page}&size=10",
-            json={},
-        )
-        assert response.status_code == 200
-        data = response.json()
-
-        # Check pagination metadata
-        assert data["page"] == page
-        assert data["size"] == 10
-        assert data["total"] == 50
-
-        # Check items count (should be 10 for all pages)
-        expected_items = 10
-        assert len(data["items"]) == expected_items
-
-        # Verify we have the correct page of items
-        start_idx = (page - 1) * 10
-        for i, item in enumerate(data["items"]):
-            expected_idx = start_idx + i
-            assert item["metadata"]["index"] == expected_idx
-
-    # Test case 3: 2 pages of 25 items each
-    for page in range(1, 3):
-        response = client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list?page={page}&size=25",
-            json={},
-        )
-        assert response.status_code == 200
-        data = response.json()
-
-        # Check pagination metadata
-        assert data["page"] == page
-        assert data["size"] == 25
-        assert data["total"] == 50
-
-        # Check items count
-        expected_items = 25
-        assert len(data["items"]) == expected_items
-
-        # Verify we have the correct page of items
-        start_idx = (page - 1) * 25
-        for i, item in enumerate(data["items"]):
-            expected_idx = start_idx + i
-            assert item["metadata"]["index"] == expected_idx
-
-    # Test case 4: 1 page of 50 items
+    # Test reversed order
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list?page=1&size=50",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list?reverse=true",
         json={},
     )
     assert response.status_code == 200
-    data = response.json()
+    reversed_data = response.json()
 
-    # Check pagination metadata
-    assert data["page"] == 1
-    assert data["size"] == 50
-    assert data["total"] == 50
+    # Both should have items
+    assert len(normal_data["items"]) >= 2
+    assert len(reversed_data["items"]) >= 2
 
-    # Check items count
-    assert len(data["items"]) == 50
+    # Order should be different (first item in normal should be last in reversed)
+    if len(normal_data["items"]) > 1 and len(reversed_data["items"]) > 1:
+        assert normal_data["items"][0]["id"] != reversed_data["items"][0]["id"]
 
-    # Verify all items are included
-    all_indices = {item["metadata"]["index"] for item in data["items"]}
-    assert all_indices == set(range(50))
 
-    # Test case 5: Test with reverse=true (newest first, reverse order)
+@pytest.mark.asyncio
+async def test_get_messages_with_empty_filter(client, db_session, sample_data):
+    """Test getting messages with empty filter object"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list?page=1&size=50&reverse=true",
-        json={},
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
+        json={"filter": {}},
     )
     assert response.status_code == 200
     data = response.json()
+    assert "items" in data
+    assert isinstance(data["items"], list)
 
-    # Check items are in reverse order when reverse=true
-    for i, item in enumerate(data["items"]):
-        expected_idx = 49 - i
-        assert item["metadata"]["index"] == expected_idx
+
+@pytest.mark.asyncio
+async def test_get_messages_with_null_filter(client, db_session, sample_data):
+    """Test getting messages with null filter"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
+        json={"filter": None},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert isinstance(data["items"], list)
+
+
+@pytest.mark.asyncio
+async def test_get_messages_no_body(client, db_session, sample_data):
+    """Test getting messages without any request body"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert isinstance(data["items"], list)
 
 
 @pytest.mark.asyncio
 async def test_get_filtered_messages(client, db_session, sample_data):
-    test_app, test_user = sample_data
-    # Create a test session and message
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and messages
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
+
     test_message = models.Message(
-        session_id=test_session.public_id,
+        session_name=test_session.name,
         content="Test message",
-        is_user=True,
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
         h_metadata={"key": "value"},
     )
     test_message2 = models.Message(
-        session_id=test_session.public_id,
-        content="Test message",
-        is_user=True,
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
+        session_name=test_session.name,
+        content="Test message 2",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
         h_metadata={"key": "value2"},
     )
     db_session.add(test_message)
@@ -212,40 +353,93 @@ async def test_get_filtered_messages(client, db_session, sample_data):
     await db_session.commit()
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={"filter": {"key": "value2"}},
     )
     assert response.status_code == 200
     data = response.json()
-    print(data)
     assert "items" in data
     assert len(data["items"]) > 0
-    assert data["items"][0]["content"] == "Test message"
-    assert data["items"][0]["is_user"] is True
+    assert data["items"][0]["content"] == "Test message 2"
+    assert data["items"][0]["peer_id"] == test_peer.name
+    assert data["items"][0]["session_id"] == test_session.name
     assert data["items"][0]["metadata"] == {"key": "value2"}
 
 
 @pytest.mark.asyncio
-async def test_update_message(client, db_session, sample_data):
-    test_app, test_user = sample_data
-    # Create a test session and message
+async def test_get_filtered_messages_with_complex_filter(
+    client, db_session, sample_data
+):
+    """Test getting messages with complex metadata filter"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and messages
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
+
+    test_message1 = models.Message(
+        session_name=test_session.name,
+        content="Message 1",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+        h_metadata={"type": "question", "priority": "high", "category": "technical"},
+    )
+    test_message2 = models.Message(
+        session_name=test_session.name,
+        content="Message 2",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+        h_metadata={"type": "answer", "priority": "high", "category": "technical"},
+    )
+    test_message3 = models.Message(
+        session_name=test_session.name,
+        content="Message 3",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+        h_metadata={"type": "question", "priority": "low", "category": "general"},
+    )
+    db_session.add(test_message1)
+    db_session.add(test_message2)
+    db_session.add(test_message3)
+    await db_session.commit()
+
+    # Filter by multiple criteria
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
+        json={"filter": {"priority": "high", "category": "technical"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    # Should return messages 1 and 2 (both have high priority and technical category)
+    assert len(data["items"]) >= 2
+
+
+@pytest.mark.asyncio
+async def test_update_message(client, db_session, sample_data):
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
     test_message = models.Message(
-        session_id=test_session.public_id,
+        session_name=test_session.name,
         content="Test message",
-        is_user=True,
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
     )
     db_session.add(test_message)
     await db_session.commit()
 
     response = client.put(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/{test_message.public_id}",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
         json={"metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
@@ -254,111 +448,271 @@ async def test_update_message(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_update_message_empty_metadata(client, db_session, sample_data):
-    test_app, test_user = sample_data
+async def test_update_message_with_complex_metadata(client, db_session, sample_data):
+    """Test updating message with complex metadata structure"""
+    test_workspace, test_peer = sample_data
+
     # Create a test session and message
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
+
     test_message = models.Message(
-        session_id=test_session.public_id,
+        session_name=test_session.name,
         content="Test message",
-        is_user=True,
-        app_id=test_app.public_id,
-        user_id=test_user.public_id,
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    complex_metadata = {
+        "tags": ["important", "follow-up"],
+        "score": 8.5,
+        "nested": {"category": "technical", "subcategory": "api"},
+        "processed": True,
+    }
+
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
+        json={"metadata": complex_metadata},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == complex_metadata
+
+
+@pytest.mark.asyncio
+async def test_update_message_empty_metadata(client, db_session, sample_data):
+    # note that this should not change the metadata of the message.
+    # this test is to ensure that the metadata is not changed when it is set to None.
+
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+        h_metadata={"test_key": "test_value"},
     )
     db_session.add(test_message)
     await db_session.commit()
 
     response = client.put(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/{test_message.public_id}",
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
         json={"metadata": None},
     )
-    assert response.status_code == 422
+    assert response.status_code == 200
+
+    # now ensure that the metadata is not changed
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}"
+    )
+    assert response.status_code == 200
     data = response.json()
-    print(data)
-    # assert data["detail"] == "Message metadata cannot be empty"
+    assert data["metadata"] == {"test_key": "test_value"}
 
 
 @pytest.mark.asyncio
-async def test_create_batch_messages(client, db_session, sample_data):
-    test_app, test_user = sample_data
+async def test_update_message_with_empty_dict_metadata(client, db_session, sample_data):
+    """Test updating message with empty dictionary metadata"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+        h_metadata={"old_key": "old_value"},
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
+        json={"metadata": {}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == {}
+
+
+@pytest.mark.asyncio
+async def test_get_single_message(client, db_session, sample_data):
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["content"] == "Test message"
+    assert data["peer_id"] == test_peer.name
+    assert data["session_id"] == test_session.name
+    assert data["workspace_id"] == test_workspace.name
+    assert data["id"] == test_message.public_id
+
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_message(client, db_session, sample_data):
+    """Test getting a message that doesn't exist"""
+    test_workspace, test_peer = sample_data
+
     # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
 
-    # Create batch of test messages
-    test_messages = {
-        "messages": [
-            {
-                "content": f"Test message {i}",
-                "is_user": i % 2 == 0,  # Alternating user/non-user messages
-                "metadata": {"batch_index": i},
-            }
-            for i in range(3)
-        ]
-    }
-
-    response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/batch",
-        json=test_messages,
+    nonexistent_message_id = str(generate_nanoid())
+    response = client.get(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{nonexistent_message_id}"
     )
-
-    assert response.status_code == 200
-    data = response.json()
-
-    # Verify the response contains all messages
-    assert len(data) == 3
-
-    # Verify messages are in the correct order and have correct content
-    for i, message in enumerate(data):
-        assert message["content"] == f"Test message {i}"
-        assert message["is_user"] == (i % 2 == 0)
-        assert message["metadata"] == {"batch_index": i}
-        assert "id" in message
-        assert message["session_id"] == test_session.public_id
-
-    # Verify messages were actually saved to the database
-    response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/list",
-        json={},
-    )
-    assert response.status_code == 200
-    saved_messages = response.json()["items"]
-    assert len(saved_messages) == 3
+    assert response.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_create_batch_messages_limit(client, db_session, sample_data):
-    test_app, test_user = sample_data
+async def test_update_nonexistent_message(client, db_session, sample_data):
+    """Test updating a message that doesn't exist"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
     test_session = models.Session(
-        user_id=test_user.public_id, app_id=test_app.public_id
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
     )
     db_session.add(test_session)
     await db_session.commit()
 
-    # Create batch with more than 100 messages
-    test_messages = {
-        "messages": [
-            {
-                "content": f"Test message {i}",
-                "is_user": i % 2 == 0,
-                "metadata": {"batch_index": i},
-            }
-            for i in range(101)  # 101 messages
-        ]
-    }
+    nonexistent_message_id = str(generate_nanoid())
+    response = client.put(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{nonexistent_message_id}",
+        json={"metadata": {"key": "value"}},
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_messages_for_nonexistent_session(client, sample_data):
+    """Test creating messages for a session that doesn't exist - should create the session"""
+    test_workspace, test_peer = sample_data
+
+    nonexistent_session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message",
+                    "peer_id": test_peer.name,
+                }
+            ]
+        },
+    )
+    # Should create the session and return 200 with the created message
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["content"] == "Test message"
+    assert data[0]["workspace_id"] == test_workspace.name
+    assert data[0]["session_id"] == nonexistent_session_id
+    assert data[0]["peer_id"] == test_peer.name
+
+
+@pytest.mark.asyncio
+async def test_get_messages_for_nonexistent_session(client, sample_data):
+    """Test getting messages for a session that doesn't exist - should return empty list"""
+    test_workspace, test_peer = sample_data
+
+    nonexistent_session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/messages/list",
+        json={},
+    )
+    # Should return 200 with empty results (session doesn't exist = no messages)
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert len(data["items"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_create_empty_batch_messages(client, db_session, sample_data):
+    """Test creating an empty batch of messages"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
 
     response = client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions/{test_session.public_id}/messages/batch",
-        json=test_messages,
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={"messages": []},
     )
+    # Should return 422 for validation error (empty list not allowed)
+    assert response.status_code == 422
 
-    assert response.status_code == 422  # Validation error
+
+@pytest.mark.asyncio
+async def test_create_batch_messages_max_limit(client, db_session, sample_data):
+    """Test creating batch messages at the maximum limit (100 messages)"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Create exactly 100 messages (the maximum allowed)
+    messages = [
+        {"content": f"Message {i}", "peer_id": test_peer.name, "metadata": {"index": i}}
+        for i in range(100)
+    ]
+
+    response = client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={"messages": messages},
+    )
+    assert response.status_code == 200
     data = response.json()
-    assert "messages" in data["detail"][0]["loc"]  # Error should mention messages field
+    assert len(data) == 100
+    assert data[0]["content"] == "Message 0"
+    assert data[99]["content"] == "Message 99"

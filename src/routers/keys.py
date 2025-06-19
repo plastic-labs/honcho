@@ -22,13 +22,12 @@ router = APIRouter(
 
 @router.post("")
 async def create_key(
-    app_id: str | None = Query(None, description="ID of the app to scope the key to"),
-    user_id: str | None = Query(None, description="ID of the user to scope the key to"),
+    workspace_id: str | None = Query(
+        None, description="ID of the workspace to scope the key to"
+    ),
+    peer_id: str | None = Query(None, description="ID of the peer to scope the key to"),
     session_id: str | None = Query(
         None, description="ID of the session to scope the key to"
-    ),
-    collection_id: str | None = Query(
-        None, description="ID of the collection to scope the key to"
     ),
     expires_at: datetime.datetime | None = None,
 ):
@@ -37,18 +36,17 @@ async def create_key(
         raise DisabledException()
 
     # Validate that at least one parameter is provided for proper scoping
-    if not any([app_id, user_id, session_id, collection_id]):
+    if not any([workspace_id, peer_id, session_id]):
         raise ValidationException(
-            "At least one of app_id, user_id, session_id, or collection_id must be provided"
+            "At least one of workspace_id, peer_id, or session_id must be provided"
         )
 
     key_str = create_jwt(
         JWTParams(
             exp=expires_at.isoformat() if expires_at else None,
-            ap=app_id,
-            us=user_id,
-            se=session_id,
-            co=collection_id,
+            w=workspace_id,
+            p=peer_id,
+            s=session_id,
         )
     )
     return {

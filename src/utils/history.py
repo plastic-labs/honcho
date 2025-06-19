@@ -1,29 +1,49 @@
+import datetime
 import logging
 from enum import Enum
-from typing import Optional, Union, cast
+from typing import Optional, TypedDict
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.utils.model_client import ModelClient, ModelProvider
 
-from .. import models
+from .. import crud, models
 
 logger = logging.getLogger(__name__)
 
+
+# TypedDict definitions for summary data
+class Summary(TypedDict):
+    """
+    A summary object. Stored in session metadata and used in a session's get_context.
+
+    Attributes:
+        content: The summary text.
+        message_count: The number of messages covered by this summary.
+        summary_type: The type of summary (short or long).
+        created_at: The timestamp of when the summary was created (ISO format string).
+        message_id: The primary key ID of the message that triggered this summary.
+        token_count: The number of tokens in the summary text.
+    """
+
+    content: str
+    message_count: int
+    summary_type: str
+    created_at: str
+    message_id: int
+    token_count: int
+
+
 # Export the public functions
 __all__ = [
-    "get_session_summaries",
-    "get_messages_since_message",
-    "get_messages_since_latest_summary",
+    "get_summary",
     "create_summary",
-    "save_summary_metamessage",
+    "save_summary",
     "get_summarized_history",
     "should_create_summary",
-    "MESSAGES_PER_SHORT_SUMMARY",
-    "MESSAGES_PER_LONG_SUMMARY",
     "SummaryType",
+    "Summary",
 ]
 
 
@@ -32,7 +52,7 @@ MESSAGES_PER_SHORT_SUMMARY = settings.HISTORY.MESSAGES_PER_SHORT_SUMMARY
 MESSAGES_PER_LONG_SUMMARY = settings.HISTORY.MESSAGES_PER_LONG_SUMMARY
 
 
-# The types of metamessages to use for summaries
+# The types of summary to store in the session metadata
 class SummaryType(Enum):
     SHORT = "honcho_chat_summary_short"
     LONG = "honcho_chat_summary_long"
@@ -43,110 +63,64 @@ class SummaryType(Enum):
 # DEFAULT_MODEL = "gemini-2.0-flash-lite"
 
 
-async def get_session_summaries(
+async def get_summary(
     db: AsyncSession,
-    session_id: str,
+    workspace_name: str,
+    session_name: str,
     summary_type: SummaryType = SummaryType.SHORT,
-    only_latest: bool = False,
-) -> Union[list[models.Metamessage], Optional[models.Metamessage]]:
+) -> Optional[Summary]:
     """
-    Get summaries for a given session.
+    Get summary for a given session or peer.
 
     Args:
         db: Database session
-        session_id: The session ID
+        workspace_name: The workspace name
+        session_name: The session name
         summary_type: Type of summary to retrieve ("short" or "long")
-        only_latest: Whether to return only the latest summary
 
     Returns:
-        If only_latest is True: The most recent summary metamessage, or None if none exists
-        If only_latest is False: A list of all summary metamessages for the session
+        The summary data dictionary, or None if no summary exists
     """
-    # Determine the metamessage type based on summary_type
+    from src.exceptions import ResourceNotFoundException
+
     label = (
         SummaryType.SHORT.value
         if summary_type == SummaryType.SHORT
         else SummaryType.LONG.value
     )
 
-    stmt = (
-        select(models.Metamessage)
-        .where(models.Metamessage.session_id == session_id)
-        .where(models.Metamessage.label == label)
-        .order_by(models.Metamessage.id.desc())
-    )
+    try:
+        session = await crud.get_session(db, session_name, workspace_name)
+    except ResourceNotFoundException:
+        # If session doesn't exist, there's no summary to retrieve
+        return None
 
-    if only_latest:
-        stmt = stmt.limit(1)
-        result = await db.execute(stmt)
-        # Always return a metamessage instance or None
-        return result.scalar_one_or_none()
-    else:
-        result = await db.execute(stmt)
-        return list(result.scalars().all())
-
-
-async def get_messages_since_message(
-    db: AsyncSession, session_id: str, message_id: Optional[str] = None
-) -> list[models.Message]:
-    """
-    Get all messages since a specific message.
-
-    Args:
-        db: Database session
-        session_id: The session ID
-        message_id: The reference message ID
-
-    Returns:
-        List of messages after the reference message or all messages if message_id is None
-    """
-    # Base query for messages in this session
-    query = (
-        select(models.Message)
-        .where(models.Message.session_id == session_id)
-        .order_by(models.Message.id)
-    )
-
-    # If we have a reference message ID, filter to get newer messages
-    if message_id:
-        # First, get the ID of the message
-        message_id_subquery = (
-            select(models.Message.id)
-            .where(models.Message.public_id == message_id)
-            .scalar_subquery()
-        )
-
-        # Then filter to only get messages with higher IDs
-        query = query.where(models.Message.id > message_id_subquery)
-
-    # Execute query
-    result = await db.execute(query)
-    return list(result.scalars().all())
+    summaries = session.internal_metadata.get("summaries", {})
+    if not summaries or label not in summaries:
+        return None
+    return summaries[label]
 
 
 async def create_summary(
     messages: list[models.Message],
-    previous_summary: Optional[str] = None,
+    previous_summary_text: Optional[str] = None,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> str:
+    max_tokens: Optional[int] = None,
+) -> Summary:
     """
     Generate a summary of the provided messages using an LLM.
 
     Args:
         messages: List of messages to summarize
-        previous_summary: Optional previous summary to provide context
+        previous_summary_text: Optional previous summary to provide context
         summary_type: Type of summary to create ("short" or "long")
+        max_tokens: Optional maximum number of tokens to generate. Supersedes summary_type.
 
     Returns:
         A summary of the conversation
     """
-    # Combine messages into a conversation format
-    conversation = "\n".join(
-        [
-            f"{'human' if msg.is_user else 'assistant'}: {msg.content}"
-            for msg in messages
-        ]
-    )
+    # Combine messages into a conversation format string
+    conversation = format_messages(messages)
 
     # Adjust system prompt based on summary type
     if summary_type == SummaryType.LONG:
@@ -183,9 +157,9 @@ but brief enough to be helpful.
 Return only the summary without any explanation or meta-commentary."""
 
     # Include previous summary if available
-    if previous_summary:
+    if previous_summary_text:
         user_prompt = f"""Here is a previous summary of the conversation:
-{previous_summary}
+{previous_summary_text}
 Now please summarize these additional messages, incorporating the context from the previous summary.
 
 Your summary should summarize the entire conversation in a self-contained way, such that someone could read it and understand the entire conversation.
@@ -205,170 +179,211 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
     # Generate the summary
     llm_messages = [{"role": "user", "content": user_prompt}]
 
+    max_tokens = max_tokens or (
+        settings.LLM.SUMMARY_MAX_TOKENS_SHORT
+        if summary_type == SummaryType.SHORT
+        else settings.LLM.SUMMARY_MAX_TOKENS_LONG
+    )
+
     try:
-        current_max_tokens = (
-            settings.LLM.SUMMARY_MAX_TOKENS_SHORT
-            if summary_type == SummaryType.SHORT
-            else settings.LLM.SUMMARY_MAX_TOKENS_LONG
-        )
-        summary = await client.generate(
+        summary_text = await client.generate(
             messages=llm_messages,
             system=system_prompt,
-            max_tokens=current_max_tokens,
-            temperature=settings.LLM.DEFAULT_TEMPERATURE,
+            max_tokens=max_tokens,
+            temperature=0.0,
             use_caching=True,
         )
-        return summary
+        logger.info("Successfully generated summary for session")
+        return Summary(
+            content=summary_text,
+            message_count=len(messages),
+            summary_type=summary_type.value,
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            message_id=messages[-1].id,
+            # cheating: just use the max tokens instead of counting
+            # tokens in response. in the future we can update client
+            # to return tokens if that's doable.
+            token_count=max_tokens,
+        )
     except Exception as e:
         logger.error(f"Error generating summary: {str(e)}")
         # Fallback to a basic summary in case of error
-        return f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+        # Do not save this failed summary to the session metadata.
+        return Summary(
+            content=(
+                f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+                if messages
+                else "No messages to summarize!"
+            ),
+            message_count=0,
+            summary_type=summary_type.value,
+            created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            message_id=messages[-1].id if messages else 0,
+            token_count=50,
+        )
 
 
-async def save_summary_metamessage(
+async def save_summary(
     db: AsyncSession,
-    app_id: str,
-    user_id: str,
-    session_id: str,
-    message_id: str,
-    summary_content: str,
-    message_count: int,
-    summary_type: SummaryType = SummaryType.SHORT,
-) -> models.Metamessage:
+    summary: Summary,
+    workspace_name: str,
+    session_name: str,
+) -> None:
     """
-    Save a summary as a metamessage.
+    Save a summary as metadata on a session.
 
     Args:
         db: Database session
-        user_id: User ID
-        session_id: Session ID
-        message_id: The ID of the most recent message being summarized
-        summary_content: The summary text to save
-        message_count: Number of messages covered by this summary
-        summary_type: Type of summary to save
+        summary: The summary to save
+        workspace_name: Workspace name
+        session_name: Session name
 
     Returns:
-        The created metamessage
+        The updated session
     """
+    from src.exceptions import ResourceNotFoundException
+
     # Get the label value from the enum
-    label_value = summary_type.value
+    label_value = summary["summary_type"]
 
-    # Create and save the metamessage
-    metamessage = models.Metamessage(
-        app_id=app_id,
-        user_id=user_id,
-        session_id=session_id,
-        message_id=message_id,
-        label=label_value,
-        content=summary_content,
-        h_metadata={"message_count": message_count, "summary_type": summary_type.name},
-    )
+    try:
+        session = await crud.get_session(db, session_name, workspace_name)
+    except ResourceNotFoundException:
+        # If session doesn't exist, we can't save the summary
+        logger.warning(
+            f"Cannot save summary: session {session_name} not found in workspace {workspace_name}"
+        )
+        return
 
-    db.add(metamessage)
+    # Get existing summaries or create new dict
+    existing_summaries = session.internal_metadata.get("summaries", {})
+    existing_summaries[label_value] = summary
+
+    # Update the object metadata - create new dict to ensure SQLAlchemy detects the change
+    updated_metadata = session.internal_metadata.copy()
+    updated_metadata["summaries"] = existing_summaries
+    session.internal_metadata = updated_metadata
+
     await db.commit()
 
     logger.info(
-        f"Saved {summary_type.name.lower()} summary metamessage for session {session_id} covering {message_count} messages"
+        "Saved %s for session %s covering %s messages",
+        summary["summary_type"],
+        session_name,
+        summary["message_count"],
     )
-    return metamessage
-
-
-async def get_full_history(
-    db: AsyncSession, session_id: str
-) -> tuple[str, list[models.Message]]:
-    """
-    Get all messages for a given session.
-    """
-    messages = await get_messages_since_message(db, session_id)
-    return format_messages(messages), messages
 
 
 async def get_summarized_history(
-    db: AsyncSession, session_id: str, summary_type: SummaryType = SummaryType.SHORT
-) -> tuple[str, list[models.Message], Optional[models.Metamessage]]:
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+    cutoff: int | None = None,
+    summary_type: SummaryType = SummaryType.SHORT,
+) -> str:
     """
     Get a summarized version of the chat history by combining the latest summary
     with all messages since that summary.
 
+    Note: history is exclusive of the cutoff message.
+
     Args:
         db: Database session
-        session_id: The session ID
+        workspace_name: The workspace name
+        session_name: The session name
+        peer_name: The peer name
+        cutoff: (Optional) message ID to cutoff at
         summary_type: Type of summary to get ("short" or "long")
 
     Returns:
-        A tuple containing:
-        - String formatted history text with summary and recent messages
-        - List of messages since the latest summary
-        - The latest summary metamessage, or None if no summary exists
+        A string formatted history text with summary and recent messages
     """
     # Get messages since the latest summary and the summary itself
-    messages, latest_summary = await get_messages_since_latest_summary(
-        db, session_id, summary_type
+    messages, latest_summary = await get_latest_summary_and_messages_since(
+        db, workspace_name, session_name, peer_name, cutoff, summary_type
     )
 
     # Format messages
     messages_text = format_messages(messages)
 
-    # We know latest_summary is either a Metamessage or None because of the type
-    # narrowing in get_messages_since_latest_summary
     if latest_summary:
         # Combine summary with recent messages
-        history_text = f"[CONVERSATION SUMMARY: {latest_summary.content}]\n\n[RECENT MESSAGES]\n{messages_text}"
+        return f"[CONVERSATION SUMMARY: {latest_summary['content']}]\n\n[RECENT MESSAGES]\n{messages_text}"
     else:
         # No summary available, return just the messages
-        history_text = messages_text
-    return history_text, messages, latest_summary
+        return messages_text
 
 
-async def get_messages_since_latest_summary(
-    db: AsyncSession, session_id: str, summary_type: SummaryType = SummaryType.SHORT
-) -> tuple[list[models.Message], Optional[models.Metamessage]]:
+async def get_latest_summary_and_messages_since(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+    cutoff: int | None = None,
+    summary_type: SummaryType = SummaryType.SHORT,
+) -> tuple[list[models.Message], Optional[Summary]]:
     """
-    Get all messages since the latest summary for a session.
+    Get all messages since the latest summary for a session or peer.
 
     This is a convenience method that combines:
-    1. Getting the latest summary for the session
+    1. Getting the latest summary for the session or peer
     2. Getting all messages since that summary
+
+    Note that if the latest summary is not found, this will return all messages
+    since the start of the session.
+
+    Note: history is exclusive of the cutoff message.
 
     Args:
         db: Database session
-        session_id: The session ID
+        workspace_name: The workspace name
+        session_name: The session name
+        peer_name: The peer name
+        cutoff: (Optional) message ID to cutoff at
         summary_type: Type of summary to get ("short" or "long")
 
     Returns:
         A tuple containing:
         - List of messages since the latest summary (or all messages if no summary exists)
-        - The latest summary metamessage, or None if no summary exists
+        - The latest summary data, or None if no summary exists
     """
-    # Get the latest summary (will be a Metamessage instance or None)
-    # We include only_latest=True to get a single Metamessage (not a list)
-    summary = await get_session_summaries(
-        db, session_id, summary_type=summary_type, only_latest=True
-    )
-
-    # Type narrowing - summary is now either None or a Metamessage instance
-    latest_summary = cast(Optional[models.Metamessage], summary)
+    # Get the latest summary
+    summary = await get_summary(db, workspace_name, session_name, summary_type)
 
     # Check if we have a valid summary with a message_id
-    if latest_summary is not None:
-        messages = await get_messages_since_message(
-            db, session_id, latest_summary.message_id
+    if summary:
+        messages = await crud.get_messages_id_range(
+            db,
+            workspace_name,
+            session_name,
+            peer_name,
+            start_id=summary["message_id"],
+            end_id=cutoff,
         )
-        return messages, latest_summary
+        return messages, summary
     else:
-        messages = await get_messages_since_message(db, session_id)
+        messages = await crud.get_messages_id_range(
+            db, workspace_name, session_name, peer_name, end_id=cutoff
+        )
         return messages, None
 
 
 async def should_create_summary(
-    db: AsyncSession, session_id: str, summary_type: SummaryType = SummaryType.SHORT
-) -> tuple[bool, list[models.Message], Optional[models.Metamessage]]:
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+    message_id: int,
+    summary_type: SummaryType = SummaryType.SHORT,
+) -> tuple[bool, list[models.Message], Optional[Summary]]:
     """
-    Determine if a new summary should be created for this session.
+    Determine if a new summary should be created for this object (peer or session).
 
     Args:
         db: Database session
-        session_id: The session ID
+        workspace_name: The workspace name
+        session_name: The session name
         summary_type: Type of summary to check for ("short" or "long")
 
     Returns:
@@ -377,8 +392,13 @@ async def should_create_summary(
         - List of messages to be included in the summary
         - The latest summary of the requested type, or None if no summary exists
     """
-    messages, latest_summary = await get_messages_since_latest_summary(
-        db, session_id, summary_type
+    messages, latest_summary = await get_latest_summary_and_messages_since(
+        db,
+        workspace_name,
+        session_name,
+        peer_name,
+        cutoff=message_id,
+        summary_type=summary_type,
     )
     threshold = (
         MESSAGES_PER_SHORT_SUMMARY
@@ -386,15 +406,20 @@ async def should_create_summary(
         else MESSAGES_PER_LONG_SUMMARY
     )
     should_create = len(messages) >= threshold
+    logger.debug(
+        "Should create summary: %s, messages: %s, threshold: %s",
+        should_create,
+        len(messages),
+        threshold,
+    )
     return should_create, messages, latest_summary
 
 
 def format_messages(messages: list[models.Message]) -> str:
     """
-    Format a list of messages into a string.
+    Format a list of messages into a string by concatenating their content and
+    prefixing each with the peer name.
     """
     if len(messages) == 0:
         return ""
-    return "\n".join(
-        [f"{'user' if msg.is_user else 'assistant'}: {msg.content}" for msg in messages]
-    )
+    return "\n".join([f"{msg.peer_name}: {msg.content}" for msg in messages])

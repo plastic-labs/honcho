@@ -3,11 +3,11 @@ from nanoid import generate as generate_nanoid
 from src.security import JWTParams, create_jwt
 
 
-def test_create_app_with_auth(auth_client):
+def test_create_workspace_with_auth(auth_client):
     name = str(generate_nanoid())
 
     response = auth_client.post(
-        "/v1/apps", json={"name": name, "metadata": {"key": "value"}}
+        "/v1/workspaces", json={"name": name, "metadata": {"key": "value"}}
     )
 
     # Check expected behavior based on auth type
@@ -26,7 +26,7 @@ def test_auth_response_time(auth_client):
     start_time = time.time()
 
     response = auth_client.post(
-        "/v1/apps", json={"name": name, "metadata": {"key": "value"}}
+        "/v1/workspaces", json={"name": name, "metadata": {"key": "value"}}
     )
 
     end_time = time.time()
@@ -43,18 +43,12 @@ def test_auth_response_time(auth_client):
     assert response.status_code == 200
 
 
-def test_get_or_create_app_with_auth(auth_client):
+def test_get_or_create_workspace_with_auth(auth_client):
     name = str(generate_nanoid())
-    # Should return a ResourceNotFoundException with 404 status
-    response = auth_client.get(f"/v1/apps/name/{name}")
 
-    if auth_client.auth_type != "admin":
-        assert response.status_code == 401
-        return
-
-    assert response.status_code == 404
-
-    response = auth_client.get(f"/v1/apps/get_or_create/{name}")
+    response = auth_client.post(
+        "/v1/workspaces", json={"name": name, "metadata": {"key": "value"}}
+    )
 
     if auth_client.auth_type != "admin":
         assert response.status_code == 401
@@ -63,223 +57,160 @@ def test_get_or_create_app_with_auth(auth_client):
     assert response.status_code == 200
 
 
-def test_get_app_by_id_with_auth(auth_client, sample_data):
-    test_app, _ = sample_data
+def test_get_workspace_with_auth(auth_client, sample_data):
+    test_workspace, _ = sample_data
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
+        # For non-admin, include the workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
-    response = auth_client.get(f"/v1/apps?app_id={test_app.public_id}")
+    response = auth_client.post("/v1/workspaces", json={"name": test_workspace.name})
 
-    # Admin JWT or JWT with matching app_id should be allowed
+    # Admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
         assert response.status_code == 401
 
 
-def test_get_app_from_token(auth_client, sample_data):
-    test_app, _ = sample_data
+def test_update_workspace_with_auth(auth_client, sample_data):
+    test_workspace, _ = sample_data
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
+        # For non-admin, include the workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
-        )
-
-    response = auth_client.get("/v1/apps")
-
-    if auth_client.auth_type == "empty":
-        assert response.status_code == 200
-        assert response.json()["id"] == test_app.public_id
-    else:
-        assert response.status_code == 401
-
-
-def test_get_app_by_name_with_auth(auth_client, sample_data):
-    test_app, _ = sample_data
-
-    if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
-        # Note that this will still fail because name route requires admin
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
-        )
-
-    response = auth_client.get(f"/v1/apps/name/{test_app.name}")
-
-    # Only admin JWT should be allowed
-    if auth_client.auth_type == "admin":
-        assert response.status_code == 200
-    else:
-        assert response.status_code == 401
-
-
-def test_update_app_with_auth(auth_client, sample_data):
-    test_app, _ = sample_data
-
-    if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
-        # Note that this will still fail because name route requires admin
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
     new_name = str(generate_nanoid())
     response = auth_client.put(
-        f"/v1/apps/{test_app.public_id}",
+        f"/v1/workspaces/{test_workspace.name}",
         json={"name": new_name, "metadata": {"new_key": "new_value"}},
     )
 
-    # Only admin JWT or JWT with matching app_id should be allowed
+    # Only admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
         assert response.status_code == 401
 
 
-def test_update_app_with_wrong_auth(auth_client, sample_data):
-    test_app, _ = sample_data
+def test_update_workspace_with_wrong_auth(auth_client, sample_data):
+    test_workspace, _ = sample_data
 
-    different_app = str(generate_nanoid())
+    different_workspace = str(generate_nanoid())
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the *wrong* app_id in the JWT
+        # For non-admin, include the *wrong* workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=different_app))}"
+            f"Bearer {create_jwt(JWTParams(w=different_workspace))}"
         )
 
     new_name = str(generate_nanoid())
     response = auth_client.put(
-        f"/v1/apps/{test_app.public_id}",
+        f"/v1/workspaces/{test_workspace.name}",
         json={"name": new_name, "metadata": {"new_key": "new_value"}},
     )
 
-    # Only admin JWT or JWT with matching app_id should be allowed
+    # Only admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type == "admin":
         assert response.status_code == 200
     else:
-        # wrong app_id should be rejected
+        # wrong workspace should be rejected
         assert response.status_code == 401
 
 
-def test_create_user_with_auth(auth_client, sample_data):
-    test_app, _ = sample_data
+def test_create_peer_with_auth(auth_client, sample_data):
+    test_workspace, _ = sample_data
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
+        # For non-admin, include the workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
     name = str(generate_nanoid())
     response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users",
-        json={"name": name, "metadata": {"user_key": "user_value"}},
+        f"/v1/workspaces/{test_workspace.name}/peers",
+        json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
 
-    # Only admin JWT or JWT with matching app_id should be allowed
+    # Only admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
         assert response.status_code == 401
 
 
-def test_get_user_by_id_with_auth(auth_client, sample_data):
-    test_app, test_user = sample_data
+def test_get_peer_by_name_with_auth(auth_client, sample_data):
+    test_workspace, test_peer = sample_data
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
+        # For non-admin, include the workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
-    response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users?user_id={test_user.public_id}"
+    # Use POST /list endpoint to get peers
+    response = auth_client.post(
+        f"/v1/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"name": test_peer.name}},
     )
 
-    # Admin JWT or JWT with matching app_id should be allowed
+    # Admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
         assert response.status_code == 401
 
-    # Test with user-scoped JWT
+    # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
         )
 
-        response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users?user_id={test_user.public_id}"
+        # Get specific peer using get_or_create endpoint
+        response = auth_client.post(
+            f"/v1/workspaces/{test_workspace.name}/peers", json={"name": test_peer.name}
         )
 
         assert response.status_code == 200
 
-        response2 = auth_client.get(f"/v1/apps/{test_app.public_id}/users")
 
-        assert response2.status_code == 200
-
-        print(response2.json())
-
-        assert response2.json()["id"] == test_user.public_id
-
-
-def test_get_user_by_name_with_auth(auth_client, sample_data):
-    test_app, test_user = sample_data
+def test_update_peer_with_auth(auth_client, sample_data):
+    test_workspace, test_peer = sample_data
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
+        # For non-admin, include the workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
-        )
-
-    response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/name/{test_user.name}"
-    )
-
-    # Admin JWT or JWT with matching app_id should be allowed
-    if auth_client.auth_type in ["admin", "empty"]:
-        assert response.status_code == 200
-    else:
-        assert response.status_code == 401
-
-
-def test_update_user_with_auth(auth_client, sample_data):
-    test_app, test_user = sample_data
-
-    if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id in the JWT
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
     new_name = str(generate_nanoid())
     response = auth_client.put(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}",
+        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"name": new_name, "metadata": {"updated_key": "updated_value"}},
     )
 
-    # Admin JWT or JWT with matching app_id should be allowed
+    # Admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
         assert response.status_code == 401
 
-    # Test with user-scoped JWT
+    # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+            f"Bearer {create_jwt(JWTParams(p=test_peer.name, w=test_workspace.name))}"
         )
 
         response = auth_client.put(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}",
+            f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
             json={
                 "name": str(generate_nanoid()),
-                "metadata": {"user_key": "user_value"},
+                "metadata": {"peer_key": "peer_value"},
             },
         )
 
@@ -287,51 +218,54 @@ def test_update_user_with_auth(auth_client, sample_data):
 
 
 def test_create_session_with_auth(auth_client, sample_data):
-    test_app, test_user = sample_data
+    test_workspace, test_peer = sample_data
 
     if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id and user_id in the JWT
+        # For non-admin, include the workspace name in the JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
+    session_name = str(generate_nanoid())
     response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={},
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"name": session_name, "peer_names": {test_peer.name: {}}},
     )
 
-    # Only admin JWT or JWT with matching app_id and user_id should be allowed
+    # Only admin JWT or JWT with matching workspace should be allowed
     if auth_client.auth_type in ["admin", "empty"]:
         assert response.status_code == 200
     else:
         assert response.status_code == 401
 
-    # Remove app_id from header and make sure user-scoped key works too
+    # Test with peer-scoped JWT
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
         )
 
+        session_name2 = str(generate_nanoid())
         response = auth_client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-            json={},
+            f"/v1/workspaces/{test_workspace.name}/sessions",
+            json={"name": session_name2, "peer_names": {test_peer.name: {}}},
         )
 
         assert response.status_code == 200
 
 
-def test_get_session_by_id_with_auth(auth_client, sample_data):
-    test_app, test_user = sample_data
+def test_get_session_by_name_with_auth(auth_client, sample_data):
+    test_workspace, test_peer = sample_data
 
     # First create a session
     if auth_client.auth_type == "empty":
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
+    session_name = str(generate_nanoid())
     create_response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions",
-        json={},
+        f"/v1/workspaces/{test_workspace.name}/sessions",
+        json={"name": session_name, "peer_names": {test_peer.name: {}}},
     )
 
     if auth_client.auth_type not in ["admin", "empty"]:
@@ -339,290 +273,65 @@ def test_get_session_by_id_with_auth(auth_client, sample_data):
         return
 
     assert create_response.status_code == 200
-    session_id = create_response.json()["id"]
 
-    # Test with app and user scoped JWT
-    response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
+    # Test with workspace scoped JWT - get the same session
+    response = auth_client.post(
+        f"/v1/workspaces/{test_workspace.name}/sessions", json={"name": session_name}
     )
     assert response.status_code == 200
 
     if auth_client.auth_type == "empty":
         # Test with session-scoped JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(se=session_id))}"
+            f"Bearer {create_jwt(JWTParams(s=session_name))}"
         )
 
-        response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
+        response = auth_client.post(
+            f"/v1/workspaces/{test_workspace.name}/sessions",
+            json={"name": session_name},
         )
         assert response.status_code == 200
 
-        response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
-        )
-
-        assert response.status_code == 200
-
-        assert response.json()["id"] == session_id
-
-        # Test with wrong session_id (should be 401 since we have a session-scoped JWT)
+        # Test with wrong session_name (should be 401 since we have a session-scoped JWT)
         assert (
-            auth_client.get(
-                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={generate_nanoid()}"
+            auth_client.post(
+                f"/v1/workspaces/{test_workspace.name}/sessions",
+                json={"name": generate_nanoid()},
             ).status_code
             == 401
         )
 
-        # Test with user-scoped JWT
+        # Test with peer-scoped JWT
         auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
+            f"Bearer {create_jwt(JWTParams(p=test_peer.name))}"
         )
 
         assert (
-            auth_client.get(
-                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
-            ).status_code
-            == 200
-        )
-        assert (
-            auth_client.get(
-                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
-            ).status_code
-            == 401
-        )
-
-        # Test with app-scoped JWT
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
-        )
-
-        assert (
-            auth_client.get(
-                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={session_id}"
+            auth_client.post(
+                f"/v1/workspaces/{test_workspace.name}/sessions",
+                json={"name": session_name},
             ).status_code
             == 200
         )
 
-        assert (
-            auth_client.get(
-                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions"
-            ).status_code
-            == 401
+        # Test with workspace-scoped JWT
+        auth_client.headers["Authorization"] = (
+            f"Bearer {create_jwt(JWTParams(w=test_workspace.name))}"
         )
 
-        # Test with wrong session_id (should be 404 since we have an app-scoped JWT)
         assert (
-            auth_client.get(
-                f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/sessions?session_id={generate_nanoid()}"
+            auth_client.post(
+                f"/v1/workspaces/{test_workspace.name}/sessions",
+                json={"name": session_name},
+            ).status_code
+            == 200
+        )
+
+        # Test with wrong session_name using DELETE endpoint (should be 404 since session doesn't exist)
+        wrong_session_name = generate_nanoid()
+        assert (
+            auth_client.delete(
+                f"/v1/workspaces/{test_workspace.name}/sessions/{wrong_session_name}"
             ).status_code
             == 404
         )
-
-
-def test_create_collection(auth_client, sample_data) -> None:
-    test_app, test_user = sample_data
-
-    if auth_client.auth_type == "empty":
-        # For non-admin, include the app_id and user_id in the JWT
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
-        )
-
-    response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "test_collection", "metadata": {}},
-    )
-
-    # Only admin JWT or JWT with matching app_id and user_id should be allowed
-    if auth_client.auth_type in ["admin", "empty"]:
-        assert response.status_code == 200
-    else:
-        assert response.status_code == 401
-
-    # Remove app_id from header and make sure user-scoped key works too
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(us=test_user.public_id))}"
-        )
-
-        response = auth_client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-            json={"name": "test_collection2", "metadata": {}},
-        )
-
-        assert response.status_code == 200
-
-    # Remove user_id from header and make sure app-scoped key works too
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id))}"
-        )
-
-        response = auth_client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-            json={"name": "test_collection3", "metadata": {}},
-        )
-
-        assert response.status_code == 200
-
-
-def test_get_collection_by_id_with_auth(auth_client, sample_data) -> None:
-    test_app, test_user = sample_data
-
-    # First create a collection
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
-        )
-
-    create_response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "test_collection_get", "metadata": {}},
-    )
-
-    if auth_client.auth_type not in ["admin", "empty"]:
-        assert create_response.status_code == 401
-        return
-
-    assert create_response.status_code == 200
-    collection_id = create_response.json()["id"]
-
-    # Test with app and user scoped JWT
-    response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={collection_id}"
-    )
-    assert response.status_code == 200
-
-    # Test with collection-scoped JWT
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(co=collection_id))}"
-        )
-
-        response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections?collection_id={collection_id}"
-        )
-        assert response.status_code == 200
-
-        # Test auto resolution of ID
-        response2 = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections"
-        )
-        assert response2.status_code == 200
-        assert response2.json()["id"] == collection_id
-
-
-def test_get_collection_by_name_with_auth(auth_client, sample_data) -> None:
-    test_app, test_user = sample_data
-    collection_name = f"test_collection_{generate_nanoid()}"
-
-    # First create a collection
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
-        )
-
-    create_response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": collection_name, "metadata": {}},
-    )
-
-    if auth_client.auth_type not in ["admin", "empty"]:
-        assert create_response.status_code == 401
-        return
-
-    assert create_response.status_code == 200
-
-    # Test with app and user scoped JWT
-    response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/name/{collection_name}"
-    )
-    assert response.status_code == 200
-
-
-def test_create_document_with_auth(auth_client, sample_data) -> None:
-    test_app, test_user = sample_data
-
-    # First create a collection
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
-        )
-
-    create_collection_response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "test_collection_docs", "metadata": {}},
-    )
-
-    if auth_client.auth_type not in ["admin", "empty"]:
-        assert create_collection_response.status_code == 401
-        return
-
-    assert create_collection_response.status_code == 200
-    collection_id = create_collection_response.json()["id"]
-
-    # Create document with app and user scoped JWT
-    response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
-        json={"content": "Test document content", "metadata": {"doc_key": "doc_value"}},
-    )
-    assert response.status_code == 200
-
-    # Test with collection-scoped JWT
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(co=collection_id))}"
-        )
-
-        response = auth_client.post(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
-            json={"content": "Test document with collection JWT", "metadata": {}},
-        )
-        assert response.status_code == 200
-
-
-def test_get_document_with_auth(auth_client, sample_data) -> None:
-    test_app, test_user = sample_data
-
-    # First create a collection and document
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(ap=test_app.public_id, us=test_user.public_id))}"
-        )
-
-    create_collection_response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections",
-        json={"name": "test_collection_get_doc", "metadata": {}},
-    )
-
-    if auth_client.auth_type not in ["admin", "empty"]:
-        assert create_collection_response.status_code == 401
-        return
-
-    assert create_collection_response.status_code == 200
-    collection_id = create_collection_response.json()["id"]
-
-    create_doc_response = auth_client.post(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents",
-        json={"content": "Test document for retrieval", "metadata": {}},
-    )
-    assert create_doc_response.status_code == 200
-    document_id = create_doc_response.json()["id"]
-
-    # Get document with app and user scoped JWT
-    response = auth_client.get(
-        f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/{document_id}"
-    )
-    assert response.status_code == 200
-
-    # Test with collection-scoped JWT
-    if auth_client.auth_type == "empty":
-        auth_client.headers["Authorization"] = (
-            f"Bearer {create_jwt(JWTParams(co=collection_id))}"
-        )
-
-        response = auth_client.get(
-            f"/v1/apps/{test_app.public_id}/users/{test_user.public_id}/collections/{collection_id}/documents/{document_id}"
-        )
-        assert response.status_code == 200

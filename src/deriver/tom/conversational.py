@@ -1,23 +1,28 @@
+import os
 import sentry_sdk
+from anthropic import Anthropic
+from anthropic.types import MessageParam, TextBlock
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 
-from src.utils.model_client import ModelClient, ModelProvider
+from src.utils.model_client import ModelClient
 
-# Initialize ModelClient for Anthropic
-# Using the specific model for ToM inference
-model_client = ModelClient(
-    provider=ModelProvider.ANTHROPIC, model="claude-3-5-sonnet-20240620"
+model_client = ModelClient()
+
+# Initialize the Anthropic client
+anthropic = Anthropic(
+    api_key=os.getenv("ANTHROPIC_API_KEY"),
+    max_retries=5,
 )
 
 
 @ai_track("Tom Inference")
 @observe()
 async def get_tom_inference_conversational(
-    chat_history: str, session_id: str, user_representation: str = "None"
+    chat_history: str, user_representation: str = "None"
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
-        messages = [
+        messages: list[MessageParam] = [
             {
                 "role": "user",
                 "content": [
@@ -69,11 +74,13 @@ async def get_tom_inference_conversational(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
         # Use ModelClient instead of direct Anthropic client
+
         response = await model_client.generate(
-            messages=messages,
+            messages=[dict(msg) for msg in messages],
             max_tokens=1000,
             temperature=0.0,
         )
+
         return response
 
 
@@ -81,14 +88,13 @@ async def get_tom_inference_conversational(
 @observe()
 async def get_user_representation_conversational(
     chat_history: str,
-    session_id: str,
     user_representation: str = "None",
     tom_inference: str = "None",
 ) -> str:
     with sentry_sdk.start_transaction(
         op="user-representation-inference", name="User Representation"
     ):
-        messages = [
+        messages: list[MessageParam] = [
             {
                 "role": "user",
                 "content": [
@@ -141,8 +147,10 @@ async def get_user_representation_conversational(
         )
         # Use ModelClient instead of direct Anthropic client
         response = await model_client.generate(
-            messages=messages,
+            messages=[dict(msg) for msg in messages],
             max_tokens=1000,
             temperature=0.0,
         )
+
+        # skip blocks that are not text and return the first text block
         return response

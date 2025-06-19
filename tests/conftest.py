@@ -214,16 +214,18 @@ def auth_client(client, request, monkeypatch):
 async def sample_data(db_session):
     """Helper function to create test data"""
     # Create test app
-    test_app = models.App(name=str(generate_nanoid()))
-    db_session.add(test_app)
+    test_workspace = models.Workspace(name=str(generate_nanoid()))
+    db_session.add(test_workspace)
     await db_session.flush()
 
     # Create test user
-    test_user = models.User(name=str(generate_nanoid()), app_id=test_app.public_id)
-    db_session.add(test_user)
+    test_peer = models.Peer(
+        name=str(generate_nanoid()), workspace_name=test_workspace.name
+    )
+    db_session.add(test_peer)
     await db_session.flush()
 
-    yield test_app, test_user
+    yield test_workspace, test_peer
 
     await db_session.rollback()
 
@@ -264,3 +266,122 @@ def mock_openai_embeddings():
         mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
         mock_create.return_value = mock_response
         yield mock_create
+
+
+@pytest.fixture(autouse=True)
+def mock_model_client(request):
+    """Mock ModelClient to avoid needing API keys during tests"""
+    # Skip mocking for ModelClient unit tests
+    if "test_model_client" in request.node.name or "test_model_client.py" in str(
+        request.fspath
+    ):
+        yield None
+        return
+
+    # Create a mock instance
+    mock_client_instance = MagicMock()
+    mock_client_instance.generate = AsyncMock(return_value="Test summary content")
+    mock_client_instance.stream = AsyncMock()
+
+    with (
+        patch("src.utils.history.ModelClient") as mock_history_client,
+        patch("src.deriver.tom.single_prompt.ModelClient") as mock_single_prompt_client,
+        patch("src.deriver.tom.long_term.ModelClient") as mock_long_term_client,
+        patch("src.agent.ModelClient") as mock_agent_client,
+    ):
+        # Make all class constructors return our mock instance
+        mock_history_client.return_value = mock_client_instance
+        mock_single_prompt_client.return_value = mock_client_instance
+        mock_long_term_client.return_value = mock_client_instance
+        mock_agent_client.return_value = mock_client_instance
+
+        yield {
+            "history": mock_history_client,
+            "single_prompt": mock_single_prompt_client,
+            "long_term": mock_long_term_client,
+            "agent": mock_agent_client,
+            "instance": mock_client_instance,
+        }
+
+
+@pytest.fixture(autouse=True)
+def mock_tracked_db(db_session):
+    """Mock tracked_db to use the test database session"""
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def mock_tracked_db_context(operation_name=None):
+        yield db_session
+
+    with patch("src.dependencies.tracked_db", mock_tracked_db_context):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_crud_collection_operations():
+    """Mock CRUD operations that try to commit to database during tests"""
+    from nanoid import generate as generate_nanoid
+
+    from src import models
+
+    async def mock_get_or_create_collection(
+        db, workspace_name, peer_name, collection_name
+    ):
+        # Create a mock collection object that doesn't require database commit
+        mock_collection = models.Collection(
+            name="honcho",
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+        )
+        mock_collection.id = generate_nanoid()
+        return mock_collection
+
+    with patch(
+        "src.crud.get_or_create_collection",
+        mock_get_or_create_collection,
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def mock_agent_api_calls(request):
+    """Mock API calls made by the agent during tests"""
+    # Mock the agent-specific functions
+    with (
+        patch("src.agent.generate_semantic_queries") as mock_generate_queries,
+        patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
+        patch("src.agent.get_user_representation_long_term") as mock_user_rep,
+        patch(
+            "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
+        ) as mock_get_facts,
+        patch("src.agent.Dialectic.call") as mock_dialectic_call,
+        patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
+    ):
+        # Mock semantic query generation
+        mock_generate_queries.return_value = ["test query 1", "test query 2"]
+
+        # Mock ToM inference
+        mock_tom_inference.return_value = (
+            "<prediction>Test prediction about user mental state</prediction>"
+        )
+
+        # Mock user representation generation
+        mock_user_rep.return_value = (
+            "<representation>Test user representation</representation>"
+        )
+
+        # Mock embedding store facts retrieval
+        mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
+
+        # Mock Dialectic API calls
+        mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
+        mock_dialectic_stream.return_value = AsyncMock()
+
+        yield {
+            "generate_queries": mock_generate_queries,
+            "tom_inference": mock_tom_inference,
+            "user_rep": mock_user_rep,
+            "get_facts": mock_get_facts,
+            "dialectic_call": mock_dialectic_call,
+            "dialectic_stream": mock_dialectic_stream,
+        }

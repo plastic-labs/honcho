@@ -26,7 +26,6 @@ MAX_FACT_DISTANCE = 0.85
 @observe()
 async def get_user_representation_long_term(
     chat_history: str,
-    session_id: str,
     user_representation: str = "None",
     tom_inference: str = "None",
     facts: Optional[list[str]] = None,

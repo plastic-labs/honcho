@@ -7,17 +7,17 @@ logger = logging.getLogger(__name__)
 
 
 class CollectionEmbeddingStore:
-    def __init__(self, app_id: str, user_id: str, collection_id: str):
-        self.app_id = app_id
-        self.user_id = user_id
-        self.collection_id = collection_id
+    def __init__(self, workspace_name: str, peer_name: str, collection_name: str):
+        self.workspace_name = workspace_name
+        self.peer_name = peer_name
+        self.collection_name = collection_name
 
     async def save_facts(
         self,
         facts: list[str],
         replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
-        message_id: str = None,
+        message_id: int | None = None,
     ) -> None:
         """Save facts to the collection.
 
@@ -31,14 +31,16 @@ class CollectionEmbeddingStore:
                 # Create document with duplicate checking
                 try:
                     metadata = {}
-                    if message_id:
+                    if message_id is not None:
                         metadata["message_id"] = message_id
                     await crud.create_document(
                         db,
-                        document=schemas.DocumentCreate(content=fact, metadata=metadata),
-                        app_id=self.app_id,
-                        user_id=self.user_id,
-                        collection_id=self.collection_id,
+                        document=schemas.DocumentCreate(
+                            content=fact, metadata=metadata
+                        ),
+                        workspace_name=self.workspace_name,
+                        peer_name=self.peer_name,
+                        collection_name=self.collection_name,
                         duplicate_threshold=1
                         - similarity_threshold,  # Convert similarity to distance
                     )
@@ -62,9 +64,9 @@ class CollectionEmbeddingStore:
         async with tracked_db("embedding_store.get_relevant_facts") as db:
             documents = await crud.query_documents(
                 db,
-                app_id=self.app_id,
-                user_id=self.user_id,
-                collection_id=self.collection_id,
+                workspace_name=self.workspace_name,
+                peer_name=self.peer_name,
+                collection_name=self.collection_name,
                 query=query,
                 max_distance=max_distance,
                 top_k=top_k,
@@ -92,9 +94,9 @@ class CollectionEmbeddingStore:
                     # Check for duplicates using the crud function
                     duplicates = await crud.get_duplicate_documents(
                         db,
-                        app_id=self.app_id,
-                        user_id=self.user_id,
-                        collection_id=self.collection_id,
+                        workspace_name=self.workspace_name,
+                        peer_name=self.peer_name,
+                        collection_name=self.collection_name,
                         content=fact,
                         similarity_threshold=similarity_threshold,
                     )

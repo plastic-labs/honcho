@@ -1,4 +1,5 @@
 import contextvars
+import os
 from typing import Optional
 
 from sqlalchemy import MetaData, create_engine, text
@@ -12,8 +13,7 @@ connect_args = {"prepare_threshold": None}
 
 # Context variable to store request context
 request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
-    "request_context",
-    default=None,
+    "request_context", default=None
 )
 
 engine_kwargs = {}
