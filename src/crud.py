@@ -881,6 +881,7 @@ async def _get_or_add_peers_to_session(
     )
     await db.execute(stmt)
 
+    # Return all active session peers after the upsert
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.workspace_name == workspace_name,
@@ -970,7 +971,6 @@ async def set_peer_config(
     session_peer.configuration["observe_me"] = config.observe_me
 
     await db.commit()
-    return
 
 
 async def search(
