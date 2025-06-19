@@ -1,0 +1,213 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Honcho",
+  "colors": {
+    "primary": "#FF5A7E",
+    "light": "#FF5A7E",
+    "dark": "#FF5A7E"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "documentation/introduction/what-is-honcho",
+              "documentation/introduction/quickstart",
+              "documentation/introduction/faq"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "documentation/core-concepts/glossary",
+              "documentation/core-concepts/architecture",
+              "documentation/core-concepts/storage-api",
+              "documentation/core-concepts/deriver",
+              "documentation/core-concepts/dialectic-api",
+              "documentation/core-concepts/features"
+            ]
+          },
+          {
+            "group": "Platform",
+            "pages": [
+              "documentation/platform/overview",
+              "documentation/platform/guided-tutorial",
+              "documentation/platform/sdk",
+              "documentation/platform/self-hosting",
+              "documentation/platform/deploying",
+              "documentation/platform/development"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "guides/overview"
+            ]
+          },
+          {
+            "group": "Application Interfaces",
+            "pages": [
+              "guides/discord"
+            ]
+          },
+          {
+            "group": "Personal Memory",
+            "pages": [
+              "guides/simple-memory",
+              "guides/dialectic-endpoint"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "API Documentation",
+            "pages": [
+              "api-reference/introduction"
+            ]
+          },
+          {
+            "group": "workspaces",
+            "pages": [
+              "api-reference/endpoint/workspaces/get-or-create-workspace",
+              "api-reference/endpoint/workspaces/get-all-workspaces",
+              "api-reference/endpoint/workspaces/update-workspace",
+              "api-reference/endpoint/workspaces/search-workspace"
+            ]
+          },
+          {
+            "group": "peers",
+            "pages": [
+              "api-reference/endpoint/peers/get-peers",
+              "api-reference/endpoint/peers/get-or-create-peer",
+              "api-reference/endpoint/peers/update-peer",
+              "api-reference/endpoint/peers/get-sessions-for-peer",
+              "api-reference/endpoint/peers/chat",
+              "api-reference/endpoint/peers/create-messages-for-peer",
+              "api-reference/endpoint/peers/get-messages-for-peer",
+              "api-reference/endpoint/peers/get-working-representation",
+              "api-reference/endpoint/peers/search-peer"
+            ]
+          },
+          {
+            "group": "sessions",
+            "pages": [
+              "api-reference/endpoint/sessions/get-or-create-session",
+              "api-reference/endpoint/sessions/get-sessions",
+              "api-reference/endpoint/sessions/update-session",
+              "api-reference/endpoint/sessions/delete-session",
+              "api-reference/endpoint/sessions/clone-session",
+              "api-reference/endpoint/sessions/get-session-peers",
+              "api-reference/endpoint/sessions/set-session-peers",
+              "api-reference/endpoint/sessions/add-peers-to-session",
+              "api-reference/endpoint/sessions/remove-peers-from-session",
+              "api-reference/endpoint/sessions/get-peer-config",
+              "api-reference/endpoint/sessions/set-peer-config",
+              "api-reference/endpoint/sessions/get-session-context",
+              "api-reference/endpoint/sessions/search-session"
+            ]
+          },
+          {
+            "group": "messages",
+            "pages": [
+              "api-reference/endpoint/messages/create-messages-for-session",
+              "api-reference/endpoint/messages/get-messages",
+              "api-reference/endpoint/messages/get-message",
+              "api-reference/endpoint/messages/update-message"
+            ]
+          },
+          {
+            "group": "keys",
+            "pages": [
+              "api-reference/endpoint/keys/create-key"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Contributing",
+        "groups": [
+          {
+            "group": "Contributing",
+            "pages": [
+              "contributing/guidelines",
+              "contributing/project-overview",
+              "contributing/configuration-guide",
+              "contributing/self-hosting",
+              "contributing/license"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "groups": [
+          {
+            "group": "Changelog",
+            "pages": [
+              "changelog/introduction"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Platform",
+          "href": "https://app.honcho.dev",
+          "icon": "book-open-cover"
+        },
+        {
+          "anchor": "Community",
+          "href": "https://discord.gg/honcho",
+          "icon": "discord"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://blog.plasticlabs.ai",
+          "icon": "newspaper"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/honcho-dark.svg",
+    "dark": "/logo/honcho-light.svg"
+  },
+  "api": {
+    "openapi": [
+      "openapi.documented.yml"
+    ]
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/plastic-labs/honcho"
+    }
+  },
+  "footer": {
+    "socials": {
+      "twitter": "https://twitter.com/plastic_labs",
+      "github": "https://github.com/plastic-labs",
+      "linkedin": "https://www.linkedin.com/company/plasticlabs"
+    }
+  },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    }
+  }
+}
