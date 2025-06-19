@@ -1,6 +1,6 @@
 # 🫡 Honcho
 
-![Static Badge](https://img.shields.io/badge/Version-1.1.0-blue)
+![Static Badge](https://img.shields.io/badge/Version-2.0.0-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
@@ -9,9 +9,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
 [![NPM version](https://img.shields.io/npm/v/honcho-ai.svg)](https://npmjs.org/package/honcho-ai)
 
-Honcho is a platform for making AI agents and LLM powered applications that are personalized
-to their end users. It leverages the inherent theory-of-mind capabilities of
-LLMs to cohere to user psychology over time.
+Honcho is an infrastructure layer for building AI agents with social cognition and theory-of-mind capabilities. It enables developers to create AI agents and LLM-powered applications that are personalized to their end users by leveraging the inherent theory-of-mind capabilities of LLMs to build coherent models of user psychology over time.
 
 Read about the project [here](https://blog.plasticlabs.ai/blog/A-Simple-Honcho-Primer).
 
@@ -60,102 +58,136 @@ version of Honcho.
 The functionality of Honcho can be split into two different services: Storage
 and Insights.
 
+
+### Peer Paradigm
+
+Honcho uses a peer-based model where both users and agents are represented as "peers". This unified approach enables:
+
+- Multi-participant sessions with mixed human and AI agents
+- Configurable observation settings (which peers observe which others)
+- Flexible identity management for all participants
+- Support for complex multi-agent interactions
+
+#### Key Features
+
+- **Theory-of-Mind System**: Multiple implementation methods that extract facts from interactions and build comprehensive models of peer psychology
+- **Dialectic API**: Provides theory-of-mind informed responses that integrate long-term facts with current context
+- **Background Processing**: Asynchronous processing pipeline for expensive operations like representation updates and session summarization
+- **Multi-Provider Support**: Configurable LLM providers for different use cases
+
 ### Storage
 
 Honcho contains several different primitives used for storing application and
-user data. This data is used for managing conversations, modeling user
+peer data. This data is used for managing conversations, modeling peer
 psychology, building RAG applications, and more.
 
-The philosophy behind Honcho is to provide a platform that is user-centric and
+The philosophy behind Honcho is to provide a platform that is peer-centric and
 easily scalable from a single user to a million.
 
-Below is a mapping of the different primitives.
+Below is a mapping of the different primitives and their relationships.
 
 ```
-Apps
-└── Users
-    ├── Sessions
-    │   └── Messages
-    ├── Collections
-    │   └── Documents
-    └── Metamessages
+Workspaces
+├── Peers ←──────────────────┐
+│   ├── Sessions             │
+│   ├── Collections          │
+│   │   └── Documents        │
+│   └── Messages (peer-level)│
+│                            │
+└── Sessions ←───────────────┤ (many-to-many)
+    ├── Peers ───────────────┘
+    └── Messages (session-level)
 ```
+
+**Relationship Details:**
+- A **Workspace** contains multiple **Peers**
+- **Peers** and **Sessions** have a many-to-many relationship (peers can participate in multiple sessions, sessions can have multiple peers)
+- **Messages** can exist at two levels:
+  - **Session-level**: Communication between peers within a session
+  - **Peer-level**: Data ingested by a peer to enhance its global representation
+- **Collections** belong to specific **Peers**
+- **Documents** are stored within **Collections**
 
 Users familiar with APIs such as the OpenAI Assistants API will be familiar with
 much of the mapping here.
 
-#### Apps
+#### Workspaces
 
-This is the top level construct of Honcho. Developers can register different
-`Apps` for different assistants, agents, AI enabled features, etc. It is a way to
-isolation data between use cases.
+This is the top level construct of Honcho (formerly called Apps). Developers can register different
+`Workspaces` for different assistants, agents, AI enabled features, etc. It is a way to
+isolate data between use cases and provide multi-tenant capabilities.
 
-**Users**
+#### Peers
 
-Within an `App` everything revolves around a `User`. the `User` object
-literally represent a user of an application.
+Within a `Workspace` everything revolves around a `Peer`. The `Peer` object
+represents any participant in the system - whether human users or AI agents.
+This unified model enables complex multi-participant interactions.
 
 #### Sessions
 
-The `Session` object represents a set of interactions a `User` has with an
-`App`. Other application may refer to this as a thread or conversation.
+The `Session` object represents a set of interactions between `Peers` within a
+`Workspace`. Other applications may refer to this as a thread or conversation.
+Sessions can involve multiple peers with configurable observation settings.
 
-**Messages**
+#### Messages
 
-The `Message` represents an atomic interaction of a `User` in a `Session`.
-`Message`s are labeled as either a `User` or AI message.
+The `Message` represents an atomic data unit that can exist at two levels:
+
+- **Session-level Messages**: Communication between peers within a session context
+- **Peer-level Messages**: Arbitrary data ingested by a peer to enhance its global representation (independent of any session)
+
+All messages are labeled by their source peer and can be processed asynchronously to update theory-of-mind models. This flexible design allows for both conversational interactions and broader data ingestion for personality modeling.
 
 #### Collections
 
 At a high level a `Collection` is a named group of `Documents`. Developers
-familiar with RAG based applications will be familiar with these. `Collection`s
+familiar with RAG based applications will be familiar with these. `Collections`
 store vector embedded data that developers and agents can retrieve against using
 functions like cosine similarity.
 
-Developers can create multiple `Collection`s for a user for different purposes
+Developers can create multiple `Collections` for a peer for different purposes
 such as modeling different personas, adding third-party data such as emails and
-PDF files, and more.
+PDF files, and more. Collections are also used internally by Honcho to store
+theory-of-mind representations.
 
 #### Documents
 
 As stated before a `Document` is vector embedded data stored in a `Collection`.
 
-#### Metamessages
-
-A `Metamessage` is similar to a `Message` with different use case. They are
-meant to be used to store intermediate inference from AI assistants or other
-derived information that is separate from the main `User` `App` interaction
-loop. For complicated prompting architectures like [metacognitive prompting](https://arxiv.org/abs/2310.06983)
-metamessages can store thought and reflection steps along with having developer
-information such as logs.
-
-Each `Metamessage` is associated with a `User` with the ability to optionally
-tie to a `Session` and a `Message`.
-
 ### Insights
 
 The Insight functionality of Honcho is built on top of the Storage service. As
-`Messages` and `Sessions` are created for a `User`, Honcho will asynchronously
-reason about the `User`'s psychology to derive facts about them and store them
-in a reserved `Collection`.
+`Messages` and `Sessions` are created for `Peers`, Honcho will asynchronously
+reason about peer psychology to derive facts about them and store them
+in reserved `Collections`.
+
+The system uses a sophisticated message processing pipeline:
+
+1. Messages are created via API 
+2. Enqueued for background processing including:
+   - `representation`: Update peer's theory of mind
+   - `summary`: Create session summaries
+3. Session-based queue processing ensures proper ordering
+4. Results are stored internally in the vector database
 
 To read more about how this works read our [Research Paper](https://arxiv.org/abs/2310.06983)
 
 Developers can then leverage these insights in their application to better
-server `User` needs. The primary interface for using these insights is through
+serve peer needs. The primary interface for using these insights is through
 the [Dialectic Endpoint](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API).
 
-This is a regular API endpoint that takes natural language requests to get data
-about the `User`. This robust design let's us use this single endpoint for all
-cases where extra personalization or information about the `User` is necessary.
+This is a regular API endpoint (`/peers/{peer_id}/chat`) that takes natural language requests to get data
+about the `Peer`. This robust design lets us use this single endpoint for all
+cases where extra personalization or information about the `Peer` is necessary.
 
-A developer's application can treat Honcho as an oracle to the `User` and
+A developer's application can treat Honcho as an oracle to the `Peer` and
 consult it when necessary. Some examples of how to leverage the Dialectic
 API include:
 
-- Asking Honcho for a theory-of-mind insight about the `User`
-- Asking Honcho to hydrate a prompt with data about the `User`s behavior
-- Asking Honcho for a 2nd opinion or approach about how to respond to the User
+- Asking Honcho for a theory-of-mind insight about the `Peer`
+- Asking Honcho to hydrate a prompt with data about the `Peer`s behavior
+- Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
+- Getting personalized responses that incorporate long-term facts and context
 
 ## License
 
