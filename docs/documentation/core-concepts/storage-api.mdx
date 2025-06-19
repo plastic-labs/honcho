@@ -1,0 +1,93 @@
+---
+title: 'Storage API'
+description: 'Core REST API for data management'
+icon: 'database'
+---
+
+# Storage API
+
+The Storage API is the foundation of Honcho, providing RESTful endpoints for managing all your application data.
+
+## Overview
+
+The Storage API handles:
+- **Apps**: Top-level application containers
+- **Users**: Individual user entities
+- **Sessions**: Conversation contexts
+- **Messages**: Communication units
+- **Collections**: Document containers
+- **Documents**: Stored content with embeddings
+
+## Core Endpoints
+
+### Apps
+```http
+GET    /apps/{app_id}
+POST   /apps
+PUT    /apps/{app_id}
+```
+
+### Users  
+```http
+GET    /apps/{app_id}/users
+POST   /apps/{app_id}/users
+GET    /apps/{app_id}/users/{user_id}
+PUT    /apps/{app_id}/users/{user_id}
+```
+
+### Sessions
+```http
+GET    /apps/{app_id}/users/{user_id}/sessions
+POST   /apps/{app_id}/users/{user_id}/sessions
+GET    /apps/{app_id}/users/{user_id}/sessions/{session_id}
+PUT    /apps/{app_id}/users/{user_id}/sessions/{session_id}
+DELETE /apps/{app_id}/users/{user_id}/sessions/{session_id}
+```
+
+### Messages
+```http
+GET    /apps/{app_id}/users/{user_id}/sessions/{session_id}/messages
+POST   /apps/{app_id}/users/{user_id}/sessions/{session_id}/messages
+GET    /apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/{message_id}
+PUT    /apps/{app_id}/users/{user_id}/sessions/{session_id}/messages/{message_id}
+```
+
+## Data Model
+
+### Hierarchical Structure
+```
+App
+├── Users
+│   ├── Sessions
+│   │   ├── Messages
+│   │   └── Metamessages
+│   └── Collections
+│       └── Documents
+```
+
+### Key Features
+- **UUID Identifiers**: All entities use UUID v4 for unique identification
+- **Metadata Support**: Every entity supports custom metadata
+- **Timestamps**: Automatic created_at tracking
+- **Scoped Access**: Users can only access their own data
+
+## Authentication
+
+The Storage API uses API keys for authentication:
+
+```http
+Authorization: Bearer <your-api-key>
+```
+
+## Error Handling
+
+Standard HTTP status codes:
+- `200` - Success
+- `201` - Created
+- `400` - Bad Request
+- `401` - Unauthorized
+- `404` - Not Found
+- `422` - Validation Error
+- `500` - Internal Server Error
+
+For detailed API documentation, see our [API Reference](/api-reference/introduction). 

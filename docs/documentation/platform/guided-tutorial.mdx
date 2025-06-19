@@ -1,0 +1,353 @@
+---
+title: 'Guided Tutorial'
+description: 'Step-by-step tutorial for building with Honcho'
+icon: 'graduation-cap'
+---
+
+# Guided Tutorial
+
+This comprehensive tutorial will walk you through building a complete AI application with Honcho, from basic setup to advanced features.
+
+## What We'll Build
+
+By the end of this tutorial, you'll have created a personal AI assistant that:
+- Remembers user preferences and facts
+- Maintains conversation context across sessions
+- Provides personalized responses based on history
+- Stores and retrieves relevant memories
+
+## Prerequisites
+
+- Python 3.8 or higher
+- Basic understanding of Python
+- OpenAI API key (or another LLM provider)
+
+## Part 1: Basic Setup
+
+### Install Dependencies
+
+<CodeGroup>
+```bash pip
+pip install honcho-ai openai python-dotenv
+```
+
+```bash poetry
+poetry add honcho-ai openai python-dotenv
+```
+</CodeGroup>
+
+### Environment Setup
+
+Create a `.env` file in your project directory:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### Initialize Honcho
+
+```python
+import os
+from dotenv import load_dotenv
+from honcho import Honcho
+import openai
+
+# Load environment variables
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Initialize Honcho
+honcho = Honcho(app_name="personal-assistant-tutorial")
+honcho.initialize()
+
+print("✅ Honcho initialized successfully!")
+```
+
+## Part 2: User Management
+
+### Create and Manage Users
+
+```python
+def get_or_create_user(username):
+    """Get existing user or create a new one"""
+    try:
+        user = honcho.get_user_by_name(username)
+        print(f"Welcome back, {username}!")
+    except:
+        user = honcho.create_user(username)
+        print(f"New user created: {username}")
+    
+    return user
+
+# Test it out
+user = get_or_create_user("alice")
+print(f"User ID: {user.id}")
+```
+
+### User Collections for Memory
+
+```python
+def setup_user_memory(user):
+    """Setup memory collection for the user"""
+    try:
+        collection = user.get_collection("personal_facts")
+    except:
+        collection = user.create_collection("personal_facts")
+        print("Created personal facts collection")
+    
+    return collection
+
+# Setup memory for our user
+facts_collection = setup_user_memory(user)
+```
+
+## Part 3: Session Management
+
+### Create Conversation Sessions
+
+```python
+def start_new_session(user, session_name=None):
+    """Start a new conversation session"""
+    metadata = {"session_name": session_name} if session_name else {}
+    session = user.create_session(metadata=metadata)
+    print(f"Started new session: {session.id}")
+    return session
+
+# Start a session
+session = start_new_session(user, "Daily Check-in")
+```
+
+### Message Handling
+
+```python
+def add_message(session, content, is_user=True):
+    """Add a message to the session"""
+    message = session.create_message(
+        content=content,
+        is_user=is_user,
+        metadata={"timestamp": str(datetime.now())}
+    )
+    return message
+
+# Add user message
+user_message = add_message(session, "Hi! I'm working on a Python project today.", is_user=True)
+```
+
+## Part 4: Fact Extraction and Storage
+
+### Extract Facts from Conversations
+
+```python
+def extract_facts(user_input):
+    """Extract facts about the user from their input"""
+    prompt = f"""
+    Extract discrete facts about the user from this message:
+    "{user_input}"
+    
+    Return only factual statements, no inferences. Format as a simple list.
+    If no facts can be extracted, return an empty list.
+    """
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1
+    )
+    
+    facts_text = response.choices[0].message.content.strip()
+    
+    # Parse facts (simple line-by-line approach)
+    facts = [fact.strip("- ").strip() for fact in facts_text.split('\n') if fact.strip()]
+    return facts
+
+# Extract and store facts
+facts = extract_facts("Hi! I'm working on a Python project today.")
+print(f"Extracted facts: {facts}")
+
+# Store facts in collection
+for fact in facts:
+    if fact:  # Only store non-empty facts
+        facts_collection.create_document(content=fact)
+        print(f"Stored fact: {fact}")
+```
+
+## Part 5: Context Retrieval and Response Generation
+
+### Retrieve Relevant Context
+
+```python
+def get_relevant_context(collection, query, top_k=5):
+    """Retrieve relevant facts for the current conversation"""
+    try:
+        results = collection.query(query=query, top_k=top_k)
+        return [doc.content for doc in results]
+    except:
+        return []
+
+def get_recent_messages(session, limit=10):
+    """Get recent conversation history"""
+    messages = list(session.get_messages_generator())
+    return messages[-limit:] if messages else []
+
+# Get context for response
+recent_context = get_recent_messages(session)
+relevant_facts = get_relevant_context(facts_collection, "Python project work")
+
+print(f"Recent messages: {len(recent_context)}")
+print(f"Relevant facts: {relevant_facts}")
+```
+
+### Generate Personalized Responses
+
+```python
+def generate_response(user_input, recent_messages, relevant_facts):
+    """Generate a personalized AI response"""
+    
+    # Format conversation history
+    conversation_history = ""
+    for msg in recent_messages[-5:]:  # Last 5 messages
+        role = "User" if msg.is_user else "Assistant"
+        conversation_history += f"{role}: {msg.content}\n"
+    
+    # Format facts
+    facts_context = "\n".join([f"- {fact}" for fact in relevant_facts])
+    
+    prompt = f"""
+    You are a helpful personal assistant. Use the conversation history and known facts about the user to provide a personalized response.
+    
+    Known facts about the user:
+    {facts_context}
+    
+    Recent conversation:
+    {conversation_history}
+    
+    User's current message: {user_input}
+    
+    Provide a helpful, personalized response that acknowledges relevant context.
+    """
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    
+    return response.choices[0].message.content
+
+# Generate response
+ai_response = generate_response(
+    "How's my project going?",
+    recent_context,
+    relevant_facts
+)
+
+print(f"AI Response: {ai_response}")
+
+# Store AI response
+add_message(session, ai_response, is_user=False)
+```
+
+## Part 6: Complete Conversation Loop
+
+### Put It All Together
+
+```python
+def chat_with_assistant(user, message_text):
+    """Complete conversation flow with memory"""
+    
+    # Get or create session
+    sessions = list(user.get_sessions_generator())
+    if sessions:
+        session = sessions[0]  # Use most recent session
+    else:
+        session = start_new_session(user, "Chat Session")
+    
+    # Add user message
+    add_message(session, message_text, is_user=True)
+    
+    # Extract and store facts
+    facts = extract_facts(message_text)
+    facts_collection = setup_user_memory(user)
+    
+    for fact in facts:
+        if fact and len(fact) > 10:  # Store meaningful facts
+            facts_collection.create_document(content=fact)
+    
+    # Get context and generate response
+    recent_messages = get_recent_messages(session)
+    relevant_facts = get_relevant_context(facts_collection, message_text)
+    
+    ai_response = generate_response(message_text, recent_messages, relevant_facts)
+    
+    # Store AI response
+    add_message(session, ai_response, is_user=False)
+    
+    return ai_response
+
+# Test the complete flow
+response = chat_with_assistant(user, "I finished the authentication module for my Python project!")
+print(f"Assistant: {response}")
+```
+
+## Part 7: Advanced Features
+
+### Session Management
+
+```python
+def list_user_sessions(user):
+    """List all sessions for a user"""
+    sessions = list(user.get_sessions_generator())
+    for session in sessions:
+        messages = list(session.get_messages_generator())
+        print(f"Session {session.id}: {len(messages)} messages")
+        if session.metadata.get("session_name"):
+            print(f"  Name: {session.metadata['session_name']}")
+
+list_user_sessions(user)
+```
+
+### Fact Management
+
+```python
+def search_user_facts(collection, query):
+    """Search through user's stored facts"""
+    results = collection.query(query=query, top_k=10)
+    print(f"Facts related to '{query}':")
+    for doc in results:
+        print(f"  - {doc.content}")
+
+search_user_facts(facts_collection, "Python")
+```
+
+## Next Steps
+
+Congratulations! You've built a complete personal AI assistant with Honcho. Here are some ideas to extend it further:
+
+1. **Web Interface**: Build a web UI using Flask/FastAPI
+2. **Multiple Collections**: Organize facts by category (work, personal, projects)
+3. **Advanced Fact Extraction**: Use more sophisticated NLP techniques
+4. **Conversation Summaries**: Generate session summaries for long conversations
+5. **Integration**: Connect with calendar, email, or other data sources
+
+## Troubleshooting
+
+### Common Issues
+
+**"No module named 'honcho'"**
+- Make sure you installed the package: `pip install honcho-ai`
+
+**API connection errors**
+- Check your internet connection
+- Verify you're using the correct base URL
+
+**Empty fact extraction**
+- Try adjusting the extraction prompt
+- Use different temperature settings
+- Ensure meaningful input text
+
+## Resources
+
+- [Full Source Code](https://github.com/plastic-labs/honcho/tree/main/examples/tutorial)
+- [API Reference](/api-reference/introduction)
+- [More Examples](/guides/overview)
+- [Discord Community](http://discord.gg/plasticlabs) 

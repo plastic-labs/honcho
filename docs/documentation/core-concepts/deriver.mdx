@@ -1,0 +1,340 @@
+---
+title: "Deriver System"
+description: "Background processing for automatic insight derivation and context management"
+---
+
+# Deriver System
+
+The Deriver System is Honcho's background processing engine that automatically analyzes user interactions to derive insights, maintain context, and build comprehensive user representations.
+
+## Overview
+
+When messages are added to sessions, they are automatically queued for background processing by the deriver system. This enables:
+
+- **Automatic Insight Generation**: Extract meaningful patterns from conversations
+- **Context Maintenance**: Keep user representations up-to-date
+- **Scalable Processing**: Handle high-volume message processing
+- **Intelligent Analysis**: Use AI to understand user behavior and preferences
+
+## How It Works
+
+### 1. Message Ingestion
+
+When a message is created, it triggers the enqueueing process:
+
+```python
+# Message added to session
+POST /workspaces/{workspace}/sessions/{session}/messages
+
+# Automatically enqueued for processing
+Queue Item: {
+  "task_type": "representation",
+  "sender_name": "user-123",
+  "target_name": "user-123",
+  "content": "User message content",
+  "session_name": "session-456"
+}
+```
+
+### 2. Queue Processing
+
+The deriver workers continuously process queued items:
+
+```bash
+# Start deriver workers
+python -m src.deriver
+```
+
+### 3. Insight Generation
+
+Different types of analysis are performed:
+
+- **User Representation**: Build psychological profiles and preferences
+- **Conversation Summary**: Generate session summaries
+- **Fact Extraction**: Extract factual information about users
+
+## Processing Types
+
+### Representation Generation
+
+Creates comprehensive user profiles including:
+
+**Psychological Insights:**
+- Personality traits
+- Communication style
+- Preferences and interests
+- Behavioral patterns
+
+**Contextual Information:**
+- Current conversation topics
+- User goals and objectives
+- Emotional state indicators
+- Relationship dynamics
+
+**Example Output:**
+```
+The user demonstrates high technical competency and prefers direct communication. 
+They show interest in software development topics and value efficiency in conversations. 
+Current session indicates they're seeking help with API integration issues.
+```
+
+### Summary Generation
+
+Creates hierarchical summaries at different levels:
+
+**Short Summaries** (every 10 messages):
+- Key points from recent conversation
+- Important decisions or outcomes
+- Action items or next steps
+
+**Long Summaries** (every 100 messages):
+- Comprehensive session overview
+- Major themes and topics
+- Relationship progression
+
+### Fact Extraction
+
+Identifies and stores specific facts about users:
+
+- Personal information (with privacy controls)
+- Preferences and opinions
+- Historical context
+- Relationship information
+
+## Queue Management
+
+### Queue States
+
+**Pending**: Work items waiting to be processed
+- Newly created items
+- Items that failed and are retrying
+
+**In Progress**: Work items currently being processed
+- Tracked in `ActiveQueueSession` table
+- Prevents duplicate processing
+- Enables monitoring and timeout handling
+
+**Completed**: Successfully processed work items
+- `processed=true` flag set
+- Results stored in user representations
+
+### Monitoring Queue Status
+
+Check processing status for any peer:
+
+```bash
+# Get overall status
+GET /workspaces/{workspace}/peers/{peer}/deriver/status
+
+# Filter by session
+GET /workspaces/{workspace}/peers/{peer}/deriver/status?session_name={session}
+
+# Include sender activity
+GET /workspaces/{workspace}/peers/{peer}/deriver/status?include_sender=true
+```
+
+**Response Format:**
+```json
+{
+  "peer_id": "user-123",
+  "total_work_units": 15,
+  "completed_work_units": 10,
+  "in_progress_work_units": 2,
+  "pending_work_units": 3,
+  "sessions": {
+    "session-456": {
+      "completed_work_units": 5,
+      "in_progress_work_units": 1,
+      "pending_work_units": 1
+    }
+  }
+}
+```
+
+## Configuration Options
+
+### Session-Level Configuration
+
+Disable deriver processing for specific sessions:
+
+```json
+{
+  "id": "session-123",
+  "configuration": {
+    "deriver_disabled": true
+  }
+}
+```
+
+### Peer-Level Configuration
+
+Control observation behavior:
+
+```json
+{
+  "name": "user-123",
+  "configuration": {
+    "observe_me": true  // Process messages from this peer
+  }
+}
+```
+
+### Session Peer Configuration
+
+Fine-grained control within sessions:
+
+```json
+{
+  "peers": {
+    "user-123": {
+      "observe_me": true,      // Process my messages
+      "observe_others": true   // Learn from others' messages
+    }
+  }
+}
+```
+
+## Performance & Scaling
+
+### Worker Scaling
+
+Scale processing capacity by running multiple workers:
+
+```bash
+# Single worker
+python -m src.deriver
+
+# Multiple workers (using process managers)
+supervisord -c deriver_supervisor.conf
+```
+
+### Queue Optimization
+
+**Batch Processing**: Process multiple items efficiently
+**Priority Handling**: Critical updates processed first
+**Error Handling**: Automatic retry with exponential backoff
+**Dead Letter Queue**: Handle permanently failed items
+
+### Resource Management
+
+**Memory Usage**: Efficient processing of large conversations
+**API Rate Limits**: Respect external service limits (OpenAI, etc.)
+**Database Connections**: Connection pooling for optimal performance
+
+## Error Handling
+
+### Retry Logic
+
+Failed processing items are automatically retried:
+
+1. **Immediate Retry**: For transient errors
+2. **Exponential Backoff**: For rate limit errors
+3. **Dead Letter**: After max retry attempts
+
+### Monitoring & Alerts
+
+Track processing health:
+
+- Processing rate and throughput
+- Error rates and types
+- Queue depth and age
+- Worker health and availability
+
+### Graceful Degradation
+
+When deriver is unavailable:
+
+- Messages still stored successfully
+- Processing queued for later
+- System remains responsive
+- No data loss occurs
+
+## Development & Testing
+
+### Local Development
+
+```bash
+# Start with debug logging
+HONCHO_LOG_LEVEL=DEBUG python -m src.deriver
+
+# Process specific session
+python -m src.deriver --session-id session-123
+```
+
+### Testing Queue Processing
+
+Create test scenarios:
+
+```python
+# Create test messages
+await create_messages(db, messages, workspace, session)
+
+# Check queue status
+status = await get_deriver_status(db, workspace, peer)
+
+# Verify processing results
+representation = await get_working_representation(db, workspace, peer)
+```
+
+## Best Practices
+
+### Message Design
+
+**Rich Metadata**: Include context in message metadata
+**Clear Attribution**: Properly identify message senders
+**Structured Content**: Use consistent message formats
+
+### Configuration Strategy
+
+**Environment-Specific**: Different settings for dev/staging/prod
+**User Preferences**: Respect user privacy and observation preferences
+**Performance Tuning**: Adjust based on usage patterns
+
+### Monitoring Strategy
+
+**Queue Health**: Monitor processing rates and backlogs
+**Error Tracking**: Alert on high error rates
+**Performance Metrics**: Track processing latency and throughput
+
+## Integration Patterns
+
+### Real-time Applications
+
+For applications requiring immediate context:
+
+```python
+# Trigger immediate processing (not recommended for production)
+await process_message_sync(message)
+
+# Better: Use cached representations with background updates
+representation = await get_cached_representation(peer_id)
+```
+
+### Batch Applications
+
+For analytics and reporting:
+
+```python
+# Process historical data
+await backfill_deriver_queue(start_date, end_date)
+
+# Generate batch insights
+insights = await generate_batch_insights(peer_ids)
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Dialectic API" icon="comments" href="/documentation/core-concepts/dialectic-api">
+    Learn how deriver insights power contextual responses
+  </Card>
+  <Card title="Storage API" icon="database" href="/documentation/core-concepts/storage-api">
+    Understand how insights are stored and retrieved
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/documentation/platform/deploying">
+    Deploy deriver workers in production
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/endpoint/peers/get-deriver-status">
+    Detailed API documentation for deriver endpoints
+  </Card>
+</CardGroup> 

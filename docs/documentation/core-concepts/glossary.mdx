@@ -1,0 +1,74 @@
+---
+title: 'Glossary'
+description: 'Key terms and concepts in Honcho'
+icon: 'book'
+---
+
+# Glossary
+
+## Core Entities
+
+### App
+A top-level container that represents your application. All users, sessions, and data are organized under an app.
+
+### User
+An individual entity within your application. Users can have multiple sessions and collections.
+
+### Session
+A conversation or interaction context between a user and your AI application. Sessions contain messages and can span multiple conversations.
+
+### Message
+A single communication unit within a session, either from the user or the AI assistant.
+
+### Metamessage
+Additional metadata or derived information attached to a message, such as summaries, facts, or analysis.
+
+## Storage & Memory
+
+### Collection
+A user-scoped container for storing documents and embeddings. Think of it as a personal knowledge base for each user.
+
+### Document
+A piece of content stored in a collection, automatically embedded and searchable via vector similarity.
+
+### Vector Embedding
+Numerical representations of text that enable semantic search and similarity matching.
+
+### Metadata
+Key-value pairs attached to any entity for additional context and filtering.
+
+## APIs & Components
+
+### Storage API
+The core REST API for managing apps, users, sessions, messages, collections, and documents.
+
+### Deriver
+A component that processes and derives insights from user interactions, creating metamessages and extracting facts.
+
+### Dialectic API
+An advanced conversation management layer that handles turn-taking, context management, and response generation.
+
+## Features
+
+### Peer Paradigm
+A conversation model where the AI acts as a peer rather than a traditional assistant, enabling more natural interactions.
+
+### Queue Status
+Real-time status tracking for background processing and async operations.
+
+### Scoped API Keys
+Authentication tokens that limit access to specific apps, users, or resources for enhanced security.
+
+## Technical Terms
+
+### Vector Search
+Finding similar content using cosine similarity between vector embeddings.
+
+### Semantic Search
+Search based on meaning rather than exact keyword matching.
+
+### Context Window
+The amount of conversation history available to the AI model at any given time.
+
+### User Context
+The accumulated knowledge and preferences associated with a specific user across all their interactions. 

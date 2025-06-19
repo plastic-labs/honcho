@@ -1,0 +1,52 @@
+---
+title: "Latest Release"
+description: "Most recent changes and updates to Honcho"
+---
+
+# Latest Release
+
+## Version 0.0.15 (Current)
+
+### Added
+- **Deriver Status Endpoint**: New endpoint to check processing status of background deriver tasks
+- **Session Filtering**: Optional session parameter for scoped deriver status queries
+- **Enhanced Search**: Hybrid search approach combining PostgreSQL full-text search with exact string matching
+- **Improved Documentation**: Comprehensive API documentation and guides
+
+### Changed
+- **Queue Processing**: Enhanced queue status tracking with completed, in-progress, and pending states
+- **Error Handling**: Improved error messages and exception handling across endpoints
+- **Authentication**: Refined JWT-based authentication with workspace and peer scoping
+
+### Fixed
+- **Session Resolution**: Fixed session name to ID resolution in deriver status queries
+- **Queue State Detection**: Improved detection of in-progress vs pending work units
+- **Search Performance**: Optimized search queries for better performance with special characters
+
+### Security
+- **Input Validation**: Enhanced input validation for all API endpoints
+- **Authorization**: Strengthened authorization checks for resource access
+
+---
+
+## Previous Releases
+
+For a complete history of all releases, see our [GitHub Releases](https://github.com/plastic-labs/honcho/releases) page.
+
+## Migration Guide
+
+### Upgrading to 0.0.15
+
+No breaking changes in this release. All existing API endpoints remain compatible.
+
+### API Changes
+
+- New endpoint: `GET /workspaces/{workspace_id}/peers/{peer_id}/deriver/status`
+- Enhanced search functionality with automatic fallback strategies
+
+## Getting Help
+
+If you encounter issues during upgrade:
+1. Check our [troubleshooting guide](/documentation/platform/development)
+2. Open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues)
+3. Join our [Discord community](http://discord.gg/plasticlabs) for support 

@@ -1,0 +1,414 @@
+---
+title: 'SDK Reference'
+description: 'Complete Python SDK documentation and examples'
+icon: 'code'
+---
+
+# Python SDK Reference
+
+The Honcho Python SDK provides a high-level interface for building AI applications with persistent user memory.
+
+<Info>
+For the complete API reference with all methods and parameters, visit our [auto-generated SDK docs](https://api.python.honcho.dev).
+</Info>
+
+## Installation
+
+<CodeGroup>
+```bash pip
+pip install honcho-ai
+```
+
+```bash poetry
+poetry add honcho-ai
+```
+</CodeGroup>
+
+## Quick Start
+
+```python
+from honcho import Honcho
+
+# Initialize (uses demo server by default)
+honcho = Honcho(app_name="my-app")
+honcho.initialize()
+
+# Create a user
+user = honcho.create_user("alice")
+
+# Start a session
+session = user.create_session()
+
+# Add messages
+session.create_message(content="Hello!", is_user=True)
+session.create_message(content="Hi there!", is_user=False)
+
+# Create collections for memory
+collection = user.create_collection("memories")
+collection.create_document(content="User likes Python programming")
+
+# Query memories
+results = collection.query("programming", top_k=5)
+```
+
+## Core Classes
+
+### Honcho Client
+
+The main client for interacting with Honcho:
+
+```python
+from honcho import Honcho
+
+# Basic initialization
+honcho = Honcho(app_name="my-app")
+
+# Custom configuration
+honcho = Honcho(
+    app_name="my-app",
+    base_url="https://your-honcho-instance.com",
+    api_key="your-api-key"
+)
+
+# Initialize the app
+honcho.initialize()
+```
+
+**Key Methods:**
+- `initialize()` - Create or retrieve the app
+- `create_user(name)` - Create a new user
+- `get_user(user_id)` - Get user by ID
+- `get_user_by_name(name)` - Get user by name
+- `get_or_create_user(name)` - Get existing or create new user
+
+### User
+
+Represents a user in your application:
+
+```python
+# Get a user
+user = honcho.get_user("user-id-here")
+
+# User properties
+print(f"User ID: {user.id}")
+print(f"User Name: {user.name}")
+print(f"Metadata: {user.metadata}")
+
+# Create sessions
+session = user.create_session()
+session_with_metadata = user.create_session(metadata={"type": "support"})
+
+# Get sessions
+sessions = list(user.get_sessions_generator())
+recent_sessions = list(user.get_sessions_generator(limit=10))
+
+# Create collections
+collection = user.create_collection("facts")
+collection_with_metadata = user.create_collection(
+    "preferences", 
+    metadata={"category": "user_prefs"}
+)
+
+# Get collections
+collections = list(user.get_collections_generator())
+```
+
+### Session
+
+Manages conversations and messages:
+
+```python
+# Get a session
+session = user.get_session("session-id-here")
+
+# Session properties
+print(f"Session ID: {session.id}")
+print(f"Created at: {session.created_at}")
+print(f"Metadata: {session.metadata}")
+
+# Create messages
+user_message = session.create_message(
+    content="What's the weather like?",
+    is_user=True,
+    metadata={"timestamp": "2024-01-01T12:00:00Z"}
+)
+
+ai_message = session.create_message(
+    content="It's sunny today!",
+    is_user=False
+)
+
+# Get messages
+messages = list(session.get_messages_generator())
+recent_messages = list(session.get_messages_generator(limit=5))
+
+# Create metamessages
+metamessage = session.create_metamessage(
+    message_id=user_message.id,
+    metamessage_type="sentiment",
+    content="positive"
+)
+
+# Update session
+session.update(metadata={"status": "completed"})
+
+# Delete session
+session.delete()
+```
+
+### Message
+
+Individual conversation messages:
+
+```python
+# Get a message
+message = session.get_message("message-id-here")
+
+# Message properties
+print(f"Content: {message.content}")
+print(f"Is User: {message.is_user}")
+print(f"Session ID: {message.session_id}")
+print(f"Created at: {message.created_at}")
+
+# Update message
+message.update(content="Updated content")
+
+# Get metamessages for this message
+metamessages = list(message.get_metamessages_generator())
+```
+
+### Collection
+
+Vector storage for user memories:
+
+```python
+# Get a collection
+collection = user.get_collection("collection-name")
+
+# Collection properties
+print(f"Collection ID: {collection.id}")
+print(f"Name: {collection.name}")
+print(f"User ID: {collection.user_id}")
+
+# Create documents
+doc = collection.create_document(
+    content="User prefers morning meetings",
+    metadata={"category": "scheduling", "confidence": 0.9}
+)
+
+# Query documents
+results = collection.query(
+    query="meeting preferences",
+    top_k=5
+)
+
+for doc in results:
+    print(f"Content: {doc.content}")
+    print(f"Similarity: {doc.metadata.get('similarity_score', 'N/A')}")
+
+# Get all documents
+documents = list(collection.get_documents_generator())
+
+# Update collection
+collection.update(metadata={"last_updated": "2024-01-01"})
+
+# Delete collection
+collection.delete()
+```
+
+### Document
+
+Individual stored documents:
+
+```python
+# Get a document
+document = collection.get_document("document-id-here")
+
+# Document properties
+print(f"Content: {document.content}")
+print(f"Collection ID: {document.collection_id}")
+print(f"Metadata: {document.metadata}")
+
+# Update document
+document.update(
+    content="Updated content",
+    metadata={"updated": True}
+)
+
+# Delete document
+document.delete()
+```
+
+## Configuration
+
+### Environment Variables
+
+```bash
+# Optional: Set default base URL
+HONCHO_BASE_URL=https://your-instance.com
+
+# Optional: Set default API key
+HONCHO_API_KEY=your-api-key
+```
+
+### Client Configuration
+
+```python
+# All configuration options
+honcho = Honcho(
+    app_name="my-app",              # Required: Your app name
+    base_url="https://...",         # Optional: Custom server URL
+    api_key="your-key",             # Optional: API key for auth
+    timeout=30,                     # Optional: Request timeout
+    retries=3,                      # Optional: Retry failed requests
+    user_agent="MyApp/1.0"          # Optional: Custom user agent
+)
+```
+
+## Error Handling
+
+The SDK provides specific exception types:
+
+```python
+from honcho.exceptions import (
+    HonchoError,
+    NotFoundError,
+    ValidationError,
+    AuthenticationError
+)
+
+try:
+    user = honcho.get_user("nonexistent-id")
+except NotFoundError:
+    print("User not found")
+except AuthenticationError:
+    print("Invalid API key")
+except ValidationError as e:
+    print(f"Validation error: {e}")
+except HonchoError as e:
+    print(f"General Honcho error: {e}")
+```
+
+## Advanced Usage
+
+### Batch Operations
+
+```python
+# Create multiple users
+users = []
+for name in ["alice", "bob", "charlie"]:
+    user = honcho.get_or_create_user(name)
+    users.append(user)
+
+# Batch create documents
+facts = [
+    "User likes Python",
+    "User works in tech",
+    "User prefers async programming"
+]
+
+collection = user.create_collection("facts")
+for fact in facts:
+    collection.create_document(content=fact)
+```
+
+### Pagination
+
+```python
+# Get all sessions with pagination
+all_sessions = []
+for session in user.get_sessions_generator():
+    all_sessions.append(session)
+    print(f"Session: {session.id}")
+
+# Limit results
+recent_sessions = list(user.get_sessions_generator(limit=10))
+```
+
+### Metadata Usage
+
+```python
+# Rich metadata on entities
+session = user.create_session(metadata={
+    "channel": "web",
+    "user_agent": "Mozilla/5.0...",
+    "session_type": "support"
+})
+
+message = session.create_message(
+    content="Hello",
+    is_user=True,
+    metadata={
+        "timestamp": datetime.now().isoformat(),
+        "source": "chat_widget",
+        "language": "en"
+    }
+)
+
+# Query with metadata filters (server-side filtering)
+# Note: Metadata filtering capabilities depend on server implementation
+```
+
+## Type Hints
+
+The SDK includes full type hints for better development experience:
+
+```python
+from honcho import Honcho
+from honcho.types import User, Session, Message, Collection, Document
+
+honcho: Honcho = Honcho(app_name="typed-app")
+user: User = honcho.create_user("alice")
+session: Session = user.create_session()
+message: Message = session.create_message("Hello", is_user=True)
+collection: Collection = user.create_collection("memories")
+document: Document = collection.create_document("Some content")
+```
+
+## Best Practices
+
+### Resource Management
+
+```python
+# Use context managers for cleanup (if supported)
+with honcho.user("alice") as user:
+    session = user.create_session()
+    # Automatic cleanup on exit
+
+# Or manually manage resources
+try:
+    session = user.create_session()
+    # Do work...
+finally:
+    # Cleanup if needed
+    pass
+```
+
+### Error Recovery
+
+```python
+def safe_create_user(honcho, username):
+    try:
+        return honcho.create_user(username)
+    except ValidationError:
+        # User might already exist
+        return honcho.get_user_by_name(username)
+    except Exception as e:
+        logger.error(f"Failed to create user {username}: {e}")
+        raise
+```
+
+### Performance Tips
+
+1. **Batch operations** when possible
+2. **Use generators** for large datasets
+3. **Cache user/session objects** to avoid repeated API calls
+4. **Set appropriate timeouts** for your use case
+5. **Use metadata wisely** - don't over-index
+
+## Next Steps
+
+- Explore the [complete API reference](https://api.python.honcho.dev)
+- Try our [guided tutorial](/platform/guided-tutorial)
+- Check out [integration examples](/guides/overview)
+- Join our [Discord community](http://discord.gg/plasticlabs) 

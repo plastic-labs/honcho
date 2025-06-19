@@ -1,0 +1,252 @@
+---
+title: "Architecture"
+description: "Understanding Honcho's core concepts and data model"
+---
+
+# Architecture Overview
+
+Honcho is built around a hierarchical data model that enables scalable memory management for AI applications. Understanding these core concepts is essential for effectively using the platform.
+
+## Data Model Hierarchy
+
+```
+Workspace
+├── Peers (Users)
+│   ├── Collections
+│   │   └── Documents (Vector Storage)
+│   └── Sessions
+│       ├── Messages
+│       └── Session Peers (with configurations)
+└── Background Processing (Deriver Queue)
+```
+
+## Core Concepts
+
+### Workspaces
+
+Workspaces are the top-level containers that provide complete isolation between different applications or environments.
+
+**Key Features:**
+- **Isolation**: Complete data separation between workspaces
+- **Multi-tenancy**: Support multiple applications or environments
+- **Configuration**: Workspace-level settings and metadata
+- **Access Control**: Authentication scoped to workspace level
+
+**Use Cases:**
+- Separate development/staging/production environments
+- Multi-tenant SaaS applications
+- Different product lines or use cases
+
+```json
+{
+  "name": "my-production-app",
+  "metadata": {
+    "environment": "production",
+    "version": "1.0.0"
+  },
+  "configuration": {
+    "deriver_enabled": true
+  }
+}
+```
+
+### Peers
+
+Peers represent individual users or entities within a workspace. They are the primary subjects for memory and context management.
+
+**Key Features:**
+- **Identity**: Unique identifier within a workspace
+- **Memory Storage**: Personal memory and context accumulation
+- **Configuration**: Per-peer behavioral settings
+- **Cross-Session Context**: Memory persists across all sessions
+
+**Use Cases:**
+- Individual users in a chatbot application
+- Customer profiles in support systems
+- Student profiles in educational platforms
+
+```json
+{
+  "name": "user-123",
+  "metadata": {
+    "email": "user@example.com",
+    "preferences": {
+      "language": "en",
+      "timezone": "UTC"
+    }
+  },
+  "configuration": {
+    "observe_me": true
+  }
+}
+```
+
+### Sessions
+
+Sessions represent individual conversation threads or interaction contexts between peers.
+
+**Key Features:**
+- **Multi-Peer**: Support multiple peers in a single session
+- **Temporal Boundaries**: Clear start/end to conversation threads
+- **Context Scoping**: Session-specific memory and context
+- **Configuration**: Session-level behavioral controls
+
+**Use Cases:**
+- Individual chat conversations
+- Support tickets
+- Meeting transcripts
+- Learning sessions
+
+```json
+{
+  "id": "conversation-456",
+  "peers": {
+    "user-123": {
+      "observe_others": true,
+      "observe_me": true
+    },
+    "assistant-ai": {
+      "observe_others": false,
+      "observe_me": false
+    }
+  },
+  "metadata": {
+    "topic": "product-support",
+    "priority": "high"
+  }
+}
+```
+
+### Messages
+
+Messages are the fundamental units of interaction within sessions, representing individual communication events.
+
+**Key Features:**
+- **Rich Content**: Support for text, metadata, and structured data
+- **Attribution**: Clear association with sending peer
+- **Ordering**: Chronological sequence within sessions
+- **Processing**: Automatic background analysis and insight derivation
+
+**Message Types:**
+- User messages
+- AI responses
+- System notifications
+- Rich media content
+
+```json
+{
+  "content": "I need help with my order",
+  "peer_id": "user-123",
+  "metadata": {
+    "intent": "support_request",
+    "urgency": "medium",
+    "order_id": "12345"
+  }
+}
+```
+
+### Collections & Documents
+
+Collections provide vector-based storage for semantic search and similarity matching.
+
+**Key Features:**
+- **Semantic Search**: Find relevant content using embedding similarity
+- **Peer-Scoped**: Each peer has their own collections
+- **Flexible Schema**: Store arbitrary text content with metadata
+- **Duplicate Detection**: Automatic handling of similar content
+
+**Use Cases:**
+- Knowledge bases
+- Conversation summaries
+- User preference profiles
+- Contextual facts
+
+```json
+{
+  "content": "User prefers morning meetings and dislikes scheduling after 4 PM",
+  "metadata": {
+    "type": "scheduling_preference",
+    "confidence": 0.95,
+    "source": "conversation_analysis"
+  }
+}
+```
+
+## Background Processing
+
+### Deriver Queue
+
+The deriver system provides automatic background processing of user interactions to derive insights and maintain context.
+
+**Processing Types:**
+- **Representation**: Generate user personality and preference profiles
+- **Summary**: Create conversation summaries and key insights
+- **Facts**: Extract and store factual information about users
+
+**Queue States:**
+- **Pending**: Waiting to be processed
+- **In Progress**: Currently being processed by workers
+- **Completed**: Successfully processed
+
+## Data Flow
+
+### 1. Input Processing
+```
+Message → Session → Deriver Queue → Background Processing
+```
+
+### 2. Context Retrieval
+```
+Query → Semantic Search → Relevant Context → Response Generation
+```
+
+### 3. Memory Updates
+```
+Interaction → Analysis → Insight Extraction → Memory Storage
+```
+
+## Scalability Considerations
+
+### Horizontal Scaling
+- **Stateless API**: Scale API servers independently
+- **Queue Workers**: Scale background processing workers
+- **Database**: PostgreSQL with read replicas
+
+### Performance Optimization
+- **Caching**: Redis for frequently accessed data
+- **Connection Pooling**: Efficient database connections
+- **Async Processing**: Non-blocking API operations
+
+### Data Management
+- **Partitioning**: Workspace-based data separation
+- **Archiving**: Historical data management
+- **Backup**: Regular automated backups
+
+## Security Architecture
+
+### Authentication & Authorization
+- **JWT Tokens**: Secure API access
+- **Scoped Access**: Workspace/peer/session level permissions
+- **Admin Controls**: Super-user capabilities
+
+### Data Privacy
+- **Workspace Isolation**: Complete data separation
+- **Encryption**: Data encryption at rest and in transit
+- **Access Logging**: Comprehensive audit trails
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Deriver System" icon="gear" href="/documentation/core-concepts/deriver">
+    Learn about background processing and insight derivation
+  </Card>
+  <Card title="Dialectic API" icon="comments" href="/documentation/core-concepts/dialectic-api">
+    Understand context-aware response generation
+  </Card>
+  <Card title="Storage API" icon="database" href="/documentation/core-concepts/storage-api">
+    Explore data storage and retrieval patterns
+  </Card>
+  <Card title="Glossary" icon="book" href="/documentation/core-concepts/glossary">
+    Reference for all technical terms
+  </Card>
+</CardGroup>

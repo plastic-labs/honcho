@@ -1,0 +1,154 @@
+---
+title: 'Dialectic API'
+description: 'Advanced conversation management layer'
+icon: 'comments'
+---
+
+# Dialectic API
+
+The Dialectic API is an advanced conversation management layer that sits on top of the Storage API, providing sophisticated turn-taking, context management, and response generation capabilities.
+
+## Overview
+
+While the Storage API handles raw data storage, the Dialectic API adds:
+- **Turn Management**: Structured conversation flow
+- **Context Synthesis**: Intelligent context window management  
+- **Response Orchestration**: Coordinated AI response generation
+- **Conversation State**: Advanced session state tracking
+
+## Key Concepts
+
+### Dialectic Sessions
+Enhanced sessions with conversation-aware features:
+- Turn tracking and management
+- Context synthesis from message history
+- Automatic relevance filtering
+- State persistence across interactions
+
+### Turn-Based Interactions
+Structured conversation patterns:
+```python
+# Start a dialectic conversation
+dialectic = honcho.dialectic(session_id=session.id)
+
+# Process a user turn
+response = dialectic.turn(
+    user_input="What did we discuss about the project timeline?",
+    context_window=10,  # Last 10 messages
+    include_facts=True  # Include derived facts
+)
+```
+
+### Context Synthesis
+Intelligent context management:
+- **Relevance Scoring**: Identify most relevant past messages
+- **Fact Integration**: Merge derived facts with conversation history
+- **Context Compression**: Summarize long conversations for context windows
+- **Multi-Session Context**: Reference across session boundaries
+
+## API Endpoints
+
+### Dialectic Management
+```http
+POST   /dialectic/sessions/{session_id}/turn
+GET    /dialectic/sessions/{session_id}/context
+POST   /dialectic/sessions/{session_id}/synthesize
+```
+
+### Turn Processing
+```http
+POST   /dialectic/turn
+{
+  "session_id": "uuid",
+  "user_input": "string",
+  "context_window": 10,
+  "include_facts": true,
+  "response_style": "conversational"
+}
+```
+
+## Features
+
+### Intelligent Context Assembly
+The Dialectic API automatically assembles context by:
+1. **Recent Messages**: Last N messages from the session
+2. **Relevant History**: Semantically similar past conversations
+3. **User Facts**: Derived facts from the user's collection
+4. **Session Metadata**: Session-specific context and state
+
+### Response Coordination
+Manages AI response generation with:
+- Context-aware prompting
+- Response style management
+- Multi-turn conversation flow
+- Error handling and fallbacks
+
+### State Management
+Tracks conversation state including:
+- Current topic or thread
+- User intent and goals
+- Conversation phase (greeting, discussion, closing)
+- Pending actions or follow-ups
+
+## Implementation Example
+
+```python
+from honcho import Honcho
+
+# Initialize with dialectic capabilities
+honcho = Honcho(app_name="my-app", enable_dialectic=True)
+user = honcho.get_user("user123")
+session = user.create_session()
+
+# Create dialectic interface
+dialectic = honcho.dialectic(session_id=session.id)
+
+# Process conversation turn
+turn_result = dialectic.turn(
+    user_input="Can you remind me what we decided about the budget?",
+    context_window=15,
+    include_facts=True,
+    synthesis_mode="comprehensive"
+)
+
+print(f"Response: {turn_result.response}")
+print(f"Context used: {len(turn_result.context_messages)} messages")
+print(f"Facts included: {len(turn_result.facts_used)} facts")
+```
+
+## Use Cases
+
+### Advanced Chatbots
+- Multi-turn conversations with memory
+- Context-aware responses
+- Personality and style consistency
+
+### Meeting Assistants
+- Cross-session memory of decisions
+- Participant context and preferences
+- Action item tracking
+
+### Personal AI Assistants
+- Long-term relationship building
+- Preference learning and application
+- Proactive assistance based on history
+
+## Configuration
+
+### Context Strategies
+- `recent`: Use most recent messages
+- `relevant`: Use semantically relevant messages
+- `comprehensive`: Combine recent + relevant + facts
+- `minimal`: Use only essential context
+
+### Response Modes
+- `conversational`: Natural dialogue style
+- `informational`: Fact-focused responses
+- `analytical`: Deep analysis and reasoning
+- `creative`: Creative and exploratory responses
+
+<Note>
+The Dialectic API is an advanced feature. For basic conversation management, the standard Storage API with sessions and messages may be sufficient.
+</Note>
+
+For practical implementation examples, see our [Dialectic Endpoint Guide](/guides/dialectic-endpoint). 

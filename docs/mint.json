@@ -27,13 +27,26 @@
     {
       "name": "API Reference",
       "url": "api-reference"
+    },
+    {
+      "name": "Contributing",
+      "url": "contributing"
+    },
+    {
+      "name": "Changelog",
+      "url": "changelog"
     }
   ],
   "anchors": [
     {
+      "name": "Platform",
+      "icon": "book-open-cover",
+      "url": "https://app.honcho.dev"
+    },
+    {
       "name": "Community",
       "icon": "discord",
-      "url": "https://discord.gg/plasticlabs"
+      "url": "https://discord.gg/honcho"
     },
     {
       "name": "Blog",
@@ -43,43 +56,80 @@
   ],
   "navigation": [
     {
-      "group": "Get Started",
+      "group": "Introduction",
       "pages": [
-        "getting-started/introduction",
-        "getting-started/quickstart",
-        "getting-started/architecture"
+        "documentation/introduction/what-is-honcho",
+        "documentation/introduction/quickstart",
+        "documentation/introduction/faq"
+      ]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "documentation/core-concepts/glossary",
+        "documentation/core-concepts/architecture",
+        "documentation/core-concepts/storage-api",
+        "documentation/core-concepts/deriver",
+        "documentation/core-concepts/dialectic-api",
+        "documentation/core-concepts/features"
+      ]
+    },
+    {
+      "group": "Platform",
+      "pages": [
+        "documentation/platform/overview",
+        "documentation/platform/guided-tutorial",
+        "documentation/platform/sdk",
+        "documentation/platform/self-hosting",
+        "documentation/platform/deploying",
+        "documentation/platform/development"
       ]
     },
     {
       "group": "Contributing",
       "pages": [
         "contributing/guidelines",
+        "contributing/project-overview",
+        "contributing/configuration-guide",
         "contributing/self-hosting",
-        "contributing/deploying",
         "contributing/license"
       ]
     },
     {
       "group": "Getting Started",
-      "pages": ["guides/overview", "guides/streaming-response"]
+      "pages": [
+        "guides/overview"
+      ]
     },
     {
       "group": "Application Interfaces",
-      "pages": ["guides/discord", "guides/honcho-mcp"]
+      "pages": [
+        "guides/discord"
+      ]
+    },
+    {
+      "group": "Integrations",
+      "pages": [
+        "guides/langchain"
+      ]
     },
     {
       "group": "Personal Memory",
-      "pages": ["guides/dialectic-endpoint"]
+      "pages": [
+        "guides/simple-memory",
+        "guides/dialectic-endpoint"
+      ]
     },
     {
       "group": "API Documentation",
-      "pages": ["api-reference/introduction"]
+      "pages": [
+        "api-reference/introduction"
+      ]
     },
     {
       "group": "apps",
       "pages": [
         "api-reference/endpoint/apps/get-app",
-        "api-reference/endpoint/apps/get-all-apps",
         "api-reference/endpoint/apps/update-app",
         "api-reference/endpoint/apps/get-app-by-name",
         "api-reference/endpoint/apps/create-app",
@@ -92,7 +142,6 @@
         "api-reference/endpoint/users/get-users",
         "api-reference/endpoint/users/create-user",
         "api-reference/endpoint/users/get-user-by-name",
-        "api-reference/endpoint/users/get-user",
         "api-reference/endpoint/users/get-or-create-user",
         "api-reference/endpoint/users/update-user"
       ]
@@ -105,8 +154,7 @@
         "api-reference/endpoint/sessions/get-session",
         "api-reference/endpoint/sessions/update-session",
         "api-reference/endpoint/sessions/delete-session",
-        "api-reference/endpoint/sessions/chat",
-        "api-reference/endpoint/sessions/clone-session"
+        "api-reference/endpoint/sessions/get-chat"
       ]
     },
     {
@@ -114,18 +162,12 @@
       "pages": [
         "api-reference/endpoint/messages/get-messages",
         "api-reference/endpoint/messages/create-message-for-session",
-        "api-reference/endpoint/messages/create-batch-messages-for-session",
         "api-reference/endpoint/messages/get-message",
-        "api-reference/endpoint/messages/update-message"
-      ]
-    },
-    {
-      "group": "metamessages",
-      "pages": [
-        "api-reference/endpoint/metamessages/create-metamessage",
-        "api-reference/endpoint/metamessages/get-metamessages",
-        "api-reference/endpoint/metamessages/get-metamessage",
-        "api-reference/endpoint/metamessages/update-metamessage"
+        "api-reference/endpoint/messages/update-message",
+        "api-reference/endpoint/messages/get-metamessages",
+        "api-reference/endpoint/messages/create-metamessage",
+        "api-reference/endpoint/messages/get-metamessage",
+        "api-reference/endpoint/messages/update-metamessage"
       ]
     },
     {
@@ -134,7 +176,6 @@
         "api-reference/endpoint/collections/get-collections",
         "api-reference/endpoint/collections/create-collection",
         "api-reference/endpoint/collections/get-collection-by-name",
-        "api-reference/endpoint/collections/get-collection",
         "api-reference/endpoint/collections/update-collection",
         "api-reference/endpoint/collections/delete-collection"
       ]
@@ -151,8 +192,10 @@
       ]
     },
     {
-      "group": "keys",
-      "pages": ["api-reference/endpoint/keys/create-key"]
+      "group": "Changelog",
+      "pages": [
+        "changelog/introduction"
+      ]
     }
   ],
   "footerSocials": {
@@ -160,7 +203,9 @@
     "github": "https://github.com/plastic-labs",
     "linkedin": "https://www.linkedin.com/company/plasticlabs"
   },
-  "openapi": ["/openapi.json"],
+  "openapi": [
+    "api-reference/openapi.json"
+  ],
   "analytics": {
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
