@@ -779,6 +779,7 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
+
     # Soft delete specified session peers by setting left_at timestamp
     update_stmt = (
         update(models.SessionPeer)
@@ -900,11 +901,13 @@ async def get_peer_config(
     """
     Get the configuration for a peer in a session.
 
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
         peer_id: Name of the peer
+
 
     Returns:
         Configuration for the peer
@@ -927,6 +930,9 @@ async def get_peer_config(
         )
 
     return schemas.SessionPeerConfig(**session_peer.configuration)
+
+    Returns:
+        List of all SessionPeer objects (both existing and newly created)
 
 
 async def set_peer_config(
@@ -965,6 +971,17 @@ async def set_peer_config(
         raise ResourceNotFoundException(
             f"Session peer {peer_id} not found in session {session_name} in workspace {workspace_name}"
         )
+        result = await db.execute(select_stmt)
+        return list(result.scalars().all())
+
+    # Check current number of active peers and validate limit before upsert
+    current_peers_stmt = select(models.SessionPeer.peer_name).where(
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.left_at.is_(None),  # Only active peers
+    )
+    result = await db.execute(current_peers_stmt)
+    existing_peer_names = result.scalars().all()
 
     # Update peer config
     session_peer.configuration["observe_others"] = config.observe_others
@@ -981,9 +998,12 @@ async def search(
     peer_name: Optional[str] = None,
 ) -> Select:
     """
-    Search across message content. If a session or peer is provided,
-    the search will be scoped to that session or peer. Otherwise, it will
-    search across all messages in the workspace.
+    Search across message content using a hybrid approach:
+    - Uses PostgreSQL full text search for natural language queries
+    - Falls back to exact string matching for queries with special characters
+
+    If a session or peer is provided, the search will be scoped to that
+    session or peer. Otherwise, it will search across all messages in the workspace.
 
     Args:
         query: Search query to match against message content
@@ -992,27 +1012,72 @@ async def search(
         peer_name: Optional name of the peer
 
     Returns:
-        List of messages that match the search query
+        List of messages that match the search query, ordered by relevance
     """
-    if session_name is not None:
-        stmt = select(models.Message).where(
-            models.Message.session_name == session_name,
-            models.Message.workspace_name == workspace_name,
-            models.Message.content.ilike(f"%{query}%"),
-        )
-    elif peer_name is not None:
-        stmt = select(models.Message).where(
-            models.Message.peer_name == peer_name,
-            models.Message.workspace_name == workspace_name,
-            models.Message.content.ilike(f"%{query}%"),
+    import re
+
+    from sqlalchemy import func, or_
+
+    # Check if query contains special characters that FTS might not handle well
+    has_special_chars = bool(
+        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
+    )
+
+    # Base query conditions
+    base_conditions = [models.Message.workspace_name == workspace_name]
+
+    if has_special_chars:
+        # For queries with special characters, use exact string matching (ILIKE)
+        # This ensures we can find exact matches like "~special-uuid~"
+        search_condition = models.Message.content.ilike(f"%{query}%")
+
+        base_query = (
+            select(models.Message)
+            .where(*base_conditions, search_condition)
+            .order_by(models.Message.created_at.desc())
         )
     else:
-        stmt = select(models.Message).where(
-            models.Message.workspace_name == workspace_name,
-            models.Message.content.ilike(f"%{query}%"),
+        # For natural language queries, use full text search with ranking
+        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
+            func.plainto_tsquery("english", query)
         )
 
-    return stmt
+        # Combine FTS with ILIKE as fallback for better coverage
+        combined_condition = or_(
+            fts_condition, models.Message.content.ilike(f"%{query}%")
+        )
+
+        base_query = (
+            select(models.Message)
+            .where(*base_conditions, combined_condition)
+            .order_by(
+                # Order by FTS relevance first, then by creation time
+                func.coalesce(
+                    func.ts_rank(
+                        func.to_tsvector("english", models.Message.content),
+                        func.plainto_tsquery("english", query),
+                    ),
+                    0,
+                ).desc(),
+                models.Message.created_at.desc(),
+            )
+        )
+
+    # Add additional filters based on parameters
+    if session_name is not None:
+        stmt = base_query.where(models.Message.session_name == session_name)
+    elif peer_name is not None:
+        stmt = base_query.where(models.Message.peer_name == peer_name)
+    else:
+        stmt = base_query
+
+    select_stmt = select(models.SessionPeer).where(
+        models.SessionPeer.session_name == session_name,
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.left_at.is_(None),  # Only active peers
+    )
+    result = await db.execute(select_stmt)
+    return list(result.scalars().all())
 
 
 async def get_working_representation(
@@ -1096,6 +1161,8 @@ async def set_working_representation(
     await db.execute(stmt)
     await db.commit()
 
+
+    return schemas.SessionPeerConfig(**session_peer.configuration)
 
 ########################################################
 # Message Methods
@@ -1279,6 +1346,8 @@ async def get_messages(
     return stmt
 
 
+    return stmt
+
 async def get_messages_id_range(
     db: AsyncSession,
     workspace_name: str,
@@ -1428,9 +1497,6 @@ async def get_collection(
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
-        logger.warning(
-            f"Collection with name '{collection_name}' not found for peer {peer_name}"
-        )
         raise ResourceNotFoundException(
             "Collection not found or does not belong to peer"
         )
