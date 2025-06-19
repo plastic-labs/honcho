@@ -11,8 +11,8 @@ Honcho is a comprehensive memory management platform designed to power the next 
 
 ```mermaid
 graph TB
-    Client[Client Applications] --> API[REST API Layer]
-    API --> Auth[Authentication Layer]
+    Client[Client Applications] --> Auth[Authentication Layer]
+    Auth --> API[REST API Layer]
     API --> Router[Route Handlers]
     Router --> CRUD[Business Logic Layer]
     CRUD --> DB[(PostgreSQL + pgvector)]
@@ -22,9 +22,10 @@ graph TB
     Workers --> AI[AI Services]
     Workers --> DB
     
-    API --> Dialectic[Dialectic API]
+    Auth --> Dialectic[Dialectic API]
     Dialectic --> Context[Context Engine]
     Context --> DB
+    Context --> AI[AI Services]
 ```
 
 ### Core Services
@@ -36,7 +37,7 @@ graph TB
 - Rate limiting and throttling
 
 **Memory Engine**
-- Hierarchical data storage (Workspaces → Peers → Sessions → Messages)
+- Hierarchical data storage (Workspaces → Peers / Sessions → Messages)
 - Vector similarity search for semantic queries
 - Metadata indexing for fast retrieval
 - Automatic data organization and cleanup
