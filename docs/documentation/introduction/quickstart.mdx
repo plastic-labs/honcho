@@ -1,204 +1,127 @@
 ---
-title: "Quick Start"
-description: "Get up and running with Honcho in under 10 minutes"
+title: 'Quickstart'
+description: 'Start building with Honcho in under 5 minutes'
+icon: 'bolt'
 ---
 
-Get Honcho running locally and make your first API calls in under 10 minutes.
 
-## Prerequisites
+<Note>
+This uses the demo server at https://demo.honcho.dev
+</Note>
 
-Before you begin, make sure you have:
+Install the Honcho client SDK with the following commands:
 
-- **Python 3.8+** installed on your system
-- **Docker & Docker Compose** for running dependencies
-- **Git** for cloning the repository
-
-## Step 1: Clone the Repository
-
-```bash
-git clone https://github.com/plastic-labs/honcho.git
-cd honcho
+<CodeGroup>
+```bash Python (uv)
+uv add honcho-ai
 ```
 
-## Step 2: Set Up Environment
-
-### Install Dependencies
-
-```bash
-# Install UV package manager (recommended)
-pip install uv
-
-# Install project dependencies
-uv sync
-
-# Activate virtual environment
-source .venv/bin/activate  # On macOS/Linux
-# or
-.venv\Scripts\activate     # On Windows
+```bash Python (pip)
+pip install honcho-ai
 ```
 
-### Environment Configuration
-
-Create a `.env` file in the project root:
-
-```bash
-cp .env.example .env
+```bash TypeScript (npm)
+npm install @honcho-ai/sdk
 ```
 
-Edit the `.env` file with your configuration:
-
-```env
-# Database
-DATABASE_URL=postgresql://testuser:testpwd@localhost:5432/honcho
-
-# OpenAI (for embeddings)
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Authentication (optional)
-USE_AUTH=false
-
-# Sentry (optional)
-SENTRY_DSN=your_sentry_dsn_here
+```bash TypeScript (yarn)
+yarn add @honcho-ai/sdk
 ```
 
-## Step 3: Start Services
+```bash TypeScript (pnpm)
+pnpm add @honcho-ai/sdk
+```
+</CodeGroup>
 
-### Start Database
+First, import the honcho client from the package:
 
-```bash
-# Start PostgreSQL with pgvector extension
-docker-compose up -d database
+<CodeGroup>
+```python Python
+from honcho import Honcho
+# Initialize client (using the default workspace and demo environment)
+client = Honcho()
 ```
 
-### Run Database Migrations
+```javascript NodeJS
+import { Honcho } from '@honcho-ai/sdk';
+// Initialize client (using the default workspace and demo environment)
+const client = new Honcho();
+```
+</CodeGroup>
 
-```bash
-# Apply database migrations
-uv run alembic upgrade head
+Next, we want to create peers within our honcho client:
+
+<CodeGroup>
+
+```python Python
+alice = client.peer("alice")
+bob = client.peer("bob")
 ```
 
-### Start the API Server
-
-```bash
-# Start Honcho API server
-uv run fastapi run src/main.py
+```javascript NodeJS
+const alice = client.peer("alice")
+const bob = client.peer("bob")
 ```
 
-The API will be available at `http://localhost:8000`
+</CodeGroup>
 
-### Start Background Workers (Optional)
 
-```bash
-# In a separate terminal, start the deriver workers
-uv run python -m src.deriver
+Create a session and add our peers to it:
+
+<CodeGroup>
+
+```python Python
+session = client.session("session_1")
+session.add_peers([alice, bob])
 ```
 
-## Step 4: Make Your First API Call
-
-### Create a Workspace
-
-```bash
-curl -X POST "http://localhost:8000/v1/workspaces" \
-  -H "Content-Type: application/json" \
-  -d '{"id": "my-first-workspace"}'
+```javascript NodeJS
+const session = client.session("session_1")
+session.addPeers([alice, bob])
 ```
 
-### Create a Peer (User)
+</CodeGroup>
 
-```bash
-curl -X POST "http://localhost:8000/v1/workspaces/my-first-workspace/peers" \
-  -H "Content-Type: application/json" \
-  -d '{"id": "user-123"}'
-```
+Add peer messages to the session:
 
-### Create a Session
+<CodeGroup>
 
-```bash
-curl -X POST "http://localhost:8000/v1/workspaces/my-first-workspace/sessions" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "session-123",
-    "peers": {
-      "user-123": {}
-    }
-  }'
-```
-
-### Add Messages
-
-```bash
-curl -X POST "http://localhost:8000/v1/workspaces/my-first-workspace/sessions/session-123/messages" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [
-      {
-        "content": "Hello, this is my first message!",
-        "peer_id": "user-123"
-      }
+```python Python
+session.add_messages(
+    [
+        alice.message("Hi Bob, how are you?"),
+        bob.message("I'm good, thank you!"),
+        alice.message("What are you doing today after work?"),
+        bob.message("I'm going to the gym!"),
     ]
-  }'
+)
 ```
 
-### Query with Dialectic API
-
-```bash
-curl -X POST "http://localhost:8000/v1/workspaces/my-first-workspace/peers/user-123/chat" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "queries": "What can you tell me about this user?",
-    "session_id": "session-123",
-    "stream": false
-  }'
+```javascript NodeJS
+session.addMessages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym!"),
+])
 ```
 
-## Step 5: Explore the API
+</CodeGroup>
 
-### API Documentation
+You can then chat with honcho to get a dialectic response:
 
-Visit `http://localhost:8000/docs` to explore the interactive API documentation.
+<CodeGroup>
 
-### Key Endpoints
+```python Python
+response = alice.chat("What is Bob doing after work?")
+```
 
-- **Workspaces**: `/v1/workspaces`
-- **Peers**: `/v1/workspaces/{workspace}/peers`
-- **Sessions**: `/v1/workspaces/{workspace}/sessions`
-- **Messages**: `/v1/workspaces/{workspace}/sessions/{session}/messages`
-- **Chat**: `/v1/workspaces/{workspace}/peers/{peer}/chat`
+```javascript NodeJS
+const response = await alice.chat("What is Bob doing after work?");
+```
 
-## Next Steps
+</CodeGroup>
 
-<CardGroup cols={2}>
-  <Card title="Core Concepts" icon="brain" href="/documentation/core-concepts/architecture">
-    Learn about workspaces, peers, sessions, and messages
-  </Card>
-  <Card title="SDKs" icon="code" href="/documentation/platform/sdk">
-    Use our Python or Node.js SDKs for easier integration
-  </Card>
-  <Card title="Deployment" icon="rocket" href="/documentation/platform/deploying">
-    Deploy Honcho to production
-  </Card>
-  <Card title="Examples" icon="lightbulb" href="/documentation/platform/guided-tutorial">
-    Follow our guided tutorial
-  </Card>
-</CardGroup>
 
-## Troubleshooting
-
-### Common Issues
-
-**Database Connection Failed**
-- Ensure PostgreSQL is running: `docker-compose ps`
-- Check your DATABASE_URL in `.env`
-
-**OpenAI API Errors**
-- Verify your OPENAI_API_KEY is set correctly
-- Ensure you have sufficient OpenAI credits
-
-**Port Already in Use**
-- Change the port: `uv run fastapi run src/main.py --port 8001`
-
-### Getting Help
-
-- Check our [FAQ](/documentation/introduction/faq)
-- Join our [Discord community](http://discord.gg/plasticlabs)
-- Open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues)
+This is a super simple overview of how to get up and running with the Honcho SDK. We covered the basic methods for creating peers, sessions, and messages, as well as retrieving basic insights.
+For a more detailed look at the SDK, check out the SDK reference [here](../platform/sdk).
