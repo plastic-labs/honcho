@@ -4,114 +4,27 @@ description: 'Key features and capabilities of Honcho'
 icon: 'star'
 ---
 
-# Features
-
-Honcho provides a comprehensive set of features for building AI applications with persistent user memory and context management.
-
-## Core Features
-
-### User Context Management
-- **Per-User Isolation**: Each user has their own data space
-- **Session-Based Organization**: Conversations organized by sessions
-- **Cross-Session Memory**: Access user context across multiple conversations
-- **Metadata Support**: Rich metadata on all entities
-
-### Vector Storage & Search
-- **Automatic Embeddings**: Documents are automatically embedded
-- **Semantic Search**: Find relevant content by meaning, not keywords
-- **Collection Management**: Organize documents in user-scoped collections
-- **Similarity Scoring**: Cosine similarity for relevance ranking
-
-### Message & Memory Management
-- **Message History**: Complete conversation logging
-- **Metamessages**: Derived insights and analysis
-- **Fact Extraction**: Automatic fact derivation from conversations
-- **Context Synthesis**: Intelligent context assembly for AI responses
-
-## Advanced Features
-
-### Peer Paradigm
-A conversation model where the AI acts as a peer rather than a traditional assistant:
-- **Equal Participant**: AI participates as a conversation partner
-- **Shared Context**: Both parties contribute to shared understanding
-- **Collaborative Discovery**: Joint exploration of topics and ideas
-- **Natural Interaction**: More human-like conversation patterns
-
-### Queue Status
-Real-time monitoring of background processing:
-- **Async Operations**: Non-blocking processing for performance
-- **Status Tracking**: Monitor job progress and completion
-- **Error Handling**: Graceful failure recovery
-- **Batch Processing**: Efficient handling of multiple operations
+### Local vs Global Representation
+Peers in Honcho are abstract entities that can represent humans, agents, or NPCs. Honcho has a two-layer approach to forming representations of Peers.
+- **Global Representation**: Representation owned by a Peer that is constructed from everything the Peer has sent within Honcho.
+- **Local Representation**: Session-level representation that Peers can optionally form of other Peers in a Session, based on messages that the Peer has seen.
 
 ### Ingest Arbitrary Data
-Flexible data ingestion capabilities:
-- **Multiple Formats**: Text, documents, structured data
-- **Batch Import**: Bulk data loading
-- **Custom Processing**: Configurable data transformation
-- **Metadata Preservation**: Maintain data provenance and context
+To facilitate the construction of a Peer's global representation, Honcho is able to ingest arbitrary data to a Peer by adding messages to the Peer directly, outside of the context of a Session. 
+- Currently, Honcho supports the ingestion of arbitrary text data.
 
-### Advanced Search
-Beyond basic vector search:
-- **Hybrid Search**: Combine vector and keyword search
-- **Filtered Search**: Search within specific metadata criteria
-- **Multi-Collection Search**: Search across multiple collections
-- **Temporal Search**: Find content from specific time periods
+### Queue Status
+To help developers understand when a Peer's representation is fully up to date, Honcho exposes the ability to poll the status of Peer-centric queues that construct representations. 
+- If no session is specified, the queue status reflects pending work for the Peer's global representation.
+- If a session is specified, the queue status reflects pending work for the Peer's local representation queue.
+
+### Search
+Honcho supports full-text search across message content. 
+- You can search within a specific Session, Peer, or across all messages in a Workspace. 
+- Search results are ordered by relevance, making it easy to quickly retrieve important past messages.
 
 ### Scoped API Keys
-Fine-grained access control:
-- **App-Level Keys**: Access to specific applications only
-- **User-Level Keys**: Access to specific user data
-- **Resource-Level Keys**: Access to specific collections or sessions
-- **Time-Limited Keys**: Temporary access tokens
-- **Permission-Based Keys**: Read-only, write-only, or full access
-
-## Developer Experience
-
-### Simple SDK
-- **Pythonic Interface**: Natural Python API design
-- **Auto-Configuration**: Minimal setup required
-- **Error Handling**: Clear error messages and debugging
-- **Documentation**: Comprehensive guides and examples
-
-### RESTful API
-- **OpenAPI Specification**: Machine-readable API documentation
-- **Standard HTTP**: RESTful design patterns
-- **JSON Responses**: Consistent data formats
-- **CORS Support**: Browser-compatible for web applications
-
-### Self-Hosting Support
-- **Docker Deployment**: Easy containerized deployment
-- **Database Options**: PostgreSQL, SQLite support
-- **Environment Configuration**: Flexible configuration options
-- **Monitoring & Logging**: Built-in observability
-
-## Performance Features
-
-### Efficient Storage
-- **Optimized Vectors**: Efficient embedding storage and retrieval
-- **Database Indexing**: Fast query performance
-- **Connection Pooling**: Scalable database connections
-- **Caching**: Intelligent caching for frequent operations
-
-### Scalability
-- **Horizontal Scaling**: Multi-instance deployment
-- **Load Balancing**: Distribute traffic across instances
-- **Resource Management**: Efficient memory and CPU usage
-- **Background Processing**: Async operations for responsiveness
-
-## Security Features
-
-### Data Privacy
-- **User Data Isolation**: Strict data separation between users
-- **Encryption at Rest**: Secure data storage
-- **Secure Communications**: HTTPS/TLS encryption
-- **Access Logging**: Audit trail for data access
-
-### Authentication & Authorization
-- **API Key Management**: Secure key generation and rotation
-- **Scoped Permissions**: Granular access control
-- **Rate Limiting**: Protection against abuse
-- **CORS Configuration**: Secure cross-origin requests
-
-For detailed implementation examples of these features, explore our [Guides section](/guides/overview). 
+Builders can create scoped API keys to control access to different resources within Honcho.
+- **Workspace-Level Keys**: Access to everything scoped to a Workspace.
+- **Peer-Level Keys**: Access to everything scoped to a Peer.
+- **Session-Level Keys**: Access to everything scoped to a Session.
