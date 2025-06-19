@@ -97,105 +97,77 @@
     },
     {
       "group": "Getting Started",
-      "pages": [
-        "guides/overview"
-      ]
+      "pages": ["guides/overview"]
     },
     {
       "group": "Application Interfaces",
-      "pages": [
-        "guides/discord"
-      ]
-    },
-    {
-      "group": "Integrations",
-      "pages": [
-        "guides/langchain"
-      ]
+      "pages": ["guides/discord"]
     },
     {
       "group": "Personal Memory",
-      "pages": [
-        "guides/simple-memory",
-        "guides/dialectic-endpoint"
-      ]
+      "pages": ["guides/simple-memory", "guides/dialectic-endpoint"]
     },
     {
       "group": "API Documentation",
+      "pages": ["api-reference/introduction"]
+    },
+    {
+      "group": "workspaces",
       "pages": [
-        "api-reference/introduction"
+        "api-reference/endpoint/workspaces/get-or-create-workspace",
+        "api-reference/endpoint/workspaces/get-all-workspaces",
+        "api-reference/endpoint/workspaces/update-workspace",
+        "api-reference/endpoint/workspaces/search-workspace"
       ]
     },
     {
-      "group": "apps",
+      "group": "peers",
       "pages": [
-        "api-reference/endpoint/apps/get-app",
-        "api-reference/endpoint/apps/update-app",
-        "api-reference/endpoint/apps/get-app-by-name",
-        "api-reference/endpoint/apps/create-app",
-        "api-reference/endpoint/apps/get-or-create-app"
-      ]
-    },
-    {
-      "group": "users",
-      "pages": [
-        "api-reference/endpoint/users/get-users",
-        "api-reference/endpoint/users/create-user",
-        "api-reference/endpoint/users/get-user-by-name",
-        "api-reference/endpoint/users/get-or-create-user",
-        "api-reference/endpoint/users/update-user"
+        "api-reference/endpoint/peers/get-peers",
+        "api-reference/endpoint/peers/get-or-create-peer",
+        "api-reference/endpoint/peers/update-peer",
+        "api-reference/endpoint/peers/get-sessions-for-peer",
+        "api-reference/endpoint/peers/chat",
+        "api-reference/endpoint/peers/create-messages-for-peer",
+        "api-reference/endpoint/peers/get-messages-for-peer",
+        "api-reference/endpoint/peers/get-working-representation",
+        "api-reference/endpoint/peers/search-peer"
       ]
     },
     {
       "group": "sessions",
       "pages": [
+        "api-reference/endpoint/sessions/get-or-create-session",
         "api-reference/endpoint/sessions/get-sessions",
-        "api-reference/endpoint/sessions/create-session",
-        "api-reference/endpoint/sessions/get-session",
         "api-reference/endpoint/sessions/update-session",
         "api-reference/endpoint/sessions/delete-session",
-        "api-reference/endpoint/sessions/get-chat"
+        "api-reference/endpoint/sessions/clone-session",
+        "api-reference/endpoint/sessions/get-session-peers",
+        "api-reference/endpoint/sessions/set-session-peers",
+        "api-reference/endpoint/sessions/add-peers-to-session",
+        "api-reference/endpoint/sessions/remove-peers-from-session",
+        "api-reference/endpoint/sessions/get-peer-config",
+        "api-reference/endpoint/sessions/set-peer-config",
+        "api-reference/endpoint/sessions/get-session-context",
+        "api-reference/endpoint/sessions/search-session"
       ]
     },
     {
       "group": "messages",
       "pages": [
+        "api-reference/endpoint/messages/create-messages-for-session",
         "api-reference/endpoint/messages/get-messages",
-        "api-reference/endpoint/messages/create-message-for-session",
         "api-reference/endpoint/messages/get-message",
-        "api-reference/endpoint/messages/update-message",
-        "api-reference/endpoint/messages/get-metamessages",
-        "api-reference/endpoint/messages/create-metamessage",
-        "api-reference/endpoint/messages/get-metamessage",
-        "api-reference/endpoint/messages/update-metamessage"
+        "api-reference/endpoint/messages/update-message"
       ]
     },
     {
-      "group": "collections",
-      "pages": [
-        "api-reference/endpoint/collections/get-collections",
-        "api-reference/endpoint/collections/create-collection",
-        "api-reference/endpoint/collections/get-collection-by-name",
-        "api-reference/endpoint/collections/update-collection",
-        "api-reference/endpoint/collections/delete-collection"
-      ]
-    },
-    {
-      "group": "documents",
-      "pages": [
-        "api-reference/endpoint/documents/get-documents",
-        "api-reference/endpoint/documents/create-document",
-        "api-reference/endpoint/documents/get-document",
-        "api-reference/endpoint/documents/update-document",
-        "api-reference/endpoint/documents/delete-document",
-        "api-reference/endpoint/documents/query-documents"
-      ]
+      "group": "keys",
+      "pages": ["api-reference/endpoint/keys/create-key"]
     },
     {
       "group": "Changelog",
-      "pages": [
-        "changelog/introduction"
-      ]
+      "pages": ["changelog/introduction"]
     }
   ],
   "footerSocials": {
@@ -203,9 +175,7 @@
     "github": "https://github.com/plastic-labs",
     "linkedin": "https://www.linkedin.com/company/plasticlabs"
   },
-  "openapi": [
-    "api-reference/openapi.json"
-  ],
+  "openapi": ["openapi.documented.yml"],
   "analytics": {
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"

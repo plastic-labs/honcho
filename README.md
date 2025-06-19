@@ -7,7 +7,7 @@
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)](https://twitter.com/plastic_labs)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
-[![NPM version](https://img.shields.io/npm/v/honcho-ai.svg)](https://npmjs.org/package/honcho-ai)
+[![NPM version](https://img.shields.io/npm/v/honcho-ai.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 
 Honcho is an infrastructure layer for building AI agents with social cognition and theory-of-mind capabilities. It enables developers to create AI agents and LLM-powered applications that are personalized to their end users by leveraging the inherent theory-of-mind capabilities of LLMs to build coherent models of user psychology over time.
 
@@ -58,7 +58,6 @@ version of Honcho.
 The functionality of Honcho can be split into two different services: Storage
 and Insights.
 
-
 ### Peer Paradigm
 
 Honcho uses a peer-based model where both users and agents are represented as "peers". This unified approach enables:
@@ -100,6 +99,7 @@ Workspaces
 ```
 
 **Relationship Details:**
+
 - A **Workspace** contains multiple **Peers**
 - **Peers** and **Sessions** have a many-to-many relationship (peers can participate in multiple sessions, sessions can have multiple peers)
 - **Messages** can exist at two levels:
@@ -163,7 +163,7 @@ in reserved `Collections`.
 
 The system uses a sophisticated message processing pipeline:
 
-1. Messages are created via API 
+1. Messages are created via API
 2. Enqueued for background processing including:
    - `representation`: Update peer's theory of mind
    - `summary`: Create session summaries
