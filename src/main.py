@@ -79,7 +79,7 @@ if SENTRY_ENABLED:
     # Sentry SDK's default behavior:
     # - Captures INFO+ level logs as breadcrumbs
     # - Captures ERROR+ level logs as Sentry events
-    # 
+    #
     # For custom log levels, use the LoggingIntegration class:
     # sentry_sdk.init(..., integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)])
     sentry_sdk.init(
@@ -114,7 +114,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="1.1.0",
+    version="2.0.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
