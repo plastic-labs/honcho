@@ -2,10 +2,9 @@ import os
 
 import sentry_sdk
 from anthropic import Anthropic
+from anthropic.types import MessageParam, TextBlock
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
-
-# Place the code below at the beginning of your application to initialize the tracer
 
 # Initialize the Anthropic client
 anthropic = Anthropic(
@@ -17,10 +16,10 @@ anthropic = Anthropic(
 @ai_track("Tom Inference")
 @observe()
 async def get_tom_inference_conversational(
-    chat_history: str, session_id: str, user_representation: str = "None"
+    chat_history: str, user_representation: str = "None"
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
-        messages = [
+        messages: list[MessageParam] = [
             {
                 "role": "user",
                 "content": [
@@ -77,21 +76,24 @@ async def get_tom_inference_conversational(
             temperature=0,
             messages=messages,
         )
-        return message.content[0].text
+        # skip blocks that are not text and return the first text block
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                return block.text
+        raise RuntimeError("No text block returned by LLM")
 
 
 @ai_track("User Representation")
 @observe()
 async def get_user_representation_conversational(
     chat_history: str,
-    session_id: str,
     user_representation: str = "None",
     tom_inference: str = "None",
 ) -> str:
     with sentry_sdk.start_transaction(
         op="user-representation-inference", name="User Representation"
     ):
-        messages = [
+        messages: list[MessageParam] = [
             {
                 "role": "user",
                 "content": [
@@ -148,4 +150,8 @@ async def get_user_representation_conversational(
             temperature=0,
             messages=messages,
         )
-        return message.content[0].text
+        # skip blocks that are not text and return the first text block
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                return block.text
+        raise RuntimeError("No text block returned by LLM")

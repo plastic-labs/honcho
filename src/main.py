@@ -15,14 +15,11 @@ from sentry_sdk.integrations.starlette import StarletteIntegration
 from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
-    apps,
-    collections,
-    documents,
     keys,
     messages,
-    metamessages,
+    peers,
     sessions,
-    users,
+    workspaces,
 )
 from src.security import create_admin_jwt
 
@@ -82,7 +79,7 @@ if SENTRY_ENABLED:
     # Sentry SDK's default behavior:
     # - Captures INFO+ level logs as breadcrumbs
     # - Captures ERROR+ level logs as Sentry events
-    # 
+    #
     # For custom log levels, use the LoggingIntegration class:
     # sentry_sdk.init(..., integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)])
     sentry_sdk.init(
@@ -117,7 +114,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="1.1.0",
+    version="2.0.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -144,13 +141,10 @@ router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
 
 add_pagination(app)
 
-app.include_router(apps.router, prefix="/v1")
-app.include_router(users.router, prefix="/v1")
+app.include_router(workspaces.router, prefix="/v1")
+app.include_router(peers.router, prefix="/v1")
 app.include_router(sessions.router, prefix="/v1")
 app.include_router(messages.router, prefix="/v1")
-app.include_router(metamessages.router, prefix="/v1")
-app.include_router(collections.router, prefix="/v1")
-app.include_router(documents.router, prefix="/v1")
 app.include_router(keys.router, prefix="/v1")
 
 
