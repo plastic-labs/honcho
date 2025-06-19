@@ -100,7 +100,7 @@ uv run python -m src.deriver
 ```bash
 curl -X POST "http://localhost:8000/v1/workspaces" \
   -H "Content-Type: application/json" \
-  -d '{"name": "my-first-workspace"}'
+  -d '{"id": "my-first-workspace"}'
 ```
 
 ### Create a Peer (User)
@@ -108,7 +108,7 @@ curl -X POST "http://localhost:8000/v1/workspaces" \
 ```bash
 curl -X POST "http://localhost:8000/v1/workspaces/my-first-workspace/peers" \
   -H "Content-Type: application/json" \
-  -d '{"name": "user-123"}'
+  -d '{"id": "user-123"}'
 ```
 
 ### Create a Session
@@ -163,7 +163,6 @@ Visit `http://localhost:8000/docs` to explore the interactive API documentation.
 - **Peers**: `/v1/workspaces/{workspace}/peers`
 - **Sessions**: `/v1/workspaces/{workspace}/sessions`
 - **Messages**: `/v1/workspaces/{workspace}/sessions/{session}/messages`
-- **Documents**: `/v1/workspaces/{workspace}/peers/{peer}/collections/{collection}/documents`
 - **Chat**: `/v1/workspaces/{workspace}/peers/{peer}/chat`
 
 ## Next Steps
