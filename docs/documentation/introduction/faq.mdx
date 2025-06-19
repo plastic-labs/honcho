@@ -12,7 +12,7 @@ Honcho is an open-source memory management system designed for AI applications. 
 ### How is Honcho different from other memory systems?
 
 Honcho offers:
-- **Hierarchical Architecture**: Workspaces → Peers → Sessions → Messages
+- **Hierarchical Architecture**: Workspaces → Peers / Sessions → Messages
 - **Background Processing**: Automatic insight derivation through the deriver system
 - **Contextual API**: The Dialectic API provides AI-powered contextual responses
 - **Vector Storage**: Semantic search capabilities with embedding-based storage
@@ -180,6 +180,8 @@ Honcho includes comprehensive testing:
 - **SDKs**: Type-safe wrappers with convenience methods
 - **Both**: Support the same functionality, SDKs provide better developer experience
 
+Currently Honcho has official SDKs for Python and TypeScript.
+
 ### Are there rate limits?
 
 Rate limiting depends on your deployment:
@@ -193,7 +195,7 @@ Common error codes:
 - **400**: Bad Request - Check request format
 - **401**: Unauthorized - Check authentication
 - **404**: Not Found - Verify resource exists
-- **429**: Rate Limited - Implement backoff
+- **429**: Rate Limited - Implement backoff and retry logic
 - **500**: Server Error - Check logs
 
 ### Can I use webhooks?
