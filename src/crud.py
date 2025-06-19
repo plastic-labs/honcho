@@ -931,9 +931,6 @@ async def get_peer_config(
 
     return schemas.SessionPeerConfig(**session_peer.configuration)
 
-    Returns:
-        List of all SessionPeer objects (both existing and newly created)
-
 
 async def set_peer_config(
     db: AsyncSession,
@@ -971,17 +968,6 @@ async def set_peer_config(
         raise ResourceNotFoundException(
             f"Session peer {peer_id} not found in session {session_name} in workspace {workspace_name}"
         )
-        result = await db.execute(select_stmt)
-        return list(result.scalars().all())
-
-    # Check current number of active peers and validate limit before upsert
-    current_peers_stmt = select(models.SessionPeer.peer_name).where(
-        models.SessionPeer.session_name == session_name,
-        models.SessionPeer.workspace_name == workspace_name,
-        models.SessionPeer.left_at.is_(None),  # Only active peers
-    )
-    result = await db.execute(current_peers_stmt)
-    existing_peer_names = result.scalars().all()
 
     # Update peer config
     session_peer.configuration["observe_others"] = config.observe_others
@@ -1071,13 +1057,7 @@ async def search(
     else:
         stmt = base_query
 
-    select_stmt = select(models.SessionPeer).where(
-        models.SessionPeer.session_name == session_name,
-        models.SessionPeer.workspace_name == workspace_name,
-        models.SessionPeer.left_at.is_(None),  # Only active peers
-    )
-    result = await db.execute(select_stmt)
-    return list(result.scalars().all())
+    return stmt
 
 
 async def get_working_representation(
@@ -1162,7 +1142,6 @@ async def set_working_representation(
     await db.commit()
 
 
-    return schemas.SessionPeerConfig(**session_peer.configuration)
 
 ########################################################
 # Message Methods
@@ -1345,8 +1324,6 @@ async def get_messages(
 
     return stmt
 
-
-    return stmt
 
 async def get_messages_id_range(
     db: AsyncSession,
