@@ -9,12 +9,11 @@ Honcho is built around a hierarchical data model that enables scalable memory ma
 
 ```
 Workspace
-├── Peers (Users)
-│   ├── Collections
-│   │   └── Documents (Vector Storage)
-│   └── Sessions
-│       ├── Messages
-│       └── Session Peers (with configurations)
+├── Peers
+│     └── Messages
+├── Sessions
+│     ├── Messages
+│     └── Session Peers (with configurations)
 └── Background Processing (Deriver Queue)
 ```
 
@@ -50,7 +49,7 @@ Workspaces are the top-level containers that provide complete isolation between 
 
 ### Peers
 
-Peers represent individual users or entities within a workspace. They are the primary subjects for memory and context management.
+Peers represent individual users, agents, or entities in a workspace. They are the primary subjects for memory and context management.
 
 **Key Features:**
 - **Identity**: Unique identifier within a workspace
@@ -60,6 +59,7 @@ Peers represent individual users or entities within a workspace. They are the pr
 
 **Use Cases:**
 - Individual users in a chatbot application
+- AI agents interacting with users or other agents
 - Customer profiles in support systems
 - Student profiles in educational platforms
 
@@ -117,7 +117,7 @@ Sessions represent individual conversation threads or interaction contexts betwe
 
 ### Messages
 
-Messages are the fundamental units of interaction within sessions, representing individual communication events.
+Messages are the fundamental units of interaction within sessions. They may also be used at the peer level to represent stored information of any kind.
 
 **Key Features:**
 - **Rich Content**: Support for text, metadata, and structured data
@@ -143,33 +143,6 @@ Messages are the fundamental units of interaction within sessions, representing 
 }
 ```
 
-### Collections & Documents
-
-Collections provide vector-based storage for semantic search and similarity matching.
-
-**Key Features:**
-- **Semantic Search**: Find relevant content using embedding similarity
-- **Peer-Scoped**: Each peer has their own collections
-- **Flexible Schema**: Store arbitrary text content with metadata
-- **Duplicate Detection**: Automatic handling of similar content
-
-**Use Cases:**
-- Knowledge bases
-- Conversation summaries
-- User preference profiles
-- Contextual facts
-
-```json
-{
-  "content": "User prefers morning meetings and dislikes scheduling after 4 PM",
-  "metadata": {
-    "type": "scheduling_preference",
-    "confidence": 0.95,
-    "source": "conversation_analysis"
-  }
-}
-```
-
 ## Background Processing
 
 ### Deriver Queue
@@ -190,7 +163,7 @@ The deriver system provides automatic background processing of user interactions
 
 ### 1. Input Processing
 ```
-Message → Session → Deriver Queue → Background Processing
+Message → Session or Peer → Deriver Queue → Background Processing
 ```
 
 ### 2. Context Retrieval
@@ -209,11 +182,6 @@ Interaction → Analysis → Insight Extraction → Memory Storage
 - **Stateless API**: Scale API servers independently
 - **Queue Workers**: Scale background processing workers
 - **Database**: PostgreSQL with read replicas
-
-### Performance Optimization
-- **Caching**: Redis for frequently accessed data
-- **Connection Pooling**: Efficient database connections
-- **Async Processing**: Non-blocking API operations
 
 ### Data Management
 - **Partitioning**: Workspace-based data separation
