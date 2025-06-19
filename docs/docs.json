@@ -8,6 +8,9 @@
     "dark": "#FF5A7E"
   },
   "favicon": "/favicon.svg",
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  },
   "navigation": {
     "tabs": [
       {
@@ -50,22 +53,15 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": [
-              "guides/overview"
-            ]
+            "pages": ["guides/overview"]
           },
           {
             "group": "Application Interfaces",
-            "pages": [
-              "guides/discord"
-            ]
+            "pages": ["guides/discord"]
           },
           {
             "group": "Personal Memory",
-            "pages": [
-              "guides/simple-memory",
-              "guides/dialectic-endpoint"
-            ]
+            "pages": ["guides/simple-memory", "guides/dialectic-endpoint"]
           }
         ]
       },
@@ -74,9 +70,7 @@
         "groups": [
           {
             "group": "API Documentation",
-            "pages": [
-              "api-reference/introduction"
-            ]
+            "pages": ["api-reference/introduction"]
           },
           {
             "group": "workspaces",
@@ -130,9 +124,7 @@
           },
           {
             "group": "keys",
-            "pages": [
-              "api-reference/endpoint/keys/create-key"
-            ]
+            "pages": ["api-reference/endpoint/keys/create-key"]
           }
         ]
       },
@@ -156,9 +148,7 @@
         "groups": [
           {
             "group": "Changelog",
-            "pages": [
-              "changelog/introduction"
-            ]
+            "pages": ["changelog/introduction"]
           }
         ]
       }
@@ -188,9 +178,7 @@
     "dark": "/logo/honcho-light.svg"
   },
   "api": {
-    "openapi": [
-      "openapi.documented.yml"
-    ]
+    "openapi": ["openapi.documented.yml"]
   },
   "navbar": {
     "primary": {
@@ -211,3 +199,4 @@
     }
   }
 }
+
