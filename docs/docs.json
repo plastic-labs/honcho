@@ -29,9 +29,7 @@
             "pages": [
               "documentation/core-concepts/glossary",
               "documentation/core-concepts/architecture",
-              "documentation/core-concepts/storage-api",
               "documentation/core-concepts/deriver",
-              "documentation/core-concepts/dialectic-api",
               "documentation/core-concepts/features"
             ]
           },
