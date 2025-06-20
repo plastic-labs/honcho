@@ -1,0 +1,298 @@
+---
+title: 'Search'
+description: 'Learn how to search across workspaces, sessions, and peers to find relevant conversations and content'
+icon: 'magnifying-glass'
+---
+
+Honcho's search functionality allows you to find relevant messages and conversations across different scopes - from entire workspaces down to specific peers or sessions.
+
+## How Search Works
+
+Search in Honcho is implemented with a two-tier approach:
+1. **Primary**: PostgreSQL English language full-text search index for intelligent matching
+2. **Fallback**: Simple string matching for broader coverage
+
+All search results are returned in a paginated format, making it easy to handle large result sets efficiently.
+
+## Search Scopes
+
+### Workspace Search
+
+Search across all content in your workspace - sessions, peers, and messages:
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Search across entire workspace
+results = honcho.search("budget planning")
+
+# Iterate through all results
+for result in results:
+    print(f"Found: {result}")
+```
+
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+// Initialize client
+const honcho = new Honcho({});
+
+// Search across entire workspace
+const results = await honcho.search("budget planning");
+
+// Iterate through all results
+for await (const result of results) {
+  console.log(`Found: ${result}`);
+}
+```
+</CodeGroup>
+
+### Session Search
+
+Search within a specific session's conversation history:
+
+<CodeGroup>
+```python Python
+# Create or get a session
+session = honcho.session("team-meeting-jan")
+
+# Search within this session only
+results = session.search("action items")
+
+# Process results
+for result in results:
+    print(f"Session result: {result}")
+```
+
+```typescript TypeScript
+// Create or get a session
+const session = honcho.session("team-meeting-jan");
+
+// Search within this session only
+const results = await session.search("action items");
+
+// Process results
+for await (const result of results) {
+  console.log(`Session result: ${result}`);
+}
+```
+</CodeGroup>
+
+### Peer Search
+
+Search across all content associated with a specific peer:
+
+<CodeGroup>
+```python Python
+# Create or get a peer
+alice = honcho.peer("alice")
+
+# Search across all of Alice's messages and interactions
+results = alice.search("programming")
+
+# View results
+for result in results:
+    print(f"Alice's content: {result}")
+```
+
+```typescript TypeScript
+// Create or get a peer
+const alice = honcho.peer("alice");
+
+// Search across all of Alice's messages and interactions
+const results = await alice.search("programming");
+
+// View results
+for await (const result of results) {
+  console.log(`Alice's content: ${result}`);
+}
+```
+</CodeGroup>
+
+## Working with Search Results
+
+### Basic Result Processing
+
+<CodeGroup>
+```python Python
+# Search returns a paginated iterator
+results = honcho.search("customer feedback")
+
+# Simple iteration processes all results automatically
+for result in results:
+    # Each result contains the matched content and context
+    print(f"Match: {result}")
+    
+# Check if there are any results
+results = honcho.search("nonexistent topic")
+result_list = list(results)
+if not result_list:
+    print("No results found")
+```
+
+```typescript TypeScript
+// Search returns a paginated Page object
+const results = await honcho.search("customer feedback");
+
+// Iterate through all results
+for await (const result of results) {
+  // Each result contains the matched content and context
+  console.log(`Match: ${result}`);
+}
+
+// Check if there are any results
+const emptyResults = await honcho.search("nonexistent topic");
+const resultData = await emptyResults.data();
+if (resultData.length === 0) {
+  console.log("No results found");
+}
+```
+</CodeGroup>
+
+### Manual Pagination
+
+<CodeGroup>
+```python Python
+# For manual pagination control, you can work with pages directly
+results = honcho.search("project updates")
+
+# The iterator handles pagination automatically, but you can also
+# work with individual batches if needed
+count = 0
+for result in results:
+    count += 1
+    print(f"Result {count}: {result}")
+    
+    # Stop after first 10 results
+    if count >= 10:
+        break
+```
+
+```typescript TypeScript
+// Manual pagination with TypeScript
+let currentPage = await honcho.search("project updates");
+
+while (currentPage) {
+  const data = await currentPage.data();
+  console.log(`Processing ${data.length} results`);
+  
+  for (const result of data) {
+    console.log(`Result: ${result}`);
+  }
+  
+  // Get next page
+  currentPage = await currentPage.nextPage();
+}
+```
+</CodeGroup>
+
+### Search with Context Building
+
+<CodeGroup>
+```python Python
+# Use search results to build context for LLM interactions
+def build_context_from_search(query: str, session_id: str):
+    session = honcho.session(session_id)
+    
+    # Search for relevant past discussions
+    search_results = list(session.search(query))
+    
+    if search_results:
+        # Use search results to inform context
+        context_summary = f"Found {len(search_results)} relevant past discussions about '{query}'"
+        
+        # Get normal session context
+        session_context = session.get_context(tokens=1500)
+        
+        return {
+            "search_summary": context_summary,
+            "session_context": session_context,
+            "search_results": search_results[:3]  # Top 3 results
+        }
+    
+    return {"message": "No relevant past discussions found"}
+
+# Build context for a new question
+context_data = build_context_from_search("user authentication", "support-session-1")
+print(f"Context: {context_data.get('search_summary', 'No context')}")
+```
+
+```typescript TypeScript
+// Use search results to build context for LLM interactions
+async function buildContextFromSearch(query: string, sessionId: string) {
+  const session = honcho.session(sessionId);
+  
+  // Search for relevant past discussions
+  const searchResults = await session.search(query);
+  const searchData = await searchResults.data();
+  
+  if (searchData.length > 0) {
+    // Use search results to inform context
+    const contextSummary = `Found ${searchData.length} relevant past discussions about '${query}'`;
+    
+    // Get normal session context
+    const sessionContext = await session.getContext({ tokens: 1500 });
+    
+    return {
+      searchSummary: contextSummary,
+      sessionContext: sessionContext,
+      searchResults: searchData.slice(0, 3)  // Top 3 results
+    };
+  }
+  
+  return { message: "No relevant past discussions found" };
+}
+
+// Build context for a new question
+const contextData = await buildContextFromSearch("user authentication", "support-session-1");
+console.log(`Context: ${contextData.searchSummary || contextData.message}`);
+```
+</CodeGroup>
+
+## Best Practices
+
+### Handle Empty Results Gracefully
+
+<CodeGroup>
+```python Python
+# Always check for empty results
+results = honcho.search("very specific query")
+result_list = list(results)
+
+if result_list:
+    print(f"Found {len(result_list)} results")
+    for result in result_list:
+        print(f"- {result}")
+else:
+    print("No results found - try a broader search")
+```
+
+```typescript TypeScript
+// Always check for empty results
+const results = await honcho.search("very specific query");
+const resultData = await results.data();
+
+if (resultData.length > 0) {
+  console.log(`Found ${resultData.length} results`);
+  for (const result of resultData) {
+    console.log(`- ${result}`);
+  }
+} else {
+  console.log("No results found - try a broader search");
+}
+```
+</CodeGroup>
+
+## Conclusion
+
+Honcho's search functionality provides powerful discovery capabilities across your conversational data. By understanding how to:
+
+- Choose the appropriate search scope (workspace, session, or peer)
+- Handle paginated results effectively
+- Combine search with context building
+
+You can build applications that provide intelligent insights and context-aware responses based on historical conversations and interactions.

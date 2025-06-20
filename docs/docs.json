@@ -59,7 +59,7 @@
           },
           {
             "group": "Personal Memory",
-            "pages": ["guides/dialectic-endpoint"]
+            "pages": ["guides/dialectic-endpoint", "guides/get-context", "guides/search"]
           },
           {
             "group": "Streaming Responses",
