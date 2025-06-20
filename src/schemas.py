@@ -1,3 +1,4 @@
+# pyright: reportMissingTypeArgument=false
 import datetime
 from typing import Annotated, Optional
 
