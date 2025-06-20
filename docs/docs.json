@@ -59,7 +59,11 @@
           },
           {
             "group": "Personal Memory",
-            "pages": ["guides/simple-memory", "guides/dialectic-endpoint"]
+            "pages": ["guides/dialectic-endpoint"]
+          },
+          {
+            "group": "Streaming Responses",
+            "pages": ["guides/streaming-response"]
           }
         ]
       },
