@@ -1,0 +1,571 @@
+---
+title: "Configuration Guide"
+description: "Complete guide to configuring Honcho for development and production"
+---
+
+# Configuration Guide
+
+This guide covers all aspects of configuring Honcho for different environments, from local development to production deployment.
+
+## Environment Variables
+
+### Core Configuration
+
+**Database Settings:**
+```bash
+# PostgreSQL connection string
+DATABASE_URL=postgresql://username:password@host:port/database
+
+# Example for local development
+DATABASE_URL=postgresql://testuser:testpwd@localhost:5432/honcho
+
+# Example for production
+DATABASE_URL=postgresql://honcho_user:secure_password@db.example.com:5432/honcho_prod
+```
+
+**AI Services:**
+```bash
+# OpenAI API configuration
+OPENAI_API_KEY=sk-your-openai-api-key-here
+OPENAI_MODEL=gpt-4  # Default model for reasoning tasks
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small  # Embedding model
+
+# Alternative AI providers (optional)
+ANTHROPIC_API_KEY=your-anthropic-key
+GROQ_API_KEY=your-groq-key
+```
+
+**Security Settings:**
+```bash
+# JWT authentication
+JWT_SECRET=your-super-secret-jwt-key-here
+JWT_ALGORITHM=HS256
+JWT_EXPIRE_MINUTES=60
+
+# API security
+USE_AUTH=true  # Enable authentication (set to false for development)
+CORS_ORIGINS=http://localhost:3000,https://yourdomain.com
+```
+
+### Application Settings
+
+**Server Configuration:**
+```bash
+# Server settings
+HOST=0.0.0.0
+PORT=8000
+WORKERS=4  # Number of worker processes
+
+# Debug settings
+DEBUG=false  # Set to true for development
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
+```
+
+**Deriver Configuration:**
+```bash
+# Background processing
+DERIVER_ENABLED=true
+DERIVER_WORKERS=2  # Number of background workers
+DERIVER_BATCH_SIZE=10  # Items processed per batch
+DERIVER_RETRY_ATTEMPTS=3  # Retry failed tasks
+
+# Queue settings
+QUEUE_CHECK_INTERVAL=5  # Seconds between queue checks
+QUEUE_MAX_AGE=3600  # Maximum age for queue items (seconds)
+```
+
+**Feature Flags:**
+```bash
+# Feature toggles
+ENABLE_VECTOR_SEARCH=true
+ENABLE_FULL_TEXT_SEARCH=true
+ENABLE_DIALECTIC_API=true
+ENABLE_METRICS=true
+```
+
+### Environment-Specific Settings
+
+**Development (.env.development):**
+```bash
+DEBUG=true
+LOG_LEVEL=DEBUG
+USE_AUTH=false
+DATABASE_URL=postgresql://testuser:testpwd@localhost:5432/honcho_dev
+CORS_ORIGINS=*
+DERIVER_WORKERS=1
+```
+
+**Staging (.env.staging):**
+```bash
+DEBUG=false
+LOG_LEVEL=INFO
+USE_AUTH=true
+DATABASE_URL=postgresql://honcho_user:password@staging-db:5432/honcho_staging
+CORS_ORIGINS=https://staging.yourdomain.com
+DERIVER_WORKERS=2
+```
+
+**Production (.env.production):**
+```bash
+DEBUG=false
+LOG_LEVEL=WARNING
+USE_AUTH=true
+DATABASE_URL=postgresql://honcho_user:secure_password@prod-db:5432/honcho_prod
+CORS_ORIGINS=https://api.yourdomain.com,https://app.yourdomain.com
+DERIVER_WORKERS=4
+SENTRY_DSN=your-sentry-dsn-for-error-tracking
+```
+
+## Database Configuration
+
+### Local Development Setup
+
+**Docker Compose for PostgreSQL:**
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  database:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: testpwd
+      POSTGRES_DB: honcho
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  postgres_data:
+```
+
+**Initialize Database:**
+```bash
+# Start database
+docker-compose up -d database
+
+# Run migrations
+uv run alembic upgrade head
+
+# Optional: Load sample data
+uv run python scripts/load_sample_data.py
+```
+
+### Production Database Setup
+
+**PostgreSQL Configuration:**
+```sql
+-- Create database and user
+CREATE DATABASE honcho_prod;
+CREATE USER honcho_user WITH PASSWORD 'secure_password';
+GRANT ALL PRIVILEGES ON DATABASE honcho_prod TO honcho_user;
+
+-- Enable pgvector extension
+\c honcho_prod
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- For full-text search
+```
+
+**Connection Pooling (PgBouncer):**
+```ini
+[databases]
+honcho_prod = host=localhost port=5432 dbname=honcho_prod
+
+[pgbouncer]
+listen_addr = 0.0.0.0
+listen_port = 6432
+auth_type = md5
+auth_file = /etc/pgbouncer/userlist.txt
+pool_mode = transaction
+max_client_conn = 100
+default_pool_size = 20
+```
+
+### Migration Management
+
+**Running Migrations:**
+```bash
+# Check current migration status
+uv run alembic current
+
+# Upgrade to latest
+uv run alembic upgrade head
+
+# Downgrade to specific revision
+uv run alembic downgrade revision_id
+
+# Create new migration
+uv run alembic revision --autogenerate -m "Description of changes"
+```
+
+**Migration Best Practices:**
+```python
+# Always review auto-generated migrations
+def upgrade():
+    # Schema changes
+    op.create_table(
+        'new_table',
+        sa.Column('id', sa.String(), nullable=False),
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.PrimaryKeyConstraint('id')
+    )
+    
+    # Add indexes for performance
+    op.create_index('idx_new_table_created_at', 'new_table', ['created_at'])
+
+def downgrade():
+    # Always provide downgrade path
+    op.drop_index('idx_new_table_created_at', table_name='new_table')
+    op.drop_table('new_table')
+```
+
+## Authentication Configuration
+
+### JWT Settings
+
+**Token Configuration:**
+```python
+# src/security.py
+class JWTSettings:
+    SECRET_KEY: str = os.getenv("JWT_SECRET")
+    ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+    
+    # Token scopes
+    ADMIN_SCOPE = "admin"
+    WORKSPACE_SCOPE = "workspace"
+    PEER_SCOPE = "peer"
+```
+
+**Creating Admin Tokens:**
+```bash
+# Generate admin token for API access
+uv run python scripts/generate_jwt_secret.py
+
+# Create workspace-scoped token
+curl -X POST "http://localhost:8000/v1/keys" \
+  -H "Authorization: Bearer admin_token" \
+  -H "Content-Type: application/json" \
+  -d '{"workspace_name": "my-workspace", "scopes": ["workspace"]}'
+```
+
+### API Key Management
+
+**Environment-based Keys:**
+```bash
+# Development - no auth required
+USE_AUTH=false
+
+# Staging/Production - require authentication
+USE_AUTH=true
+API_KEYS_REQUIRED=true
+```
+
+**Creating API Keys:**
+```python
+# Create workspace API key
+POST /v1/workspaces/{workspace_name}/keys
+{
+  "name": "production-key",
+  "scopes": ["workspace"],
+  "expires_at": "2024-12-31T23:59:59Z"
+}
+```
+
+## AI Service Configuration
+
+### OpenAI Integration
+
+**Model Configuration:**
+```bash
+# Primary models
+OPENAI_MODEL=gpt-4-turbo-preview  # For reasoning tasks
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small  # For embeddings
+
+# Fallback models
+OPENAI_FALLBACK_MODEL=gpt-3.5-turbo
+OPENAI_CHEAP_MODEL=gpt-3.5-turbo  # For simple tasks
+
+# Rate limiting
+OPENAI_MAX_REQUESTS_PER_MINUTE=60
+OPENAI_MAX_TOKENS_PER_REQUEST=4000
+```
+
+**Custom Model Configuration:**
+```python
+# src/utils/model_client.py
+MODEL_CONFIGS = {
+    "reasoning": {
+        "model": os.getenv("OPENAI_MODEL", "gpt-4"),
+        "max_tokens": 2000,
+        "temperature": 0.7,
+    },
+    "embedding": {
+        "model": os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"),
+        "dimensions": 1536,
+    },
+    "summary": {
+        "model": os.getenv("OPENAI_CHEAP_MODEL", "gpt-3.5-turbo"),
+        "max_tokens": 500,
+        "temperature": 0.3,
+    }
+}
+```
+
+### Alternative AI Providers
+
+**Anthropic Configuration:**
+```bash
+ANTHROPIC_API_KEY=your-anthropic-key
+ANTHROPIC_MODEL=claude-3-sonnet-20240229
+ANTHROPIC_MAX_TOKENS=4000
+```
+
+**Groq Configuration:**
+```bash
+GROQ_API_KEY=your-groq-key
+GROQ_MODEL=mixtral-8x7b-32768
+GROQ_MAX_TOKENS=32768
+```
+
+**Provider Selection:**
+```python
+# Automatic provider selection based on task
+class AIProviderConfig:
+    REASONING_PROVIDER = "openai"  # openai, anthropic, groq
+    EMBEDDING_PROVIDER = "openai"  # Currently only OpenAI supported
+    FAST_PROVIDER = "groq"  # For quick responses
+```
+
+## Caching Configuration
+
+### Redis Setup
+
+**Redis Configuration:**
+```bash
+# Redis connection
+REDIS_URL=redis://localhost:6379/0
+REDIS_PASSWORD=your-redis-password  # If authentication enabled
+REDIS_DB=0  # Database number
+
+# Cache settings
+CACHE_TTL=3600  # Default cache TTL in seconds
+CACHE_MAX_SIZE=1000  # Maximum cached items
+```
+
+**Docker Redis:**
+```yaml
+# Add to docker-compose.yml
+redis:
+  image: redis:7-alpine
+  ports:
+    - "6379:6379"
+  command: redis-server --requirepass your-redis-password
+  volumes:
+    - redis_data:/data
+```
+
+### Caching Strategy
+
+**Cache Configuration:**
+```python
+# src/utils/cache.py
+class CacheConfig:
+    # Cache keys
+    PEER_CACHE_KEY = "peer:{peer_id}"
+    SESSION_CACHE_KEY = "session:{session_id}"
+    REPRESENTATION_CACHE_KEY = "repr:{peer_id}"
+    
+    # TTL settings (seconds)
+    PEER_TTL = 3600  # 1 hour
+    SESSION_TTL = 1800  # 30 minutes
+    REPRESENTATION_TTL = 7200  # 2 hours
+    
+    # Cache sizes
+    MAX_CACHED_PEERS = 1000
+    MAX_CACHED_SESSIONS = 5000
+```
+
+## Monitoring Configuration
+
+### Logging Setup
+
+**Logging Configuration:**
+```python
+# src/config.py
+LOGGING_CONFIG = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        },
+        "json": {
+            "format": '{"timestamp": "%(asctime)s", "logger": "%(name)s", "level": "%(levelname)s", "message": "%(message)s"}',
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "level": os.getenv("LOG_LEVEL", "INFO"),
+            "formatter": "default",
+        },
+        "file": {
+            "class": "logging.FileHandler",
+            "filename": "honcho.log",
+            "level": "INFO",
+            "formatter": "json",
+        },
+    },
+    "root": {
+        "level": "INFO",
+        "handlers": ["console", "file"],
+    },
+}
+```
+
+### Error Tracking
+
+**Sentry Configuration:**
+```bash
+# Sentry error tracking
+SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
+SENTRY_ENVIRONMENT=production  # development, staging, production
+SENTRY_TRACES_SAMPLE_RATE=0.1  # 10% of transactions
+```
+
+**Application Monitoring:**
+```python
+# src/main.py
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+if os.getenv("SENTRY_DSN"):
+    sentry_sdk.init(
+        dsn=os.getenv("SENTRY_DSN"),
+        environment=os.getenv("SENTRY_ENVIRONMENT", "development"),
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
+        integrations=[FastApiIntegration()],
+    )
+```
+
+### Health Checks
+
+**Health Check Configuration:**
+```python
+# Health check endpoints
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow(),
+        "version": os.getenv("APP_VERSION", "unknown"),
+    }
+
+@app.get("/health/detailed")
+async def detailed_health_check(db=Depends(get_db)):
+    # Check database connectivity
+    # Check external service availability
+    # Check queue status
+    return health_status
+```
+
+## Performance Configuration
+
+### Database Performance
+
+**Connection Pool Settings:**
+```python
+# src/db.py
+DATABASE_CONFIG = {
+    "pool_size": int(os.getenv("DB_POOL_SIZE", "10")),
+    "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "20")),
+    "pool_timeout": int(os.getenv("DB_POOL_TIMEOUT", "30")),
+    "pool_recycle": int(os.getenv("DB_POOL_RECYCLE", "3600")),
+}
+```
+
+### Worker Configuration
+
+**Deriver Worker Settings:**
+```bash
+# Worker process configuration
+DERIVER_WORKERS=4  # Number of concurrent workers
+DERIVER_BATCH_SIZE=10  # Items processed per batch
+DERIVER_MAX_RETRIES=3  # Maximum retry attempts
+DERIVER_RETRY_DELAY=60  # Seconds between retries
+
+# Memory management
+DERIVER_MAX_MEMORY_MB=512  # Maximum memory per worker
+DERIVER_RESTART_ON_MEMORY_LIMIT=true
+```
+
+### API Performance
+
+**FastAPI Configuration:**
+```python
+# src/main.py
+app = FastAPI(
+    title="Honcho API",
+    version=os.getenv("APP_VERSION", "0.0.1"),
+    docs_url="/docs" if os.getenv("DEBUG") == "true" else None,
+    redoc_url="/redoc" if os.getenv("DEBUG") == "true" else None,
+)
+
+# Add middleware for performance
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=os.getenv("CORS_ORIGINS", "*").split(","),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+## Security Configuration
+
+### HTTPS and SSL
+
+**SSL Configuration:**
+```bash
+# SSL settings for production
+SSL_KEYFILE=/path/to/private.key
+SSL_CERTFILE=/path/to/certificate.crt
+SSL_CA_CERTS=/path/to/ca-bundle.crt
+
+# Redirect HTTP to HTTPS
+FORCE_HTTPS=true
+```
+
+### CORS Configuration
+
+**CORS Settings:**
+```bash
+# Development - allow all origins
+CORS_ORIGINS=*
+
+# Production - specific domains only
+CORS_ORIGINS=https://app.yourdomain.com,https://admin.yourdomain.com
+
+# Additional CORS settings
+CORS_ALLOW_CREDENTIALS=true
+CORS_MAX_AGE=3600
+```
+
+### Rate Limiting
+
+**Rate Limit Configuration:**
+```bash
+# API rate limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS_PER_MINUTE=60
+RATE_LIMIT_BURST=10
+
+# Per-endpoint limits
+RATE_LIMIT_CHAT_REQUESTS_PER_MINUTE=30
+RATE_LIMIT_UPLOAD_REQUESTS_PER_MINUTE=10
+```
+
+This configuration guide should help you set up Honcho correctly for any environment. Always use environment-specific configuration files and never commit sensitive values to version control. 

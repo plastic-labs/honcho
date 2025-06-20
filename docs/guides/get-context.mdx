@@ -1,0 +1,506 @@
+---
+title: 'Working with Session Context'
+description: 'Learn how to use get_context() to retrieve and format conversation context for LLM integration'
+icon: 'messages'
+---
+
+The `get_context()` method is a powerful feature that retrieves formatted conversation context from sessions, making it easy to integrate with LLMs like OpenAI, Anthropic, and others. This guide covers everything you need to know about working with session context.
+
+By default, the context includes a blend of summary and messages which covers the entire history of the session. Summaries are automatically generated at intervals and recent messages are included depending on how many tokens the context is intended to be. You can specify any token limit you want, and can disable summaries to fill that limit entirely with recent messages.
+
+## Basic Usage
+
+The `get_context()` method is available on all Session objects and returns a `SessionContext` that contains the formatted conversation history.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client and create session
+honcho = Honcho()
+session = honcho.session("conversation-1")
+
+# Get basic context (not very useful before adding any messages!)
+context = session.get_context()
+```
+
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+// Initialize client and create session
+const honcho = new Honcho({});
+const session = honcho.session("conversation-1");
+
+# Get basic context (not very useful before adding any messages!)
+const context = await session.getContext();
+```
+</CodeGroup>
+
+## Context Parameters
+
+The `get_context()` method accepts several optional parameters to customize the retrieved context:
+
+### Token Limits
+
+Control the size of the context by setting a maximum token count:
+
+<CodeGroup>
+```python Python
+# Limit context to 1500 tokens
+context = session.get_context(tokens=1500)
+
+# Limit context to 3000 tokens for larger conversations
+context = session.get_context(tokens=3000)
+```
+
+```typescript TypeScript
+// Limit context to 1500 tokens
+const context = await session.getContext({ tokens: 1500 });
+
+// Limit context to 3000 tokens for larger conversations
+const context = await session.getContext({ tokens: 3000 });
+```
+</CodeGroup>
+
+### Summary Mode
+
+Enable summary mode (on by default) to get a condensed version of the conversation:
+
+<CodeGroup>
+```python Python
+# Get context with summary enabled -- will contain both summary and messages
+context = session.get_context(summary=True)
+
+# Combine summary=False with token limits to get more messages
+context = session.get_context(summary=False, tokens=2000)
+```
+
+```typescript TypeScript
+// Get context with summary enabled -- will contain both summary and messages
+const context = await session.getContext({ summary: true });
+
+// Combine summary=False with token limits to get more messages
+const context = await session.getContext({ 
+  summary: false, 
+  tokens: 2000 
+});
+```
+</CodeGroup>
+
+## Converting to LLM Formats
+
+The `SessionContext` object provides methods to convert the context into formats compatible with popular LLM APIs. When converting to OpenAI format, you must specify the assistant peer to format the context in such a way that the LLM can understand it.
+
+### OpenAI Format
+
+Convert context to OpenAI's chat completion format:
+
+<CodeGroup>
+```python Python
+# Create peers
+alice = honcho.peer("alice")
+assistant = honcho.peer("assistant")
+
+# Add some conversation
+session.add_messages([
+    alice.message("What's the weather like today?"),
+    assistant.message("It's sunny and 75°F outside!")
+])
+
+# Get context and convert to OpenAI format
+context = session.get_context()
+openai_messages = context.to_openai(assistant=assistant)
+
+# The messages are now ready for OpenAI API
+print(openai_messages)
+# [
+#   {"role": "user", "content": "What's the weather like today?"},
+#   {"role": "assistant", "content": "It's sunny and 75°F outside!"}
+# ]
+```
+
+```typescript TypeScript
+// Create peers
+const alice = honcho.peer("alice");
+const assistant = honcho.peer("assistant");
+
+// Add some conversation
+await session.addMessages([
+  alice.message("What's the weather like today?"),
+  assistant.message("It's sunny and 75°F outside!")
+]);
+
+// Get context and convert to OpenAI format
+const context = await session.getContext();
+const openaiMessages = context.toOpenAI(assistant);
+
+// The messages are now ready for OpenAI API
+console.log(openaiMessages);
+// [
+//   {"role": "user", "content": "What's the weather like today?"},
+//   {"role": "assistant", "content": "It's sunny and 75°F outside!"}
+// ]
+```
+</CodeGroup>
+
+### Anthropic Format
+
+Convert context to Anthropic's Claude format:
+
+<CodeGroup>
+```python Python
+# Get context and convert to Anthropic format
+context = session.get_context()
+anthropic_messages = context.to_anthropic(assistant=assistant)
+
+# Ready for Anthropic API
+print(anthropic_messages)
+```
+
+```typescript TypeScript
+// Get context and convert to Anthropic format
+const context = await session.getContext();
+const anthropicMessages = context.toAnthropic(assistant);
+
+// Ready for Anthropic API
+console.log(anthropicMessages);
+```
+</CodeGroup>
+
+## Complete LLM Integration Examples
+
+### Using with OpenAI
+
+<CodeGroup>
+```python Python
+import openai
+from honcho import Honcho
+
+# Initialize clients
+honcho = Honcho()
+openai_client = openai.OpenAI()
+
+# Set up conversation
+session = honcho.session("support-chat")
+user = honcho.peer("user-123")
+assistant = honcho.peer("support-bot")
+
+# Add conversation history
+session.add_messages([
+    user.message("I'm having trouble with my account login"),
+    assistant.message("I can help you with that. What error message are you seeing?"),
+    user.message("It says 'Invalid credentials' but I'm sure my password is correct")
+])
+
+# Get context for LLM
+messages = session.get_context(tokens=2000).to_openai(assistant=assistant)
+
+# Add new user message and get AI response
+messages.append({
+    "role": "user", 
+    "content": "Can you reset my password?"
+})
+
+response = openai_client.chat.completions.create(
+    model="gpt-4",
+    messages=messages
+)
+
+# Add AI response back to session
+session.add_messages([
+    user.message("Can you reset my password?"),
+    assistant.message(response.choices[0].message.content)
+])
+```
+
+```typescript TypeScript
+import OpenAI from 'openai';
+import { Honcho } from "@honcho-ai/sdk";
+
+// Initialize clients
+const honcho = new Honcho({});
+const openai = new OpenAI();
+
+// Set up conversation
+const session = honcho.session("support-chat");
+const user = honcho.peer("user-123");
+const assistant = honcho.peer("support-bot");
+
+// Add conversation history
+await session.addMessages([
+  user.message("I'm having trouble with my account login"),
+  assistant.message("I can help you with that. What error message are you seeing?"),
+  user.message("It says 'Invalid credentials' but I'm sure my password is correct")
+]);
+
+// Get context for LLM
+const messages = await session.getContext({ tokens: 2000 }).toOpenAI(assistant);
+
+// Add new user message and get AI response
+const response = await openai.chat.completions.create({
+  model: "gpt-4",
+  messages: [
+    ...messages,
+    { role: "user", content: "Can you reset my password?" }
+  ]
+});
+
+// Add AI response back to session
+await session.addMessages([
+  user.message("Can you reset my password?"),
+  assistant.message(response.choices[0].message.content)
+]);
+```
+</CodeGroup>
+
+### Multi-Turn Conversation Loop
+
+<CodeGroup>
+```python Python
+def chat_loop():
+    """Example of a continuous chat loop using get_context()"""
+    
+    session = honcho.session("chat-session")
+    user = honcho.peer("user")
+    assistant = honcho.peer("ai-assistant")
+    
+    while True:
+        # Get user input
+        user_input = input("You: ")
+        if user_input.lower() in ['quit', 'exit']:
+            break
+            
+        # Add user message to session
+        session.add_messages([user.message(user_input)])
+        
+        # Get conversation context
+        context = session.get_context(tokens=2000)
+        messages = context.to_openai(assistant=assistant)
+        
+        # Get AI response
+        response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=messages
+        )
+        
+        ai_response = response.choices[0].message.content
+        print(f"Assistant: {ai_response}")
+        
+        # Add AI response to session
+        session.add_messages([assistant.message(ai_response)])
+
+# Start the chat loop
+chat_loop()
+```
+
+```typescript TypeScript
+async function chatLoop() {
+  const session = honcho.session("chat-session");
+  const user = honcho.peer("user");
+  const assistant = honcho.peer("ai-assistant");
+  
+  // This would be replaced with actual user input handling in a real app
+  const userInputs = [
+    "Hello, how are you?",
+    "What's the weather like?",
+    "Tell me a joke"
+  ];
+  
+  for (const userInput of userInputs) {
+    console.log(`You: ${userInput}`);
+    
+    // Add user message to session
+    await session.addMessages([user.message(userInput)]);
+    
+    // Get conversation context
+    const context = await session.getContext({ tokens: 2000 });
+    const messages = context.toOpenAI(assistant);
+    
+    // Get AI response
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: messages
+    });
+    
+    const aiResponse = response.choices[0].message.content;
+    console.log(`Assistant: ${aiResponse}`);
+    
+    // Add AI response to session
+    await session.addMessages([assistant.message(aiResponse)]);
+  }
+}
+
+// Start the chat loop
+await chatLoop();
+```
+</CodeGroup>
+
+## Advanced Context Usage
+
+### Context with Summaries for Long Conversations
+
+For very long conversations, use summaries to maintain context while controlling token usage:
+
+<CodeGroup>
+```python Python
+# For long conversations, use summary mode
+long_session = honcho.session("long-conversation")
+
+# Get summarized context to fit within token limits
+context = long_session.get_context(summary=True, tokens=1500)
+messages = context.to_openai(assistant=assistant)
+
+# This will include a summary of older messages and recent full messages
+print(f"Context contains {len(messages)} formatted messages")
+```
+
+```typescript TypeScript
+// For long conversations, use summary mode
+const longSession = honcho.session("long-conversation");
+
+// Get summarized context to fit within token limits
+const context = await longSession.getContext({ 
+  summary: true, 
+  tokens: 1500 
+});
+const messages = context.toOpenAI(assistant);
+
+// This will include a summary of older messages and recent full messages
+console.log(`Context contains ${messages.length} formatted messages`);
+```
+</CodeGroup>
+
+### Context for Different Assistant Types
+
+You can get context formatted for different types of assistants in the same session:
+
+<CodeGroup>
+```python Python
+# Create different assistant peers
+chatbot = honcho.peer("chatbot")
+analyzer = honcho.peer("data-analyzer")
+moderator = honcho.peer("moderator")
+
+# Get context formatted for each assistant type
+chatbot_context = session.get_context().to_openai(assistant=chatbot)
+analyzer_context = session.get_context().to_openai(assistant=analyzer)
+moderator_context = session.get_context().to_openai(assistant=moderator)
+
+# Each context will format the conversation from that assistant's perspective
+```
+
+```typescript TypeScript
+// Create different assistant peers
+const chatbot = honcho.peer("chatbot");
+const analyzer = honcho.peer("data-analyzer");
+const moderator = honcho.peer("moderator");
+
+// Get context formatted for each assistant type
+const context = await session.getContext();
+const chatbotContext = context.toOpenAI(chatbot);
+const analyzerContext = context.toOpenAI(analyzer);
+const moderatorContext = context.toOpenAI(moderator);
+
+// Each context will format the conversation from that assistant's perspective
+```
+</CodeGroup>
+
+## Best Practices
+
+### 1. Token Management
+
+Always set appropriate token limits to control costs and ensure context fits within LLM limits:
+
+<CodeGroup>
+```python Python
+# Good: Set reasonable token limits based on your model
+context = session.get_context(tokens=3000)  # For GPT-4
+context = session.get_context(tokens=1500)  # For smaller models
+
+# Good: Use summaries for very long conversations
+context = session.get_context(summary=True, tokens=2000)
+```
+
+```typescript TypeScript
+// Good: Set reasonable token limits based on your model
+const context = await session.getContext({ tokens: 3000 });  // For GPT-4
+const context = await session.getContext({ tokens: 1500 });  // For smaller models
+
+// Good: Use summaries for very long conversations
+const context = await session.getContext({ summary: true, tokens: 2000 });
+```
+</CodeGroup>
+
+### 2. Context Caching
+
+For applications with frequent context retrieval, consider caching context when appropriate:
+
+<CodeGroup>
+```python Python
+# Cache context for multiple LLM calls within the same request
+context = session.get_context(tokens=2000)
+openai_messages = context.to_openai(assistant=assistant)
+anthropic_messages = context.to_anthropic(assistant=assistant)
+
+# Use the same context object for multiple format conversions
+```
+
+```typescript TypeScript
+// Cache context for multiple LLM calls within the same request
+const context = await session.getContext({ tokens: 2000 });
+const openaiMessages = context.toOpenAI(assistant);
+const anthropicMessages = context.toAnthropic(assistant);
+
+// Use the same context object for multiple format conversions
+```
+</CodeGroup>
+
+### 3. Error Handling
+
+Always handle potential errors when working with context:
+
+<CodeGroup>
+```python Python
+try:
+    context = session.get_context(tokens=2000)
+    messages = context.to_openai(assistant=assistant)
+    
+    # Use messages with LLM API
+    response = openai_client.chat.completions.create(
+        model="gpt-4",
+        messages=messages
+    )
+    
+except Exception as e:
+    print(f"Error getting context: {e}")
+    # Handle error appropriately
+```
+
+```typescript TypeScript
+try {
+  const context = await session.getContext({ tokens: 2000 });
+  const messages = context.toOpenAI(assistant);
+  
+  // Use messages with LLM API
+  const response = await openai.chat.completions.create({
+    model: "gpt-4",
+    messages: messages
+  });
+  
+} catch (error) {
+  console.error(`Error getting context: ${error}`);
+  // Handle error appropriately
+}
+```
+</CodeGroup>
+
+## Conclusion
+
+The `get_context()` method is essential for integrating Honcho sessions with LLMs. By understanding how to:
+
+- Retrieve context with appropriate parameters
+- Convert context to LLM-specific formats
+- Manage token limits and summaries
+- Handle multi-turn conversations
+
+You can build sophisticated AI applications that maintain conversation history and context across interactions while integrating seamlessly with popular LLM providers.

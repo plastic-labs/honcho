@@ -28,46 +28,45 @@ One of the primary use cases for streaming in Honcho is with the Dialectic endpo
 ```python Python
 from honcho import Honcho
 
+# Initialize client (using the default workspace)
 honcho = Honcho()
 
-# Create or get an existing App
-app = honcho.apps.get_or_create(name="demo-app")
-
-# Create or get user
-user = honcho.apps.users.get_or_create(app_id=app.id, name="demo-user")
+# Create or get peers
+user = honcho.peer("demo-user")
+assistant = honcho.peer("assistant")
 
 # Create a new session
-session = honcho.apps.users.sessions.create(app_id=app.id, user_id=user.id)
+session = honcho.session("demo-session")
+
+# Add peers to the session
+session.add_peers([user, assistant])
 
 # Store some messages for context (optional)
-honcho.apps.users.sessions.messages.create(
-    app_id=app.id,
-    user_id=user.id,
-    session_id=session.id,
-    content="Hello, I'm testing the streaming functionality",
-    is_user=True
-)
+session.add_messages([
+    user.message("Hello, I'm testing the streaming functionality")
+])
 ```
 
-```javascript NodeJS
-import Honcho from 'honcho-ai';
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
 
+// Initialize client (using the default workspace)
 const honcho = new Honcho();
 
-// Create or get an existing App
-const app = await honcho.apps.getOrCreate('demo-app');
-
-// Create or get user
-const user = await honcho.apps.users.getOrCreate(app.id, 'demo-user');
+// Create or get peers
+const user = honcho.peer('demo-user');
+const assistant = honcho.peer('assistant');
 
 // Create a new session
-const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
+const session = honcho.session('demo-session');
+
+// Add peers to the session
+await session.addPeers([user, assistant]);
 
 // Store some messages for context (optional)
-await honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
-  content: "Hello, I'm testing the streaming functionality",
-  is_user: true
-});
+await session.addMessages([
+  user.message("Hello, I'm testing the streaming functionality")
+]);
 ```
 </CodeGroup>
 
@@ -78,26 +77,21 @@ await honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
 import time
 
 # Basic streaming example
-with honcho.apps.users.sessions.with_streaming_response.stream(
-    app_id=app.id,
-    user_id=user.id,
-    session_id=session.id,
-    queries="What can you tell me about this user?",
-) as response:
-    for chunk in response.iter_text():
-        print(chunk, end="", flush=True)  # Print each chunk as it arrives
-        time.sleep(0.01)  # Optional delay for demonstration
+response_stream = user.chat("What can you tell me about this user?", stream=True)
+
+for chunk in response_stream.iter_text():
+    print(chunk, end="", flush=True)  # Print each chunk as it arrives
+    time.sleep(0.01)  # Optional delay for demonstration
 ```
 
-```javascript NodeJS
+```typescript TypeScript
 // Basic streaming example
-const stream = await honcho.apps.users.sessions.chat(app.id, user.id, session.id, {
-  queries: "What can you tell me about this user?",
-  stream: true
+const responseStream = await user.chat("What can you tell me about this user?", { 
+  stream: true 
 });
 
 // Process the stream
-for await (const chunk of stream) {
+for await (const chunk of responseStream.iter_text()) {
   process.stdout.write(chunk);  // Write to console without newlines
 }
 ```
@@ -120,10 +114,18 @@ import asyncio
 from honcho import Honcho
 
 async def restaurant_recommendation_chat():
+    # Initialize client
     honcho = Honcho()
-    app = await honcho.apps.get_or_create(name="food-app")
-    user = await honcho.apps.users.get_or_create(app_id=app.id, name="food-lover")
-    session = await honcho.apps.users.sessions.create(app_id=app.id, user_id=user.id)
+    
+    # Create peers
+    user = honcho.peer("food-lover")
+    assistant = honcho.peer("restaurant-assistant")
+    
+    # Create session
+    session = honcho.session("food-preferences-session")
+    
+    # Add peers to session
+    await session.add_peers([user, assistant])
     
     # Store multiple user messages about food preferences
     user_messages = [
@@ -133,15 +135,12 @@ async def restaurant_recommendation_chat():
         "I can't handle overly sweet desserts, but love something with dark chocolate."
     ]
     
-    # Store the user's messages in the session
+    # Add the user's messages to the session
+    session_messages = [user.message(message) for message in user_messages]
+    await session.add_messages(session_messages)
+    
+    # Print the user messages
     for message in user_messages:
-        await honcho.apps.users.sessions.messages.create(
-            app_id=app.id,
-            user_id=user.id,
-            session_id=session.id,
-            content=message,
-            is_user=True
-        )
         print(f"User: {message}")
     
     # Ask for restaurant recommendations based on preferences
@@ -149,40 +148,44 @@ async def restaurant_recommendation_chat():
     print("Assistant: ", end="", flush=True)
     full_response = ""
     
-    # Stream the response
-    with honcho.apps.users.sessions.with_streaming_response.stream(
-        app_id=app.id,
-        user_id=user.id,
-        session_id=session.id,
-        queries="Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side."
-    ) as response:
-        for chunk in response.iter_text():
-            print(chunk, end="", flush=True)
-            full_response += chunk
-            await asyncio.sleep(0.01)
+    # Stream the response using the user's peer to get recommendations
+    response_stream = user.chat(
+        "Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side.",
+        stream=True,
+        session_id=session.id
+    )
+    
+    for chunk in response_stream.iter_text():
+        print(chunk, end="", flush=True)
+        full_response += chunk
+        await asyncio.sleep(0.01)
     
     # Store the assistant's complete response
-    await honcho.apps.users.sessions.messages.create(
-        app_id=app.id,
-        user_id=user.id,
-        session_id=session.id,
-        content=full_response,
-        is_user=False
-    )
+    await session.add_messages([
+        assistant.message(full_response)
+    ])
 
 # Run the async function
 if __name__ == "__main__":
     asyncio.run(restaurant_recommendation_chat())
 ```
 
-```javascript NodeJS
-import Honcho from 'honcho-ai';
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
 
 async function restaurantRecommendationChat() {
+  // Initialize client
   const honcho = new Honcho();
-  const app = await honcho.apps.getOrCreate('food-app');
-  const user = await honcho.apps.users.getOrCreate(app.id, 'food-lover');
-  const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
+  
+  // Create peers
+  const user = honcho.peer('food-lover');
+  const assistant = honcho.peer('restaurant-assistant');
+  
+  // Create session
+  const session = honcho.session('food-preferences-session');
+  
+  // Add peers to session
+  await session.addPeers([user, assistant]);
   
   // Store multiple user messages about food preferences
   const userMessages = [
@@ -192,12 +195,12 @@ async function restaurantRecommendationChat() {
     "I can't handle overly sweet desserts, but love something with dark chocolate."
   ];
   
-  // Store the user's messages in the session
+  // Add the user's messages to the session
+  const sessionMessages = userMessages.map(message => user.message(message));
+  await session.addMessages(sessionMessages);
+  
+  // Print the user messages
   for (const message of userMessages) {
-    await honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
-      content: message,
-      is_user: true
-    });
     console.log(`User: ${message}`);
   }
   
@@ -206,22 +209,24 @@ async function restaurantRecommendationChat() {
   process.stdout.write("Assistant: ");
   let fullResponse = "";
   
-  // Stream the response
-  const stream = await honcho.apps.users.sessions.chat(app.id, user.id, session.id, {
-    queries: "Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side.",
-    stream: true
-  });
+  // Stream the response using the user's peer to get recommendations
+  const responseStream = await user.chat(
+    "Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side.",
+    { 
+      stream: true,
+      sessionId: session.id 
+    }
+  );
   
-  for await (const chunk of stream) {
+  for await (const chunk of responseStream.iter_text()) {
     process.stdout.write(chunk);
     fullResponse += chunk;
   }
   
   // Store the assistant's complete response
-  await honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
-    content: fullResponse,
-    is_user: false
-  });
+  await session.addMessages([
+    assistant.message(fullResponse)
+  ]);
 }
 
 restaurantRecommendationChat().catch(console.error);

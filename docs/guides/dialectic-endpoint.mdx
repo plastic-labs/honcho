@@ -12,9 +12,9 @@ On every message written to a session, an automatic callback is run that will re
 
 ## Dialectic Endpoint
 
-You can query the automatically derived facts in the `honcho` collection directly, or you can offload this task to our agent and use the Dialectic endpoint. This endpoint allows you to define logic enabling your agent to talk to our agent that automatically retrieves and synthesizes facts from the collection. 
+The Dialectic endpoint allows you to define logic enabling your agent to talk to our agent that automatically retrieves and synthesizes facts from the collection. You can use the response as part of your reasoning process for your agent–add it to your next prompt to inject critical context about the user.
 
-This chat interface is exposed via the `chat` endpoint. It accepts a string or a list of strings. Below is some example code on how this works. 
+This chat interface is exposed via the `peer.chat()` endpoint. It accepts a string or a list of strings. Below is some example code on how this works. 
 
 ## Prerequisites
 
@@ -22,33 +22,29 @@ This chat interface is exposed via the `chat` endpoint. It accepts a string or a
 ```python Python
 from honcho import Honcho
 
+# use the default workspace
 honcho = Honcho()
 
-# Create or get an existing App
-app = honcho.apps.get_or_create(name="demo-app")
+# get/create a peer
+peer = honcho.peer("demo-user")
 
-# create or get user
-user = honcho.apps.users.get_or_create(app_id=app.id, name="demo-user")
-
-# create a new session
-session = honcho.apps.users.session.create(app_id=app.id, user_id=user.id)
+# get/create a session
+session = honcho.session("demo-session")
 
 # (assuming some messages have been written to Honcho for the deriver to use)
 ```
 
-```javascript NodeJS
-import Honcho from 'honcho-ai';
+```typescript TypeScript
+import Honcho from '@honcho-ai/sdk';
 
-const honcho = new Honcho(); // defaults to demo server
+// use the default workspace
+const honcho = new Honcho();
 
-// Create or get an existing App
-const app = await honcho.apps.getOrCreate('demo-app');
+// get/create a peer
+const peer = await honcho.peer('demo-user');
 
-// create or get user
-const user = await honcho.apps.users.getOrCreate(app.id, 'demo-user');
-
-// create a new session (need to send empty body because it's a POST request)
-const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
+// get/create a session
+const session = await honcho.session('demo-session');
 
 // (assuming some messages have been written to Honcho for the deriver to use)
 ```
@@ -58,14 +54,12 @@ const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
 <CodeGroup>
 ```python Python
 query = "What is the user's favorite way of completing the task?"
-answer = honcho.apps.users.session.chat(app_id=app.id, user_id=user.id, session_id=session.id, queries=query)
+answer = peer.chat(query)
 ```
 
-```javascript NodeJS
-const query = 'What is the user's favorite way of completing the task?'
-const DialecticResponse = await honcho.apps.users.sessions.chat(app.id, user.id, session.id, {
-    queries: query,
-});
+```typescript TypeScript
+const query = "What is the user's favorite way of completing the task?"
+const dialecticResponse = await peer.chat(query)
 ```
 </CodeGroup>
 
@@ -73,20 +67,20 @@ const DialecticResponse = await honcho.apps.users.sessions.chat(app.id, user.id,
 
 <CodeGroup>
 ```python Python
-with honcho.apps.users.sessions.with_streaming_response.stream(
-        app_id=app.id,
-        user_id=user.id,
-        session_id=session.id,
-        queries="What do we know about the user",
-    ) as response:
-        print(response)
-        for line in response.iter_text():
-            print(line)
-            time.sleep(0.025)
+query = "What do we know about the user?"
+response_stream = peer.chat(query, stream=True)
+
+for line in response_stream.iter_text():
+    print(line)
 ```
 
-```javascript NodeJS
+```typescript TypeScript
+const query = "What do we know about the user?"
+const responseStream = await peer.chat(query, { stream: true })
 
+for await (const line of responseStream.iter_text()) {
+    console.log(line)
+}
 ```
 </CodeGroup>
 
