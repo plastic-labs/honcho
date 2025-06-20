@@ -8,9 +8,9 @@ logger = logging.getLogger(__name__)
 
 class CollectionEmbeddingStore:
     def __init__(self, workspace_name: str, peer_name: str, collection_name: str):
-        self.workspace_name = workspace_name
-        self.peer_name = peer_name
-        self.collection_name = collection_name
+        self.workspace_name: str = workspace_name
+        self.peer_name: str = peer_name
+        self.collection_name: str = collection_name
 
     async def save_facts(
         self,

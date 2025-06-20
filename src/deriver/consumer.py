@@ -3,7 +3,7 @@ import os
 from typing import Any, Literal
 
 import sentry_sdk
-from langfuse.decorators import observe
+from langfuse.decorators import observe  # pyright: ignore
 from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession

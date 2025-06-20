@@ -95,7 +95,7 @@ async def get_summary(
         # If session doesn't exist, there's no summary to retrieve
         return None
 
-    summaries = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
     if not summaries or label not in summaries:
         return None
     return summaries[label]

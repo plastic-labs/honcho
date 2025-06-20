@@ -3,13 +3,13 @@ Utility functions for interacting with various language model APIs.
 """
 
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Optional, Protocol
 
 import sentry_sdk
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import types as genai_types
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 
 # from openai import AsyncOpenAI
 from langfuse.openai import AsyncOpenAI
@@ -78,11 +78,11 @@ class ModelClient:
             api_key: The API key to use, or None to read from environment variables
             base_url: Custom base URL for the API endpoints (used for OpenRouter)
         """
-        self.provider = provider
-        self.model = model or DEFAULT_MODELS[provider]
-        self.base_url = base_url
-        self.openai_client = None
-        self.gemini_client = None
+        self.provider: ModelProvider = provider
+        self.model: str = model or DEFAULT_MODELS[provider]
+        self.base_url: str | None = base_url
+        self.openai_client: AsyncOpenAI | None = None
+        self.gemini_client: genai.Client | None = None
 
         # Setup provider-specific clients
         if provider == ModelProvider.ANTHROPIC:

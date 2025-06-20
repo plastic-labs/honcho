@@ -84,10 +84,11 @@ reportIgnoreCommentWithoutRule = false
 # comment/uncomment these as desired:
 reportMissingTypeStubs = false
 reportUnusedCallResult = false
-reportAny = false
+# reportAny = false
 reportExplicitAny = false
-reportImplicitStringConcatenation = false
-reportUnreachable = false
+allowedUntypedLibraries = ["langfuse", "langfuse.decorators"]
+# reportImplicitStringConcatenation = false
+# reportUnreachable = false
 # reportPrivateImportUsage = false
 # reportPrivateLocalImportUsage = false
 # reportMissingImports = false

@@ -8,17 +8,20 @@ import sentry_sdk
 from anthropic import MessageStreamManager
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
+from dotenv import load_dotenv
+from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
+from src.deriver.tom.single_prompt import get_tom_inference_single_prompt
 from src.utils import history, parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
+from src.utils.types import track
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -42,9 +45,11 @@ class Dialectic:
             provider=ModelProvider(settings.LLM.DIALECTIC_PROVIDER),
             model=settings.LLM.DIALECTIC_MODEL,
         )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        self.system_prompt: str = (
+            """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+        )
 
-    @ai_track("Dialectic Call")
+    @track("Dialectic Call")
     @observe()
     async def call(self):
         with sentry_sdk.start_transaction(
@@ -84,7 +89,7 @@ class Dialectic:
             logger.debug(f"call() completed in {total_time:.2f}s")
             return [{"text": response}]
 
-    @ai_track("Dialectic Call")
+    @track("Dialectic Call")
     @observe()
     async def stream(self):
         with sentry_sdk.start_transaction(
