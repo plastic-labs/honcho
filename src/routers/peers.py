@@ -180,28 +180,26 @@ async def chat(
             workspace_id, peer_id, options.session_id, options.queries, options.stream
         )
 
-    else:
+    async def parse_stream():
+        try:
+            stream = await agent.chat(
+                workspace_id,
+                peer_id,
+                options.session_id,
+                options.queries,
+                stream=True,
+            )
+            if isinstance(stream, AsyncMessageStreamManager):
+                async with stream as stream_manager:
+                    async for text in stream_manager.text_stream:
+                        yield text
+        except Exception as e:
+            logger.error(f"Error in stream: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
-        async def parse_stream():
-            try:
-                stream = await agent.chat(
-                    workspace_id,
-                    peer_id,
-                    options.session_id,
-                    options.queries,
-                    stream=True,
-                )
-                if type(stream) is AsyncMessageStreamManager:
-                    async with stream as stream_manager:
-                        async for text in stream_manager.text_stream:
-                            yield text
-            except Exception as e:
-                logger.error(f"Error in stream: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e)) from e
-
-        return StreamingResponse(
-            content=parse_stream(), media_type="text/event-stream", status_code=200
-        )
+    return StreamingResponse(
+        content=parse_stream(), media_type="text/event-stream", status_code=200
+    )
 
 
 @router.post(
