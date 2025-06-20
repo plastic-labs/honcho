@@ -42,7 +42,7 @@ from honcho import Honcho
 client = Honcho()
 ```
 
-```javascript NodeJS
+```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
 // Initialize client (using the default workspace and demo environment)
 const client = new Honcho();
@@ -58,7 +58,7 @@ alice = client.peer("alice")
 bob = client.peer("bob")
 ```
 
-```javascript NodeJS
+```typescript TypeScript
 const alice = client.peer("alice")
 const bob = client.peer("bob")
 ```
@@ -75,7 +75,7 @@ session = client.session("session_1")
 session.add_peers([alice, bob])
 ```
 
-```javascript NodeJS
+```typescript TypeScript
 const session = client.session("session_1")
 session.addPeers([alice, bob])
 ```
@@ -97,7 +97,7 @@ session.add_messages(
 )
 ```
 
-```javascript NodeJS
+```typescript TypeScript
 session.addMessages([
     alice.message("Hi Bob, how are you?"),
     bob.message("I'm good, thank you!"),
@@ -116,7 +116,7 @@ You can then chat with Honcho to get a dialectic response, which is informed by 
 response = alice.chat("What is Bob doing after work?")
 ```
 
-```javascript NodeJS
+```typescript TypeScript
 const response = await alice.chat("What is Bob doing after work?");
 ```
 

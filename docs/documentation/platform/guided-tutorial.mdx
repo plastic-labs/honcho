@@ -9,10 +9,10 @@ This comprehensive tutorial will walk you through building a complete AI applica
 ## What We'll Build
 
 By the end of this tutorial, you'll have created a personal AI assistant that:
-- Remembers user preferences and facts
-- Maintains conversation context across sessions
-- Provides personalized responses based on history
-- Stores and retrieves relevant memories
+- Learns about users through conversation and remembers facts across sessions
+- Automatically formats conversation context for any LLM (OpenAI, Anthropic, etc.)
+- Answers questions about what it knows using natural language queries
+- Handles multi-party conversations with theory-of-mind modeling
 
 ## Prerequisites
 
@@ -40,6 +40,7 @@ Create a `.env` file in your project directory:
 
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
+HONCHO_API_KEY=your_honcho_api_key_here
 ```
 
 ### Initialize Honcho
@@ -54,49 +55,34 @@ import openai
 load_dotenv()
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize Honcho
-honcho = Honcho(app_name="personal-assistant-tutorial")
-honcho.initialize()
-
-print("✅ Honcho initialized successfully!")
+# Initialize Honcho with your app workspace
+honcho = Honcho(workspace_id="personal-assistant-tutorial")
 ```
 
-## Part 2: User Management
+## Part 2: Peer Management
 
-### Create and Manage Users
-
-```python
-def get_or_create_user(username):
-    """Get existing user or create a new one"""
-    try:
-        user = honcho.get_user_by_name(username)
-        print(f"Welcome back, {username}!")
-    except:
-        user = honcho.create_user(username)
-        print(f"New user created: {username}")
-    
-    return user
-
-# Test it out
-user = get_or_create_user("alice")
-print(f"User ID: {user.id}")
-```
-
-### User Collections for Memory
+### Create and Manage Peers
 
 ```python
-def setup_user_memory(user):
-    """Setup memory collection for the user"""
-    try:
-        collection = user.get_collection("personal_facts")
-    except:
-        collection = user.create_collection("personal_facts")
-        print("Created personal facts collection")
-    
-    return collection
+def get_user_peer(username):
+    """Get or create a peer representing a user"""
+    # Peers are created lazily - no API call until used
+    user_peer = honcho.peer(f"user-{username}")
+    print(f"Created peer for user: {username}")
+    return user_peer
 
-# Setup memory for our user
-facts_collection = setup_user_memory(user)
+def get_assistant_peer():
+    """Get or create the assistant peer"""
+    assistant_peer = honcho.peer("assistant")
+    print("Created assistant peer")
+    return assistant_peer
+
+# Create peers for our conversation
+alice = get_user_peer("alice")
+assistant = get_assistant_peer()
+
+print(f"User peer ID: {alice.id}")
+print(f"Assistant peer ID: {assistant.id}")
 ```
 
 ## Part 3: Session Management
@@ -104,49 +90,69 @@ facts_collection = setup_user_memory(user)
 ### Create Conversation Sessions
 
 ```python
-def start_new_session(user, session_name=None):
+def start_new_session(session_name=None):
     """Start a new conversation session"""
-    metadata = {"session_name": session_name} if session_name else {}
-    session = user.create_session(metadata=metadata)
+    # Create session with descriptive ID
+    session_id = session_name or f"chat-{int(time.time())}"
+    session = honcho.session(session_id)
+    
+    # Add both peers to the session
+    session.add_peers([alice, assistant])
+    
     print(f"Started new session: {session.id}")
     return session
 
+import time
 # Start a session
-session = start_new_session(user, "Daily Check-in")
+session = start_new_session("daily-checkin")
 ```
 
 ### Message Handling
 
 ```python
-def add_message(session, content, is_user=True):
-    """Add a message to the session"""
-    message = session.create_message(
-        content=content,
-        is_user=is_user,
-        metadata={"timestamp": str(datetime.now())}
-    )
-    return message
+def add_conversation_turn(session, user_message, assistant_response=None):
+    """Add a conversation turn to the session"""
+    messages_to_add = [alice.message(user_message)]
+    
+    if assistant_response:
+        messages_to_add.append(assistant.message(assistant_response))
+    
+    session.add_messages(messages_to_add)
+    print(f"Added {len(messages_to_add)} messages to session")
 
 # Add user message
-user_message = add_message(session, "Hi! I'm working on a Python project today.", is_user=True)
+add_conversation_turn(session, "Hi! I'm working on a Python project today.")
 ```
 
-## Part 4: Fact Extraction and Storage
+## Part 4: Fact Learning and Memory
 
-### Extract Facts from Conversations
+### Store Information in Peer Representations
 
 ```python
-def extract_facts(user_input):
-    """Extract facts about the user from their input"""
+def teach_assistant_about_user(assistant_peer, user_peer, facts):
+    """Add facts about the user to the assistant's knowledge"""
+    # Format facts as messages to build the assistant's representation
+    fact_messages = []
+    for fact in facts:
+        fact_messages.append(assistant_peer.message(f"I learned that {user_peer.id} {fact}"))
+    
+    # Add these to the assistant's global knowledge
+    assistant_peer.add_messages(fact_messages)
+    print(f"Taught assistant {len(facts)} facts about {user_peer.id}")
+
+def extract_facts_from_message(user_message):
+    """Extract facts about the user from their message using LLM"""
     prompt = f"""
     Extract discrete facts about the user from this message:
-    "{user_input}"
+    "{user_message}"
     
-    Return only factual statements, no inferences. Format as a simple list.
+    Return only factual statements about the user, no inferences. 
+    Format as a simple list of facts starting with action verbs or descriptors.
     If no facts can be extracted, return an empty list.
+    Example: "is working on a Python project", "likes morning coffee"
     """
     
-    response = openai.ChatCompletion.create(
+    response = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1
@@ -156,93 +162,71 @@ def extract_facts(user_input):
     
     # Parse facts (simple line-by-line approach)
     facts = [fact.strip("- ").strip() for fact in facts_text.split('\n') if fact.strip()]
-    return facts
+    return [fact for fact in facts if fact and len(fact) > 5]
 
 # Extract and store facts
-facts = extract_facts("Hi! I'm working on a Python project today.")
+user_input = "Hi! I'm working on a Python project today."
+facts = extract_facts_from_message(user_input)
 print(f"Extracted facts: {facts}")
 
-# Store facts in collection
-for fact in facts:
-    if fact:  # Only store non-empty facts
-        facts_collection.create_document(content=fact)
-        print(f"Stored fact: {fact}")
+# Teach the assistant these facts
+if facts:
+    teach_assistant_about_user(assistant, alice, facts)
 ```
 
-## Part 5: Context Retrieval and Response Generation
+## Part 5: LLM Integration with Context
 
-### Retrieve Relevant Context
-
-```python
-def get_relevant_context(collection, query, top_k=5):
-    """Retrieve relevant facts for the current conversation"""
-    try:
-        results = collection.query(query=query, top_k=top_k)
-        return [doc.content for doc in results]
-    except:
-        return []
-
-def get_recent_messages(session, limit=10):
-    """Get recent conversation history"""
-    messages = list(session.get_messages_generator())
-    return messages[-limit:] if messages else []
-
-# Get context for response
-recent_context = get_recent_messages(session)
-relevant_facts = get_relevant_context(facts_collection, "Python project work")
-
-print(f"Recent messages: {len(recent_context)}")
-print(f"Relevant facts: {relevant_facts}")
-```
-
-### Generate Personalized Responses
+### Generate Responses Using Built-in Context
 
 ```python
-def generate_response(user_input, recent_messages, relevant_facts):
-    """Generate a personalized AI response"""
+def generate_response_with_context(session, assistant_peer, user_message):
+    """Generate AI response using Honcho's built-in context management"""
     
-    # Format conversation history
-    conversation_history = ""
-    for msg in recent_messages[-5:]:  # Last 5 messages
-        role = "User" if msg.is_user else "Assistant"
-        conversation_history += f"{role}: {msg.content}\n"
+    # Get formatted conversation context - Honcho handles the complexity!
+    context = session.get_context(tokens=2000)
+    messages = context.to_openai(assistant=assistant_peer)
     
-    # Format facts
-    facts_context = "\n".join([f"- {fact}" for fact in relevant_facts])
+    # Add the current user message
+    messages.append({"role": "user", "content": user_message})
     
-    prompt = f"""
-    You are a helpful personal assistant. Use the conversation history and known facts about the user to provide a personalized response.
-    
-    Known facts about the user:
-    {facts_context}
-    
-    Recent conversation:
-    {conversation_history}
-    
-    User's current message: {user_input}
-    
-    Provide a helpful, personalized response that acknowledges relevant context.
-    """
-    
-    response = openai.ChatCompletion.create(
+    # Call your LLM with the properly formatted context
+    response = openai.chat.completions.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "user", "content": prompt}],
+        messages=messages,
         temperature=0.7
     )
     
     return response.choices[0].message.content
 
-# Generate response
-ai_response = generate_response(
-    "How's my project going?",
-    recent_context,
-    relevant_facts
-)
+# Generate response using built-in context
+user_input = "How's my project going?"
+ai_response = generate_response_with_context(session, assistant, user_input)
 
 print(f"AI Response: {ai_response}")
 
-# Store AI response
-add_message(session, ai_response, is_user=False)
+# Add the complete conversation turn to the session
+add_conversation_turn(session, user_input, ai_response)
+```
+
+### Query Peer Knowledge Directly
+
+```python
+def get_personalized_insight(assistant_peer, user_peer, query):
+    """Query what the assistant knows about a specific user"""
+    # Honcho's chat handles context retrieval automatically
+    response = assistant_peer.chat(
+        f"Based on what I know about {user_peer.id}: {query}",
+        target=user_peer
+    )
+    return response
+
+# Get personalized insights without manual context building
+insight = get_personalized_insight(
+    assistant, 
+    alice, 
+    "What programming projects has this user worked on?"
+)
+print(f"Programming insights: {insight}")
 ```
 
 ## Part 6: Complete Conversation Loop
@@ -250,82 +234,168 @@ add_message(session, ai_response, is_user=False)
 ### Put It All Together
 
 ```python
-def chat_with_assistant(user, message_text):
-    """Complete conversation flow with memory"""
+def chat_with_assistant(user_peer, assistant_peer, message_text, session=None):
+    """Complete conversation flow with memory and personalization"""
     
-    # Get or create session
-    sessions = list(user.get_sessions_generator())
-    if sessions:
-        session = sessions[0]  # Use most recent session
-    else:
-        session = start_new_session(user, "Chat Session")
+    # Use existing session or create new one
+    if not session:
+        session = start_new_session()
     
-    # Add user message
-    add_message(session, message_text, is_user=True)
+    # Extract facts from user message and teach assistant
+    facts = extract_facts_from_message(message_text)
+    if facts:
+        teach_assistant_about_user(assistant_peer, user_peer, facts)
     
-    # Extract and store facts
-    facts = extract_facts(message_text)
-    facts_collection = setup_user_memory(user)
+    # Generate response using Honcho's built-in context management
+    ai_response = generate_response_with_context(session, assistant_peer, message_text)
     
-    for fact in facts:
-        if fact and len(fact) > 10:  # Store meaningful facts
-            facts_collection.create_document(content=fact)
-    
-    # Get context and generate response
-    recent_messages = get_recent_messages(session)
-    relevant_facts = get_relevant_context(facts_collection, message_text)
-    
-    ai_response = generate_response(message_text, recent_messages, relevant_facts)
-    
-    # Store AI response
-    add_message(session, ai_response, is_user=False)
+    # Add the conversation turn to session
+    add_conversation_turn(session, message_text, ai_response)
     
     return ai_response
 
 # Test the complete flow
-response = chat_with_assistant(user, "I finished the authentication module for my Python project!")
+response = chat_with_assistant(
+    alice, 
+    assistant, 
+    "I finished the authentication module for my Python project!"
+)
 print(f"Assistant: {response}")
+
+# Continue the conversation
+response2 = chat_with_assistant(
+    alice,
+    assistant,
+    "What should I work on next?",
+    session  # Continue in same session
+)
+print(f"Assistant: {response2}")
 ```
 
 ## Part 7: Advanced Features
 
-### Session Management
+### Multi-Session Memory
 
 ```python
-def list_user_sessions(user):
-    """List all sessions for a user"""
-    sessions = list(user.get_sessions_generator())
-    for session in sessions:
-        messages = list(session.get_messages_generator())
-        print(f"Session {session.id}: {len(messages)} messages")
-        if session.metadata.get("session_name"):
-            print(f"  Name: {session.metadata['session_name']}")
+def query_user_history(assistant_peer, user_peer, query):
+    """Query what the assistant knows about the user across all sessions"""
+    response = assistant_peer.chat(
+        f"Based on everything I know about {user_peer.id}, {query}",
+        target=user_peer
+    )
+    return response
 
-list_user_sessions(user)
+# Query across all conversations
+history_query = query_user_history(
+    assistant, 
+    alice, 
+    "what programming languages and technologies has this user mentioned?"
+)
+print(f"User's programming history: {history_query}")
 ```
 
-### Fact Management
+### Session-Specific Context
 
 ```python
-def search_user_facts(collection, query):
-    """Search through user's stored facts"""
-    results = collection.query(query=query, top_k=10)
-    print(f"Facts related to '{query}':")
-    for doc in results:
-        print(f"  - {doc.content}")
+def query_session_specific(assistant_peer, session, query):
+    """Query what happened in a specific session"""
+    response = assistant_peer.chat(
+        query,
+        session_id=session.id
+    )
+    return response
 
-search_user_facts(facts_collection, "Python")
+# Query about current session
+session_summary = query_session_specific(
+    assistant,
+    session,
+    "What did we discuss in this conversation?"
+)
+print(f"Session summary: {session_summary}")
+```
+
+### Working with Multiple Users
+
+```python
+def create_group_session(user_peers, assistant_peer):
+    """Create a session with multiple users and an assistant"""
+    group_session = honcho.session("group-discussion")
+    
+    # Add all peers to the session
+    all_peers = user_peers + [assistant_peer]
+    group_session.add_peers(all_peers)
+    
+    return group_session
+
+# Create multiple user peers
+bob = honcho.peer("user-bob")
+charlie = honcho.peer("user-charlie")
+
+# Create group session
+group_session = create_group_session([alice, bob, charlie], assistant)
+
+# Add group conversation
+group_session.add_messages([
+    alice.message("I think we should use Python for the backend"),
+    bob.message("I prefer TypeScript, it's more type-safe"),
+    charlie.message("What about performance considerations?"),
+    assistant.message("Both are good choices. Let me help you compare them based on your requirements.")
+])
+
+# Query different perspectives
+alice_view = assistant.chat(
+    "What does alice think about the technology discussion?",
+    target=alice,
+    session_id=group_session.id
+)
+print(f"Alice's perspective: {alice_view}")
+```
+
+## Part 8: Advanced Features
+
+### Direct Knowledge Queries
+
+```python
+# Instead of complex manual context building, use peer.chat() directly
+response = assistant.chat("What programming languages does alice prefer and why?", target=alice)
+print(f"Alice's language preferences: {response}")
+
+# Query session-specific knowledge
+session_insights = assistant.chat(
+    "What was the main topic of discussion in this session?", 
+    session_id=session.id
+)
+print(f"Session insights: {session_insights}")
+```
+
+### Alternative LLM Formats
+
+```python
+# Honcho supports multiple LLM formats out of the box
+def use_anthropic_format(session, assistant_peer, user_message):
+    """Example using Anthropic's message format"""
+    context = session.get_context(tokens=1500)
+    messages = context.to_anthropic(assistant=assistant_peer)
+    
+    # Now you can use these messages with Anthropic's API
+    # anthropic_response = anthropic.messages.create(...)
+    
+    return messages
+
+# Get Anthropic-formatted messages
+anthropic_messages = use_anthropic_format(session, assistant, "Hello!")
+print(f"Formatted for Anthropic: {len(anthropic_messages)} messages")
 ```
 
 ## Next Steps
 
-Congratulations! You've built a complete personal AI assistant with Honcho. Here are some ideas to extend it further:
+Congratulations! You've built a complete personal AI assistant with Honcho that automatically handles memory, context, and LLM integration. Here are some ideas to extend it further:
 
-1. **Web Interface**: Build a web UI using Flask/FastAPI
-2. **Multiple Collections**: Organize facts by category (work, personal, projects)
-3. **Advanced Fact Extraction**: Use more sophisticated NLP techniques
-4. **Conversation Summaries**: Generate session summaries for long conversations
-5. **Integration**: Connect with calendar, email, or other data sources
+1. **Web Interface**: Build a web UI using Flask/FastAPI - the SDK makes it easy to integrate
+2. **Streaming Responses**: Use `peer.chat(..., stream=True)` for real-time conversations
+3. **Multi-Modal Support**: Integrate with vision models while leveraging Honcho's memory
+4. **Advanced Theory-of-Mind**: Explore peer modeling with `observe_others=False` configurations
+5. **Production Deployment**: Scale with workspaces, metadata, and batch operations
 
 ## Troubleshooting
 
@@ -334,18 +404,22 @@ Congratulations! You've built a complete personal AI assistant with Honcho. Here
 **"No module named 'honcho'"**
 - Make sure you installed the package: `pip install honcho-ai`
 
-**API connection errors**
-- Check your internet connection
-- Verify you're using the correct base URL
+**API authentication errors**
+- Check your `HONCHO_API_KEY` environment variable
+- Verify your API key is valid
 
-**Empty fact extraction**
-- Try adjusting the extraction prompt
-- Use different temperature settings
-- Ensure meaningful input text
+**Empty context or knowledge queries**
+- Ensure you've added messages to peers before querying
+- Check that peers are added to sessions before conversation
+- Verify session has messages before getting context
+
+**Rate limiting or timeout issues**
+- The SDK handles retries automatically
+- Consider adding delays between large batch operations
 
 ## Resources
 
-- [Full Source Code](https://github.com/plastic-labs/honcho/tree/main/examples/tutorial)
+- [SDK Reference](/documentation/platform/sdk)
 - [API Reference](/api-reference/introduction)
 - [More Examples](/guides/overview)
 - [Discord Community](http://discord.gg/plasticlabs) 
