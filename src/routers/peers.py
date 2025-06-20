@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 
+from anthropic import AsyncMessageStreamManager
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -9,6 +10,8 @@ from fastapi import (
     Path,
     Query,
 )
+from fastapi.exceptions import HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
 
@@ -172,10 +175,33 @@ async def chat(
         db, workspace_name=workspace_id, peers=[schemas.PeerCreate(name=peer_id)]
     )
 
-    response = await agent.chat(
-        workspace_id, peer_id, options.session_id, options.queries, options.stream
-    )
-    return response
+    if not options.stream:
+        return await agent.chat(
+            workspace_id, peer_id, options.session_id, options.queries, options.stream
+        )
+
+    else:
+
+        async def parse_stream():
+            try:
+                stream = await agent.chat(
+                    workspace_id,
+                    peer_id,
+                    options.session_id,
+                    options.queries,
+                    stream=True,
+                )
+                if type(stream) is AsyncMessageStreamManager:
+                    async with stream as stream_manager:
+                        async for text in stream_manager.text_stream:
+                            yield text
+            except Exception as e:
+                logger.error(f"Error in stream: {str(e)}")
+                raise HTTPException(status_code=500, detail=str(e)) from e
+
+        return StreamingResponse(
+            content=parse_stream(), media_type="text/event-stream", status_code=200
+        )
 
 
 @router.post(
