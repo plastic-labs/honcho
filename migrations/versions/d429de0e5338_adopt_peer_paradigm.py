@@ -589,6 +589,7 @@ def update_messages_table(schema: str, inspector) -> None:
     op.create_index(
         "ix_messages_workspace_name", "messages", ["workspace_name"], schema=schema
     )
+
     # Create full text search index on content column
     op.create_index(
         "idx_messages_content_gin",
@@ -1531,6 +1532,7 @@ def restore_messages_table(schema: str, inspector) -> None:
         op.drop_index(
             "ix_messages_workspace_name", table_name="messages", schema=schema
         )
+
     # Drop full text search index
     if index_exists("messages", "idx_messages_content_gin", inspector):
         op.drop_index("idx_messages_content_gin", table_name="messages", schema=schema)
