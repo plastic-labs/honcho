@@ -94,7 +94,7 @@ async def get_summary(
         # If session doesn't exist, there's no summary to retrieve
         return None
 
-    summaries = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
     if not summaries or label not in summaries:
         return None
     return summaries[label]
@@ -202,9 +202,11 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
         # Fallback to a basic summary in case of error
         # Do not save this failed summary to the session metadata.
         return Summary(
-            content=f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
-            if messages
-            else "No messages to summarize!",
+            content=(
+                f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+                if messages
+                else "No messages to summarize!"
+            ),
             message_count=0,
             summary_type=summary_type.value,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),

@@ -3,8 +3,8 @@ from typing import Any
 
 import sentry_sdk
 from langfuse.decorators import langfuse_context, observe
-from sentry_sdk.ai.monitoring import ai_track
 
+from src.utils.types import track
 from src.utils.model_client import ModelClient, ModelProvider
 
 logger = logging.getLogger(__name__)
@@ -101,12 +101,11 @@ UPDATES:
 </representation>"""
 
 
-@ai_track("Tom Inference")
+@track("Tom Inference")
 @observe()
 async def get_tom_inference_single_prompt(
     chat_history: str,
     user_representation: str | None = None,
-    **kwargs,
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
         # Create a new model client
@@ -148,7 +147,7 @@ async def get_tom_inference_single_prompt(
         return response
 
 
-@ai_track("User Representation")
+@track("User Representation")
 @observe()
 async def get_user_representation_single_prompt(
     chat_history: str,

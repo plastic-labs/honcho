@@ -11,7 +11,7 @@ from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 
 # from openai import AsyncOpenAI
 from langfuse.openai import AsyncOpenAI
@@ -78,15 +78,15 @@ class ModelClient:
             api_key: The API key to use, or None to read from environment variables
             base_url: Custom base URL for the API endpoints (used for OpenRouter)
         """
-        self.provider = provider
-        self.model = model or DEFAULT_MODELS[provider]
-        self.base_url = base_url
-        self.openai_client = None
-        self.gemini_client = None
+        self.provider: ModelProvider = provider
+        self.model: str = model or DEFAULT_MODELS[provider]
+        self.base_url: str | None = base_url
+        self.openai_client: AsyncOpenAI | None = None
+        self.gemini_client: genai.Client | None = None
 
         # Setup provider-specific clients
         if provider == ModelProvider.ANTHROPIC:
-            self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+            self.api_key: str | None = api_key or os.getenv("ANTHROPIC_API_KEY")
             if not self.api_key:
                 raise ValueError("Anthropic API key is required")
             self.client = AsyncAnthropic(api_key=self.api_key)
