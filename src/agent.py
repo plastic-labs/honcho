@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 import sentry_sdk
 from anthropic import MessageStreamManager
@@ -445,7 +445,7 @@ async def generate_user_representation(
     tom_inference: str,
     facts: list[str],
     db: AsyncSession,
-    message_id: Optional[str] = None,
+    message_id: str | None = None,
     with_inference: bool = False,
 ) -> str:
     """

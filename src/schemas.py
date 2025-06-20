@@ -1,6 +1,6 @@
 # pyright: reportMissingTypeArgument=false
 import datetime
-from typing import Annotated, Optional
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -78,7 +78,7 @@ class PeerRepresentationGet(BaseModel):
     session_id: str = Field(
         ..., description="Get the working representation within this session"
     )
-    target: Optional[str] = Field(
+    target: str | None = Field(
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
     )
@@ -199,10 +199,10 @@ class DocumentUpdate(DocumentBase):
 
 
 class DialecticOptions(BaseModel):
-    session_id: Optional[str] = Field(
+    session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"
     )
-    target: Optional[str] = Field(
+    target: str | None = Field(
         None,
         description="Optional peer to get the representation for, from the perspective of this peer",
     )

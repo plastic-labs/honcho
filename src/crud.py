@@ -1,13 +1,7 @@
 import os
 from collections.abc import Sequence
 from logging import getLogger
-from sqlalchemy.sql.selectable import Select
-from sqlalchemy.sql.selectable import Select
-from sqlalchemy.sql.selectable import Select
-from src.models import Session
-from sqlalchemy.sql.selectable import Select
-from src.models import Workspace
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -15,9 +9,11 @@ from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import Select
 from sqlalchemy.types import BigInteger
 
 from src.config import settings
+from src.models import Session, Workspace
 
 from . import models, schemas
 from .exceptions import (
@@ -546,7 +542,7 @@ async def clone_session(
     db: AsyncSession,
     workspace_name: str,
     original_session_name: str,
-    cutoff_message_id: Optional[str] = None,
+    cutoff_message_id: str | None = None,
 ) -> models.Session:
     """
     Clone a session and its messages. If cutoff_message_id is provided,
@@ -994,8 +990,8 @@ async def search(
     query: str,
     *,
     workspace_name: str,
-    session_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
+    session_name: str | None = None,
+    peer_name: str | None = None,
 ) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
@@ -1344,7 +1340,7 @@ async def get_messages_id_range(
     session_name: str | None,
     peer_name: str | None,
     start_id: int = 0,
-    end_id: Optional[int] = None,
+    end_id: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session or peer by primary key ID range.
@@ -1418,7 +1414,7 @@ async def get_message(
     workspace_name: str,
     session_name: str,
     message_id: str,
-) -> Optional[models.Message]:
+) -> models.Message | None:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1558,7 +1554,7 @@ async def create_document(
     workspace_name: str,
     peer_name: str,
     collection_name: str,
-    duplicate_threshold: Optional[float] = None,
+    duplicate_threshold: float | None = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.

@@ -2,7 +2,6 @@
 Custom exceptions for the Honcho application.
 """
 
-from typing import Optional
 
 
 class HonchoException(Exception):
@@ -11,7 +10,7 @@ class HonchoException(Exception):
     status_code = 500
     detail = "An unexpected error occurred"
 
-    def __init__(self, detail: Optional[str] = None, status_code: Optional[int] = None):
+    def __init__(self, detail: str | None = None, status_code: int | None = None):
         self.detail = detail or self.detail
         self.status_code = status_code or self.status_code
         super().__init__(self.detail)

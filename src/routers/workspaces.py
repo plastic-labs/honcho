@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from fastapi_pagination import Page
@@ -53,7 +52,7 @@ async def get_or_create_workspace(
     dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_all_workspaces(
-    options: Optional[schemas.WorkspaceGet] = Body(
+    options: schemas.WorkspaceGet | None = Body(
         None, description="Filtering and pagination options for the workspaces list"
     ),
     db=db,

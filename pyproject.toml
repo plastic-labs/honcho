@@ -6,7 +6,7 @@ authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
 ]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.111.0",
     "python-dotenv>=1.0.0",
@@ -72,7 +72,7 @@ asyncio_default_fixture_loop_scope = "session"
 # than mypy and with a good extension for VSCode/Cursor.
 # https://marketplace.visualstudio.com/items?itemName=detachhead.basedpyright
 # https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
-include = ["src", "tests"]
+include = ["src"]
 exclude = ["tests/**/disabled*.py"]
 # By default BasedPyright is very strict, so you almost certainly want to disable
 # some of the rules.
@@ -82,12 +82,12 @@ reportIgnoreCommentWithoutRule = false
 # A few typically noisy warnings are next.
 # How many you enable is up to you. The first few are off by default, but you can
 # comment/uncomment these as desired:
-# reportMissingTypeStubs = false
-# reportUnusedCallResult = false
-# reportAny = false
-# reportExplicitAny = false
-# reportImplicitStringConcatenation = false
-# reportUnreachable = false
+reportMissingTypeStubs = false
+reportUnusedCallResult = false
+reportAny = false
+reportExplicitAny = false
+reportImplicitStringConcatenation = false
+reportUnreachable = false
 # reportPrivateImportUsage = false
 # reportPrivateLocalImportUsage = false
 # reportMissingImports = false

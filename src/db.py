@@ -1,5 +1,6 @@
 import contextvars
 from typing import Optional
+import os
 
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -11,7 +12,7 @@ from src.config import settings
 connect_args = {"prepare_threshold": None}
 
 # Context variable to store request context
-request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_context", default=None
 )
 

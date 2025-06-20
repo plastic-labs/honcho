@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
@@ -26,8 +26,8 @@ router = APIRouter(
 
 def create_processed_payload(
     message: dict[str, Any],
-    sender_name: Optional[str],
-    target_name: Optional[str],
+    sender_name: str | None,
+    target_name: str | None,
     task_type: str,
 ) -> dict[str, Any]:
     """
@@ -310,10 +310,10 @@ async def create_messages_for_session(
 async def get_messages(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    options: Optional[schemas.MessageGet] = Body(
+    options: schemas.MessageGet | None = Body(
         None, description="Filtering options for the messages list"
     ),
-    reverse: Optional[bool] = Query(
+    reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
     db=db,
