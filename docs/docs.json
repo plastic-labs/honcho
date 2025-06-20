@@ -9,7 +9,12 @@
   },
   "favicon": "/favicon.svg",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude"]
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ]
   },
   "navigation": {
     "tabs": [
@@ -20,8 +25,7 @@
             "group": "Introduction",
             "pages": [
               "documentation/introduction/what-is-honcho",
-              "documentation/introduction/quickstart",
-              "documentation/introduction/faq"
+              "documentation/introduction/quickstart"
             ]
           },
           {
@@ -51,19 +55,29 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["guides/overview"]
+            "pages": [
+              "guides/overview"
+            ]
           },
           {
             "group": "Application Interfaces",
-            "pages": ["guides/discord"]
+            "pages": [
+              "guides/discord"
+            ]
           },
           {
             "group": "Personal Memory",
-            "pages": ["guides/dialectic-endpoint", "guides/get-context", "guides/search"]
+            "pages": [
+              "guides/dialectic-endpoint",
+              "guides/get-context",
+              "guides/search"
+            ]
           },
           {
             "group": "Streaming Responses",
-            "pages": ["guides/streaming-response"]
+            "pages": [
+              "guides/streaming-response"
+            ]
           }
         ]
       },
@@ -72,7 +86,9 @@
         "groups": [
           {
             "group": "API Documentation",
-            "pages": ["api-reference/introduction"]
+            "pages": [
+              "api-reference/introduction"
+            ]
           },
           {
             "group": "workspaces",
@@ -126,7 +142,9 @@
           },
           {
             "group": "keys",
-            "pages": ["api-reference/endpoint/keys/create-key"]
+            "pages": [
+              "api-reference/endpoint/keys/create-key"
+            ]
           }
         ]
       },
@@ -150,7 +168,9 @@
         "groups": [
           {
             "group": "Changelog",
-            "pages": ["changelog/introduction"]
+            "pages": [
+              "changelog/introduction"
+            ]
           }
         ]
       }
@@ -180,7 +200,9 @@
     "dark": "/logo/honcho-light.svg"
   },
   "api": {
-    "openapi": ["openapi.documented.yml"]
+    "openapi": [
+      "openapi.documented.yml"
+    ]
   },
   "navbar": {
     "primary": {
@@ -201,4 +223,3 @@
     }
   }
 }
-
