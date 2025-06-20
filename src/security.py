@@ -1,7 +1,7 @@
 import datetime
 import logging
 import os
-from typing import Annotated, Optional
+from typing import Annotated
 
 import jwt
 from fastapi import Depends, Request
@@ -66,11 +66,11 @@ class JWTParams(BaseModel):
     """
 
     t: str = datetime.datetime.now().isoformat()
-    exp: Optional[str] = None
-    ad: Optional[bool] = None
-    w: Optional[str] = None
-    p: Optional[str] = None
-    s: Optional[str] = None
+    exp: str | None = None
+    ad: bool | None = None
+    w: str | None = None
+    p: str | None = None
+    s: str | None = None
 
 
 def create_admin_jwt() -> str:
@@ -118,10 +118,10 @@ async def verify_jwt(token: str) -> JWTParams:
 
 
 def require_auth(
-    admin: Optional[bool] = None,
-    workspace_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-    session_name: Optional[str] = None,
+    admin: bool | None = None,
+    workspace_name: str | None = None,
+    peer_name: str | None = None,
+    session_name: str | None = None,
 ):
     """
     Generate a dependency that requires authentication for the given parameters.
@@ -163,10 +163,10 @@ def require_auth(
 
 async def auth(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    admin: Optional[bool] = None,
-    workspace_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-    session_name: Optional[str] = None,
+    admin: bool | None = None,
+    workspace_name: str | None = None,
+    peer_name: str | None = None,
+    session_name: str | None = None,
 ) -> JWTParams:
     """Authenticate the given JWT and return the decoded parameters."""
     if not USE_AUTH:

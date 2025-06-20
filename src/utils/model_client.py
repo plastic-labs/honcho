@@ -4,7 +4,7 @@ Utility functions for interacting with various language model APIs.
 
 import os
 from enum import Enum
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import sentry_sdk
 from anthropic import AsyncAnthropic
@@ -65,9 +65,9 @@ class ModelClient:
     def __init__(
         self,
         provider: ModelProvider = ModelProvider.ANTHROPIC,
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ):
         """
         Initialize the model client.
@@ -124,10 +124,10 @@ class ModelClient:
     async def generate(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> str:
         """
@@ -176,10 +176,10 @@ class ModelClient:
     async def _generate_anthropic(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> str:
         """Generate a response using the Anthropic API."""
@@ -227,7 +227,7 @@ class ModelClient:
     async def _generate_openai(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
@@ -263,10 +263,10 @@ class ModelClient:
     async def stream(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> Any:
         """
@@ -315,10 +315,10 @@ class ModelClient:
     async def _stream_anthropic(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> Any:
         """Stream text using Anthropic API."""
@@ -354,7 +354,7 @@ class ModelClient:
     async def _stream_openai(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> Any:
@@ -387,7 +387,7 @@ class ModelClient:
     async def _generate_gemini(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
@@ -468,7 +468,7 @@ class ModelClient:
     async def _stream_gemini(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> Any:

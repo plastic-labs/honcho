@@ -1,7 +1,6 @@
 import json
 import logging
 import time
-from typing import Optional
 
 from langfuse.decorators import observe
 from sentry_sdk.ai.monitoring import ai_track
@@ -28,7 +27,7 @@ async def get_user_representation_long_term(
     chat_history: str,
     user_representation: str = "None",
     tom_inference: str = "None",
-    facts: Optional[list[str]] = None,
+    facts: list[str] | None = None,
 ) -> str:
     if facts is None:
         facts = []

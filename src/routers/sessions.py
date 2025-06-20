@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
@@ -77,7 +76,7 @@ async def get_or_create_session(
 )
 async def get_sessions(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    options: Optional[schemas.SessionGet] = Body(
+    options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
     db=db,
@@ -165,7 +164,7 @@ async def clone_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to clone"),
     db=db,
-    message_id: Optional[str] = Query(
+    message_id: str | None = Query(
         None, description="Message ID to cut off the clone at"
     ),
 ):
@@ -377,7 +376,7 @@ async def get_session_peers(
 async def get_session_context(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    tokens: Optional[int] = Query(
+    tokens: int | None = Query(
         None,
         description="Number of tokens to use for the context. Includes summary if set to true",
     ),

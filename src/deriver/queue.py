@@ -1,12 +1,11 @@
-from _asyncio import Task
 import asyncio
 import os
 import signal
+from _asyncio import Task
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
-from typing import Any
 
 import sentry_sdk
 from dotenv import load_dotenv

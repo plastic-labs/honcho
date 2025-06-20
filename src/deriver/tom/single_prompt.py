@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import sentry_sdk
 from langfuse.decorators import langfuse_context, observe
@@ -105,7 +105,7 @@ UPDATES:
 @observe()
 async def get_tom_inference_single_prompt(
     chat_history: str,
-    user_representation: Optional[str] = None,
+    user_representation: str | None = None,
     **kwargs,
 ) -> str:
     with sentry_sdk.start_transaction(op="tom-inference", name="ToM Inference"):
@@ -152,8 +152,8 @@ async def get_tom_inference_single_prompt(
 @observe()
 async def get_user_representation_single_prompt(
     chat_history: str,
-    user_representation: Optional[str] = None,
-    tom_inference: Optional[str] = None,
+    user_representation: str | None = None,
+    tom_inference: str | None = None,
     **kwargs,
 ) -> str:
     with sentry_sdk.start_transaction(
