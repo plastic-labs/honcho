@@ -1,5 +1,4 @@
 import logging
-from typing import Optional
 
 from anthropic import AsyncMessageStreamManager
 from fastapi import (
@@ -39,7 +38,7 @@ router = APIRouter(
 )
 async def get_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    options: Optional[schemas.PeerGet] = Body(
+    options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
     db=db,
@@ -121,7 +120,7 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    options: Optional[schemas.SessionGet] = Body(
+    options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
     db=db,
@@ -263,10 +262,10 @@ async def create_messages_for_peer(
 async def get_messages_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    options: Optional[schemas.MessageGet] = Body(
+    options: schemas.MessageGet | None = Body(
         None, description="Filtering options for the messages list"
     ),
-    reverse: Optional[bool] = Query(
+    reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
     db=db,

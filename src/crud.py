@@ -1,7 +1,7 @@
 import os
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -9,7 +9,10 @@ from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import Select
 from sqlalchemy.types import BigInteger
+
+from src.models import Session, Workspace
 
 from . import models, schemas
 from .exceptions import ResourceNotFoundException
@@ -68,8 +71,8 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    filter: Optional[dict] = None,
-) -> Select:
+    filter: dict[str, str] | None = None,
+) -> Select[tuple[Workspace]]:
     """
     Get all workspaces.
 
@@ -80,7 +83,7 @@ async def get_all_workspaces(
     stmt = select(models.Workspace)
     if filter is not None:
         stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
-    stmt = stmt.order_by(models.Workspace.created_at)
+    stmt: Select[tuple[Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
 
 
@@ -222,8 +225,8 @@ async def get_peer(
 
 async def get_peers(
     workspace_name: str,
-    filter: Optional[dict] = None,
-) -> Select:
+    filter: dict[str, str] | None = None,
+) -> Select[tuple[models.Peer]]:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
     if filter is not None:
@@ -274,9 +277,9 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    is_active: Optional[bool] = None,
-    filter: Optional[dict] = None,
-) -> Select:
+    is_active: bool | None = None,
+    filter: dict[str, str] | None = None,
+) -> Select[tuple[Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
 
@@ -306,7 +309,7 @@ async def get_sessions_for_peer(
     if filter is not None:
         stmt = stmt.where(models.Session.h_metadata.contains(filter))
 
-    stmt = stmt.order_by(models.Session.created_at)
+    stmt: Select[tuple[Session]] = stmt.order_by(models.Session.created_at)
 
     return stmt
 
@@ -318,9 +321,9 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    is_active: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
+    is_active: bool | None = None,
+    filter: dict[str, str] | None = None,
+) -> Select[tuple[Session]]:
     """
     Get all sessions in a workspace.
     """
@@ -531,7 +534,7 @@ async def clone_session(
     db: AsyncSession,
     workspace_name: str,
     original_session_name: str,
-    cutoff_message_id: Optional[str] = None,
+    cutoff_message_id: str | None = None,
 ) -> models.Session:
     """
     Clone a session and its messages. If cutoff_message_id is provided,
@@ -683,7 +686,7 @@ async def remove_peers_from_session(
 async def get_peers_from_session(
     workspace_name: str,
     session_name: str,
-) -> Select:
+) -> Select[tuple[models.Peer]]:
     """
     Get all peers from a session.
 
@@ -710,7 +713,7 @@ async def get_peers_from_session(
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
-) -> Select:
+) -> Select[tuple[str, dict[str, Any], Any]]:
     """
     Get configuration from both SessionPeer and Peer tables for active peers in a session.
 
@@ -721,7 +724,7 @@ async def get_session_peer_configuration(
     Returns:
         Select statement returning peer_name, peer_configuration, and session_peer_configuration
     """
-    stmt = (
+    stmt: Select[tuple[str, dict[str, Any], Any]] = (
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.configuration.label("peer_configuration"),
@@ -977,9 +980,9 @@ async def search(
     query: str,
     *,
     workspace_name: str,
-    session_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-) -> Select:
+    session_name: str | None = None,
+    peer_name: str | None = None,
+) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
     - Uses PostgreSQL full text search for natural language queries
@@ -1238,11 +1241,11 @@ async def create_messages_for_peer(
 async def get_messages(
     workspace_name: str,
     session_name: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-    token_limit: Optional[int] = None,
-    message_count_limit: Optional[int] = None,
-) -> Select:
+    reverse: bool | None = False,
+    filter: dict[str, str] | None = None,
+    token_limit: int | None = None,
+    message_count_limit: int | None = None,
+) -> Select[tuple[models.Message]]:
     """
     Get messages from a session. If token_limit is provided, the n most recent messages
     with token count adding up to the limit will be returned. If message_count_limit is provided,
@@ -1327,7 +1330,7 @@ async def get_messages_id_range(
     session_name: str | None,
     peer_name: str | None,
     start_id: int = 0,
-    end_id: Optional[int] = None,
+    end_id: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session or peer by primary key ID range.
@@ -1375,9 +1378,9 @@ async def get_messages_id_range(
 async def get_messages_for_peer(
     workspace_name: str,
     peer_name: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
+    reverse: bool | None = False,
+    filter: dict[str, str] | None = None,
+) -> Select[tuple[models.Message]]:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1401,7 +1404,7 @@ async def get_message(
     workspace_name: str,
     session_name: str,
     message_id: str,
-) -> Optional[models.Message]:
+) -> models.Message | None:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1509,8 +1512,8 @@ async def query_documents(
     peer_name: str,
     collection_name: str,
     query: str,
-    filter: Optional[dict] = None,
-    max_distance: Optional[float] = None,
+    filter: dict[str, str] | None = None,
+    max_distance: float | None = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using async client with await
@@ -1544,7 +1547,7 @@ async def create_document(
     workspace_name: str,
     peer_name: str,
     collection_name: str,
-    duplicate_threshold: Optional[float] = None,
+    duplicate_threshold: float | None = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.

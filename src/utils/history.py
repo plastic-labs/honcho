@@ -1,7 +1,7 @@
 import datetime
 import logging
 from enum import Enum
-from typing import Optional, TypedDict
+from typing import TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,7 +67,7 @@ async def get_summary(
     workspace_name: str,
     session_name: str,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> Optional[Summary]:
+) -> Summary | None:
     """
     Get summary for a given session or peer.
 
@@ -94,7 +94,7 @@ async def get_summary(
         # If session doesn't exist, there's no summary to retrieve
         return None
 
-    summaries = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
     if not summaries or label not in summaries:
         return None
     return summaries[label]
@@ -102,9 +102,9 @@ async def get_summary(
 
 async def create_summary(
     messages: list[models.Message],
-    previous_summary_text: Optional[str] = None,
+    previous_summary_text: str | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> Summary:
     """
     Generate a summary of the provided messages using an LLM.
@@ -202,9 +202,11 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
         # Fallback to a basic summary in case of error
         # Do not save this failed summary to the session metadata.
         return Summary(
-            content=f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
-            if messages
-            else "No messages to summarize!",
+            content=(
+                f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+                if messages
+                else "No messages to summarize!"
+            ),
             message_count=0,
             summary_type=summary_type.value,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -312,7 +314,7 @@ async def get_latest_summary_and_messages_since(
     peer_name: str,
     cutoff: int | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> tuple[list[models.Message], Optional[Summary]]:
+) -> tuple[list[models.Message], Summary | None]:
     """
     Get all messages since the latest summary for a session or peer.
 
@@ -366,7 +368,7 @@ async def should_create_summary(
     peer_name: str,
     message_id: int,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> tuple[bool, list[models.Message], Optional[Summary]]:
+) -> tuple[bool, list[models.Message], Summary | None]:
     """
     Determine if a new summary should be created for this object (peer or session).
 

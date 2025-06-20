@@ -30,7 +30,10 @@ class TestWorkspaceValidations:
 
     def test_app_invalid_metadata_type(self):
         with pytest.raises(ValidationError) as exc_info:
-            WorkspaceCreate(name="test", metadata="not a dict")
+            WorkspaceCreate(
+                name="test",
+                metadata="not a dict",  # pyright: ignore
+            )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "dict_type"
 

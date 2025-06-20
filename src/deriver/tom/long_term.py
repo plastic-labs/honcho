@@ -1,13 +1,12 @@
 import json
 import logging
 import time
-from typing import Optional
 
-from langfuse.decorators import observe
-from sentry_sdk.ai.monitoring import ai_track
+from langfuse.decorators import observe  # pyright: ignore
 
 from src.utils import parse_xml_content
 from src.utils.model_client import ModelClient, ModelProvider
+from src.utils.types import track
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,13 +21,13 @@ USER_REPRESENTATION_MODEL = "llama-3.3-70b-versatile"
 MAX_FACT_DISTANCE = 0.85
 
 
-@ai_track("User Representation")
+@track("User Representation")
 @observe()
 async def get_user_representation_long_term(
     chat_history: str,
     user_representation: str = "None",
     tom_inference: str = "None",
-    facts: Optional[list[str]] = None,
+    facts: list[str] | None = None,
 ) -> str:
     if facts is None:
         facts = []
@@ -113,7 +112,7 @@ UPDATES:
     return response.replace("<KNOWN_FACTS>", persistent_info)
 
 
-@ai_track("Fact Extraction")
+@track("Fact Extraction")
 @observe()
 async def extract_facts_long_term(chat_history: str) -> list[str]:
     logger.debug("Starting fact extraction from chat history")

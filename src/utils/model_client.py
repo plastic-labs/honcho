@@ -4,14 +4,14 @@ Utility functions for interacting with various language model APIs.
 
 import os
 from enum import Enum
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 import sentry_sdk
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types as genai_types
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 
 # from openai import AsyncOpenAI
 from langfuse.openai import AsyncOpenAI
@@ -65,9 +65,9 @@ class ModelClient:
     def __init__(
         self,
         provider: ModelProvider = ModelProvider.ANTHROPIC,
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        model: str | None = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
     ):
         """
         Initialize the model client.
@@ -78,15 +78,15 @@ class ModelClient:
             api_key: The API key to use, or None to read from environment variables
             base_url: Custom base URL for the API endpoints (used for OpenRouter)
         """
-        self.provider = provider
-        self.model = model or DEFAULT_MODELS[provider]
-        self.base_url = base_url
-        self.openai_client = None
-        self.gemini_client = None
+        self.provider: ModelProvider = provider
+        self.model: str = model or DEFAULT_MODELS[provider]
+        self.base_url: str | None = base_url
+        self.openai_client: AsyncOpenAI | None = None
+        self.gemini_client: genai.Client | None = None
 
         # Setup provider-specific clients
         if provider == ModelProvider.ANTHROPIC:
-            self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+            self.api_key: str | None = api_key or os.getenv("ANTHROPIC_API_KEY")
             if not self.api_key:
                 raise ValueError("Anthropic API key is required")
             self.client = AsyncAnthropic(api_key=self.api_key)
@@ -124,10 +124,10 @@ class ModelClient:
     async def generate(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> str:
         """
@@ -176,10 +176,10 @@ class ModelClient:
     async def _generate_anthropic(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> str:
         """Generate a response using the Anthropic API."""
@@ -208,7 +208,7 @@ class ModelClient:
 
         langfuse_context.update_current_observation(input=messages, model=self.model)
 
-        response = await self.client.messages.create(**params)
+        response = await self.client.messages.create(**params)  # pyright: ignore
 
         # Extract the text from the response
         if response.content and len(response.content) > 0:
@@ -227,7 +227,7 @@ class ModelClient:
     async def _generate_openai(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
@@ -263,10 +263,10 @@ class ModelClient:
     async def stream(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> Any:
         """
@@ -315,10 +315,10 @@ class ModelClient:
     async def _stream_anthropic(
         self,
         messages: list[dict[str, Any]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
-        extra_headers: Optional[dict[str, str]] = None,
+        extra_headers: dict[str, str] | None = None,
         use_caching: bool = False,
     ) -> Any:
         """Stream text using Anthropic API."""
@@ -348,13 +348,13 @@ class ModelClient:
         langfuse_context.update_current_observation(input=messages, model=self.model)
 
         # Return the stream directly without awaiting it
-        return self.client.messages.stream(**params)
+        return self.client.messages.stream(**params)  # pyright: ignore
 
     @observe(as_type="generation")
     async def _stream_openai(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> Any:
@@ -387,7 +387,7 @@ class ModelClient:
     async def _generate_gemini(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> str:
@@ -453,9 +453,9 @@ class ModelClient:
             # model = get_model(self.model)
             response = await self.gemini_client.aio.models.generate_content(
                 model=self.model,
-                contents=gemini_messages
-                if len(gemini_messages) > 1
-                else gemini_messages[0],
+                contents=(
+                    gemini_messages if len(gemini_messages) > 1 else gemini_messages[0]
+                ),
                 config=generate_content_config,
             )
 
@@ -468,7 +468,7 @@ class ModelClient:
     async def _stream_gemini(
         self,
         messages: list[dict[str, str]],
-        system: Optional[str] = None,
+        system: str | None = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         temperature: float = DEFAULT_TEMPERATURE,
     ) -> Any:
@@ -532,9 +532,9 @@ class ModelClient:
             # Normal case with messages
             stream = await self.gemini_client.aio.models.generate_content_stream(
                 model=self.model,
-                contents=gemini_messages
-                if len(gemini_messages) > 1
-                else gemini_messages[0],
+                contents=(
+                    gemini_messages if len(gemini_messages) > 1 else gemini_messages[0]
+                ),
                 config=generate_content_config,
             )
 

@@ -1,6 +1,5 @@
 import contextvars
 import os
-from typing import Optional
 
 from dotenv import load_dotenv
 from sqlalchemy import MetaData, create_engine, text
@@ -12,7 +11,7 @@ load_dotenv()
 connect_args = {"prepare_threshold": None}
 
 # Context variable to store request context
-request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_context", default=None
 )
 
