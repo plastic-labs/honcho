@@ -1,5 +1,6 @@
 import datetime
 from logging import getLogger
+from typing import Any
 
 import tiktoken
 from dotenv import load_dotenv
@@ -101,11 +102,11 @@ class Workspace(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
-    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -118,8 +119,8 @@ class Peer(Base):
     __tablename__ = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -128,7 +129,7 @@ class Peer(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship(
@@ -153,8 +154,8 @@ class Session(Base):
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -164,7 +165,7 @@ class Session(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     peers = relationship(
         "Peer", secondary=session_peers_table, back_populates="sessions"
@@ -191,8 +192,8 @@ class Message(Base):
     )
     session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
     content: Mapped[str] = mapped_column(TEXT)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -252,8 +253,8 @@ class Collection(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     documents = relationship(
@@ -283,7 +284,7 @@ class Collection(Base):
 class Document(Base):
     __tablename__ = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    internal_metadata: Mapped[dict] = mapped_column(
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     content: Mapped[str] = mapped_column(TEXT)
@@ -334,7 +335,7 @@ class QueueItem(Base):
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id"), index=True, nullable=True
     )
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
 
 

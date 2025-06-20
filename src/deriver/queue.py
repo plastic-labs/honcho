@@ -1,9 +1,11 @@
+from _asyncio import Task
 import asyncio
 import signal
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
+from typing import Any
 
 import sentry_sdk
 from dotenv import load_dotenv
@@ -46,7 +48,7 @@ class WorkUnit:
 class QueueManager:
     def __init__(self):
         self.shutdown_event = asyncio.Event()
-        self.active_tasks: set[asyncio.Task] = set()
+        self.active_tasks: set[asyncio.Task[None]] = set()
         self.owned_work_units: set[WorkUnit] = set()
         self.queue_empty_flag = asyncio.Event()
 
@@ -64,7 +66,7 @@ class QueueManager:
                 integrations=[AsyncioIntegration()],
             )
 
-    def add_task(self, task: asyncio.Task):
+    def add_task(self, task: asyncio.Task[None]):
         """Track a new task"""
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
@@ -241,7 +243,7 @@ class QueueManager:
 
                                     # Create a new task for processing this work unit
                                     if not self.shutdown_event.is_set():
-                                        task = asyncio.create_task(
+                                        task: Task[None] = asyncio.create_task(
                                             self.process_work_unit(work_unit)
                                         )
                                         self.add_task(task)

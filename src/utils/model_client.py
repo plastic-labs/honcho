@@ -217,7 +217,7 @@ class ModelClient:
 
         langfuse_context.update_current_observation(input=messages, model=self.model)
 
-        response = await self.client.messages.create(**params)
+        response = await self.client.messages.create(**params)  # pyright: ignore
 
         # Extract the text from the response
         if response.content and len(response.content) > 0:
@@ -357,7 +357,7 @@ class ModelClient:
         langfuse_context.update_current_observation(input=messages, model=self.model)
 
         # Return the stream directly without awaiting it
-        return self.client.messages.stream(**params)
+        return self.client.messages.stream(**params)  # pyright: ignore
 
     @observe(as_type="generation")
     async def _stream_openai(
@@ -462,9 +462,9 @@ class ModelClient:
             # model = get_model(self.model)
             response = await self.gemini_client.aio.models.generate_content(
                 model=self.model,
-                contents=gemini_messages
-                if len(gemini_messages) > 1
-                else gemini_messages[0],
+                contents=(
+                    gemini_messages if len(gemini_messages) > 1 else gemini_messages[0]
+                ),
                 config=generate_content_config,
             )
 
@@ -541,9 +541,9 @@ class ModelClient:
             # Normal case with messages
             stream = await self.gemini_client.aio.models.generate_content_stream(
                 model=self.model,
-                contents=gemini_messages
-                if len(gemini_messages) > 1
-                else gemini_messages[0],
+                contents=(
+                    gemini_messages if len(gemini_messages) > 1 else gemini_messages[0]
+                ),
                 config=generate_content_config,
             )
 

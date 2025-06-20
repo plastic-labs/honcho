@@ -25,11 +25,11 @@ router = APIRouter(
 
 
 def create_processed_payload(
-    message: dict,
+    message: dict[str, Any],
     sender_name: Optional[str],
     target_name: Optional[str],
     task_type: str,
-) -> dict:
+) -> dict[str, Any]:
     """
     Create a processed payload from a message for queue processing.
 
@@ -53,7 +53,7 @@ def create_processed_payload(
     return processed_payload
 
 
-async def enqueue(payload: list[dict]):
+async def enqueue(payload: list[dict[str, Any]]):
     """
     Add message(s) to the deriver queue for processing.
 

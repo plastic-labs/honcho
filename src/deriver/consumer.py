@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Literal
+from typing import Any, Literal
 
 import sentry_sdk
 from langfuse.decorators import observe
@@ -43,7 +43,7 @@ class PayloadSchema(BaseModel):
         extra = "forbid"
 
 
-async def process_item(db: AsyncSession, payload: dict):
+async def process_item(db: AsyncSession, payload: dict[str, Any]):
     # Validate payload structure and types before processing
     try:
         validated_payload = PayloadSchema(**payload)
@@ -57,22 +57,21 @@ async def process_item(db: AsyncSession, payload: dict):
         validated_payload.session_name,
     )
 
-    processing_args = [
-        validated_payload.content,
-        validated_payload.workspace_name,
-        validated_payload.sender_name,
-        validated_payload.target_name,
-        validated_payload.session_name,
-        validated_payload.message_id,
-        db,
-    ]
     if validated_payload.task_type == "representation":
         logger.debug(
             "Processing message %s in %s",
             validated_payload.message_id,
             validated_payload.session_name,
         )
-        await process_message(*processing_args)
+        await process_message(
+            validated_payload.content,
+            validated_payload.workspace_name,
+            validated_payload.sender_name,
+            validated_payload.target_name,
+            validated_payload.session_name,
+            validated_payload.message_id,
+            db,
+        )
         logger.debug(
             "Finished processing message %s in %s %s",
             validated_payload.message_id,

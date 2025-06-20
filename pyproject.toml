@@ -38,6 +38,7 @@ dev-dependencies = [
     "interrogate>=1.7.0",
     "py-spy>=0.3.14",
     "ruff>=0.11.2",
+    "basedpyright>=1.29.4",
 ]
 
 [tool.ruff.lint]
@@ -64,3 +65,34 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+
+
+[tool.basedpyright]
+# BasedPyright currently seems like the best type checker option, much faster
+# than mypy and with a good extension for VSCode/Cursor.
+# https://marketplace.visualstudio.com/items?itemName=detachhead.basedpyright
+# https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
+include = ["src", "tests"]
+exclude = ["tests/**/disabled*.py"]
+# By default BasedPyright is very strict, so you almost certainly want to disable
+# some of the rules.
+# First, these turn off warnings about (yes) how you ignore warnings:
+reportIgnoreCommentWithoutRule = false
+# reportUnnecessaryTypeIgnoreComment = false
+# A few typically noisy warnings are next.
+# How many you enable is up to you. The first few are off by default, but you can
+# comment/uncomment these as desired:
+# reportMissingTypeStubs = false
+# reportUnusedCallResult = false
+# reportAny = false
+# reportExplicitAny = false
+# reportImplicitStringConcatenation = false
+# reportUnreachable = false
+# reportPrivateImportUsage = false
+# reportPrivateLocalImportUsage = false
+# reportMissingImports = false
+# reportUnnecessaryIsInstance = false
+# reportUnknownVariableType = false
+# reportUnknownArgumentType = false
+# reportUnknownParameterType = false
+# reportUnknownMemberType = false
