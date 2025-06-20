@@ -1,0 +1,76 @@
+# Honcho Configuration File
+# This file demonstrates all available configuration options.
+# Copy this to config.toml and modify as needed.
+# Environment variables will override these values.
+
+# Application-level settings
+[app]
+LOG_LEVEL = "INFO"
+FASTAPI_HOST = "0.0.0.0"
+FASTAPI_PORT = 8000
+
+# Database settings
+[db]
+CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
+SCHEMA = "public"
+POOL_PRE_PING = true
+POOL_SIZE = 10
+MAX_OVERFLOW = 20
+POOL_TIMEOUT = 30  # seconds
+POOL_RECYCLE = 300  # seconds
+POOL_USE_LIFO = true
+SQL_DEBUG = false
+
+# Authentication settings
+[auth]
+USE_AUTH = true
+JWT_SECRET = "your-secret-key-here"  # Must be set if USE_AUTH is true
+
+# Sentry settings
+[sentry]
+ENABLED = false
+DSN = ""
+TRACES_SAMPLE_RATE = 0.1
+PROFILES_SAMPLE_RATE = 0.1
+
+# OpenTelemetry settings
+[opentelemetry]
+ENABLED = false
+
+# LLM settings
+[llm]
+DEFAULT_MAX_TOKENS = 1000
+DEFAULT_TEMPERATURE = 0.0
+
+# Dialectic specific
+DIALECTIC_PROVIDER = "anthropic"
+DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
+
+# Query Generation specific
+QUERY_GENERATION_PROVIDER = "groq"
+QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
+
+# Summarization specific
+SUMMARY_PROVIDER = "gemini"
+SUMMARY_MODEL = "gemini-2.0-flash-lite"
+SUMMARY_MAX_TOKENS_SHORT = 1000
+SUMMARY_MAX_TOKENS_LONG = 2000
+
+# Agent settings
+[agent]
+SEMANTIC_SEARCH_TOP_K = 10
+SEMANTIC_SEARCH_MAX_DISTANCE = 0.85
+TOM_INFERENCE_METHOD = "single_prompt"
+
+# Deriver settings
+[deriver]
+WORKERS = 1
+STALE_SESSION_TIMEOUT_MINUTES = 5
+POLLING_SLEEP_INTERVAL_SECONDS = 1.0
+TOM_METHOD = "single_prompt"
+USER_REPRESENTATION_METHOD = "long_term"
+
+# History settings
+[history]
+MESSAGES_PER_SHORT_SUMMARY = 20
+MESSAGES_PER_LONG_SUMMARY = 60

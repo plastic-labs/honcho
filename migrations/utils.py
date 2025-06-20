@@ -4,9 +4,11 @@ from typing import Optional
 import sqlalchemy as sa
 from alembic import op
 
+from src.config import settings
+
 
 def get_schema() -> str:
-    return getenv("DATABASE_SCHEMA", "public")
+    return settings.DB.SCHEMA
 
 
 def table_exists(table_name: str, inspector: Optional[sa.Inspector] = None) -> bool:

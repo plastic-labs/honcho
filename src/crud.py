@@ -8,21 +8,33 @@ from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
+from src.config import settings
+
 from . import models, schemas
-from .exceptions import ResourceNotFoundException
+from .exceptions import (
+    ConflictException,
+    ResourceNotFoundException,
+    ValidationException,
+)
+from .utils.model_client import ModelClient, ModelProvider
 
 load_dotenv(override=True)
 
-openai_client = AsyncOpenAI()
+openai_client = AsyncOpenAI(api_key=settings.LLM.OPENAI_API_KEY)
 
 logger = getLogger(__name__)
 
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
 
 SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
+
+# Create a ModelClient instance for embeddings
+# Using OpenAI provider for embeddings as it's the most common
+embedding_client = ModelClient(provider=ModelProvider.OPENAI)
 
 ########################################################
 # workspace methods
@@ -1513,11 +1525,8 @@ async def query_documents(
     max_distance: Optional[float] = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
-    # Using async client with await
-    response = await openai_client.embeddings.create(
-        model="text-embedding-3-small", input=query
-    )
-    embedding_query = response.data[0].embedding
+    # Using ModelClient for embeddings
+    embedding_query = await embedding_client.embed(query)
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
@@ -1572,12 +1581,8 @@ async def create_document(
         collection_name=collection_name,
     )
 
-    # Using async client with await
-    response = await openai_client.embeddings.create(
-        input=document.content, model="text-embedding-3-small"
-    )
-
-    embedding = response.data[0].embedding
+    # Using ModelClient for embeddings
+    embedding = await embedding_client.embed(document.content)
 
     if duplicate_threshold is not None:
         # Check if there are duplicates within the threshold
@@ -1611,6 +1616,78 @@ async def create_document(
     return honcho_document
 
 
+async def get_document(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
+    document_id: str,
+) -> models.Document:
+    """Get a document by ID."""
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.peer_name == peer_name)
+        .where(models.Document.collection_name == collection_name)
+        .where(models.Document.public_id == document_id)
+    )
+    result = await db.execute(stmt)
+    document = result.scalar_one_or_none()
+    if document is None:
+        raise ResourceNotFoundException("Document not found")
+    return document
+
+
+async def update_document(
+    db: AsyncSession,
+    document: schemas.DocumentUpdate,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
+    document_id: str,
+) -> models.Document:
+    honcho_document = await get_document(
+        db,
+        workspace_name=workspace_name,
+        peer_name=peer_name,
+        collection_name=collection_name,
+        document_id=document_id,
+    )
+    if document.content is not None:
+        honcho_document.content = document.content
+        # Using ModelClient for embeddings
+        embedding = await embedding_client.embed(document.content)
+        honcho_document.embedding = embedding
+        honcho_document.created_at = func.now()
+
+    if document.metadata is not None:
+        honcho_document.h_metadata = document.metadata
+    await db.commit()
+    return honcho_document
+
+
+async def delete_document(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
+    document_id: str,
+) -> bool:
+    try:
+        document = await get_document(
+            db,
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+            collection_name=collection_name,
+            document_id=document_id,
+        )
+        await db.delete(document)
+        await db.commit()
+        return True
+    except ResourceNotFoundException:
+        return False
+
+
 async def get_duplicate_documents(
     db: AsyncSession,
     workspace_name: str,
@@ -1633,11 +1710,8 @@ async def get_duplicate_documents(
         List of documents that are similar to the provided content
     """
     # Get embedding for the content
-    # Using async client with await
-    response = await openai_client.embeddings.create(
-        input=content, model="text-embedding-3-small"
-    )
-    embedding = response.data[0].embedding
+    # Using ModelClient for embeddings
+    embedding = await embedding_client.embed(content)
 
     # Find documents with similar embeddings
     stmt = (

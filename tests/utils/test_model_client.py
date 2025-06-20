@@ -1,4 +1,3 @@
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -102,9 +101,15 @@ def test_unsupported_provider_initialization():
 def test_missing_api_key_initialization():
     """Test initialization without required API key."""
     with (
-        patch.dict(os.environ, {}, clear=True),
+        patch("src.utils.model_client.settings") as mock_settings,
         pytest.raises(ValueError, match="API key is required"),
     ):
+        # Mock the settings to return None for all API keys
+        mock_settings.LLM.ANTHROPIC_API_KEY = None
+        mock_settings.LLM.OPENAI_API_KEY = None
+        mock_settings.LLM.OPENAI_COMPATIBLE_API_KEY = None
+        mock_settings.LLM.GROQ_API_KEY = None
+        mock_settings.LLM.GEMINI_API_KEY = None
         ModelClient()
 
 

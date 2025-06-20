@@ -1,7 +1,7 @@
 import datetime
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -190,6 +190,11 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict = {}
+
+
+class DocumentUpdate(DocumentBase):
+    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    metadata: dict | None = None
 
 
 class DialecticOptions(BaseModel):

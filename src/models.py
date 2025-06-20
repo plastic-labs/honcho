@@ -27,7 +27,7 @@ from sqlalchemy.sql import func
 
 from .db import Base
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger = getLogger(__name__)
 
