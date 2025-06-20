@@ -1,8 +1,8 @@
 ---
 title: "Discord Bots with Honcho"
 icon: 'discord'
-description: "Discord is a powerful chat application that handles many UI complications"
-sidebarTitle: 'Discord'
+description: "Use Honcho to build a Discord bot with conversational memory and context management."
+sidebarTitle: 'Discord Bot'
 ---
 
 > Example code is available on [GitHub](https://github.com/plastic-labs/discord-python-starter)
@@ -16,190 +16,117 @@ place to start.
 ## Events
 
 Most Discord bots have async functions that listen for specific events, the most common one being messages. We can use Honcho to store messages by user and session based on an interface's event logic. Take the following function definition for example:
+
 ```python
 @bot.event
 async def on_message(message):
-    """Event that is run when a message is sent in a channel or DM that the bot has access to"""
-    global last_message_id
-    if message.author == bot.user:
-        # ensure the bot does not reply to itself
+    """
+    Receive a message from Discord and respond with a message from our LLM assistant.
+    """
+    if not validate_message(message):
         return
 
-    is_dm = isinstance(message.channel, discord.DMChannel)
-    is_reply_to_bot = (
-        message.reference and message.reference.resolved.author == bot.user
+    input = sanitize_message(message)
+
+    # If the message is empty after sanitizing, ignore it
+    if not input:
+        return
+
+    peer = honcho_client.peer(id=get_peer_id_from_discord(message))
+    session = honcho_client.session(id=str(message.channel.id))
+
+    async with message.channel.typing():
+        response = llm(session, input)
+
+    await send_discord_message(message, response)
+
+    # Save both the user's message and the bot's response to the session
+    session.add_messages(
+        [
+            peer.message(input),
+            assistant.message(response),
+        ]
     )
-    is_mention = bot.user.mentioned_in(message)
-
-    if is_dm or is_reply_to_bot or is_mention:
-        # Remove the bot's mention from the message content if present
-        input = message.content.replace(f"<@{bot.user.id}>", "").strip()
-
-        # If the message is empty after removing the mention, ignore it
-        if not input:
-            return
-
-        # Get a user object for the message author
-        user_id = f"discord_{str(message.author.id)}"
-        user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
-
-        # Use the channel ID as the location_id (for DMs, this will be unique to the user)
-        location_id = str(message.channel.id)
-
-        # Get or create a session for this user and location
-        session, _ = get_session(user.id, location_id, create=True)
-
-        # Get messages
-        history_iter = honcho.apps.users.sessions.messages.list(
-            app_id=app.id, session_id=session.id, user_id=user.id
-        )
-        history = list(msg for msg in history_iter)
-
-        # Add user message to session
-        user_msg = honcho.apps.users.sessions.messages.create(
-            app_id=app.id,
-            user_id=user.id,
-            session_id=session.id,
-            content=input,
-            is_user=True,
-        )
-        last_message_id = user_msg.id
-
-        async with message.channel.typing():
-            response = llm(input, history)
-
-        if len(response) > 1500:
-            # Split response into chunks at newlines, keeping under 1500 chars
-            chunks = []
-            current_chunk = ""
-            for line in response.splitlines(keepends=True):
-                if len(current_chunk) + len(line) > 1500:
-                    chunks.append(current_chunk)
-                    current_chunk = line
-                else:
-                    current_chunk += line
-            if current_chunk:
-                chunks.append(current_chunk)
-            for chunk in chunks:
-                await message.channel.send(chunk)
-        else:
-            await message.channel.send(response)
-
-        # Add bot message to session
-        honcho.apps.users.sessions.messages.create(
-            app_id=app.id,
-            user_id=user.id,
-            session_id=session.id,
-            content=response,
-            is_user=False,
-        )
 ```
 
 Let's break down what this code is doing...
+
 ```python
 @bot.event
 async def on_message(message):
-    if message.author == bot.user:
+    if not validate_message(message):
         return
 ```
 
-This is how you define an event function in `py-cord` that listens for messages and checks that the bot doesn't respond to itself.
+This is how you define an event function in `py-cord` that listens for messages. We use a helper function `validate_message()` to check if the message should be processed.
+
+## Helper Functions
+
+The code uses several helper functions to keep the main logic clean and readable. Let's examine each one:
+
+### Message Validation
 
 ```python
-is_dm = isinstance(message.channel, discord.DMChannel)
-is_reply_to_bot = (
-    message.reference and message.reference.resolved.author == bot.user
-)
-is_mention = bot.user.mentioned_in(message)
+def validate_message(message) -> bool:
+    """
+    Determine if the message is valid for the bot to respond to.
+    Return True if it is, False otherwise. Currently, the bot will
+    only respond to messages that tag it with an @mention in a
+    public channel and are not from the bot itself.
+    """
+    if message.author == bot.user:
+        # ensure the bot does not reply to itself
+        return False
+
+    if isinstance(message.channel, discord.DMChannel):
+        return False
+
+    if not bot.user.mentioned_in(message):
+        return False
+
+    return True
 ```
 
-These lines check what kind of message is being sent in Discord, which is a useful condition to check before entering the reply logic. The code inside that if-statement is commented quite well, so we'll just go over the relevant Honcho parts. 
+This function centralizes all the logic for determining whether the bot should respond to a message. It checks that:
+- The message isn't from the bot itself
+- The message isn't in a DM channel  
+- The bot is mentioned in the message
+
+### Message Sanitization
 
 ```python
-# Get a user object for the message author
-user_id = f"discord_{str(message.author.id)}"
-user = honcho.apps.users.get_or_create(name=user_id, app_id=app.id)
+def sanitize_message(message) -> str | None:
+    """Remove the bot's mention from the message content if present"""
+    content = message.content.replace(f"<@{bot.user.id}>", "").strip()
+    if not content:
+        return None
+    return content
 ```
 
-Here we're getting or creating a user for an app that's been defined at the top of the file. 
+This helper removes the bot's mention from the message content, leaving just the actual user input.
+
+### Peer ID Generation
 
 ```python
-# Use the channel ID as the location_id (for DMs, this will be unique to the user)
-location_id = str(message.channel.id)
-
-# Get or create a session for this user and location
-session, _ = get_session(user.id, location_id, create=True)
+def get_peer_id_from_discord(message):
+    """Get a Honcho peer ID for the message author"""
+    return f"discord_{str(message.author.id)}"
 ```
 
-Here we're using the discord channel ID as a unique `location_id` to attach as metadata to the session. Then we have a nice [helper function](https://github.com/plastic-labs/discord-python-starter/blob/main/src/bot.py#L85) to take care of some of the session querying logic--we'll dive into that shortly.
+This creates a unique peer identifier for each Discord user by prefixing their Discord ID.
+
+### LLM Integration
 
 ```python
-# Get messages
-history_iter = honcho.apps.users.sessions.messages.list(
-    app_id=app.id, session_id=session.id, user_id=user.id
-)
-history = list(msg for msg in history_iter)
-```
+def llm(session, prompt) -> str:
+    """
+    Call the LLM with the given prompt and chat history.
 
-When you call the `list` method, it returns an iterable which you can quickly loop over to create a list of `Message` objects. Then, we make the call to the LLM using another neat [helper function](https://github.com/plastic-labs/discord-python-starter/blob/main/src/bot.py#L52) that we will cover.
-
-## Helper functions
-
-The first helper function we create is called `get_session`. This simplifies a lot of our session-querying logic.
-
-```python
-def get_session(user_id, location_id, create=False):
-    # Get an existing session for the user and location or optionally create a new one if none exists.
-    # Returns a tuple of (session, is_new) where is_new indicates if a new session was created.
-    
-    # Query for *active* sessions with both user_id and location_id
-    sessions_iter = honcho.apps.users.sessions.list(
-        app_id=app.id, user_id=user_id, reverse=True, is_active=True
+    You should expand this function with custom logic, prompts, etc.
+    """
+    messages: list[dict[str, object]] = session.get_context().to_openai(
+        assistant=assistant
     )
-    sessions = list(session for session in sessions_iter)
-
-    # Find the right session
-    for session in sessions:
-        if session.metadata.get("location_id") == location_id:
-            return session, False
-
-    # If no session is found and create is True, create a new one
-    if create:
-        print("No active session found, creating new one")
-        return honcho.apps.users.sessions.create(
-            user_id=user_id,
-            app_id=app.id,
-            metadata={"location_id": location_id},
-        ), True
-
-    return None, False
-```
-
-You can see the `list` method on the sessions object similarly returns an iterable. This is a common pattern in Honcho--use list comprehension to create your new python list. Then loop through those session objects to find the appropriate `location_id` in the metadata, and if none are found then create a new session. You'll also notice we list messages in `reverse=True` order--this means you will get the most recent ones first. We also support native filtering by active sessions.
-
-The next helper function we create is called `llm`. This simplifies constructing the chat message object we're going to send to the inference provider.
-
-```python
-def llm(prompt, previous_chats=None):
-    messages = []
-
-    # Add system message with documentation context
-    messages.append(
-        {
-            "role": "system",
-            "content": f"You are a helpful assistant."
-        }
-    )
-
-    if previous_chats:
-        messages.extend(
-            [
-                {"role": "user" if msg.is_user else "assistant", "content": msg.content}
-                for msg in previous_chats
-            ]
-        )
-
-
     messages.append({"role": "user", "content": prompt})
 
     try:
@@ -213,48 +140,115 @@ def llm(prompt, previous_chats=None):
         return f"Error: {e}"
 ```
 
-Note that `messages` is a list of dictionaries that are individually defined with key-value pairs for roles and content. We again use list comprehension to unpack historical message objects into the list that we send to the chat completions method. Honcho `Message` objects store role and content natively to make this context construction as simple as possible. If you're interested in learning more about native Honcho objects, you can check out the [`models.py`](https://github.com/plastic-labs/honcho/blob/main/src/models.py) file.
+This function handles the LLM interaction. It uses Honcho's built-in `to_openai()` method to automatically convert the session context into the format expected by OpenAI's chat completions API.
+
+### Message Sending
+
+```python
+async def send_discord_message(message, response_content: str):
+    """Send a message to the Discord channel"""
+    if len(response_content) > 1500:
+        # Split response into chunks at newlines, keeping under 1500 chars
+        chunks = []
+        current_chunk = ""
+        for line in response_content.splitlines(keepends=True):
+            if len(current_chunk) + len(line) > 1500:
+                chunks.append(current_chunk)
+                current_chunk = line
+            else:
+                current_chunk += line
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        for chunk in chunks:
+            await message.channel.send(chunk)
+    else:
+        await message.channel.send(response_content)
+```
+
+This function handles sending messages to Discord, automatically splitting long responses into multiple messages to stay within Discord's character limits.
+
+## Honcho Integration
+
+The new Honcho peer/session API makes integration much simpler:
+
+```python
+peer = honcho_client.peer(id=get_peer_id_from_discord(message))
+session = honcho_client.session(id=str(message.channel.id))
+```
+
+Here we create a peer object for the user and a session object using the Discord channel ID. This automatically handles user and session management.
+
+```python
+# Save both the user's message and the bot's response to the session
+session.add_messages(
+    [
+        peer.message(input),
+        assistant.message(response),
+    ]
+)
+```
+
+After generating the response, we save both the user's input and the bot's response to the session using the `add_messages()` method. The `peer.message()` creates a message from the user, while `assistant.message()` creates a message from the assistant.
 
 ## Slash Commands
 
-Discord bots also offer slash command functionality. We can use Honcho to do
-interesting things via slash commands. Here's a simple example:
+Discord bots also offer slash command functionality. Here's an example using Honcho's dialectic feature:
 
 ```python
 @bot.slash_command(
-    name="restart",
-    description="Reset all of your messaging history with Honcho in this channel.",
+    name="dialectic",
+    description="Query the Honcho Dialectic endpoint.",
 )
-async def restart(ctx):
-    print(f"restarting conversation for {ctx.author.name}")
-    async with ctx.typing():
-        user_name = f"discord_{str(ctx.author.id)}"
-        user = honcho.apps.users.get_or_create(name=user_name, app_id=app.id)
-        location_id = str(ctx.channel_id)
+async def dialectic(ctx, query: str):
+    await ctx.defer()
 
-        # Get existing session
-        session, _ = get_session(user.id, location_id, create=False)
+    try:
+        peer = honcho_client.peer(id=get_peer_id_from_discord(ctx))
+        session = honcho_client.session(id=str(ctx.channel.id))
 
-        if session:
-            # Delete the session
-            honcho.apps.users.sessions.delete(
-                app_id=app.id, user_id=user.id, session_id=session.id
+        response = peer.chat(
+            queries=query,
+            session_id=session.id,
+        )
+
+        if response:
+            await ctx.followup.send(response)
+        else:
+            await ctx.followup.send(
+                f"I don't know anything about {ctx.author.name} because we haven't talked yet!"
             )
-
-        msg = "The conversation has been restarted."
-
-    await ctx.respond(msg)
+    except Exception as e:
+        logger.error(f"Error calling Dialectic API: {e}")
+        await ctx.followup.send(
+            f"Sorry, there was an error processing your request: {str(e)}"
+        )
 ```
 
-This slash command restarts a conversation with a bot. In Honcho, the `delete` method marks a session's `is_active` field to `False`. 
+This slash command uses Honcho's dialectic functionality to answer questions about the user based on their conversation history.
+
+## Setup and Configuration
+
+The bot requires several environment variables and setup:
+
+```python
+honcho_client = Honcho()
+assistant = honcho_client.peer(id="assistant", config={"observe_me": False})
+openai = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=MODEL_API_KEY)
+```
+
+- `honcho_client`: The main Honcho client
+- `assistant`: A peer representing the bot/assistant
+- `openai`: OpenAI client configured to use OpenRouter
 
 ## Recap
 
-How you use Honcho is tightly coupled with the client you're building in. Here, Discord serves as an example of an interactive chat interface. We're just scratching the surface of things you can do with Honcho, but we learned some key patterns:
-- how to register users
-- how to work with iterables when listing sessions, messages
-- how to attach metadata to Honcho objects (like `location_id` on sessions)
-- how to sort and filter when calling list methods
+The new Honcho peer/session API makes Discord bot integration much simpler and more intuitive. Key patterns we learned:
 
-You are well on your way to becoming a context construction master! Stay tuned for more in-depth examples. If you want a challenge, try deciphering how we construct context in one of our apps, [Bloom](https://github.com/plastic-labs/tutor-gpt/blob/main/app/Chat.tsx).
+- **Peer/Session Model**: Users are represented as peers, conversations as sessions
+- **Automatic Context Management**: `session.get_context().to_openai()` automatically formats chat history
+- **Message Storage**: `session.add_messages()` stores both user and assistant messages
+- **Dialectic Queries**: `peer.chat()` enables querying conversation history
+- **Helper Functions**: Clean code organization with focused helper functions
 
+This approach provides a clean, maintainable structure for building Discord bots with conversational memory and context management. 
