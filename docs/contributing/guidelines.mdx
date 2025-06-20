@@ -1,430 +1,172 @@
 ---
-title: "Contributing Guidelines"
-description: "How to contribute to the Honcho project"
+title: 'Contributing Guidelines'
+icon: 'handshake'
 ---
 
-# Contributing Guidelines
-
-We're excited that you're interested in contributing to Honcho! This guide will help you get started with contributing to our open-source memory management system.
-
-## Ways to Contribute
-
-There are many ways you can help improve Honcho:
-
-- **Report Bugs**: Help us identify and fix issues
-- **Suggest Features**: Propose new functionality or improvements
-- **Write Code**: Submit bug fixes or implement new features
-- **Improve Documentation**: Help make our docs clearer and more comprehensive
-- **Community Support**: Help other users in discussions and issues
-- **Testing**: Help test new features and releases
+Thank you for your interest in contributing to Honcho! This guide outlines the process for contributing to the project and our development conventions.
 
 ## Getting Started
 
-### Prerequisites
+Before you start contributing, please:
 
-Before contributing, make sure you have:
+1. **Set up your development environment** - Follow the [Local Development guide](./README.md#local-development) in the README to get Honcho running locally.
 
-- **Python 3.8+** installed
-- **Git** for version control
-- **Docker & Docker Compose** for local development
-- **PostgreSQL** knowledge (helpful but not required)
+2. **Join our community** - Feel free to join us in our [Discord](http://discord.gg/plasticlabs) to discuss your changes, get help, or ask questions.
 
-### Development Setup
+3. **Review existing issues** - Check the [issues tab](https://github.com/plastic-labs/honcho/issues) to see what's already being worked on or to find something to contribute to.
 
-1. **Fork the Repository**
+## Contribution Workflow
+
+### 1. Fork and Clone
+
+1. Fork the repository on GitHub
+2. Clone your fork locally:
    ```bash
-   # Fork the repo on GitHub, then clone your fork
-   git clone https://github.com/your-username/honcho.git
+   git clone https://github.com/YOUR_USERNAME/honcho.git
    cd honcho
    ```
-
-2. **Set Up Development Environment**
+3. Add the upstream repository as a remote:
    ```bash
-   # Install UV package manager
-   pip install uv
-   
-   # Install dependencies
-   uv sync
-   
-   # Activate virtual environment
-   source .venv/bin/activate
+   git remote add upstream https://github.com/plastic-labs/honcho.git
    ```
 
-3. **Configure Environment**
-   ```bash
-   # Copy example environment file
-   cp .env.example .env
-   
-   # Edit .env with your local configuration
-   # You'll need an OpenAI API key for embeddings
-   ```
+### 2. Create a Branch
 
-4. **Start Local Services**
-   ```bash
-   # Start PostgreSQL with pgvector
-   docker-compose up -d database
-   
-   # Run database migrations
-   uv run alembic upgrade head
-   
-   # Start the API server
-   uv run fastapi run src/main.py
-   
-   # In another terminal, start deriver workers
-   uv run python -m src.deriver
-   ```
-
-5. **Verify Setup**
-   ```bash
-   # Check API is running
-   curl http://localhost:8000/health
-   
-   # Check API documentation
-   open http://localhost:8000/docs
-   ```
-
-## Development Workflow
-
-### Creating a Feature Branch
+Create a new branch for your feature or bug fix:
 
 ```bash
-# Create and switch to a new branch
 git checkout -b feature/your-feature-name
-
-# Or for bug fixes
-git checkout -b fix/issue-description
+# or
+git checkout -b fix/your-bug-fix-name
 ```
 
-### Making Changes
+**Branch naming conventions:**
+- `feature/description` - for new features
+- `fix/description` - for bug fixes  
+- `docs/description` - for documentation updates
+- `refactor/description` - for code refactoring
+- `test/description` - for adding or updating tests
 
-1. **Write Tests First** (TDD approach recommended)
-   ```bash
-   # Create tests for your feature
-   # Tests go in tests/ directory
-   ```
+### 3. Make Your Changes
 
-2. **Implement Your Changes**
-   - Follow existing code style and patterns
-   - Add comprehensive docstrings
-   - Include type hints where appropriate
+- Write clean, readable code that follows our coding standards (see below)
+- Add tests for new functionality
+- Update documentation as needed
+- Make sure your changes don't break existing functionality
 
-3. **Run Tests**
-   ```bash
-   # Run all tests
-   uv run pytest
-   
-   # Run specific test file
-   uv run pytest tests/test_your_feature.py
-   
-   # Run with coverage
-   uv run pytest --cov=src
-   ```
+### 4. Commit Your Changes
 
-4. **Check Code Quality**
-   ```bash
-   # Format code
-   uv run black src/ tests/
-   
-   # Sort imports
-   uv run isort src/ tests/
-   
-   # Check linting
-   uv run ruff check src/ tests/
-   
-   # Type checking
-   uv run mypy src/
-   ```
+We follow conventional commit standards. Format your commit messages as:
 
-### Committing Changes
+```
+type(scope): description
 
-We use conventional commits for clear commit history:
+[optional body]
 
+[optional footer]
+```
+
+**Types:**
+- `feat`: A new feature
+- `fix`: A bug fix
+- `docs`: Documentation only changes
+- `style`: Changes that do not affect the meaning of the code
+- `refactor`: A code change that neither fixes a bug nor adds a feature
+- `test`: Adding missing tests or correcting existing tests
+- `chore`: Changes to the build process or auxiliary tools
+
+**Examples:**
 ```bash
-# Examples of good commit messages
-git commit -m "feat: add deriver status endpoint"
-git commit -m "fix: resolve session name resolution bug"
-git commit -m "docs: update API documentation"
-git commit -m "test: add integration tests for peer endpoints"
+git commit -m "feat(api): add new dialectic endpoint for user insights"
+git commit -m "fix(db): resolve connection pool timeout issue"
+git commit -m "docs(readme): update installation instructions"
 ```
 
-**Commit Types:**
-- `feat`: New features
-- `fix`: Bug fixes
-- `docs`: Documentation changes
-- `test`: Adding or updating tests
-- `refactor`: Code refactoring
-- `perf`: Performance improvements
-- `chore`: Maintenance tasks
+### 5. Submit a Pull Request
 
-## Code Style Guidelines
+1. Push your branch to your fork:
+   ```bash
+   git push origin your-branch-name
+   ```
+
+2. Create a pull request on GitHub from your branch to the `main` branch
+
+3. Fill out the pull request template with:
+   - A clear description of what changes you've made
+   - The motivation for the changes
+   - Any relevant issue numbers (use "Closes #123" to auto-close issues)
+   - Screenshots or examples if applicable
+
+## Coding Standards
 
 ### Python Code Style
 
-We follow PEP 8 with some modifications:
+- Follow [PEP 8](https://www.python.org/dev/peps/pep-0008/) style guidelines
+- Use [Black](https://black.readthedocs.io/) for code formatting (we may add this to CI in the future)
+- Use type hints where possible
+- Write docstrings for functions and classes using Google style docstrings
 
-```python
-# Use type hints
-async def get_peer(
-    db: AsyncSession,
-    workspace_name: str,
-    peer_name: str,
-) -> models.Peer:
-    """
-    Get a peer from the database.
-    
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        
-    Returns:
-        The peer object
-        
-    Raises:
-        ResourceNotFoundException: If peer not found
-    """
-    # Implementation here
-```
+### Code Organization
 
-### Database Changes
+- Keep functions focused and single-purpose
+- Use meaningful variable and function names
+- Add comments for complex logic
+- Follow existing patterns in the codebase
 
-For database schema changes:
+### Testing
 
-1. **Create Migration**
-   ```bash
-   uv run alembic revision --autogenerate -m "Description of change"
-   ```
+- Write unit tests for new functionality
+- Ensure existing tests pass before submitting
+- Use descriptive test names that explain what is being tested
+- Mock external dependencies appropriately
 
-2. **Review Migration**
-   - Check generated migration file
-   - Ensure it's safe for production
-   - Add any necessary data migrations
+### Documentation
 
-3. **Test Migration**
-   ```bash
-   # Test upgrade
-   uv run alembic upgrade head
-   
-   # Test downgrade
-   uv run alembic downgrade -1
-   ```
+- Update relevant documentation for new features
+- Include examples in docstrings where helpful
+- Keep README and other docs up to date with changes
 
-### API Changes
+## Review Process
 
-When adding new API endpoints:
+1. **Automated checks** - Your PR will run through automated checks including tests and linting
+2. **Project maintainer review** - A project maintainer will review your code for:
+   - Code quality and adherence to standards
+   - Functionality and correctness
+   - Test coverage
+   - Documentation completeness
+3. **Discussion and iteration** - You may be asked to make changes or clarifications
+4. **Approval and merge** - Once approved, your PR will be merged into `main`
 
-1. **Define Schema Models**
-   ```python
-   # In src/schemas.py
-   class NewFeatureCreate(BaseModel):
-       name: str = Field(min_length=1, max_length=100)
-       metadata: dict = Field(default_factory=dict)
-   ```
+## Types of Contributions
 
-2. **Implement CRUD Operations**
-   ```python
-   # In src/crud.py
-   async def create_new_feature(
-       db: AsyncSession,
-       feature: schemas.NewFeatureCreate,
-   ) -> models.NewFeature:
-       # Implementation
-   ```
+We welcome various types of contributions:
 
-3. **Add Router Endpoints**
-   ```python
-   # In appropriate router file
-   @router.post("/features", response_model=schemas.NewFeature)
-   async def create_feature(
-       feature: schemas.NewFeatureCreate = Body(...),
-       db=db,
-   ):
-       return await crud.create_new_feature(db, feature)
-   ```
+- **Bug fixes** - Help us squash bugs and improve stability
+- **New features** - Add functionality that benefits the community
+- **Documentation** - Improve or expand our documentation
+- **Tests** - Increase test coverage and reliability
+- **Performance improvements** - Help make Honcho faster and more efficient
+- **Examples and tutorials** - Help other developers use Honcho
 
-4. **Write Tests**
-   ```python
-   # In tests/routes/test_features.py
-   def test_create_feature(client, sample_data):
-       response = client.post("/v1/features", json={"name": "test"})
-       assert response.status_code == 200
-   ```
+## Issue Reporting
 
-## Testing Guidelines
+When reporting bugs or requesting features:
 
-### Test Structure
+1. Check if the issue already exists
+2. Use the appropriate issue template
+3. Provide clear reproduction steps for bugs
+4. Include relevant environment information
+5. Be specific about expected vs actual behavior
 
-```
-tests/
-├── conftest.py              # Test fixtures
-├── integration/             # Integration tests
-│   └── test_enqueue.py
-├── routes/                  # API endpoint tests
-│   ├── test_peers.py
-│   └── test_sessions.py
-└── utils/                   # Utility tests
-```
+## Questions and Support
 
-### Writing Tests
+- **General questions** - Join our [Discord](http://discord.gg/plasticlabs)
+- **Bug reports** - Use GitHub issues
+- **Feature requests** - Use GitHub issues with the feature request template
+- **Security issues** - Please email us privately rather than opening a public issue
 
-```python
-import pytest
-from fastapi.testclient import TestClient
+## License
 
-def test_feature_functionality(client: TestClient, sample_data):
-    """Test description of what this test verifies."""
-    workspace, peer = sample_data
-    
-    # Arrange
-    test_data = {"name": "test-feature"}
-    
-    # Act
-    response = client.post(f"/v1/workspaces/{workspace.name}/features", json=test_data)
-    
-    # Assert
-    assert response.status_code == 200
-    data = response.json()
-    assert data["name"] == "test-feature"
-```
+By contributing to Honcho, you agree that your contributions will be licensed under the same [AGPL-3.0 License](./license) that covers the project.
 
-### Test Categories
-
-- **Unit Tests**: Test individual functions/methods
-- **Integration Tests**: Test component interactions
-- **End-to-End Tests**: Test complete user workflows
-- **Performance Tests**: Test system performance
-
-## Documentation
-
-### Code Documentation
-
-- **Docstrings**: All public functions must have docstrings
-- **Type Hints**: Use type hints for all function parameters and returns
-- **Comments**: Explain complex logic and business rules
-
-### User Documentation
-
-When adding features that affect users:
-
-1. **Update API Reference**: Add endpoint documentation
-2. **Update Guides**: Include new features in relevant guides
-3. **Update Examples**: Add code examples demonstrating usage
-4. **Update FAQ**: Add common questions about the feature
-
-## Submitting Your Contribution
-
-### Pull Request Process
-
-1. **Push Your Branch**
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-
-2. **Create Pull Request**
-   - Go to GitHub and create a PR from your branch
-   - Use the PR template to provide context
-   - Link any related issues
-
-3. **PR Requirements**
-   - All tests must pass
-   - Code coverage should not decrease
-   - Documentation must be updated
-   - Changes must be backward compatible (unless major version)
-
-### PR Template
-
-Your PR should include:
-
-```markdown
-## Description
-Brief description of changes and motivation.
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-
-## Testing
-- [ ] Unit tests added/updated
-- [ ] Integration tests added/updated
-- [ ] Manual testing completed
-
-## Checklist
-- [ ] Code follows style guidelines
-- [ ] Self-review completed
-- [ ] Documentation updated
-- [ ] Tests pass locally
-```
-
-## Code Review Process
-
-### What to Expect
-
-1. **Automated Checks**: GitHub Actions will run tests and linting
-2. **Maintainer Review**: Core team member will review your code
-3. **Feedback**: You may receive suggestions for improvements
-4. **Approval**: Once approved, your PR will be merged
-
-### Review Criteria
-
-Reviewers will check for:
-
-- **Functionality**: Does the code work as intended?
-- **Quality**: Is the code well-written and maintainable?
-- **Testing**: Are there adequate tests?
-- **Documentation**: Is documentation updated?
-- **Performance**: Any performance implications?
-- **Security**: Any security considerations?
-
-## Community Guidelines
-
-### Code of Conduct
-
-We follow the [Contributor Covenant Code of Conduct](https://www.contributor-covenant.org/). Please be respectful and inclusive in all interactions.
-
-### Communication
-
-- **GitHub Issues**: For bug reports and feature requests
-- **GitHub Discussions**: For questions and general discussion
-- **Discord**: For real-time community chat
-- **Email**: For security issues or private matters
-
-### Recognition
-
-Contributors are recognized in:
-
-- **Release Notes**: Significant contributions mentioned
-- **Contributors File**: All contributors listed
-- **Community Shoutouts**: Recognition in Discord and social media
-
-## Getting Help
-
-If you need help contributing:
-
-1. **Check Documentation**: Review this guide and existing docs
-2. **Search Issues**: See if your question has been asked before
-3. **Ask in Discord**: Join our community for real-time help
-4. **Create Discussion**: Start a GitHub discussion for complex topics
-
-## Advanced Contributions
-
-### Core Team Responsibilities
-
-Interested in deeper involvement? Core team members:
-
-- Review and merge pull requests
-- Maintain release processes
-- Guide project direction
-- Mentor new contributors
-
-### Security Contributions
-
-For security-related contributions:
-
-1. **Do NOT** open public issues for security vulnerabilities
-2. **Email** security issues to [security@plasticlabs.ai]
-3. **Follow** responsible disclosure practices
-4. **Wait** for confirmation before public disclosure
-
-Thank you for contributing to Honcho! Your contributions help make memory management better for AI applications everywhere. 🚀
+Thank you for helping make Honcho better! 🫡

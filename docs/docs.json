@@ -42,10 +42,7 @@
             "pages": [
               "documentation/platform/overview",
               "documentation/platform/guided-tutorial",
-              "documentation/platform/sdk",
-              "documentation/platform/self-hosting",
-              "documentation/platform/deploying",
-              "documentation/platform/development"
+              "documentation/platform/sdk"
             ]
           }
         ]
@@ -155,9 +152,9 @@
             "group": "Contributing",
             "pages": [
               "contributing/guidelines",
-              "contributing/project-overview",
-              "contributing/configuration-guide",
               "contributing/self-hosting",
+              "contributing/deployment",
+              "contributing/development",
               "contributing/license"
             ]
           }
