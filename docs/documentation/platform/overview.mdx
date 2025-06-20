@@ -1,430 +1,139 @@
 ---
-title: "Platform Overview"
-description: "Comprehensive overview of Honcho's platform capabilities and features"
+title: "Overview"
+icon: "rocket"
+description: "Honcho is the personal identity platform for AI - enabling truly personalized, contextually aware agents and applications."
 ---
 
-Honcho is a comprehensive memory management platform designed to power the next generation of AI applications. This overview covers the platform's key capabilities, architectural decisions, and how they work together to provide scalable memory management.
 
-## Platform Architecture
+<Tip>📢 **Announcing Honcho Platform**: We've raised $5.35M pre-seed from Variant, White Star Capital & Betaworks to build the personal identity layer for AI. Access the hosted platform today!</Tip>
 
-### High-Level Components
+<Card title="Sign up to start using Honcho!" icon="rocket" href="https://app.honcho.dev">
+    Start using the platform to manage Honcho instances for your workspace or app.
+  </Card>
+
+## Welcome to Honcho!
+
+The Honcho Platform is a managed service and the easiest way to add personal memory and identity to your AI applications. Built by the team at Plastic Labs, Honcho enables **ambient personalization** - your AI learns about users automatically as they interact, with no surveys or additional user overhead.
+
+<img src="/images/app-screenshots/welcome-to-honcho.png" alt="Honcho Platform Dashboard" width="400" />
+
+## Why Use the Honcho Dashboard?
+
+The Honcho management platform streamlines deployment and monitoring so you can focus on building great AI experiences:
+
+**One-Click Deployment**: Launch dedicated Honcho instances in seconds with zero infrastructure setup. We handle provisioning, scaling, and maintenance automatically.
+
+**Developer-First Tools**: Create and manage API keys, utilize an API playground with a Postman-like experience, get machine status and performance analytics of your Honcho instance.
+
+**Production Monitoring**: Real-time analytics, usage metrics, and health monitoring. Track performance and user engagement across all your AI applications.
+
+<img src="/images/app-screenshots/get-started copy.png" alt="Honcho Dashboard Getting Started" width="500" />
+
+## Go to app.honcho.dev
+
+Get up and running with Honcho in minutes through our managed platform:
+
+### **1. Sign Up & Create Your Organization**
+Start by creating your account and setting up your organization. Each organization gets isolated workspaces, team management, and dedicated infrastructure for your Honcho instances.
+
+### **2. Deploy Your Honcho Instance**
+One-click deployment creates a dedicated Honcho instance on Fly.io infrastructure. Your instance is automatically provisioned with PostgreSQL + pgvector, background workers, and API endpoints - ready to handle production traffic for your workspace.
+
+### **3. Generate API Keys** 
+Create and manage API keys for different environments (development, staging, production). Each key provides secure access to your Honcho instance with granular permissions and usage tracking.
+
+<img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" />
+
+### **4. Test with API Playground**
+Use our Postman-like API playground to test queries, explore endpoints, and validate your integration. Send requests directly to your Honcho instance and see real-time responses with full request/response logging.
+
+<img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" />
+
+### **5. Monitor Performance & Machine Status**
+Track your Honcho instance health, usage metrics, and performance analytics. Monitor API response times, background processing queues, memory usage, and user engagement across all your AI applications.
+
+<img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" />
+
+View the status of your machines running Honcho:
+<img src="/images/app-screenshots/machine-status.png" alt="Machine Status" />
+
+## What's Happening Under the Hood
 
 ```mermaid
-graph TB
-    Client[Client Applications] --> Auth[Authentication Layer]
-    Auth --> API[REST API Layer]
-    API --> Router[Route Handlers]
-    Router --> CRUD[Business Logic Layer]
-    CRUD --> DB[(PostgreSQL + pgvector)]
-    
-    Router --> Queue[Deriver Queue]
-    Queue --> Workers[Background Workers]
-    Workers --> AI[AI Services]
-    Workers --> DB
-    
-    Auth --> Dialectic[Dialectic API]
-    Dialectic --> Context[Context Engine]
-    Context --> DB
-    Context --> AI[AI Services]
+
+graph LR
+    User[User Interacts] --> App[Your AI App]
+    App --> Honcho[Honcho API]
+    Honcho --> Theory[Theory of Mind<br/>Processing]
+    Theory --> Profile[Living User<br/>Representation]
+    Profile --> Context[Rich Context<br/>for AI]
+    Context --> App
+
+
 ```
 
-### Core Services
+**1. Users interact naturally** with your AI application  
+**2. Honcho processes interactions via** using advanced theory of mind inference  
+**3. Builds living representations** of each user's psychology, preferences, and identity  
+**4. Provides rich context** to your AI when needed, in natural language
 
-**API Gateway**
-- RESTful endpoints for all operations
-- JWT-based authentication and authorization
-- Request validation and error handling
-- Rate limiting and throttling
 
-**Memory Engine**
+**Memory Engine Architecture**
 - Hierarchical data storage (Workspaces → Peers / Sessions → Messages)
 - Vector similarity search for semantic queries
 - Metadata indexing for fast retrieval
 - Automatic data organization and cleanup
 
-**Deriver System**
-- Background processing queue for insight generation
-- Scalable worker architecture
-- Automatic retry and error handling
-- Real-time status monitoring
 
-**Dialectic Engine**
-- Context-aware response generation
-- Multi-source information synthesis
-- Streaming and batch processing modes
-- Customizable reasoning workflows
-
-## Key Features
-
-### Memory Management
-
-**Persistent Storage**
-- Store unlimited conversation history
-- Maintain context across sessions and applications
-- Organize information hierarchically
-- Support for rich metadata and custom fields
-
-**Intelligent Organization**
-- Automatic categorization of interactions
-- Temporal organization with timestamp indexing
-- User-scoped collections for personalized data
-- Cross-session context preservation
-
-**Efficient Retrieval**
-- Vector similarity search for semantic queries
-- Full-text search for exact matches
-- Hybrid search combining multiple strategies
-- Real-time and batch query processing
-
-### Background Processing
-
-**Automatic Insight Generation**
-- User personality and preference profiling
-- Conversation summarization at multiple levels
-- Fact extraction and knowledge building
-- Behavioral pattern recognition
-
-**Scalable Processing**
-- Distributed worker architecture
-- Queue-based job management
-- Horizontal scaling capabilities
-- Resource optimization and load balancing
-
-**Intelligent Prioritization**
-- Priority-based job scheduling
-- Real-time vs. batch processing decisions
-- Resource allocation based on importance
-- Adaptive processing based on system load
-
-### Contextual Intelligence
-
-**Multi-Source Context**
-- Combine conversation history, user profiles, and documents
-- Cross-session context awareness
-- Relationship mapping between entities
-- Dynamic context window management
-
-**Reasoning Capabilities**
-- Logical inference from stored information
-- Temporal reasoning about user changes
-- Causal analysis of user behavior
-- Predictive insights based on patterns
-
-**Personalization Engine**
-- Individual user modeling and adaptation
-- Preference learning and evolution tracking
-- Contextual response customization
-- Experience optimization over time
-
-## Technical Capabilities
-
-### Data Storage
-
-**PostgreSQL Foundation**
-- ACID compliance for data integrity
-- Advanced indexing for fast queries
-- JSON support for flexible schemas
-- Robust backup and recovery
-
-**Vector Search**
-- pgvector extension for embeddings
-- Cosine similarity and other distance metrics
-- Efficient similarity search at scale
-- Support for multiple embedding models
-
-**Performance Optimization**
-- Connection pooling and caching
-- Query optimization and indexing strategies
-- Read replicas for scaling read operations
-- Partitioning for large datasets
-
-### Security & Privacy
-
-**Authentication & Authorization**
-- JWT-based token system
-- Hierarchical access control (workspace/peer/session)
-- API key management
-- Role-based permissions
-
-**Data Protection**
-- Encryption at rest and in transit
-- Workspace-level data isolation
-- Audit logging for compliance
-- GDPR-compliant data handling
-
-**Privacy Controls**
-- User consent management
-- Data retention policies
-- Selective data processing controls
-- Anonymization capabilities
-
-### Integration & APIs
-
-**RESTful Design**
-- Consistent API patterns across all endpoints
-- Comprehensive error handling
-- Standardized request/response formats
-- OpenAPI specification for documentation
-
-**SDK Support**
-- Official Python and Node.js SDKs
-- Type-safe interfaces with comprehensive documentation
-- Async/await support for modern applications
-- Framework-specific integrations
-
-**Webhook Support** (Coming Soon)
-- Event-driven architecture
-- Real-time notifications
-- Custom event filtering
-- Reliable delivery guarantees
-
-## Deployment Options
-
-### Self-Hosted Deployment
-
-**Container-Based**
-- Docker and Docker Compose support
-- Kubernetes Helm charts
-- Multi-environment configurations
-- Health checks and monitoring
-
-**Cloud Platforms**
-- AWS, GCP, Azure support
-- Terraform infrastructure templates
-- Auto-scaling configurations
-- Managed service integrations
-
-**Edge Deployment**
-- Local development environments
-- On-premises installations
-- Hybrid cloud configurations
-- Offline-capable modes
-
-### Managed Services
-
-**Honcho Cloud** (Coming Soon)
-- Fully managed hosting
-- Automatic scaling and updates
-- Enterprise support and SLAs
-- Global edge deployments
-
-**Enterprise Features**
-- SSO integration
-- Advanced analytics
-- Custom model support
-- Dedicated infrastructure
-
-## Performance Characteristics
-
-### Scalability
-
-**Horizontal Scaling**
-- Stateless API servers for easy scaling
-- Distributed worker architecture
-- Database read replicas
-- CDN integration for static assets
-
-**Vertical Scaling**
-- Efficient resource utilization
-- Memory-optimized operations
-- CPU-intensive task optimization
-- Storage performance tuning
-
-**Load Handling**
-- Queue-based request buffering
-- Intelligent load balancing
-- Circuit breaker patterns
-- Graceful degradation under load
-
-### Latency & Throughput
-
-**API Response Times**
-- < 100ms for simple queries
-- < 500ms for complex searches
-- Streaming responses for large results
-- Caching for frequently accessed data
-
-**Processing Throughput**
-- Thousands of messages per second
-- Batch processing optimizations
-- Parallel worker execution
-- Adaptive processing strategies
-
-**Storage Performance**
-- Sub-second query responses
-- Efficient indexing strategies
-- Optimized vector operations
-- Concurrent access handling
-
-## Monitoring & Observability
-
-### Metrics & Analytics
-
-**System Metrics**
-- API request rates and latencies
-- Database performance indicators
-- Queue depth and processing rates
-- Worker health and utilization
-
-**Business Metrics**
-- User engagement patterns
-- Feature usage analytics
-- Processing success rates
-- Error frequency and types
-
-**Custom Metrics**
-- Application-specific KPIs
-- User behavior insights
-- Performance benchmarks
-- ROI measurement tools
-
-### Logging & Debugging
-
-**Structured Logging**
-- JSON-formatted log entries
-- Correlation IDs for request tracing
-- Log level controls
-- Centralized log aggregation
-
-**Distributed Tracing**
-- Request flow visualization
-- Performance bottleneck identification
-- Error propagation tracking
-- Service dependency mapping
-
-**Health Monitoring**
-- System health dashboards
-- Automated alerting
-- Failure detection and notification
-- Recovery procedure automation
-
-## Development Experience
-
-### Developer Tools
-
-**Interactive Documentation**
-- Auto-generated API docs
-- Live endpoint testing
-- Code examples in multiple languages
-- Response schema validation
-
-**SDKs & Libraries**
-- Comprehensive client libraries
-- Type definitions and intellisense
-- Error handling and retry logic
-- Authentication helpers
-
-**Development Environment**
-- Local development setup
-- Docker-based development
-- Test data generation
-- Mock service integration
-
-### Testing & QA
-
-**Testing Framework**
-- Unit and integration tests
-- API endpoint testing
-- Performance benchmarking
-- Load testing capabilities
-
-**Quality Assurance**
-- Automated code quality checks
-- Security vulnerability scanning
-- Dependency management
-- CI/CD pipeline integration
-
-## Use Case Scenarios
-
-### Customer Support
-
-**Conversation Continuity**
-- Maintain context across support interactions
-- Track issue resolution progress
-- Learn customer preferences and communication styles
-- Provide personalized support experiences
-
-**Knowledge Building**
-- Build comprehensive customer profiles
-- Track common issues and solutions
-- Generate insights from support interactions
-- Improve response quality over time
-
-### Educational Platforms
-
-**Learning Personalization**
-- Adapt content to individual learning styles
-- Track progress and knowledge gaps
-- Provide contextual hints and guidance
-- Maintain long-term learning relationships
-
-**Progress Tracking**
-- Monitor skill development over time
-- Identify areas needing attention
-- Generate personalized learning paths
-- Provide meaningful feedback
-
-### Healthcare Applications
-
-**Patient Interaction History**
-- Maintain comprehensive interaction records
-- Track symptoms and treatment responses
-- Provide context for care decisions
-- Support care coordination
-
-**Care Personalization**
-- Learn patient preferences and concerns
-- Adapt communication styles
-- Provide relevant health information
-- Support treatment adherence
-
-## Future Roadmap
-
-### Short-Term Enhancements
-
-- Real-time collaboration features
-- Advanced analytics dashboard
-- Webhook system implementation
-- Performance optimizations
-
-### Medium-Term Goals
-
-- Multi-modal content support (images, audio)
-- Advanced reasoning capabilities
-- Federated deployment options
-- Enterprise security features
-
-### Long-Term Vision
-
-- AGI-ready memory architecture
-- Cross-application memory sharing
-- Advanced privacy-preserving techniques
-- Autonomous memory management
+```python
+import honcho
+
+# Initialize client
+client = honcho.Client(api_key="your-api-key")
+
+# Create a workspace for your app
+workspace = client.workspaces.create(name="My AI App")
+
+# Create a peer (user)
+peer = client.peers.create(
+    workspace_id=workspace.id,
+    name="user_123"
+)
+
+# Get personalized context for AI response
+context = client.dialectic.query(
+    workspace_id=workspace.id,
+    peer_id=peer.id,
+    query="What communication style does this user prefer?"
+)
+# Returns rich, nuanced context about the user
+```
 
 ## Getting Started
 
-Ready to explore Honcho's capabilities?
+Check out our [Platform Guide](/documentation/platform/guided-tutorial) to start using Honcho platform quickly.
+
+Or dive into our [API Reference](/api-reference) to explore all available endpoints.
+
+## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Quick Start" icon="rocket" href="/documentation/introduction/quickstart">
-    Get Honcho running in minutes
+  <Card title="Sign up to Honcho Platform" icon="rocket" href="https://app.honcho.dev">
+    Get started with managed Honcho instances
   </Card>
-  <Card title="Tutorial" icon="graduation-cap" href="/documentation/platform/guided-tutorial">
-    Follow our step-by-step guide
+  <Card title="Join our Discord" icon="discord" href="http://discord.gg/plasticlabs">
+    Connect with 1000+ developers building with Honcho
   </Card>
-  <Card title="API Reference" icon="code" href="/api-reference">
-    Explore all available endpoints
+  <Card title="Read the Docs" icon="book" href="/documentation/introduction/quickstart">
+    Follow our comprehensive guides
   </Card>
-  <Card title="SDKs" icon="cube" href="/documentation/platform/sdk">
-    Use our client libraries
+  <Card title="Explore Examples" icon="code" href="/guides">
+    See Honcho in action with real examples
   </Card>
 </CardGroup>
 
-## Community & Support
+We're excited to see what you'll build with Honcho Platform. Let's create smarter, more personalized AI experiences together!
 
-- **Documentation**: Comprehensive guides and API reference
-- **Discord**: [Join our developer community](http://discord.gg/plasticlabs)
-- **GitHub**: [Open source repository](https://github.com/plastic-labs/honcho)
-- **Issues**: Report bugs and request features
+---
 
-Honcho empowers developers to build the next generation of memory-enabled AI applications. Start building today! 
+*Ready to build personally aligned AI? [Get started with Honcho →](https://app.honcho.dev)*
