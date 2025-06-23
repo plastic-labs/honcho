@@ -145,74 +145,76 @@ Messages are the fundamental units of interaction within sessions. They may also
 }
 ```
 
-## Background Processing
+## Deriver System
 
 ### Deriver Queue
 
-The deriver system provides automatic background processing of user interactions to derive insights and maintain context.
+The deriver system provides automatic background processing of user interactions to derive facts, insights, and context. Messages ingested by Honcho are automatically queued for background processing by the deriver. Depending on the configuration of peer that authored the message and the session in which the message is created, the deriver may enqueue the message multiple times -- we can store facts derived from the message in the peer's global representation, their session-level representation, and/or the representations of other peers observing the author.
 
-**Processing Types:**
-- **Representation**: Generate user personality and preference profiles
-- **Summary**: Create conversation summaries and key insights
-- **Facts**: Extract and store factual information about users
+Facts derived here are used in the Dialectic chat endpoint to generate context-aware responses that can correctly reference both concrete facts extracted from messages and social insights deduced from facts, tone, and opinion.  
 
-**Queue States:**
-- **Pending**: Waiting to be processed
-- **In Progress**: Currently being processed by workers
-- **Completed**: Successfully processed
+<Info>
+Deriver tasks are processed in parallel, but tasks affecting the same peer representation will always be processed serially in order of message creation, so as to properly understand their cumulative effect.
+</Info>
 
-## Data Flow
+### Deriver Tasks
 
-### 1. Input Processing
+#### Representation
+
+Representation tasks generate peer representations. They may be enqueued for each peer that observes a message, depending on configuration. Representations are accessed via the `chat` endpoint, allowing developers to query a peer's representation: from the "omnipresent" perspective of Honcho, the session-level representation, and the representation of that peer *from the perspective of other peers*.
+
+Representation tasks create comprehensive user profiles including:
+
+**Psychological Insights:**
+- Personality traits
+- Communication style
+- Preferences and interests
+- Behavioral patterns
+
+**Contextual Information:**
+- Current conversation topics
+- User goals and objectives
+- Emotional state indicators
+- Relationship dynamics
+
+**Example Output:**
 ```
-Message → Session or Peer → Deriver Queue → Background Processing
+The user demonstrates high technical competency and prefers direct communication. 
+They show interest in software development topics and value efficiency in conversations. 
+Current session indicates they're seeking help with API integration issues.
 ```
 
-### 2. Context Retrieval
-```
-Query → Semantic Search → Relevant Context → Response Generation
-```
+#### Summary
 
-### 3. Memory Updates
-```
-Interaction → Analysis → Insight Extraction → Memory Storage
-```
+Summary tasks create conversation summaries and key insights. Periodically, a "short" summary will be created for each session as messages are added -- every 20 messages by default. "Long" summaries are created every 60 messages by default and maintain a total overview of the session by including the previous summary in a recursive fashion. These summaries are accessed in the `get_context` endpoint along with recent messages, allowing developers to easily fetch everything necessary to generate the next LLM completion for an agent.
+
+## Dialectic Chat
+
+Honcho's killer feature is the `chat` endpoint. By storing messages in Honcho, you may query in natural language to get intelligent answer's about a user or agent's personality, theory of mind, history, and more. Dialectic Chat should be thought of as an assisting agent which your agent can reach out to for useful context and answers about actors, human or AI, operating your application.
+
+[TODO: Describe RSR / new dialectic + deriver architecture here when it's finalized]
+
+
 
 ## Scalability Considerations
 
-### Horizontal Scaling
 - **Stateless API**: Scale API servers independently
 - **Queue Workers**: Scale background processing workers
 - **Database**: PostgreSQL with read replicas
 
-### Data Management
-- **Partitioning**: Workspace-based data separation
-- **Archiving**: Historical data management
-- **Backup**: Regular automated backups
-
 ## Security Architecture
 
-### Authentication & Authorization
-- **JWT Tokens**: Secure API access
+- **JWTs**: Secure API access
 - **Scoped Access**: Workspace/peer/session level permissions
 - **Admin Controls**: Super-user capabilities
-
-### Data Privacy
 - **Workspace Isolation**: Complete data separation
 - **Encryption**: Data encryption at rest and in transit
-- **Access Logging**: Comprehensive audit trails
 
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Deriver System" icon="gear" href="/documentation/core-concepts/deriver">
-    Learn about background processing and insight derivation
-  </Card>
-  <Card title="Dialectic API" icon="comments" href="/documentation/core-concepts/dialectic-api">
-    Understand context-aware response generation
-  </Card>
-  <Card title="Storage API" icon="database" href="/documentation/core-concepts/storage-api">
-    Explore data storage and retrieval patterns
+  <Card title="SDK" icon="database" href="/documentation/platform/sdk">
+    Learn how to use the SDK to interact with the data model
   </Card>
   <Card title="Glossary" icon="book" href="/documentation/core-concepts/glossary">
     Reference for all technical terms
