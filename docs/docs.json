@@ -60,7 +60,8 @@
               {
                 "group": "Getting Started",
                 "pages": [
-                  "v2/guides/overview"
+                  "v2/guides/overview",
+                  "v2/guides/cursor-claude-setup"
                 ]
               },
               {
