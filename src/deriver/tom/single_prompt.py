@@ -4,7 +4,6 @@ from enum import Enum
 from mirascope import llm
 from mirascope.integrations.langfuse import with_langfuse
 from pydantic import BaseModel
-from sentry_sdk.ai.monitoring import ai_track
 
 from src.utils.types import track
 
