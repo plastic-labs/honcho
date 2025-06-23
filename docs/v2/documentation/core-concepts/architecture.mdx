@@ -1,150 +1,162 @@
 ---
 title: "Architecture"
-description: "Understanding Honcho's core concepts and data model"
+description: "Understanding Honcho's core concepts and data model."
 icon: "sitemap"
 ---
 
 Honcho is built around a hierarchical data model that enables scalable memory management for AI applications. Understanding these core concepts is essential for effectively using the platform.
 
-## Data Model Hierarchy
+## Data Model Overview
 
-```
-  Workspace
-  ├── Peers
-  │     └── Messages
-  ├── Sessions
-  │     ├── Messages
-  │     └── Session Peers (with configurations)
-  └── Background Processing (Deriver Queue)
+```mermaid
+graph TD
+    W[Workspace] --> P[Peers]
+    W --> S[Sessions]
+    W --> D[Background Processing]
+    P --> PM[Messages]
+    S --> SM[Messages]
+    S --> SP[Session Peers]
+    SP --> Config[Configurations]
+    D --> DQ[Deriver Queue]
+    
+    style W fill:#FF5A7E,stroke:#333,stroke-width:2px,color:#fff
+    style P fill:#e1f5fe
+    style S fill:#f3e5f5
+    style D fill:#fff3e0
 ```
 
-See the [Storage API](/v2/api-reference/introduction) to see how to use the data model in practice.
+<Info>
+See the [Storage API](/v2/api-reference/introduction) to learn how to use the data model in practice.
+</Info>
 
 ## Core Concepts
 
-### Workspaces
+<AccordionGroup>
+  <Accordion title="Workspaces" icon="building">
+    Workspaces are the top-level containers that provide complete isolation between different applications or environments.
 
-Workspaces are the top-level containers that provide complete isolation between different applications or environments.
+    **Key Features:**
+    - **Isolation**: Complete data separation between workspaces
+    - **Multi-tenancy**: Support multiple applications or environments  
+    - **Configuration**: Workspace-level settings and metadata
+    - **Access Control**: Authentication scoped to workspace level
 
-**Key Features:**
-- **Isolation**: Complete data separation between workspaces
-- **Multi-tenancy**: Support multiple applications or environments
-- **Configuration**: Workspace-level settings and metadata
-- **Access Control**: Authentication scoped to workspace level
+    **Use Cases:**
+    - Separate development/staging/production environments
+    - Multi-tenant SaaS applications
+    - Different product lines or use cases
+    - Complete data separation between teams
 
-**Use Cases:**
-- Separate development/staging/production environments
-- Multi-tenant SaaS applications
-- Different product lines or use cases
-
-```json
-{
-  "name": "my-production-app",
-  "metadata": {
-    "environment": "production",
-    "version": "1.0.0"
-  },
-  "configuration": {
-    "deriver_enabled": true
-  }
-}
-```
-
-### Peers
-
-Peers represent individual users, agents, or entities in a workspace. They are the primary subjects for memory and context management.
-
-**Key Features:**
-- **Identity**: Unique identifier within a workspace
-- **Memory Storage**: Personal memory and context accumulation
-- **Configuration**: Per-peer behavioral settings
-- **Cross-Session Context**: Memory persists across all sessions
-
-**Use Cases:**
-- Individual users in a chatbot application
-- AI agents interacting with users or other agents
-- Customer profiles in support systems
-- Student profiles in educational platforms
-
-```json
-{
-  "name": "user-123",
-  "metadata": {
-    "email": "user@example.com",
-    "preferences": {
-      "language": "en",
-      "timezone": "UTC"
+    ```json
+    {
+      "name": "my-production-app",
+      "metadata": {
+        "environment": "production",
+        "version": "1.0.0"
+      },
+      "configuration": {
+        "deriver_enabled": true
+      }
     }
-  },
-  "configuration": {
-    "observe_me": true
-  }
-}
-```
+    ```
+  </Accordion>
 
-### Sessions
+  <Accordion title="Peers" icon="user">
+    Peers represent individual users, agents, or entities in a workspace. They are the primary subjects for memory and context management.
 
-Sessions represent individual conversation threads or interaction contexts between peers.
+    **Key Features:**
+    - **Identity**: Unique identifier within a workspace
+    - **Memory Storage**: Personal memory and context accumulation
+    - **Configuration**: Per-peer behavioral settings
+    - **Cross-Session Context**: Memory persists across all sessions
 
-**Key Features:**
-- **Multi-Peer**: Support multiple peers in a single session
-- **Temporal Boundaries**: Clear start/end to conversation threads
-- **Context Scoping**: Session-specific memory and context
-- **Configuration**: Session-level behavioral controls
+    **Use Cases:**
+    - Individual users in chatbot applications
+    - AI agents interacting with users or other agents
+    - Customer profiles in support systems
+    - Student profiles in educational platforms
 
-**Use Cases:**
-- Individual chat conversations
-- Support tickets
-- Meeting transcripts
-- Learning sessions
-
-```json
-{
-  "id": "conversation-456",
-  "peers": {
-    "user-123": {
-      "observe_others": true,
-      "observe_me": true
-    },
-    "assistant-ai": {
-      "observe_others": false,
-      "observe_me": false
+    ```json
+    {
+      "name": "user-123",
+      "metadata": {
+        "email": "user@example.com",
+        "preferences": {
+          "language": "en",
+          "timezone": "UTC"
+        }
+      },
+      "configuration": {
+        "observe_me": true
+      }
     }
-  },
-  "metadata": {
-    "topic": "product-support",
-    "priority": "high"
-  }
-}
-```
+    ```
+  </Accordion>
 
-### Messages
+  <Accordion title="Sessions" icon="message">
+    Sessions represent individual conversation threads or interaction contexts between peers.
 
-Messages are the fundamental units of interaction within sessions. They may also be used at the peer level to represent stored information of any kind.
+    **Key Features:**
+    - **Multi-Peer**: Support multiple peers in a single session
+    - **Temporal Boundaries**: Clear start/end to conversation threads
+    - **Context Scoping**: Session-specific memory and context
+    - **Configuration**: Session-level behavioral controls
 
-**Key Features:**
-- **Rich Content**: Support for text, metadata, and structured data
-- **Attribution**: Clear association with sending peer
-- **Ordering**: Chronological sequence within sessions
-- **Processing**: Automatic background analysis and insight derivation
+    **Use Cases:**
+    - Individual chat conversations
+    - Support tickets
+    - Meeting transcripts
+    - Learning sessions
 
-**Message Types:**
-- User messages
-- AI responses
-- System notifications
-- Rich media content
+    ```json
+    {
+      "id": "conversation-456",
+      "peers": {
+        "user-123": {
+          "observe_others": true,
+          "observe_me": true
+        },
+        "assistant-ai": {
+          "observe_others": false,
+          "observe_me": false
+        }
+      },
+      "metadata": {
+        "topic": "product-support",
+        "priority": "high"
+      }
+    }
+    ```
+  </Accordion>
 
-```json
-{
-  "content": "I need help with my order",
-  "peer_id": "user-123",
-  "metadata": {
-    "intent": "support_request",
-    "urgency": "medium",
-    "order_id": "12345"
-  }
-}
-```
+  <Accordion title="Messages" icon="envelope">
+    Messages are the fundamental units of interaction within sessions. They may also be used at the peer level to represent stored information of any kind.
+
+    **Key Features:**
+    - **Rich Content**: Support for text, metadata, and structured data
+    - **Attribution**: Clear association with sending peer
+    - **Ordering**: Chronological sequence within sessions
+    - **Processing**: Automatic background analysis and insight derivation
+
+    **Message Types:**
+    - User messages
+    - AI responses
+    - System notifications
+    - Rich media content
+
+    ```json
+    {
+      "content": "I need help with my order",
+      "peer_id": "user-123",
+      "metadata": {
+        "intent": "support_request",
+        "urgency": "medium",
+        "order_id": "12345"
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
 
 ## Deriver System
 
@@ -193,9 +205,11 @@ Summary tasks create conversation summaries and key insights. Periodically, a "s
 
 Honcho's killer feature is the `chat` endpoint. By storing messages in Honcho, you may query in natural language to get intelligent answer's about a user or agent's personality, theory of mind, history, and more. Dialectic Chat should be thought of as an assisting agent which your agent can reach out to for useful context and answers about actors, human or AI, operating your application.
 
+<Note>
+Think of Dialectic Chat as an assisting agent that your main agent can consult for contextual information about any actor in your application.
+</Note>
+
 [TODO: Describe RSR / new dialectic + deriver architecture here when it's finalized]
-
-
 
 ## Scalability Considerations
 
@@ -214,10 +228,16 @@ Honcho's killer feature is the `chat` endpoint. By storing messages in Honcho, y
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="SDK" icon="database" href="/v2/documentation/platform/sdk">
+  <Card title="Platform SDK" icon="code" href="/v2/documentation/platform/sdk">
     Learn how to use the SDK to interact with the data model
   </Card>
   <Card title="Glossary" icon="book" href="/v2/documentation/core-concepts/glossary">
-    Reference for all technical terms
+    Reference for all technical terms and concepts
+  </Card>
+  <Card title="API Reference" icon="api" href="/v2/api-reference/introduction">
+    Detailed API documentation and examples
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/v2/documentation/introduction/quickstart">
+    Get started with your first integration
   </Card>
 </CardGroup>
