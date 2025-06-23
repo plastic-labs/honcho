@@ -1,39 +1,49 @@
 import logging  # noqa: I001
 import os
-from typing import Any
 from collections.abc import AsyncGenerator
-from src.models import Peer, Workspace
-import jwt
-from nanoid import generate as generate_nanoid
-from unittest.mock import patch, MagicMock, AsyncMock
+from typing import Any
+from collections.abc import Callable
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 import pytest_asyncio
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from nanoid import generate as generate_nanoid
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.engine.url import make_url
+from sqlalchemy.engine.url import URL, make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
-from sqlalchemy_utils import create_database, database_exists, drop_database
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy_utils import (
+    create_database,  # pyright: ignore[reportUnknownVariableType]
+    database_exists,  # pyright: ignore[reportUnknownVariableType]
+    drop_database,  # pyright: ignore[reportUnknownVariableType]
+)
 
 from src import models
 from src.db import Base
 from src.dependencies import get_db
 from src.exceptions import HonchoException
-from src.security import create_admin_jwt, create_jwt, JWTParams
 from src.main import app
 from src.config import settings
+from src.models import Peer, Workspace
+from src.security import JWTParams, create_admin_jwt, create_jwt
 
 
 # Create a custom handler that doesn't get closed prematurely
 class TestHandler(logging.Handler):
     def __init__(self):
         super().__init__()
-        self.records = []
+        self.records: list[logging.LogRecord] = []
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord):
         self.records.append(record)
 
 
@@ -61,7 +71,7 @@ DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 # We'll use settings.AUTH directly where needed
 
 
-def create_test_database(db_url):
+def create_test_database(db_url: URL):
     """Helper function create a database if it does not already exist
     uses the `sqlalchemy_utils` library to create the database and takes a DB URL
     as the input
@@ -82,7 +92,7 @@ def create_test_database(db_url):
         raise
 
 
-async def setup_test_database(db_url):
+async def setup_test_database(db_url: URL):
     """Helper function to setup the test database
     takes a DB URL as input and returns a SQLAlchemy engine
 
@@ -148,7 +158,7 @@ async def db_engine():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_session(db_engine):
+async def db_session(db_engine: AsyncEngine):
     """Create a database session for the scope of a single test function"""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with Session() as session:
@@ -157,12 +167,14 @@ async def db_session(db_engine):
 
 
 @pytest.fixture(scope="function")
-async def client(db_session):
+async def client(db_session: AsyncSession):
     """Create a FastAPI TestClient for the scope of a single test function"""
 
     # Register exception handlers for tests
     @app.exception_handler(HonchoException)
-    async def test_exception_handler(request: Request, exc: HonchoException):
+    async def test_exception_handler(  # pyright: ignore
+        _: Request, exc: HonchoException
+    ):
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -180,7 +192,13 @@ async def client(db_session):
 
 
 def create_invalid_jwt() -> str:
-    return jwt.encode({"ad": "invalid"}, "this is not the secret", algorithm="HS256")
+    return jwt.encode(  # pyright: ignore[reportUnknownMemberType]
+        {"ad": "invalid"}, "this is not the secret", algorithm="HS256"
+    )
+
+
+class AuthClient(TestClient):
+    auth_type: str | None = None
 
 
 @pytest.fixture(
@@ -191,7 +209,11 @@ def create_invalid_jwt() -> str:
         ("admin", create_admin_jwt),  # Admin JWT
     ]
 )
-def auth_client(client, request, monkeypatch):
+def auth_client(
+    client: AuthClient,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """
     Fixture that provides a client with different authentication states.
     Always ensures USE_AUTH is set to True.
@@ -214,7 +236,9 @@ def auth_client(client, request, monkeypatch):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def sample_data(db_session) -> AsyncGenerator[tuple[Workspace, Peer], Any]:
+async def sample_data(
+    db_session: AsyncSession,
+) -> AsyncGenerator[tuple[Workspace, Peer], Any]:
     """Helper function to create test data"""
     # Create test app
     test_workspace = models.Workspace(name=str(generate_nanoid()))
@@ -241,7 +265,10 @@ def mock_langfuse():
         patch("langfuse.decorators.langfuse_context") as mock_context,
     ):
         # Mock the decorator to just return the function
-        mock_observe.return_value = lambda func: func
+        def return_value(func: Callable[..., Any]):
+            return func
+
+        mock_observe.return_value = return_value
 
         # Mock the context object
         mock_context_obj = MagicMock()
@@ -272,7 +299,7 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_mirascope_functions(request):
+def mock_mirascope_functions():
     """Mock Mirascope LLM functions to avoid needing API keys during tests"""
 
     # Create mock responses for different function types
@@ -306,9 +333,9 @@ def mock_mirascope_functions(request):
         mock_user_rep_inference.return_value = "Test user representation"
         # Mock single_tom to return a proper Pydantic object
         from src.deriver.tom.single_prompt import (
-            TomInferenceOutput,
             CurrentState,
             TentativeInference,
+            TomInferenceOutput,
         )
 
         mock_tom_obj = TomInferenceOutput(
@@ -353,12 +380,12 @@ def mock_mirascope_functions(request):
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_session):
+def mock_tracked_db(db_session: AsyncSession):
     """Mock tracked_db to use the test database session"""
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
-    async def mock_tracked_db_context(operation_name=None):
+    async def mock_tracked_db_context(_: str | None = None):
         yield db_session
 
     with patch("src.dependencies.tracked_db", mock_tracked_db_context):
@@ -373,7 +400,7 @@ def mock_crud_collection_operations():
     from src import models
 
     async def mock_get_or_create_collection(
-        db, workspace_name, peer_name, collection_name
+        _: AsyncSession, workspace_name: str, peer_name: str
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
@@ -392,7 +419,7 @@ def mock_crud_collection_operations():
 
 
 @pytest.fixture(autouse=True)
-def mock_agent_api_calls(request):
+def mock_agent_api_calls():
     """Mock API calls made by the agent during tests"""
     # Mock the agent-specific functions
     with (

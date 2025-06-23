@@ -1,7 +1,10 @@
+from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
+from src.models import Peer, Workspace
 
-def test_workspace_validations_api(client):
+
+def test_workspace_validations_api(client: TestClient):
     # Test name too short
     response = client.post("/v2/workspaces", json={"name": "", "metadata": {}})
     assert response.status_code == 422
@@ -28,7 +31,7 @@ def test_workspace_validations_api(client):
     assert error["type"] == "dict_type"
 
 
-def test_peer_validations_api(client, sample_data):
+def test_peer_validations_api(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
 
     # Test name too short
@@ -53,7 +56,9 @@ def test_peer_validations_api(client, sample_data):
     assert error["type"] == "string_too_long"
 
 
-def test_message_validations_api(client, sample_data):
+def test_message_validations_api(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     # Create a test session first
     session_id = str(generate_nanoid())
@@ -79,7 +84,9 @@ def test_message_validations_api(client, sample_data):
     assert error["type"] == "string_too_long"
 
 
-def test_session_validations_api(client, sample_data):
+def test_session_validations_api(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     # Create a test session first
     session_id = str(generate_nanoid())
@@ -125,7 +132,9 @@ def test_session_validations_api(client, sample_data):
     assert data["configuration"] == {"test_flag": "test_value"}
 
 
-def test_agent_query_validations_api(client, sample_data):
+def test_agent_query_validations_api(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     # Create a session first since agent queries are session-based
     session_id = str(generate_nanoid())
@@ -195,7 +204,9 @@ def test_agent_query_validations_api(client, sample_data):
     assert response.status_code == 200
 
 
-def test_required_field_validations_api(client, sample_data):
+def test_required_field_validations_api(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
     session_response = client.post(
@@ -225,7 +236,9 @@ def test_required_field_validations_api(client, sample_data):
     assert error["type"] == "missing"
 
 
-def test_filter_validations_api(client, sample_data):
+def test_filter_validations_api(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     # Create a session first
     session_id = str(generate_nanoid())

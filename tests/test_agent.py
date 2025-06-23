@@ -1,5 +1,6 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src import agent
 
@@ -56,9 +57,9 @@ async def test_run_tom_inference_function():
     """Test that run_tom_inference function works with new Pydantic objects"""
     with patch("src.agent.get_tom_inference_single_prompt") as mock_tom:
         from src.deriver.tom.single_prompt import (
-            TomInferenceOutput,
             CurrentState,
             TentativeInference,
+            TomInferenceOutput,
         )
 
         # Mock the function to return a proper Pydantic object

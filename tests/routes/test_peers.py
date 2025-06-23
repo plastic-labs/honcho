@@ -1,9 +1,10 @@
+from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
 from src.models import Peer, Workspace
 
 
-def test_get_or_create_peer(client, sample_data: tuple[Workspace, Peer]):
+def test_get_or_create_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
     name = str(generate_nanoid())
     response = client.post(
@@ -18,7 +19,7 @@ def test_get_or_create_peer(client, sample_data: tuple[Workspace, Peer]):
 
 
 def test_get_or_create_peer_with_configuration(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test peer creation with configuration parameter"""
     test_workspace, _ = sample_data
@@ -36,7 +37,7 @@ def test_get_or_create_peer_with_configuration(
 
 
 def test_get_or_create_peer_with_all_optional_params(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test peer creation with all optional parameters"""
     test_workspace, _ = sample_data
@@ -55,7 +56,9 @@ def test_get_or_create_peer_with_all_optional_params(
     assert data["configuration"] == configuration
 
 
-def test_get_or_create_existing_peer(client, sample_data: tuple[Workspace, Peer]):
+def test_get_or_create_existing_peer(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, _ = sample_data
     name = str(generate_nanoid())
 
@@ -80,7 +83,7 @@ def test_get_or_create_existing_peer(client, sample_data: tuple[Workspace, Peer]
     assert peer1["metadata"] == peer2["metadata"]
 
 
-def test_get_peers(client, sample_data: tuple[Workspace, Peer]):
+def test_get_peers(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
 
     # Create a few peers with metadata
@@ -119,7 +122,9 @@ def test_get_peers(client, sample_data: tuple[Workspace, Peer]):
     assert data["items"][0]["metadata"]["peer_key"] == "peer_value"
 
 
-def test_get_peers_with_empty_filter(client, sample_data: tuple[Workspace, Peer]):
+def test_get_peers_with_empty_filter(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer listing with empty filter object"""
     test_workspace, _ = sample_data
 
@@ -132,7 +137,9 @@ def test_get_peers_with_empty_filter(client, sample_data: tuple[Workspace, Peer]
     assert isinstance(data["items"], list)
 
 
-def test_get_peers_with_null_filter(client, sample_data: tuple[Workspace, Peer]):
+def test_get_peers_with_null_filter(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer listing with null filter"""
     test_workspace, _ = sample_data
 
@@ -145,7 +152,7 @@ def test_get_peers_with_null_filter(client, sample_data: tuple[Workspace, Peer])
     assert isinstance(data["items"], list)
 
 
-def test_update_peer(client, sample_data: tuple[Workspace, Peer]):
+def test_update_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     response = client.put(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
@@ -156,7 +163,9 @@ def test_update_peer(client, sample_data: tuple[Workspace, Peer]):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-def test_update_peer_with_configuration(client, sample_data: tuple[Workspace, Peer]):
+def test_update_peer_with_configuration(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer update with configuration parameter"""
     test_workspace, test_peer = sample_data
     configuration = {"new_feature": True, "legacy_feature": False}
@@ -171,7 +180,7 @@ def test_update_peer_with_configuration(client, sample_data: tuple[Workspace, Pe
 
 
 def test_update_peer_with_all_optional_params(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test peer update with both metadata and configuration"""
     test_workspace, test_peer = sample_data
@@ -188,7 +197,9 @@ def test_update_peer_with_all_optional_params(
     assert data["configuration"] == configuration
 
 
-def test_update_peer_with_null_metadata(client, sample_data: tuple[Workspace, Peer]):
+def test_update_peer_with_null_metadata(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer update with null metadata"""
     test_workspace, test_peer = sample_data
 
@@ -209,7 +220,7 @@ def test_update_peer_with_null_metadata(client, sample_data: tuple[Workspace, Pe
 
 
 def test_update_peer_with_null_configuration(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test peer update with null configuration"""
     test_workspace, test_peer = sample_data
@@ -223,7 +234,9 @@ def test_update_peer_with_null_configuration(
     assert "configuration" in data
 
 
-def test_get_sessions_for_peer_no_sessions(client, sample_data: tuple[Workspace, Peer]):
+def test_get_sessions_for_peer_no_sessions(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Get sessions for the peer
@@ -236,7 +249,7 @@ def test_get_sessions_for_peer_no_sessions(client, sample_data: tuple[Workspace,
     assert "items" in data
 
 
-def test_get_sessions_for_peer(client, sample_data: tuple[Workspace, Peer]):
+def test_get_sessions_for_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
 
     # Create session for the peer
@@ -263,7 +276,7 @@ def test_get_sessions_for_peer(client, sample_data: tuple[Workspace, Peer]):
 
 
 def test_get_sessions_for_peer_with_is_active_filter(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test getting sessions for peer with is_active parameter"""
     test_workspace, test_peer = sample_data
@@ -290,7 +303,7 @@ def test_get_sessions_for_peer_with_is_active_filter(
 
 
 def test_get_sessions_for_peer_with_empty_filter(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test getting sessions for peer with empty filter object"""
     test_workspace, test_peer = sample_data
@@ -305,7 +318,9 @@ def test_get_sessions_for_peer_with_empty_filter(
     assert isinstance(data["items"], list)
 
 
-def test_create_and_get_messages_for_peer(client, sample_data: tuple[Workspace, Peer]):
+def test_create_and_get_messages_for_peer(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Create messages for the peer
@@ -349,7 +364,7 @@ def test_create_and_get_messages_for_peer(client, sample_data: tuple[Workspace, 
 
 
 def test_get_messages_for_peer_with_reverse(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test getting messages for peer with reverse parameter"""
     test_workspace, test_peer = sample_data
@@ -387,7 +402,7 @@ def test_get_messages_for_peer_with_reverse(
 
 
 def test_get_messages_for_peer_with_empty_filter(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test getting messages for peer with empty filter object"""
     test_workspace, test_peer = sample_data
@@ -403,7 +418,7 @@ def test_get_messages_for_peer_with_empty_filter(
 
 
 def test_get_messages_for_peer_with_null_filter(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test getting messages for peer with null filter"""
     test_workspace, test_peer = sample_data
@@ -418,7 +433,7 @@ def test_get_messages_for_peer_with_null_filter(
     assert isinstance(data["items"], list)
 
 
-def test_chat(client, sample_data: tuple[Workspace, Peer]):
+def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     target_peer = str(generate_nanoid())
 
@@ -436,7 +451,9 @@ def test_chat(client, sample_data: tuple[Workspace, Peer]):
     assert "content" in data
 
 
-def test_chat_with_optional_params(client, sample_data: tuple[Workspace, Peer]):
+def test_chat_with_optional_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test chat endpoint with optional parameters"""
     test_workspace, test_peer = sample_data
 
@@ -463,7 +480,7 @@ def test_chat_with_optional_params(client, sample_data: tuple[Workspace, Peer]):
 
 
 def test_get_peer_representation_with_session(
-    client, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test peer representation with session_id parameter"""
     test_workspace, test_peer = sample_data
@@ -486,7 +503,7 @@ def test_get_peer_representation_with_session(
     assert response.status_code == 200
 
 
-def test_search_peer(client, sample_data: tuple[Workspace, Peer]):
+def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the peer search functionality"""
     test_workspace, test_peer = sample_data
 
@@ -517,7 +534,9 @@ def test_search_peer(client, sample_data: tuple[Workspace, Peer]):
     assert isinstance(data["items"], list)
 
 
-def test_search_peer_empty_query(client, sample_data: tuple[Workspace, Peer]):
+def test_search_peer_empty_query(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer search with empty query"""
     test_workspace, test_peer = sample_data
 
@@ -533,7 +552,9 @@ def test_search_peer_empty_query(client, sample_data: tuple[Workspace, Peer]):
     assert isinstance(data["items"], list)
 
 
-def test_search_peer_nonexistent(client, sample_data: tuple[Workspace, Peer]):
+def test_search_peer_nonexistent(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test searching a peer that doesn't exist"""
     test_workspace, _ = sample_data
     nonexistent_peer_id = str(generate_nanoid())

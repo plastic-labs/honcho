@@ -73,7 +73,7 @@ asyncio_default_fixture_loop_scope = "session"
 # than mypy and with a good extension for VSCode/Cursor.
 # https://marketplace.visualstudio.com/items?itemName=detachhead.basedpyright
 # https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
-include = ["src"]
+include = ["src", "tests"]
 exclude = ["tests/**/disabled*.py"]
 # By default BasedPyright is very strict, so you almost certainly want to disable
 # some of the rules.
