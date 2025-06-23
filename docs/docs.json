@@ -86,6 +86,21 @@
             ]
           },
           {
+            "tab": "Contributing",
+            "groups": [
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/deployment",
+                  "v2/contributing/development",
+                  "v2/contributing/license"
+                ]
+              }
+            ]
+          },
+          {
             "tab": "API Reference",
             "groups": [
               {
@@ -153,35 +168,20 @@
             ]
           },
           {
-            "tab": "Contributing",
-            "groups": [
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v2/contributing/guidelines",
-                  "v2/contributing/self-hosting",
-                  "v2/contributing/deployment",
-                  "v2/contributing/development",
-                  "v2/contributing/license"
-                ]
-              }
-            ]
-          },
-          {
             "tab": "Changelog",
             "groups": [
               {
                 "group": "API Changelog",
                 "pages": [
                   "changelog/introduction",
-                  "changelog/changelog/introduction"
+                  "changelog/api/introduction"
                 ]
               },
               {
                 "group": "SDK Changelog",
                 "pages": [
-                  "changelog/sdk/compatibility-guide",
-                  "changelog/sdk/introduction"
+                  "changelog/sdk/introduction",
+                  "changelog/sdk/compatibility-guide"
                 ]
               }
             ]
@@ -219,7 +219,7 @@
             ]
           },
           {
-            "tab": "Guides",
+            "tab": "Spellbooks and Tutorials",
             "groups": [
               {
                 "group": "Getting Started",
@@ -339,10 +339,17 @@
             "tab": "Changelog",
             "groups": [
               {
-                "group": "Changelog",
+                "group": "API Changelog",
                 "pages": [
                   "changelog/introduction",
-                  "changelog/changelog/introduction"
+                  "changelog/api/introduction"
+                ]
+              },
+              {
+                "group": "SDK Changelog",
+                "pages": [
+                  "changelog/sdk/compatibility-guide",
+                  "changelog/sdk/introduction"
                 ]
               }
             ]

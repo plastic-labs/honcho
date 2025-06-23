@@ -4,9 +4,34 @@ description: "Compatibility guide for Honcho's SDKs and API"
 icon: "shield-check"
 ---
 
-# SDK and API Compatibility Guide
+This guide helps you understand which versions of Honcho's API are compatible with which SDK versions.
 
-## Getting Help
-If you encounter issues using our SDKs:
-1. Open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues)
-2. Join our [Discord community](http://discord.gg/plasticlabs) for support 
+## Version Compatibility
+
+### Honcho API v2.0.0 (Current)
+
+<CardGroup cols={2}>
+  <Card title="TypeScript SDK" icon="js">
+    **Compatible Version:** v1.0.2
+    
+    Install with:
+    ```bash
+    npm install @honcho-ai/sdk@1.0.2
+    ```
+  </Card>
+  
+  <Card title="Python SDK" icon="python">
+    **Compatible Version:** v1.0.2
+    
+    Install with:
+    ```bash
+    pip install honcho-ai==1.0.2
+    ```
+  </Card>
+</CardGroup>
+
+## Version Compatibility Table
+
+| Honcho API Version | TypeScript SDK | Python SDK | Notes |
+|-------------------|---------------|------------|-------|
+| v2.0.0 (Current) | v1.0.2 | v1.0.2 | Full compatibility with new peer architecture |

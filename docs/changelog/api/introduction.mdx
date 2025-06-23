@@ -4,10 +4,7 @@ description: "Most recent changes and updates to Honcho"
 icon: "sparkles"
 ---
 
-# Latest Release
-
-## Version 2.0.0 (Current)
-
+<Update label="v2.0.0 (Current)">
 ### Added
 
 - Ability to get a peer's working representation
@@ -45,24 +42,52 @@ icon: "sparkles"
 - Collections and Documents no longer exposed in the API, solely internal
 - Obsolete tests for apps, users, collections, documents, and metamessages
 ---
+</Update>
+
+<Update label="v1.1.0">
+### Added
+
+- Normalize resources to remove joins and increase query performance
+- Query tracing for debugging
+
+### Changed
+
+- `/list` endpoints to not require a request body
+- `metamessage_type` to `label` with backwards compatability
+- Database Provisioning to rely on alembic
+- Database Session Manager to explicitly rollback transactions before closing
+  the connection
+
+### Fixed
+
+- Alembic Migrations to include initial database migrations
+- Sentry Middleware to not report Honcho Exceptions
+</Update>
+
+<Update label="v1.0.0">
+### Added
+
+- JWT based API authentication
+- Configurable logging
+- Consolidated LLM Inference via `ModelClient` class
+- Dynamic logging configurable via environment variables
+
+### Changed
+
+- Deriver & Dialectic API to use Hybrid Memory Architecture
+- Metamessages are not strictly tied to a message
+- Database provisioning is a separate script instead of happening on startup
+- Consolidated `session/chat` and `session/chat/stream` endpoints
+</Update>
+
 
 ## Previous Releases
 
 For a complete history of all releases, see our [GitHub Releases](https://github.com/plastic-labs/honcho/tags) page.
 
-## Migration Guide
-
-### Upgrading to 2.0.0
-
-This release has several breaking changes. TODO: Add migration guide.
-
-### API Changes
-
-- The API has been overhauled to use a new "Peer" paradigm.
-
 ## Getting Help
 
-If you encounter issues during upgrade:
+If you encounter issues with the API:
 
 1. Open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues)
 2. Join our [Discord community](http://discord.gg/plasticlabs) for support 
