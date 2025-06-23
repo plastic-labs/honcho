@@ -78,7 +78,7 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    filter: dict[str, str] | None = None,
+    filter: dict[str, Any] | None = None,
 ) -> Select[tuple[Workspace]]:
     """
     Get all workspaces.
@@ -285,7 +285,7 @@ async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
     is_active: bool | None = None,
-    filter: dict[str, str] | None = None,
+    filter: dict[str, Any] | None = None,
 ) -> Select[tuple[Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
@@ -329,7 +329,7 @@ async def get_sessions_for_peer(
 async def get_sessions(
     workspace_name: str,
     is_active: bool | None = None,
-    filter: dict[str, str] | None = None,
+    filter: dict[str, Any] | None = None,
 ) -> Select[tuple[Session]]:
     """
     Get all sessions in a workspace.
@@ -1251,7 +1251,7 @@ async def get_messages(
     workspace_name: str,
     session_name: str,
     reverse: bool | None = False,
-    filter: dict[str, str] | None = None,
+    filter: dict[str, Any] | None = None,
     token_limit: int | None = None,
     message_count_limit: int | None = None,
 ) -> Select[tuple[models.Message]]:
@@ -1388,7 +1388,7 @@ async def get_messages_for_peer(
     workspace_name: str,
     peer_name: str,
     reverse: bool | None = False,
-    filter: dict[str, str] | None = None,
+    filter: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Message]]:
     stmt = (
         select(models.Message)
@@ -1521,7 +1521,7 @@ async def query_documents(
     peer_name: str,
     collection_name: str,
     query: str,
-    filter: dict[str, str] | None = None,
+    filter: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:

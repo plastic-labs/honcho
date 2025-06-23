@@ -119,8 +119,6 @@ async def chat(
     logger.debug(f"Received query: {final_query} for session {session_name}")
     logger.debug("Starting on-demand user representation generation")
 
-    start_time = asyncio.get_event_loop().time()
-
     # Setup phase - create resources we'll need for all operations
 
     # 1. Fetch latest peer message & chat history
@@ -197,9 +195,6 @@ async def chat(
 
     # Call dialectic with enhanced context
 
-    generation_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(f"User representation generation completed in {generation_time:.2f}s")
-
     langfuse_context.update_current_trace(
         session_id=session_name,
         user_id=peer_name,
@@ -209,24 +204,15 @@ async def chat(
 
     # Use streaming or non-streaming response based on the request
     logger.debug(f"Calling Dialectic with streaming={stream}")
-    query_start_time = asyncio.get_event_loop().time()
     if stream:
         logger.debug("Calling Dialectic with streaming")
         response = await dialectic_stream(
             final_query, user_representation, chat_history
         )
-        logger.debug(
-            f"Dialectic stream started after {asyncio.get_event_loop().time() - query_start_time:.2f}s"
-        )
         return response
     else:
         logger.debug("Calling Dialectic with non-streaming")
         response = await dialectic_call(final_query, user_representation, chat_history)
-        query_time = asyncio.get_event_loop().time() - query_start_time
-        total_time = asyncio.get_event_loop().time() - start_time
-        logger.debug(
-            f"Dialectic response received in {query_time:.2f}s (total: {total_time:.2f}s)"
-        )
         return response
 
 
