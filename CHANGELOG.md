@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Changed
 
+- API route is now /v2/
 - New architecture centered around the concept of a "peer" replaces the former
   "app"/"user"/"session" paradigm
 - Workspaces replace "apps" as top-level namespace

@@ -29,7 +29,7 @@ Honcho uses a peer-based model where both users and agents are represented as "p
 ## Architecture Overview
 
 ### API Structure
-All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
+All API routes follow the pattern: `/v2/{resource}/{id}/{action}`
 - **Workspaces**: Create, list, update, search
 - **Peers**: Create, list, update, chat (dialectic), messages, representation
 - **Sessions**: Create, list, update, delete, clone, manage peers, get context
