@@ -1,15 +1,31 @@
 ---
 title: 'Quickstart'
-description: 'Start building with Honcho in under 5 minutes'
+description: 'Start building with Honcho in under 5 minutes.'
 icon: 'bolt'
 ---
 
+<Tip>📢 **Announcing Honcho Platform**: We've raised $5.35M pre-seed from Variant, White Star Capital & Betaworks to build the personal identity layer for AI!</Tip>
+
+For production-level use, Honcho offers two powerful ways to leverage ambient personalization: our managed platform and our open source solution. Read further if you want to explore the quickstart demo.
+
+<CardGroup cols={2}>
+  <Card title="Honcho Platform" icon="cloud" href="https://app.honcho.dev">
+    Fully managed, hassle-free solution with one-click deployment
+  </Card>
+  <Card title="Honcho Open Source" icon="github" href="https://github.com/plastic-labs/honcho">
+    Self-hosted, fully customizable, and open source
+  </Card>
+</CardGroup>
+
+# Getting Started
+
+Have your project use Honcho's ambient personalization capabilities in just a few steps. No signup required!
 
 <Note>
-This uses the demo server at https://demo.honcho.dev
+This quickstart uses the demo server at https://demo.honcho.dev
 </Note>
 
-Install the Honcho client SDK with the following commands:
+## 1. Install the SDK
 
 <CodeGroup>
 ```bash Python (uv)
@@ -33,26 +49,29 @@ pnpm add @honcho-ai/sdk
 ```
 </CodeGroup>
 
-First, import the Honcho client from the package:
+## 2. Initialize the Client
 
 <CodeGroup>
 ```python Python
 from honcho import Honcho
-# Initialize client (using the default workspace and demo environment)
+
+# Initialize client (using the demo environment)
 client = Honcho()
 ```
 
 ```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
-// Initialize client (using the default workspace and demo environment)
+
+// Initialize client (using the demo environment)
 const client = new Honcho();
 ```
 </CodeGroup>
 
-Next, we want to create Peers within our instance of Honcho:
+## 3. Create Peers
+
+Peers represent individual users, AI agents, or any conversational entity in your system:
 
 <CodeGroup>
-
 ```python Python
 alice = client.peer("alice")
 bob = client.peer("bob")
@@ -62,14 +81,13 @@ bob = client.peer("bob")
 const alice = client.peer("alice")
 const bob = client.peer("bob")
 ```
-
 </CodeGroup>
 
+## 4. Create a Session
 
-Create a Session and add our Peers to it:
+Sessions are independent conversations that can include multiple peers:
 
 <CodeGroup>
-
 ```python Python
 session = client.session("session_1")
 session.add_peers([alice, bob])
@@ -79,22 +97,22 @@ session.add_peers([alice, bob])
 const session = client.session("session_1")
 session.addPeers([alice, bob])
 ```
-
 </CodeGroup>
 
-Add Messages to the Session:
+## 5. Add Messages
+
+Add some conversation messages. Honcho automatically learns from these interactions:
 
 <CodeGroup>
-
 ```python Python
-session.add_messages(
-    [
-        alice.message("Hi Bob, how are you?"),
-        bob.message("I'm good, thank you!"),
-        alice.message("What are you doing today after work?"),
-        bob.message("I'm going to the gym!"),
-    ]
-)
+session.add_messages([
+    alice.message("Hi Bob, how are you?"),
+    bob.message("I'm good, thank you!"),
+    alice.message("What are you doing today after work?"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
+])
 ```
 
 ```typescript TypeScript
@@ -102,25 +120,60 @@ session.addMessages([
     alice.message("Hi Bob, how are you?"),
     bob.message("I'm good, thank you!"),
     alice.message("What are you doing today after work?"),
-    bob.message("I'm going to the gym!"),
+    bob.message("I'm going to the gym! I've been trying to get back in shape."),
+    alice.message("That's great! I should probably start exercising too."),
+    bob.message("You should! I find that evening workouts help me relax."),
 ])
 ```
-
 </CodeGroup>
 
-You can then chat with Honcho to get a dialectic response, which is informed by the Peer representation that Honcho has constructed from the above Messages:
+## 6. Query for Insights
+
+Now ask Honcho what it's learned - this is where the magic happens:
 
 <CodeGroup>
-
 ```python Python
-response = alice.chat("What is Bob doing after work?")
+# Ask what Bob is like
+response = alice.chat("Tell me about Bob's interests and habits")
+print(response)
+
+# Returns rich context like:
+# "Bob is health-conscious and has been working on getting back in shape. 
+# He regularly goes to the gym, particularly in the evenings, and finds 
+# exercise helps him relax. He's encouraging about fitness and willing 
+# to share advice about workout routines."
 ```
 
 ```typescript TypeScript
-const response = await alice.chat("What is Bob doing after work?");
-```
+// Ask what Bob is like  
+const response = await alice.chat("Tell me about Bob's interests and habits");
+console.log(response);
 
+// Returns rich context like:
+// "Bob is health-conscious and has been working on getting back in shape. 
+// He regularly goes to the gym, particularly in the evenings, and finds 
+// exercise helps him relax. He's encouraging about fitness and willing 
+// to share advice about workout routines."
+```
 </CodeGroup>
 
-This is a super simple overview of how to get up and running with the Honcho SDK. We covered the basic methods for creating peers, sessions, and messages, as well as retrieving basic insights.
-For a more detailed look at the SDK, check out the SDK reference [here](../platform/sdk).
+## What Just Happened?
+
+Honcho automatically built rich psychological profiles from just a few messages:
+
+- **Theory of Mind Processing**: Understanding personality, preferences, and patterns
+- **Ambient Learning**: No surveys or explicit training - just natural conversation
+- **Rich Context**: Far more detailed than simple conversation history
+
+The response isn't just retrieving stored text - it's synthesizing insights about Bob's personality, habits, and communication style.
+
+## Next Steps
+
+This covers the core concepts: **peers**, **sessions**, **messages**, and **dialectic queries**. 
+
+- For production use, [sign up for the managed platform](https://app.honcho.dev) or get an [overview here](/v2/documentation/platform/overview).
+- For detailed API reference, check out our [SDK documentation](/documentation/platform/sdk).
+- For more examples, explore our [guides](/guides).
+
+---
+
