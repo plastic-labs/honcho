@@ -1,4 +1,8 @@
 import logging  # noqa: I001
+import os
+from typing import Any
+from collections.abc import AsyncGenerator
+from src.models import Peer, Workspace
 import jwt
 from nanoid import generate as generate_nanoid
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -120,7 +124,7 @@ async def db_engine():
     # Save the original schema to restore later
     original_schema = Base.metadata.schema
     Base.metadata.schema = "public"
-    
+
     # Update all table schemas to public
     for table in Base.metadata.tables.values():
         table.schema = "public"
@@ -210,7 +214,7 @@ def auth_client(client, request, monkeypatch):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def sample_data(db_session):
+async def sample_data(db_session) -> AsyncGenerator[tuple[Workspace, Peer], Any]:
     """Helper function to create test data"""
     # Create test app
     test_workspace = models.Workspace(name=str(generate_nanoid()))
@@ -268,38 +272,83 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_model_client(request):
-    """Mock ModelClient to avoid needing API keys during tests"""
-    # Skip mocking for ModelClient unit tests
-    if "test_model_client" in request.node.name or "test_model_client.py" in str(
-        request.fspath
-    ):
-        yield None
-        return
+def mock_mirascope_functions(request):
+    """Mock Mirascope LLM functions to avoid needing API keys during tests"""
 
-    # Create a mock instance
-    mock_client_instance = MagicMock()
-    mock_client_instance.generate = AsyncMock(return_value="Test summary content")
-    mock_client_instance.stream = AsyncMock()
-
+    # Create mock responses for different function types
     with (
-        patch("src.utils.history.ModelClient") as mock_history_client,
-        patch("src.deriver.tom.single_prompt.ModelClient") as mock_single_prompt_client,
-        patch("src.deriver.tom.long_term.ModelClient") as mock_long_term_client,
-        patch("src.agent.ModelClient") as mock_agent_client,
+        patch("src.utils.history.create_short_summary") as mock_short_summary,
+        patch("src.utils.history.create_long_summary") as mock_long_summary,
+        patch("src.deriver.tom.single_prompt.tom_inference") as mock_tom_inference,
+        patch(
+            "src.deriver.tom.single_prompt.user_representation_inference"
+        ) as mock_user_rep_inference,
+        patch(
+            "src.deriver.tom.single_prompt.get_tom_inference_single_prompt"
+        ) as mock_single_tom,
+        patch(
+            "src.deriver.tom.single_prompt.get_user_representation_single_prompt"
+        ) as mock_single_rep,
+        patch(
+            "src.deriver.tom.long_term.get_user_representation_long_term"
+        ) as mock_long_rep,
+        patch(
+            "src.deriver.tom.long_term.extract_facts_long_term"
+        ) as mock_extract_facts,
+        patch("src.agent.dialectic_call") as mock_dialectic_call,
+        patch("src.agent.dialectic_stream") as mock_dialectic_stream,
+        patch("src.agent.generate_semantic_queries_llm") as mock_semantic_queries,
     ):
-        # Make all class constructors return our mock instance
-        mock_history_client.return_value = mock_client_instance
-        mock_single_prompt_client.return_value = mock_client_instance
-        mock_long_term_client.return_value = mock_client_instance
-        mock_agent_client.return_value = mock_client_instance
+        # Mock return values for different function types
+        mock_short_summary.return_value = "Test short summary content"
+        mock_long_summary.return_value = "Test long summary content"
+        mock_tom_inference.return_value = MagicMock(inference="Test tom inference")
+        mock_user_rep_inference.return_value = "Test user representation"
+        # Mock single_tom to return a proper Pydantic object
+        from src.deriver.tom.single_prompt import (
+            TomInferenceOutput,
+            CurrentState,
+            TentativeInference,
+        )
+
+        mock_tom_obj = TomInferenceOutput(
+            current_state=CurrentState(
+                immediate_context="test context",
+                active_goals="test goals",
+                present_mood="test mood",
+            ),
+            tentative_inferences=[
+                TentativeInference(interpretation="test inference", basis="test basis")
+            ],
+            knowledge_gaps=[],
+            expectation_violations=[],
+        )
+        mock_single_tom.return_value = mock_tom_obj
+        mock_single_rep.return_value = "Test user representation"
+        mock_long_rep.return_value = MagicMock(
+            current_state="Test state",
+            tentative_patterns=[],
+            knowledge_gaps=[],
+            expectation_violations=[],
+            updates=[],
+        )
+        mock_extract_facts.return_value = MagicMock(facts=["fact 1", "fact 2"])
+        mock_dialectic_call.return_value = MagicMock(content="Test dialectic response")
+        mock_dialectic_stream.return_value = AsyncMock()
+        mock_semantic_queries.return_value = ["test query 1", "test query 2"]
 
         yield {
-            "history": mock_history_client,
-            "single_prompt": mock_single_prompt_client,
-            "long_term": mock_long_term_client,
-            "agent": mock_agent_client,
-            "instance": mock_client_instance,
+            "short_summary": mock_short_summary,
+            "long_summary": mock_long_summary,
+            "tom_inference": mock_tom_inference,
+            "user_rep_inference": mock_user_rep_inference,
+            "single_tom": mock_single_tom,
+            "single_rep": mock_single_rep,
+            "long_rep": mock_long_rep,
+            "extract_facts": mock_extract_facts,
+            "dialectic_call": mock_dialectic_call,
+            "dialectic_stream": mock_dialectic_stream,
+            "semantic_queries": mock_semantic_queries,
         }
 
 
@@ -348,21 +397,15 @@ def mock_agent_api_calls(request):
     # Mock the agent-specific functions
     with (
         patch("src.agent.generate_semantic_queries") as mock_generate_queries,
-        patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
         patch("src.agent.get_user_representation_long_term") as mock_user_rep,
         patch(
             "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
         ) as mock_get_facts,
-        patch("src.agent.Dialectic.call") as mock_dialectic_call,
-        patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
+        patch("src.agent.dialectic_call") as mock_dialectic_call,
+        patch("src.agent.dialectic_stream") as mock_dialectic_stream,
     ):
         # Mock semantic query generation
         mock_generate_queries.return_value = ["test query 1", "test query 2"]
-
-        # Mock ToM inference
-        mock_tom_inference.return_value = (
-            "<prediction>Test prediction about user mental state</prediction>"
-        )
 
         # Mock user representation generation
         mock_user_rep.return_value = (
@@ -373,12 +416,11 @@ def mock_agent_api_calls(request):
         mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
 
         # Mock Dialectic API calls
-        mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
+        mock_dialectic_call.return_value = MagicMock(content="Test dialectic response")
         mock_dialectic_stream.return_value = AsyncMock()
 
         yield {
             "generate_queries": mock_generate_queries,
-            "tom_inference": mock_tom_inference,
             "user_rep": mock_user_rep,
             "get_facts": mock_get_facts,
             "dialectic_call": mock_dialectic_call,

@@ -79,7 +79,7 @@ FastAPI routes should be simple, letting global exception handlers do most of th
 
 ```python
 @router.get("/{user_id}")
-async def get_user(app_id: str, user_id: str, db=db):
+async def get_user(app_id: str, user_id: str, db: AsyncSession = db):
     # ResourceNotFoundException will be caught by global handler
     return await crud.get_user(db, app_id, user_id)
 ```
@@ -88,7 +88,7 @@ For specific handling, use try/except only when necessary:
 
 ```python
 @router.post("")
-async def create_user(app_id: str, user: schemas.UserCreate, db=db):
+async def create_user(app_id: str, user: schemas.UserCreate, db: AsyncSession = db):
     try:
         return await crud.create_user(db, app_id, user)
     except ConflictException:
@@ -197,7 +197,7 @@ async def get_document(
     user_id: str, 
     collection_id: str, 
     document_id: str, 
-    db=db
+    db: AsyncSession = db
 ):
     """Get a document by ID"""
     # ResourceNotFoundException will be caught by global handler

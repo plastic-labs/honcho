@@ -46,10 +46,10 @@ class WorkUnit:
 
 class QueueManager:
     def __init__(self):
-        self.shutdown_event = asyncio.Event()
+        self.shutdown_event: asyncio.Event = asyncio.Event()
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.owned_work_units: set[WorkUnit] = set()
-        self.queue_empty_flag = asyncio.Event()
+        self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
         # Initialize from settings
         self.workers = settings.DERIVER.WORKERS

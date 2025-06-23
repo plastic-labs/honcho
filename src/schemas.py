@@ -1,6 +1,6 @@
-# pyright: reportMissingTypeArgument=false
+# pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -16,28 +16,32 @@ class WorkspaceCreate(WorkspaceBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict = {}
-    configuration: dict = {}
+    metadata: dict[str, Any] = {}
+    configuration: dict[str, Any] = {}
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
 
 class WorkspaceGet(WorkspaceBase):
-    filter: dict | None = None
+    filter: dict[str, Any] | None = None
 
 
 class WorkspaceUpdate(WorkspaceBase):
-    metadata: dict | None = None
-    configuration: dict | None = None
+    metadata: dict[str, Any] | None = None
+    configuration: dict[str, Any] | None = None
 
 
 class Workspace(WorkspaceBase):
     name: str = Field(serialization_alias="id")
-    h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
-    configuration: dict = Field(default_factory=dict)
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
+    configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
 
 
 class PeerBase(BaseModel):
@@ -49,29 +53,33 @@ class PeerCreate(PeerBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict | None = None
-    configuration: dict | None = None
+    metadata: dict[str, Any] | None = None
+    configuration: dict[str, Any] | None = None
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
 
 class PeerGet(PeerBase):
-    filter: dict | None = None
+    filter: dict[str, Any] | None = None
 
 
 class PeerUpdate(PeerBase):
-    metadata: dict | None = None
-    configuration: dict | None = None
+    metadata: dict[str, Any] | None = None
+    configuration: dict[str, Any] | None = None
 
 
 class Peer(PeerBase):
     name: str = Field(serialization_alias="id")
     workspace_name: str = Field(serialization_alias="workspace_id")
     created_at: datetime.datetime
-    h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
-    configuration: dict = Field(default_factory=dict)
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
+    configuration: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
 
 
 class PeerRepresentationGet(BaseModel):
@@ -98,15 +106,15 @@ class MessageBase(BaseModel):
 class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class MessageGet(MessageBase):
-    filter: dict | None = None
+    filter: dict[str, Any] | None = None
 
 
 class MessageUpdate(MessageBase):
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class Message(MessageBase):
@@ -114,12 +122,16 @@ class Message(MessageBase):
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
     session_name: str | None = Field(serialization_alias="session_id")
-    h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
     created_at: datetime.datetime
     workspace_name: str = Field(serialization_alias="workspace_id")
     token_count: int
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
 
 
 class MessageBatchCreate(BaseModel):
@@ -148,32 +160,36 @@ class SessionCreate(SessionBase):
         str,
         Field(alias="id", min_length=1, max_length=100, pattern=RESOURCE_NAME_PATTERN),
     ]
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
     peer_names: dict[str, SessionPeerConfig] | None = Field(default=None, alias="peers")
-    configuration: dict | None = None
+    configuration: dict[str, Any] | None = None
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
 
 class SessionGet(SessionBase):
-    filter: dict | None = None
+    filter: dict[str, Any] | None = None
     is_active: bool = False
 
 
 class SessionUpdate(SessionBase):
-    metadata: dict | None = None
-    configuration: dict | None = None
+    metadata: dict[str, Any] | None = None
+    configuration: dict[str, Any] | None = None
 
 
 class Session(SessionBase):
     name: str = Field(serialization_alias="id")
     is_active: bool
     workspace_name: str = Field(serialization_alias="workspace_id")
-    h_metadata: dict = Field(default_factory=dict, serialization_alias="metadata")
-    configuration: dict = Field(default_factory=dict)
+    h_metadata: dict[str, Any] = Field(
+        default_factory=dict, serialization_alias="metadata"
+    )
+    configuration: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
 
 
 class SessionContext(SessionBase):
@@ -181,7 +197,9 @@ class SessionContext(SessionBase):
     messages: list[Message]
     summary: str
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
 
 
 class DocumentBase(BaseModel):
@@ -190,7 +208,7 @@ class DocumentBase(BaseModel):
 
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
-    metadata: dict = {}
+    metadata: dict[str, Any] = {}
 
 
 class DocumentUpdate(DocumentBase):
@@ -210,13 +228,13 @@ class DialecticOptions(BaseModel):
     stream: bool = False
 
     @field_validator("queries")
-    def validate_queries(cls, v):
+    def validate_queries(cls, v: str | list[str]) -> str | list[str]:
         MAX_STRING_LENGTH = 10000
         MAX_LIST_LENGTH = 25
         if isinstance(v, str):
             if len(v) > MAX_STRING_LENGTH:
                 raise ValueError("Query too long")
-        elif isinstance(v, list):
+        else:
             if len(v) > MAX_LIST_LENGTH:
                 raise ValueError("Too many queries")
             if any(len(q) > MAX_STRING_LENGTH for q in v):

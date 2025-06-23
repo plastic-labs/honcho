@@ -271,6 +271,15 @@ wheels = [
 ]
 
 [[package]]
+name = "docstring-parser"
+version = "0.16"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/08/12/9c22a58c0b1e29271051222d8906257616da84135af9ed167c9e28f85cb3/docstring_parser-0.16.tar.gz", hash = "sha256:538beabd0af1e2db0146b6bd3caa526c35a34d61af9fd2887f3a8a27a739aa6e", size = 26565 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/7c/e9fcff7623954d86bdc17782036cbf715ecab1bec4847c008557affe1ca8/docstring_parser-0.16-py3-none-any.whl", hash = "sha256:bf0a1387354d3691d102edef7ec124f219ef639982d096e26e3b60aeffa90637", size = 36533 },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -458,6 +467,7 @@ dependencies = [
     { name = "greenlet" },
     { name = "httpx" },
     { name = "langfuse" },
+    { name = "mirascope" },
     { name = "nanoid" },
     { name = "openai" },
     { name = "pgvector" },
@@ -493,7 +503,8 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.10.0" },
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "langfuse", specifier = ">=2.57.1,<3.0.0" },
+    { name = "langfuse", specifier = ">=2.57.1,<3" },
+    { name = "mirascope", specifier = ">=1.25.1" },
     { name = "nanoid", specifier = ">=2.0.0" },
     { name = "openai", specifier = ">=1.43.0" },
     { name = "pgvector", specifier = ">=0.2.5" },
@@ -811,6 +822,21 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979 },
+]
+
+[[package]]
+name = "mirascope"
+version = "1.25.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "docstring-parser" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/60/e7/4a196658d3e9ffe5840872922e0ea5e9f583bc3cb204c769e55347e142c1/mirascope-1.25.2.tar.gz", hash = "sha256:88df7232c8b41150e0f788371ba5657c08c27eb544dec93aa4d8354adf04f4be", size = 627149 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1e/1d/cf7f99294c19552f4a80ba092d8b883ab34161f7030c66c38a5c43e27c0d/mirascope-1.25.2-py3-none-any.whl", hash = "sha256:9d96bec0bcb7fa3dd767803d978b71167eb1fd657be865b9f3bfbd23f24d2187", size = 373194 },
 ]
 
 [[package]]

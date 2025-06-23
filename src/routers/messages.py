@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import insert
 
 from src import crud, schemas
@@ -268,7 +269,7 @@ async def create_messages_for_session(
     messages: schemas.MessageBatchCreate = Body(
         ..., description="Batch of messages to create"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     workspace_name, session_name = workspace_id, session_id
     """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
@@ -316,7 +317,7 @@ async def get_messages(
     reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get all messages for a session"""
     try:
@@ -344,7 +345,7 @@ async def get_message(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     message_id: str = Path(..., description="ID of the message to retrieve"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get a Message by ID"""
     honcho_message = await crud.get_message(
@@ -364,7 +365,7 @@ async def update_message(
     message: schemas.MessageUpdate = Body(
         ..., description="Updated message parameters"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Update the metadata of a Message"""
     try:

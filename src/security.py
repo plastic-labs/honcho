@@ -129,7 +129,6 @@ def require_auth(
     async def auth_dependency(
         request: Request,
         credentials: HTTPAuthorizationCredentials = Depends(security),
-        db: AsyncSession = Depends(get_db),
     ):
         workspace_name_param = (
             request.path_params.get(workspace_name)

@@ -22,12 +22,13 @@ dependencies = [
     "anthropic>=0.36.0",
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
-    "langfuse>=2.57.1,<3.0.0",
+    "langfuse>=2.57.1,<3",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
     "pydantic-settings>=2.9.1",
     "tomli>=2.0.0; python_version < '3.11'",
     "tiktoken>=0.9.0",
+    "mirascope>=1.25.1",
 ]
 [tool.uv]
 dev-dependencies = [
@@ -84,9 +85,11 @@ reportIgnoreCommentWithoutRule = false
 # comment/uncomment these as desired:
 reportMissingTypeStubs = false
 reportUnusedCallResult = false
-# reportAny = false
+reportCallInDefaultInitializer = false
+reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse", "langfuse.decorators"]
+allowedUntypedLibraries = ["langfuse", "langfuse.decorators", "mirascope"]
+reportImplicitOverride = false
 # reportImplicitStringConcatenation = false
 # reportUnreachable = false
 # reportPrivateImportUsage = false

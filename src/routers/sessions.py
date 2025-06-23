@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
@@ -32,7 +33,7 @@ async def get_or_create_session(
         ..., description="Session creation parameters"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Get a specific session in a workspace.
@@ -79,7 +80,7 @@ async def get_sessions(
     options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get All Sessions in a Workspace"""
     filter_param = None
@@ -116,7 +117,7 @@ async def update_session(
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Update the metadata of a Session"""
     try:
@@ -139,7 +140,7 @@ async def update_session(
 async def delete_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to delete"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Delete a session by marking it as inactive"""
     try:
@@ -163,7 +164,7 @@ async def delete_session(
 async def clone_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to clone"),
-    db=db,
+    db: AsyncSession = db,
     message_id: str | None = Query(
         None, description="Message ID to cut off the clone at"
     ),
@@ -197,7 +198,7 @@ async def add_peers_to_session(
     peers: dict[str, schemas.SessionPeerConfig] = Body(
         ..., description="List of peer IDs to add to the session"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Add peers to a session"""
     try:
@@ -229,7 +230,7 @@ async def set_session_peers(
     peers: dict[str, schemas.SessionPeerConfig] = Body(
         ..., description="List of peer IDs to set for the session"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Set the peers in a session"""
     try:
@@ -265,7 +266,7 @@ async def remove_peers_from_session(
     peers: list[str] = Body(
         ..., description="List of peer IDs to remove from the session"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Remove peers from a session"""
     try:
@@ -299,7 +300,7 @@ async def get_peer_config(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     peer_id: str = Path(..., description="ID of the peer"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get the configuration for a peer in a session"""
     return await crud.get_peer_config(
@@ -321,7 +322,7 @@ async def set_peer_config(
     session_id: str = Path(..., description="ID of the session"),
     peer_id: str = Path(..., description="ID of the peer"),
     config: schemas.SessionPeerConfig = Body(..., description="Peer configuration"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Set the configuration for a peer in a session"""
     try:
@@ -353,7 +354,7 @@ async def set_peer_config(
 async def get_session_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get peers from a session"""
     try:
@@ -384,7 +385,7 @@ async def get_session_context(
         False,
         description="Whether to summarize the session history prior to the cutoff message",
     ),  # default to false
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Produce a context object from the session. The caller provides a token limit which the entire context must fit into.
@@ -460,7 +461,7 @@ async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     query: str = Body(..., description="Search query"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Search a Session"""
     stmt = await crud.search(

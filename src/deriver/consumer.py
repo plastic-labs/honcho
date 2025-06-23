@@ -40,7 +40,7 @@ class PayloadSchema(BaseModel):
 
     class Config:
         # Forbid extra fields to prevent injection of unexpected data
-        extra = "forbid"
+        extra = "forbid"  # pyright: ignore
 
 
 async def process_item(db: AsyncSession, payload: dict[str, Any]):
@@ -139,7 +139,8 @@ async def process_message(
     # Extract facts from chat history
     logger.debug("Extracting facts from chat history")
     extract_start = os.times()[4]
-    facts = await extract_facts_long_term(chat_history_str)
+    fact_extraction = await extract_facts_long_term(chat_history_str)
+    facts: list[str] = fact_extraction.facts or []
     extract_time = os.times()[4] - extract_start
     console.print(f"Extracted Facts: {facts}", style="bright_blue")
     logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")

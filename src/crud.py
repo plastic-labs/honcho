@@ -9,7 +9,6 @@ from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.selectable import Select
 from sqlalchemy.types import BigInteger
 
 from src.config import settings

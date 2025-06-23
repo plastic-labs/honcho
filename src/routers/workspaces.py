@@ -3,6 +3,7 @@ import logging
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
@@ -23,7 +24,7 @@ async def get_or_create_workspace(
         ..., description="Workspace creation parameters"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Get a Workspace by ID.
@@ -55,7 +56,7 @@ async def get_all_workspaces(
     options: schemas.WorkspaceGet | None = Body(
         None, description="Filtering and pagination options for the workspaces list"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get all Workspaces"""
     filter_param = None
@@ -80,7 +81,7 @@ async def update_workspace(
     workspace: schemas.WorkspaceUpdate = Body(
         ..., description="Updated workspace parameters"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Update a Workspace"""
     # ResourceNotFoundException will be caught by global handler if workspace not found
@@ -98,7 +99,7 @@ async def update_workspace(
 async def search_workspace(
     workspace_id: str = Path(..., description="ID of the workspace to search"),
     query: str = Body(..., description="Search query"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Search a Workspace"""
     stmt = await crud.search(query, workspace_name=workspace_id)
