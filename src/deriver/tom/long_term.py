@@ -104,7 +104,7 @@ PERSISTENT FACTS ABOUT USER:
 """
 
 
-@ai_track("Fact Extraction")
+@track("Fact Extraction")
 @with_langfuse()
 @llm.call(
     provider="google", model="gemini-2.0-flash-lite", response_model=FactExtraction
