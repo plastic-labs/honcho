@@ -8,7 +8,7 @@ from src import agent
 @pytest.mark.asyncio
 async def test_dialectic_call_function_exists():
     """Test that dialectic_call function exists and can be mocked"""
-    with patch("src.agent.dialectic_call") as mock_call:
+    with patch("src.agent.dialectic_call", new_callable=AsyncMock) as mock_call:
         mock_call.return_value = MagicMock(content="test response")
 
         # This would normally make an LLM call, but it's mocked
@@ -25,7 +25,7 @@ async def test_dialectic_call_function_exists():
 @pytest.mark.asyncio
 async def test_dialectic_stream_function_exists():
     """Test that dialectic_stream function exists and can be mocked"""
-    with patch("src.agent.dialectic_stream") as mock_stream:
+    with patch("src.agent.dialectic_stream", new_callable=AsyncMock) as mock_stream:
         mock_stream.return_value = AsyncMock()
 
         # This would normally make a streaming LLM call, but it's mocked

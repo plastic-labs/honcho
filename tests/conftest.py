@@ -322,7 +322,7 @@ def mock_mirascope_functions():
         patch(
             "src.deriver.tom.long_term.extract_facts_long_term"
         ) as mock_extract_facts,
-        patch("src.agent.dialectic_call") as mock_dialectic_call,
+        patch("src.agent.dialectic_call", new_callable=AsyncMock) as mock_dialectic_call,
         patch("src.agent.dialectic_stream") as mock_dialectic_stream,
         patch("src.agent.generate_semantic_queries_llm") as mock_semantic_queries,
     ):
@@ -360,7 +360,12 @@ def mock_mirascope_functions():
             updates=[],
         )
         mock_extract_facts.return_value = MagicMock(facts=["fact 1", "fact 2"])
-        mock_dialectic_call.return_value = MagicMock(content="Test dialectic response")
+        
+        # Create a proper async mock result for dialectic_call
+        mock_dialectic_result = MagicMock()
+        mock_dialectic_result.content = "Test dialectic response"
+        mock_dialectic_call.return_value = mock_dialectic_result
+        
         mock_dialectic_stream.return_value = AsyncMock()
         mock_semantic_queries.return_value = ["test query 1", "test query 2"]
 
@@ -400,11 +405,11 @@ def mock_crud_collection_operations():
     from src import models
 
     async def mock_get_or_create_collection(
-        _: AsyncSession, workspace_name: str, peer_name: str
+        _: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
-            name="honcho",
+            name=collection_name,
             workspace_name=workspace_name,
             peer_name=peer_name,
         )
@@ -428,7 +433,7 @@ def mock_agent_api_calls():
         patch(
             "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
         ) as mock_get_facts,
-        patch("src.agent.dialectic_call") as mock_dialectic_call,
+        patch("src.agent.dialectic_call", new_callable=AsyncMock) as mock_dialectic_call,
         patch("src.agent.dialectic_stream") as mock_dialectic_stream,
     ):
         # Mock semantic query generation
@@ -443,7 +448,9 @@ def mock_agent_api_calls():
         mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
 
         # Mock Dialectic API calls
-        mock_dialectic_call.return_value = MagicMock(content="Test dialectic response")
+        mock_dialectic_result = MagicMock()
+        mock_dialectic_result.content = "Test dialectic response"
+        mock_dialectic_call.return_value = mock_dialectic_result
         mock_dialectic_stream.return_value = AsyncMock()
 
         yield {
