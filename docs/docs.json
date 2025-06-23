@@ -20,6 +20,11 @@
     "versions": [
       {
         "version": "v2.0.0",
+        "api": {
+          "openapi": [
+            "openapi.documented.yml"
+          ]
+        },
         "tabs": [
           {
             "tab": "Documentation",
@@ -178,6 +183,11 @@
       },
       {
         "version": "v1.1.0",
+        "api": {
+          "openapi": [
+            "openapi.json"
+          ]
+        },
         "tabs": [
           {
             "tab": "Documentation",
@@ -236,51 +246,45 @@
                 ]
               },
               {
-                "group": "workspaces",
+                "group": "apps",
                 "pages": [
-                  "v1/api-reference/endpoint/workspaces/get-or-create-workspace",
-                  "v1/api-reference/endpoint/workspaces/get-all-workspaces",
-                  "v1/api-reference/endpoint/workspaces/update-workspace",
-                  "v1/api-reference/endpoint/workspaces/search-workspace"
+                  "v1/api-reference/endpoint/apps/get-app",
+                  "v1/api-reference/endpoint/apps/get-all-apps",
+                  "v1/api-reference/endpoint/apps/update-app",
+                  "v1/api-reference/endpoint/apps/get-app-by-name",
+                  "v1/api-reference/endpoint/apps/create-app",
+                  "v1/api-reference/endpoint/apps/get-or-create-app"
                 ]
               },
               {
                 "group": "sessions",
                 "pages": [
-                  "v1/api-reference/endpoint/sessions/get-or-create-session",
                   "v1/api-reference/endpoint/sessions/get-sessions",
+                  "v1/api-reference/endpoint/sessions/create-session",
+                  "v1/api-reference/endpoint/sessions/get-session",
                   "v1/api-reference/endpoint/sessions/update-session",
                   "v1/api-reference/endpoint/sessions/delete-session",
-                  "v1/api-reference/endpoint/sessions/clone-session",
-                  "v1/api-reference/endpoint/sessions/add-peers-to-session",
-                  "v1/api-reference/endpoint/sessions/set-session-peers",
-                  "v1/api-reference/endpoint/sessions/remove-peers-from-session",
-                  "v1/api-reference/endpoint/sessions/get-session-peers",
-                  "v1/api-reference/endpoint/sessions/get-peer-config",
-                  "v1/api-reference/endpoint/sessions/set-peer-config",
-                  "v1/api-reference/endpoint/sessions/get-session-context",
-                  "v1/api-reference/endpoint/sessions/search-session"
+                  "v1/api-reference/endpoint/sessions/chat",
+                  "v1/api-reference/endpoint/sessions/clone-session"
                 ]
               },
               {
-                "group": "peers",
+                "group": "users",
                 "pages": [
-                  "v1/api-reference/endpoint/peers/get-or-create-peer",
-                  "v1/api-reference/endpoint/peers/get-peers",
-                  "v1/api-reference/endpoint/peers/update-peer",
-                  "v1/api-reference/endpoint/peers/search-peer",
-                  "v1/api-reference/endpoint/peers/get-sessions-for-peer",
-                  "v1/api-reference/endpoint/peers/get-messages-for-peer",
-                  "v1/api-reference/endpoint/peers/create-messages-for-peer",
-                  "v1/api-reference/endpoint/peers/get-working-representation",
-                  "v1/api-reference/endpoint/peers/chat"
+                  "v1/api-reference/endpoint/users/get-users",
+                  "v1/api-reference/endpoint/users/create-user",
+                  "v1/api-reference/endpoint/users/get-user-by-name",
+                  "v1/api-reference/endpoint/users/get-user",
+                  "v1/api-reference/endpoint/users/get-or-create-user",
+                  "v1/api-reference/endpoint/users/update-user"
                 ]
               },
               {
                 "group": "messages",
                 "pages": [
                   "v1/api-reference/endpoint/messages/get-messages",
-                  "v1/api-reference/endpoint/messages/create-messages-for-session",
+                  "v1/api-reference/endpoint/messages/create-message-for-session",
+                  "v1/api-reference/endpoint/messages/create-batch-messages-for-session",
                   "v1/api-reference/endpoint/messages/get-message",
                   "v1/api-reference/endpoint/messages/update-message"
                 ]
@@ -289,6 +293,37 @@
                 "group": "keys",
                 "pages": [
                   "v1/api-reference/endpoint/keys/create-key"
+                ]
+              },
+              {
+                "group": "metamessages",
+                "pages": [
+                  "v1/api-reference/endpoint/metamessages/create-metamessage",
+                  "v1/api-reference/endpoint/metamessages/get-metamessages",
+                  "v1/api-reference/endpoint/metamessages/get-metamessage",
+                  "v1/api-reference/endpoint/metamessages/update-metamessage"
+                ]
+              },
+              {
+                "group": "collections",
+                "pages": [
+                  "v1/api-reference/endpoint/collections/get-collections",
+                  "v1/api-reference/endpoint/collections/create-collection",
+                  "v1/api-reference/endpoint/collections/get-collection-by-name",
+                  "v1/api-reference/endpoint/collections/get-collection",
+                  "v1/api-reference/endpoint/collections/update-collection",
+                  "v1/api-reference/endpoint/collections/delete-collection"
+                ]
+              },
+              {
+                "group": "documents",
+                "pages": [
+                  "v1/api-reference/endpoint/documents/get-documents",
+                  "v1/api-reference/endpoint/documents/create-document",
+                  "v1/api-reference/endpoint/documents/get-document",
+                  "v1/api-reference/endpoint/documents/update-document",
+                  "v1/api-reference/endpoint/documents/delete-document",
+                  "v1/api-reference/endpoint/documents/query-documents"
                 ]
               }
             ]
@@ -319,11 +354,6 @@
   "logo": {
     "light": "/logo/honcho-dark.svg",
     "dark": "/logo/honcho-light.svg"
-  },
-  "api": {
-    "openapi": [
-      "openapi.documented.yml"
-    ]
   },
   "navbar": {
     "primary": {
