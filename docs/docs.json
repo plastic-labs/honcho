@@ -172,17 +172,10 @@
             "tab": "Changelog",
             "groups": [
               {
-                "group": "API Changelog",
+                "group": "Changelog",
                 "pages": [
                   "changelog/introduction",
-                  "changelog/api/introduction"
-                ]
-              },
-              {
-                "group": "SDK Changelog",
-                "pages": [
-                  "changelog/sdk/introduction",
-                  "changelog/sdk/compatibility-guide"
+                  "changelog/compatibility-guide"
                 ]
               }
             ]
@@ -340,17 +333,10 @@
             "tab": "Changelog",
             "groups": [
               {
-                "group": "API Changelog",
+                "group": "Changelog",
                 "pages": [
                   "changelog/introduction",
-                  "changelog/api/introduction"
-                ]
-              },
-              {
-                "group": "SDK Changelog",
-                "pages": [
-                  "changelog/sdk/compatibility-guide",
-                  "changelog/sdk/introduction"
+                  "changelog/compatibility-guide"
                 ]
               }
             ]

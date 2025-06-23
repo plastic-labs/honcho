@@ -1,37 +1,136 @@
 ---
-title: "Overview"
-description: "Track changes, updates, and new features in Honcho"
+title: "Changelog"
 icon: "clock-rotate-left"
 ---
 
-# Changelog
+Welcome to the Honcho changelog! This section documents all notable changes to the Honcho API and SDKs.
 
-Welcome to the Honcho changelog! This section documents all notable changes to the Honcho platform, including new features, improvements, bug fixes, and breaking changes.
 
-## How to Read This Changelog
+<Accordion title="How to Read This Changelog">
+    Each release is documented with:
 
-Each release is documented with:
+    - **Added**: New features and capabilities
+    - **Changed**: Modifications to existing functionality
+    - **Deprecated**: Features that will be removed in future versions
+    - **Removed**: Features that have been removed
+    - **Fixed**: Bug fixes and corrections
+    - **Security**: Security-related improvements
 
-- **Added**: New features and capabilities
-- **Changed**: Modifications to existing functionality
-- **Deprecated**: Features that will be removed in future versions
-- **Removed**: Features that have been removed
-- **Fixed**: Bug fixes and corrections
-- **Security**: Security-related improvements
+    ## Version Format
 
-## Version Format
+    Honcho follows [Semantic Versioning](https://semver.org/):
+    - **MAJOR** version for incompatible API changes
+    - **MINOR** version for backwards-compatible functionality additions
+    - **PATCH** version for backwards-compatible bug fixes
+</Accordion>
 
-Honcho follows [Semantic Versioning](https://semver.org/):
-- **MAJOR** version for incompatible API changes
-- **MINOR** version for backwards-compatible functionality additions
-- **PATCH** version for backwards-compatible bug fixes
+### Honcho API and SDK Changelogs
+<Tabs>
+    <Tab title="Honcho API">
+        <Update label="v2.0.0 (Current)">
+        ### Added
 
-## Stay Updated
+        - Ability to get a peer's working representation
+        - Metadata to all data primitives (Workspaces, Peers, Sessions, Messages)
+        - Internal metadata to store Honcho's state no longer exposed in API
+        - Batch message operations and enhanced message querying with token and message count limits
+        - Search and summary functionalities scoped by workspace, peer, and session
+        - Session context retrieval with summaries and token allocation
 
-- Subscribe to release notifications on [GitHub](https://github.com/plastic-labs/honcho)
-- Follow development progress through our GitHub issues and pull requests
-- Check this changelog regularly for the latest updates
+        ### Changed
 
-## Feedback
+        - New architecture centered around the concept of a "peer" replaces the former
+        "app"/"user"/"session" paradigm
+        - Workspaces replace "apps" as top-level namespace
+        - Peers replace "users"
+        - Sessions no longer nested beneath peers and no longer limited to a single
+        user-assistant model. A session exists independently of any one peer and
+        peers can be added to and removed from sessions.
+        - Dialectic API is now part of the Peer, not the Session
+        - Dialectic API now allows queries to be scoped to a session or "targeted"
+        to a fellow peer
+        - Database schema migrated to adopt workspace/peer/session naming and structure
+        - Authentication and JWT scopes updated to workspace/peer/session hierarchy
+        - Queue processing now works on 'work units' instead of sessions
+        - Message token counting updated with tiktoken integration and fallback heuristic
+        - Queue and message processing updated to handle sender/target and task types for multi-peer scenarios
 
-Found an issue or have suggestions? Please [open an issue](https://github.com/plastic-labs/honcho/issues) on our GitHub repository. 
+        ### Fixed
+
+        - Improved error handling and validation for batch message operations and metadata
+
+        ### Removed
+
+        - Metamessages removed in favor of metadata
+        - Collections and Documents no longer exposed in the API, solely internal
+        - Obsolete tests for apps, users, collections, documents, and metamessages
+        ---
+        </Update>
+
+        <Update label="v1.1.0">
+        ### Added
+
+        - Normalize resources to remove joins and increase query performance
+        - Query tracing for debugging
+
+        ### Changed
+
+        - `/list` endpoints to not require a request body
+        - `metamessage_type` to `label` with backwards compatability
+        - Database Provisioning to rely on alembic
+        - Database Session Manager to explicitly rollback transactions before closing
+        the connection
+
+        ### Fixed
+
+        - Alembic Migrations to include initial database migrations
+        - Sentry Middleware to not report Honcho Exceptions
+        </Update>
+
+        <Update label="v1.0.0">
+        ### Added
+
+        - JWT based API authentication
+        - Configurable logging
+        - Consolidated LLM Inference via `ModelClient` class
+        - Dynamic logging configurable via environment variables
+
+        ### Changed
+
+        - Deriver & Dialectic API to use Hybrid Memory Architecture
+        - Metamessages are not strictly tied to a message
+        - Database provisioning is a separate script instead of happening on startup
+        - Consolidated `session/chat` and `session/chat/stream` endpoints
+        </Update>
+
+        ## Previous Releases
+
+        For a complete history of all releases, see our [GitHub Releases](https://github.com/plastic-labs/honcho/tags) page.
+    </Tab>
+
+    <Tab title="Python SDK">
+        [Python SDK](https://pypi.org/project/honcho-ai/)
+        <Update label="v1.0.2 (Current)">
+            ### Fixed
+
+            - Properly handle AsyncClient
+        </Update>
+    </Tab>
+
+    <Tab title="TypeScript SDK">
+        [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
+        <Update label="v1.0.2 (Current)">
+            ### Fixed
+
+            - Create default workspace on Honcho client instantiation
+            - Simplified Honcho client import path
+        </Update>
+    </Tab>
+</Tabs>
+
+## Getting Help
+
+If you encounter issues using the Honcho API or its SDKs:
+
+1. Open an issue on [GitHub](https://github.com/plastic-labs/honcho/issues)
+2. Join our [Discord community](http://discord.gg/plasticlabs) for support 
