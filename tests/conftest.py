@@ -306,12 +306,12 @@ def mock_mirascope_functions():
     with (
         patch("src.utils.history.create_short_summary") as mock_short_summary,
         patch("src.utils.history.create_long_summary") as mock_long_summary,
-        patch("src.deriver.tom.single_prompt.tom_inference") as mock_tom_inference,
+        patch("src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock) as mock_tom_inference,
         patch(
             "src.deriver.tom.single_prompt.user_representation_inference"
         ) as mock_user_rep_inference,
         patch(
-            "src.deriver.tom.single_prompt.get_tom_inference_single_prompt"
+            "src.deriver.tom.single_prompt.get_tom_inference_single_prompt", new_callable=AsyncMock
         ) as mock_single_tom,
         patch(
             "src.deriver.tom.single_prompt.get_user_representation_single_prompt"
