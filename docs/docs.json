@@ -17,156 +17,280 @@
     ]
   },
   "navigation": {
-    "tabs": [
+    "versions": [
       {
-        "tab": "Documentation",
-        "groups": [
+        "version": "v2.0.0",
+        "tabs": [
           {
-            "group": "Introduction",
-            "pages": [
-              "documentation/introduction/what-is-honcho",
-              "documentation/introduction/quickstart"
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Introduction",
+                "pages": [
+                  "v2/documentation/introduction/what-is-honcho",
+                  "v2/documentation/introduction/quickstart"
+                ]
+              },
+              {
+                "group": "Core Concepts",
+                "pages": [
+                  "v2/documentation/core-concepts/glossary",
+                  "v2/documentation/core-concepts/architecture",
+                  "v2/documentation/core-concepts/deriver",
+                  "v2/documentation/core-concepts/features"
+                ]
+              },
+              {
+                "group": "Platform",
+                "pages": [
+                  "v2/documentation/platform/overview",
+                  "v2/documentation/platform/guided-tutorial",
+                  "v2/documentation/platform/sdk"
+                ]
+              }
             ]
           },
           {
-            "group": "Core Concepts",
-            "pages": [
-              "documentation/core-concepts/glossary",
-              "documentation/core-concepts/architecture",
-              "documentation/core-concepts/deriver",
-              "documentation/core-concepts/features"
+            "tab": "Spellbooks and Tutorials",
+            "groups": [
+              {
+                "group": "Getting Started",
+                "pages": [
+                  "v2/guides/overview"
+                ]
+              },
+              {
+                "group": "Application Interfaces",
+                "pages": [
+                  "v2/guides/discord"
+                ]
+              },
+              {
+                "group": "Personal Memory",
+                "pages": [
+                  "v2/guides/dialectic-endpoint",
+                  "v2/guides/get-context",
+                  "v2/guides/search"
+                ]
+              },
+              {
+                "group": "Streaming Responses",
+                "pages": [
+                  "v2/guides/streaming-response"
+                ]
+              }
             ]
           },
           {
-            "group": "Platform",
-            "pages": [
-              "documentation/platform/overview",
-              "documentation/platform/guided-tutorial",
-              "documentation/platform/sdk"
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": [
+                  "v2/api-reference/introduction"
+                ]
+              },
+              {
+                "group": "workspaces",
+                "pages": [
+                  "v2/api-reference/endpoint/workspaces/get-or-create-workspace",
+                  "v2/api-reference/endpoint/workspaces/get-all-workspaces",
+                  "v2/api-reference/endpoint/workspaces/update-workspace",
+                  "v2/api-reference/endpoint/workspaces/search-workspace"
+                ]
+              },
+              {
+                "group": "peers",
+                "pages": [
+                  "v2/api-reference/endpoint/peers/get-peers",
+                  "v2/api-reference/endpoint/peers/get-or-create-peer",
+                  "v2/api-reference/endpoint/peers/update-peer",
+                  "v2/api-reference/endpoint/peers/get-sessions-for-peer",
+                  "v2/api-reference/endpoint/peers/chat",
+                  "v2/api-reference/endpoint/peers/create-messages-for-peer",
+                  "v2/api-reference/endpoint/peers/get-messages-for-peer",
+                  "v2/api-reference/endpoint/peers/get-working-representation",
+                  "v2/api-reference/endpoint/peers/search-peer"
+                ]
+              },
+              {
+                "group": "sessions",
+                "pages": [
+                  "v2/api-reference/endpoint/sessions/get-or-create-session",
+                  "v2/api-reference/endpoint/sessions/get-sessions",
+                  "v2/api-reference/endpoint/sessions/update-session",
+                  "v2/api-reference/endpoint/sessions/delete-session",
+                  "v2/api-reference/endpoint/sessions/clone-session",
+                  "v2/api-reference/endpoint/sessions/get-session-peers",
+                  "v2/api-reference/endpoint/sessions/set-session-peers",
+                  "v2/api-reference/endpoint/sessions/add-peers-to-session",
+                  "v2/api-reference/endpoint/sessions/remove-peers-from-session",
+                  "v2/api-reference/endpoint/sessions/get-peer-config",
+                  "v2/api-reference/endpoint/sessions/set-peer-config",
+                  "v2/api-reference/endpoint/sessions/get-session-context",
+                  "v2/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "messages",
+                "pages": [
+                  "v2/api-reference/endpoint/messages/create-messages-for-session",
+                  "v2/api-reference/endpoint/messages/get-messages",
+                  "v2/api-reference/endpoint/messages/get-message",
+                  "v2/api-reference/endpoint/messages/update-message"
+                ]
+              },
+              {
+                "group": "keys",
+                "pages": [
+                  "v2/api-reference/endpoint/keys/create-key"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Contributing",
+            "groups": [
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/deployment",
+                  "v2/contributing/development",
+                  "v2/contributing/license"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Changelog",
+            "groups": [
+              {
+                "group": "Changelog",
+                "pages": [
+                  "changelog/introduction"
+                ]
+              }
             ]
           }
         ]
       },
       {
-        "tab": "Spellbooks and Tutorials",
-        "groups": [
+        "version": "v1.1.0",
+        "tabs": [
           {
-            "group": "Getting Started",
-            "pages": [
-              "guides/overview"
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Get Started",
+                "pages": [
+                  "v1/getting-started/introduction",
+                  "v1/getting-started/quickstart",
+                  "v1/getting-started/architecture"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v1/contributing/guidelines",
+                  "v1/contributing/self-hosting",
+                  "v1/contributing/deploying",
+                  "v1/contributing/license"
+                ]
+              }
             ]
           },
           {
-            "group": "Application Interfaces",
-            "pages": [
-              "guides/discord"
+            "tab": "Guides",
+            "groups": [
+              {
+                "group": "Getting Started",
+                "pages": [
+                  "v1/guides/overview",
+                  "v1/guides/streaming-response"
+                ]
+              },
+              {
+                "group": "Application Interfaces",
+                "pages": [
+                  "v1/guides/discord",
+                  "v1/guides/honcho-mcp"
+                ]
+              },
+              {
+                "group": "Personal Memory",
+                "pages": [
+                  "v1/guides/dialectic-endpoint"
+                ]
+              }
             ]
           },
           {
-            "group": "Personal Memory",
-            "pages": [
-              "guides/dialectic-endpoint",
-              "guides/get-context",
-              "guides/search"
-            ]
-          },
-          {
-            "group": "Streaming Responses",
-            "pages": [
-              "guides/streaming-response"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "API Reference",
-        "groups": [
-          {
-            "group": "API Documentation",
-            "pages": [
-              "api-reference/introduction"
-            ]
-          },
-          {
-            "group": "workspaces",
-            "pages": [
-              "api-reference/endpoint/workspaces/get-or-create-workspace",
-              "api-reference/endpoint/workspaces/get-all-workspaces",
-              "api-reference/endpoint/workspaces/update-workspace",
-              "api-reference/endpoint/workspaces/search-workspace"
-            ]
-          },
-          {
-            "group": "peers",
-            "pages": [
-              "api-reference/endpoint/peers/get-peers",
-              "api-reference/endpoint/peers/get-or-create-peer",
-              "api-reference/endpoint/peers/update-peer",
-              "api-reference/endpoint/peers/get-sessions-for-peer",
-              "api-reference/endpoint/peers/chat",
-              "api-reference/endpoint/peers/create-messages-for-peer",
-              "api-reference/endpoint/peers/get-messages-for-peer",
-              "api-reference/endpoint/peers/get-working-representation",
-              "api-reference/endpoint/peers/search-peer"
-            ]
-          },
-          {
-            "group": "sessions",
-            "pages": [
-              "api-reference/endpoint/sessions/get-or-create-session",
-              "api-reference/endpoint/sessions/get-sessions",
-              "api-reference/endpoint/sessions/update-session",
-              "api-reference/endpoint/sessions/delete-session",
-              "api-reference/endpoint/sessions/clone-session",
-              "api-reference/endpoint/sessions/get-session-peers",
-              "api-reference/endpoint/sessions/set-session-peers",
-              "api-reference/endpoint/sessions/add-peers-to-session",
-              "api-reference/endpoint/sessions/remove-peers-from-session",
-              "api-reference/endpoint/sessions/get-peer-config",
-              "api-reference/endpoint/sessions/set-peer-config",
-              "api-reference/endpoint/sessions/get-session-context",
-              "api-reference/endpoint/sessions/search-session"
-            ]
-          },
-          {
-            "group": "messages",
-            "pages": [
-              "api-reference/endpoint/messages/create-messages-for-session",
-              "api-reference/endpoint/messages/get-messages",
-              "api-reference/endpoint/messages/get-message",
-              "api-reference/endpoint/messages/update-message"
-            ]
-          },
-          {
-            "group": "keys",
-            "pages": [
-              "api-reference/endpoint/keys/create-key"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Contributing",
-        "groups": [
-          {
-            "group": "Contributing",
-            "pages": [
-              "contributing/guidelines",
-              "contributing/self-hosting",
-              "contributing/deployment",
-              "contributing/development",
-              "contributing/license"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "Changelog",
-        "groups": [
-          {
-            "group": "Changelog",
-            "pages": [
-              "changelog/introduction"
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": [
+                  "v1/api-reference/introduction"
+                ]
+              },
+              {
+                "group": "workspaces",
+                "pages": [
+                  "v1/api-reference/endpoint/workspaces/get-or-create-workspace",
+                  "v1/api-reference/endpoint/workspaces/get-all-workspaces",
+                  "v1/api-reference/endpoint/workspaces/update-workspace",
+                  "v1/api-reference/endpoint/workspaces/search-workspace"
+                ]
+              },
+              {
+                "group": "sessions",
+                "pages": [
+                  "v1/api-reference/endpoint/sessions/get-or-create-session",
+                  "v1/api-reference/endpoint/sessions/get-sessions",
+                  "v1/api-reference/endpoint/sessions/update-session",
+                  "v1/api-reference/endpoint/sessions/delete-session",
+                  "v1/api-reference/endpoint/sessions/clone-session",
+                  "v1/api-reference/endpoint/sessions/add-peers-to-session",
+                  "v1/api-reference/endpoint/sessions/set-session-peers",
+                  "v1/api-reference/endpoint/sessions/remove-peers-from-session",
+                  "v1/api-reference/endpoint/sessions/get-session-peers",
+                  "v1/api-reference/endpoint/sessions/get-peer-config",
+                  "v1/api-reference/endpoint/sessions/set-peer-config",
+                  "v1/api-reference/endpoint/sessions/get-session-context",
+                  "v1/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "peers",
+                "pages": [
+                  "v1/api-reference/endpoint/peers/get-or-create-peer",
+                  "v1/api-reference/endpoint/peers/get-peers",
+                  "v1/api-reference/endpoint/peers/update-peer",
+                  "v1/api-reference/endpoint/peers/search-peer",
+                  "v1/api-reference/endpoint/peers/get-sessions-for-peer",
+                  "v1/api-reference/endpoint/peers/get-messages-for-peer",
+                  "v1/api-reference/endpoint/peers/create-messages-for-peer",
+                  "v1/api-reference/endpoint/peers/get-working-representation",
+                  "v1/api-reference/endpoint/peers/chat"
+                ]
+              },
+              {
+                "group": "messages",
+                "pages": [
+                  "v1/api-reference/endpoint/messages/get-messages",
+                  "v1/api-reference/endpoint/messages/create-messages-for-session",
+                  "v1/api-reference/endpoint/messages/get-message",
+                  "v1/api-reference/endpoint/messages/update-message"
+                ]
+              },
+              {
+                "group": "keys",
+                "pages": [
+                  "v1/api-reference/endpoint/keys/create-key"
+                ]
+              }
             ]
           }
         ]

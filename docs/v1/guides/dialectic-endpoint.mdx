@@ -1,0 +1,96 @@
+---
+title: "Dialectic Endpoint"
+description: "An endpoint for reasoning about your users"
+icon: "comments"
+---
+
+Honcho by default runs ambient inference on top of the `message` objects you store. Those messages serve as the ground truth upon which facts about the user are derived and stored. The **Dialectic Endpoint** is the natural language interface through which insights are synthesized from those facts. We believe [intellectual respect](https://blog.plasticlabs.ai/extrusions/Extrusion-02.24) for LLMs is paramount in building effective AI agents/apps. It follows that the LLM should know better than any human what would aid them in their generation task. Thus, the Dialectic endpoint exists for flexible agent-to-agent communication. 
+
+## Automatic Fact Derivation
+
+On every message written to a session, an automatic callback is run that will reason about the conversation and store facts in a `collection` named `honcho`. This is a reserved `collection` specifically for the backend Honcho agent to interact with. 
+
+## Dialectic Endpoint
+
+You can query the automatically derived facts in the `honcho` collection directly, or you can offload this task to our agent and use the Dialectic endpoint. This endpoint allows you to define logic enabling your agent to talk to our agent that automatically retrieves and synthesizes facts from the collection. 
+
+This chat interface is exposed via the `chat` endpoint. It accepts a string or a list of strings. Below is some example code on how this works. 
+
+## Prerequisites
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+honcho = Honcho()
+
+# Create or get an existing App
+app = honcho.apps.get_or_create(name="demo-app")
+
+# create or get user
+user = honcho.apps.users.get_or_create(app_id=app.id, name="demo-user")
+
+# create a new session
+session = honcho.apps.users.session.create(app_id=app.id, user_id=user.id)
+
+# (assuming some messages have been written to Honcho for the deriver to use)
+```
+
+```javascript NodeJS
+import Honcho from 'honcho-ai';
+
+const honcho = new Honcho(); // defaults to demo server
+
+// Create or get an existing App
+const app = await honcho.apps.getOrCreate('demo-app');
+
+// create or get user
+const user = await honcho.apps.users.getOrCreate(app.id, 'demo-user');
+
+// create a new session (need to send empty body because it's a POST request)
+const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
+
+// (assuming some messages have been written to Honcho for the deriver to use)
+```
+</CodeGroup>
+## Static Dialectic Call 
+
+<CodeGroup>
+```python Python
+query = "What is the user's favorite way of completing the task?"
+answer = honcho.apps.users.session.chat(app_id=app.id, user_id=user.id, session_id=session.id, queries=query)
+```
+
+```javascript NodeJS
+const query = 'What is the user's favorite way of completing the task?'
+const DialecticResponse = await honcho.apps.users.sessions.chat(app.id, user.id, session.id, {
+    queries: query,
+});
+```
+</CodeGroup>
+
+## Streaming Dialectic Call
+
+<CodeGroup>
+```python Python
+with honcho.apps.users.sessions.with_streaming_response.stream(
+        app_id=app.id,
+        user_id=user.id,
+        session_id=session.id,
+        queries="What do we know about the user",
+    ) as response:
+        print(response)
+        for line in response.iter_text():
+            print(line)
+            time.sleep(0.025)
+```
+
+```javascript NodeJS
+
+```
+</CodeGroup>
+
+We've designed the Dialectic endpoint to be infinitely flexible. We wrote an incomplete list of ideas on how to use it on our blog [here](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API#how-it-works).
+
+
+
