@@ -106,7 +106,7 @@ class UserRepresentationOutput(BaseModel):
     updates: UpdateSection
 
 
-@ai_track("Tom Inference")
+@track("Tom Inference")
 @with_langfuse()
 @llm.call(
     provider="groq", model="llama-3.3-70b-versatile", response_model=TomInferenceOutput
