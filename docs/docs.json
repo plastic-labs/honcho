@@ -171,9 +171,17 @@
             "tab": "Changelog",
             "groups": [
               {
-                "group": "Changelog",
+                "group": "API Changelog",
                 "pages": [
-                  "changelog/introduction"
+                  "changelog/introduction",
+                  "changelog/changelog/introduction"
+                ]
+              },
+              {
+                "group": "SDK Changelog",
+                "pages": [
+                  "changelog/sdk/compatibility-guide",
+                  "changelog/sdk/introduction"
                 ]
               }
             ]
@@ -323,6 +331,18 @@
                   "v1/api-reference/endpoint/documents/update-document",
                   "v1/api-reference/endpoint/documents/delete-document",
                   "v1/api-reference/endpoint/documents/query-documents"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Changelog",
+            "groups": [
+              {
+                "group": "Changelog",
+                "pages": [
+                  "changelog/introduction",
+                  "changelog/changelog/introduction"
                 ]
               }
             ]
