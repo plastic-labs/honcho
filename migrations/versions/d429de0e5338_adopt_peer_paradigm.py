@@ -9,7 +9,6 @@ Create Date: 2025-06-09 15:16:38.164067
 from collections.abc import Sequence
 from contextlib import suppress
 from os import getenv
-from typing import Union
 
 import sqlalchemy as sa
 import tiktoken
@@ -28,9 +27,9 @@ from migrations.utils import (
 
 # revision identifiers, used by Alembic.
 revision: str = "d429de0e5338"
-down_revision: Union[str, None] = "66e63cf2cf77"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "66e63cf2cf77"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

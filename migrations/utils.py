@@ -1,5 +1,4 @@
 from os import getenv
-from typing import Optional
 
 import sqlalchemy as sa
 from alembic import op
@@ -11,7 +10,7 @@ def get_schema() -> str:
     return settings.DB.SCHEMA
 
 
-def table_exists(table_name: str, inspector: Optional[sa.Inspector] = None) -> bool:
+def table_exists(table_name: str, inspector: sa.Inspector | None = None) -> bool:
     """Check if a table exists in the database."""
     if inspector is None:
         inspector = sa.inspect(op.get_bind())
@@ -20,7 +19,7 @@ def table_exists(table_name: str, inspector: Optional[sa.Inspector] = None) -> b
 
 
 def column_exists(
-    table_name: str, column_name: str, inspector: Optional[sa.Inspector] = None
+    table_name: str, column_name: str, inspector: sa.Inspector | None = None
 ) -> bool:
     """Check if a column exists in a table."""
     if inspector is None:
@@ -33,7 +32,7 @@ def column_exists(
 
 
 def fk_exists(
-    table_name: str, fk_name: str, inspector: Optional[sa.Inspector] = None
+    table_name: str, fk_name: str, inspector: sa.Inspector | None = None
 ) -> bool:
     """Check if a foreign key exists in a table."""
     if inspector is None:
@@ -44,7 +43,7 @@ def fk_exists(
 
 
 def index_exists(
-    table_name: str, index_name: str, inspector: Optional[sa.Inspector] = None
+    table_name: str, index_name: str, inspector: sa.Inspector | None = None
 ) -> bool:
     """Check if an index exists in a table."""
     if inspector is None:
@@ -58,7 +57,7 @@ def constraint_exists(
     table_name: str,
     constraint_name: str,
     type: str,
-    inspector: Optional[sa.Inspector] = None,
+    inspector: sa.Inspector | None = None,
 ) -> bool:
     """Check if a constraint exists in a table."""
     if inspector is None:

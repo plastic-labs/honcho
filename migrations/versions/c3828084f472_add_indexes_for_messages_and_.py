@@ -8,7 +8,6 @@ Create Date: 2024-12-12 13:41:40.156095
 
 from collections.abc import Sequence
 from os import getenv
-from typing import Union
 
 import sqlalchemy as sa
 from alembic import op
@@ -17,9 +16,9 @@ from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "c3828084f472"
-down_revision: Union[str, None] = "a1b2c3d4e5f6"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "a1b2c3d4e5f6"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

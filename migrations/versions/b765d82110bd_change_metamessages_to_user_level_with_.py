@@ -8,6 +8,7 @@ Create Date: 2025-04-03 15:32:16.733312
 
 from collections.abc import Sequence
 from typing import Union
+from os import getenv
 
 import sqlalchemy as sa
 from alembic import op
@@ -18,9 +19,9 @@ from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "b765d82110bd"
-down_revision: Union[str, None] = "c3828084f472"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "c3828084f472"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -99,13 +100,15 @@ def upgrade() -> None:
 
     # 4. Data migration: Fill session_id from messages
     try:
-        op.execute("""
+        op.execute(
+            """
             UPDATE metamessages m
             SET session_id = msg.session_id
             FROM messages msg
             WHERE m.message_id = msg.public_id
             AND m.session_id IS NULL
-        """)
+        """
+        )
         print("Updated session_id values from messages")
     except Exception as e:
         print(f"Error updating session_id values: {e}")
@@ -122,23 +125,27 @@ def upgrade() -> None:
             print(
                 f"Found {orphaned_count} orphaned records. Setting message_id to NULL."
             )
-            op.execute("""
+            op.execute(
+                """
                 UPDATE metamessages
                 SET message_id = NULL
                 WHERE message_id IS NOT NULL AND session_id IS NULL
-            """)
+            """
+            )
     except Exception as e:
         print(f"Error handling orphaned records: {e}")
 
     # 6. Data migration: Fill user_id from session's user
     try:
-        op.execute("""
+        op.execute(
+            """
             UPDATE metamessages m
             SET user_id = s.user_id
             FROM sessions s
             WHERE m.session_id = s.public_id
             AND m.user_id IS NULL
-        """)
+        """
+        )
         print("Updated user_id values from sessions")
     except Exception as e:
         print(f"Error updating user_id values from sessions: {e}")
@@ -191,11 +198,13 @@ def upgrade() -> None:
     if constraint_violations and constraint_violations > 0:
         print(f"WARNING: {constraint_violations} records would violate the constraint!")
         print("Setting these message_ids to NULL to prevent constraint violation")
-        op.execute("""
+        op.execute(
+            """
             UPDATE metamessages
             SET message_id = NULL
             WHERE message_id IS NOT NULL AND session_id IS NULL
-        """)
+        """
+        )
 
     # 9. Add the check constraint for message_id and session_id relationship
     try:
@@ -230,7 +239,8 @@ def upgrade() -> None:
     if null_user_count and null_user_count > 0:
         print(f"WARNING: {null_user_count} records have NULL user_id!")
         # Try to derive user_id from message for these orphaned records
-        op.execute("""
+        op.execute(
+            """
             UPDATE metamessages m
             SET user_id = u.public_id
             FROM messages msg
@@ -238,7 +248,8 @@ def upgrade() -> None:
             JOIN users u ON s.user_id = u.public_id
             WHERE m.message_id = msg.public_id
             AND m.user_id IS NULL
-        """)
+        """
+        )
 
         # Check again after fixes
         null_user_count = conn.execute(
@@ -321,9 +332,11 @@ def downgrade() -> None:
 
     # 4. Make message_id required again and clean up data if needed
     try:
-        op.execute("""
+        op.execute(
+            """
             DELETE FROM metamessages WHERE message_id IS NULL
-        """)
+        """
+        )
         op.alter_column(
             "metamessages",
             "message_id",
