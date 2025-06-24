@@ -195,6 +195,76 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
             return column == value
 
 
+def _safe_numeric_cast(column_accessor, op_value):
+    """
+    Safely cast JSONB column accessor to numeric for comparison.
+
+    Args:
+        column_accessor: SQLAlchemy JSONB column accessor (.astext)
+        op_value: The value to compare against
+
+    Returns:
+        Tuple of (cast_column_accessor, cast_op_value) for numeric comparison
+        or (column_accessor, str_op_value) for string comparison
+    """
+    if isinstance(op_value, (int, float)):
+        try:
+            # Cast to numeric for proper numeric comparison
+            numeric_accessor = cast(column_accessor, Numeric)
+            return numeric_accessor, op_value
+        except Exception:
+            # Fall back to string comparison if casting fails
+            logger.debug(
+                "Failed to cast JSONB value to numeric, using string comparison"
+            )
+            return column_accessor, str(op_value)
+    else:
+        # Non-numeric value, use string comparison
+        return column_accessor, str(op_value)
+
+
+def _build_comparison_condition(
+    column, field_name: str, operator: str, op_value: Any
+) -> Any:
+    """
+    Build a single comparison condition for a JSONB field.
+
+    Args:
+        column: SQLAlchemy JSONB column object
+        field_name: Name of the field in the JSONB column
+        operator: Comparison operator
+        op_value: Value to compare against
+
+    Returns:
+        SQLAlchemy condition object or None
+    """
+    if op_value == "*":
+        return None
+
+    field_accessor = column[field_name].astext
+
+    # Mapping of operators to their SQLAlchemy methods
+    numeric_operators = {"gte", "lte", "gt", "lt", "ne"}
+
+    if operator in numeric_operators:
+        safe_accessor, safe_value = _safe_numeric_cast(field_accessor, op_value)
+        operator_map = {
+            "gte": lambda a, v: a >= v,
+            "lte": lambda a, v: a <= v,
+            "gt": lambda a, v: a > v,
+            "lt": lambda a, v: a < v,
+            "ne": lambda a, v: a != v,
+        }
+        return operator_map[operator](safe_accessor, safe_value)
+    elif operator == "in":
+        if isinstance(op_value, list):
+            return field_accessor.in_([str(v) for v in op_value])
+    elif operator in ("contains", "icontains"):
+        return field_accessor.ilike(f"%{op_value}%")
+
+    return None
+
+
 def _build_nested_metadata_conditions(
     column, metadata_dict: dict[str, Any], model_class
 ) -> Any:
@@ -228,65 +298,37 @@ def _build_nested_metadata_conditions(
             # This field has comparison operators
             field_conditions = []
             for operator, op_value in field_value.items():
-                if op_value == "*":
-                    continue
-
-                condition = None
-
-                if operator == "gte":
-                    # For numeric comparisons, cast to numeric; otherwise use string comparison
-                    if isinstance(op_value, int | float):
-                        field_accessor = cast(column[field_name].astext, Numeric)
-                        condition = field_accessor >= op_value
-                    else:
-                        condition = column[field_name].astext >= str(op_value)
-                elif operator == "lte":
-                    if isinstance(op_value, int | float):
-                        field_accessor = cast(column[field_name].astext, Numeric)
-                        condition = field_accessor <= op_value
-                    else:
-                        condition = column[field_name].astext <= str(op_value)
-                elif operator == "gt":
-                    if isinstance(op_value, int | float):
-                        field_accessor = cast(column[field_name].astext, Numeric)
-                        condition = field_accessor > op_value
-                    else:
-                        condition = column[field_name].astext > str(op_value)
-                elif operator == "lt":
-                    if isinstance(op_value, int | float):
-                        field_accessor = cast(column[field_name].astext, Numeric)
-                        condition = field_accessor < op_value
-                    else:
-                        condition = column[field_name].astext < str(op_value)
-                elif operator == "ne":
-                    # For ne, we need to handle both numeric and text comparisons
-                    if isinstance(op_value, int | float):
-                        field_accessor = cast(column[field_name].astext, Numeric)
-                        condition = field_accessor != op_value
-                    else:
-                        condition = column[field_name].astext != str(op_value)
-                elif operator == "in":
-                    if isinstance(op_value, list):
-                        condition = column[field_name].astext.in_(
-                            [str(v) for v in op_value]
-                        )
-                elif operator == "contains" or operator == "icontains":
-                    condition = column[field_name].astext.ilike(f"%{op_value}%")
-
+                condition = _build_comparison_condition(
+                    column, field_name, operator, op_value
+                )
                 if condition is not None:
                     field_conditions.append(condition)
 
             if field_conditions:
-                if len(field_conditions) == 1:
-                    conditions.append(field_conditions[0])
-                else:
-                    conditions.append(and_(*field_conditions))
+                conditions.append(
+                    field_conditions[0]
+                    if len(field_conditions) == 1
+                    else and_(*field_conditions)
+                )
         else:
             # Regular field equality - use JSONB contains for nested object matching
             conditions.append(column.contains({field_name: field_value}))
 
     # Combine all field conditions with AND
-    if len(conditions) == 0:
+    return _combine_conditions_with_and(conditions)
+
+
+def _combine_conditions_with_and(conditions: list) -> Any:
+    """
+    Combine a list of conditions with AND logic.
+
+    Args:
+        conditions: List of SQLAlchemy condition objects
+
+    Returns:
+        Combined condition object or None if no conditions
+    """
+    if not conditions:
         return None
     elif len(conditions) == 1:
         return conditions[0]
