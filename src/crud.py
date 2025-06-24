@@ -888,6 +888,7 @@ async def _get_or_add_peers_to_session(
     )
     await db.execute(stmt)
 
+    # Return all active session peers after the upsert
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.workspace_name == workspace_name,
@@ -906,11 +907,13 @@ async def get_peer_config(
     """
     Get the configuration for a peer in a session.
 
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
         peer_id: Name of the peer
+
 
     Returns:
         Configuration for the peer
@@ -977,7 +980,6 @@ async def set_peer_config(
     session_peer.configuration["observe_me"] = config.observe_me
 
     await db.commit()
-    return
 
 
 async def search(
@@ -1646,6 +1648,206 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+########################################################
+# deriver queue methods
+########################################################
+
+
+async def get_deriver_status(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: Optional[str] = None,
+    session_name: Optional[str] = None,
+    include_sender: bool = False,
+) -> schemas.DeriverStatus:
+    """
+    Get the deriver processing status, optionally filtered by peer and/or session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peer_name: Optional name of the peer to filter by
+        session_name: Optional session name to filter by
+        include_sender: Whether to include work units where peer is the sender
+
+    Returns:
+        DeriverStatus: Schema containing processing status
+
+    Raises:
+        ValueError: If neither peer_name nor session_name is provided
+    """
+    if (peer_name is None or peer_name == "") and (
+        session_name is None or session_name == ""
+    ):
+        raise ValueError("At least one of peer_name or session_name must be provided")
+
+    # Normalize empty strings to None for consistent handling
+    normalized_peer_name = peer_name if peer_name else None
+    normalized_session_name = session_name if session_name else None
+
+    stmt = _build_queue_status_query(
+        workspace_name, normalized_peer_name, normalized_session_name, include_sender
+    )
+    result = await db.execute(stmt)
+    rows = result.fetchall()
+
+    counts = _process_queue_rows(rows)
+    return _build_status_response(peer_name, session_name, counts)
+
+
+def _build_queue_status_query(
+    workspace_name: str,
+    peer_name: Optional[str],
+    session_name: Optional[str],
+    include_sender: bool,
+):
+    """Build SQL query for queue status with validation and aggregation."""
+    from sqlalchemy import case, func
+
+    sender_name_expr = models.QueueItem.payload["sender_name"].astext
+    target_name_expr = models.QueueItem.payload["target_name"].astext
+    task_type_expr = models.QueueItem.payload["task_type"].astext
+
+    # Define conditions for cleaner window functions
+    is_completed = models.QueueItem.processed
+    is_in_progress = (~models.QueueItem.processed) & (
+        models.ActiveQueueSession.id.isnot(None)
+    )
+    is_pending = (~models.QueueItem.processed) & (
+        models.ActiveQueueSession.id.is_(None)
+    )
+
+    # Use window functions to calculate totals and per-session counts in SQL
+    stmt = select(
+        models.QueueItem.session_id,
+        # Overall totals using window functions
+        func.count().over().label("total"),
+        func.count(case((is_completed, 1))).over().label("completed"),
+        func.count(case((is_in_progress, 1))).over().label("in_progress"),
+        func.count(case((is_pending, 1))).over().label("pending"),
+        # Per-session totals using partitioned window functions
+        func.count()
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_total"),
+        func.count(case((is_completed, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_completed"),
+        func.count(case((is_in_progress, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_in_progress"),
+        func.count(case((is_pending, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_pending"),
+    ).select_from(models.QueueItem)
+
+    stmt = stmt.outerjoin(
+        models.ActiveQueueSession,
+        (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
+        & (sender_name_expr == models.ActiveQueueSession.sender_name)
+        & (target_name_expr == models.ActiveQueueSession.target_name)
+        & (task_type_expr == models.ActiveQueueSession.task_type),
+    )
+
+    if peer_name is not None:
+        stmt = stmt.outerjoin(
+            models.Peer,
+            (models.Peer.name == peer_name)
+            & (models.Peer.workspace_name == workspace_name),
+        )
+
+    if session_name is not None:
+        stmt = stmt.outerjoin(
+            models.Session,
+            (models.Session.name == session_name)
+            & (models.Session.workspace_name == workspace_name),
+        )
+        stmt = stmt.where(models.QueueItem.session_id == models.Session.id)
+
+    if peer_name is not None:
+        if include_sender:
+            from sqlalchemy import or_
+
+            stmt = stmt.where(
+                or_(
+                    target_name_expr == peer_name,
+                    sender_name_expr == peer_name,
+                )
+            )
+        else:
+            stmt = stmt.where(target_name_expr == peer_name)
+
+    return stmt
+
+
+def _process_queue_rows(rows):
+    """Process query results that already contain aggregated counts."""
+    if not rows:
+        return {
+            "total": 0,
+            "completed": 0,
+            "in_progress": 0,
+            "pending": 0,
+            "sessions": {},
+        }
+
+    # Since we're using window functions, all rows have the same overall totals
+    # We just need the first row for overall counts
+    first_row = rows[0]
+
+    # Build sessions dictionary from unique session_ids
+    sessions = {}
+    seen_sessions = set()
+
+    for row in rows:
+        if row.session_id and row.session_id not in seen_sessions:
+            sessions[row.session_id] = {
+                "completed": row.session_completed,
+                "in_progress": row.session_in_progress,
+                "pending": row.session_pending,
+            }
+            seen_sessions.add(row.session_id)
+
+    return {
+        "total": first_row.total,
+        "completed": first_row.completed,
+        "in_progress": first_row.in_progress,
+        "pending": first_row.pending,
+        "sessions": sessions,
+    }
+
+
+def _build_status_response(
+    peer_name: Optional[str], session_name: Optional[str], counts: dict
+):
+    """Build the final response object."""
+    base_response = {
+        "peer_id": peer_name,
+        "total_work_units": counts["total"],
+        "completed_work_units": counts["completed"],
+        "in_progress_work_units": counts["in_progress"],
+        "pending_work_units": counts["pending"],
+    }
+
+    if session_name:
+        return schemas.DeriverStatus(session_id=session_name, **base_response)
+
+    sessions = {}
+    for session_id, data in counts["sessions"].items():
+        total = data["completed"] + data["in_progress"] + data["pending"]
+        sessions[session_id] = schemas.DeriverStatus(
+            peer_id=peer_name,
+            session_id=session_id,
+            total_work_units=total,
+            completed_work_units=data["completed"],
+            in_progress_work_units=data["in_progress"],
+            pending_work_units=data["pending"],
+        )
+
+    return schemas.DeriverStatus(
+        sessions=sessions if sessions else None, **base_response
+    )
 
 
 def construct_collection_name(peer_name: str, target_name: str) -> str:

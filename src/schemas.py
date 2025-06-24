@@ -225,3 +225,22 @@ class DialecticOptions(BaseModel):
 
 class DialecticResponse(BaseModel):
     content: str
+
+
+class DeriverStatus(BaseModel):
+    peer_id: Optional[str] = Field(
+        default=None,
+        description="ID of the peer (optional when filtering by session only)",
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="Session ID if filtered by session"
+    )
+    total_work_units: int = Field(description="Total work units")
+    completed_work_units: int = Field(description="Completed work units")
+    in_progress_work_units: int = Field(
+        description="Work units currently being processed"
+    )
+    pending_work_units: int = Field(description="Work units waiting to be processed")
+    sessions: Optional[dict[str, "DeriverStatus"]] = Field(
+        default=None, description="Per-session status when not filtered by session"
+    )

@@ -1,7 +1,7 @@
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Path
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 
@@ -105,3 +105,40 @@ async def search_workspace(
     stmt = await crud.search(query, workspace_name=workspace_id)
 
     return await apaginate(db, stmt)
+
+
+@router.get(
+    "/{workspace_id}/deriver/status",
+    response_model=schemas.DeriverStatus,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_deriver_status(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: Optional[str] = Query(None, description="Optional peer ID to filter by"),
+    session_id: Optional[str] = Query(
+        None, description="Optional session ID to filter by"
+    ),
+    include_sender: bool = Query(
+        False, description="Include work units triggered by this peer"
+    ),
+    db=db,
+):
+    """Get the deriver processing status, optionally scoped to a peer and/or session"""
+    # Validate that at least one of peer_id or session_id is provided
+    if peer_id is None and session_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of 'peer_id' or 'session_id' must be provided",
+        )
+
+    try:
+        return await crud.get_deriver_status(
+            db,
+            workspace_name=workspace_id,
+            peer_name=peer_id,
+            session_name=session_id,
+            include_sender=include_sender,
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid request parameters: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e)) from e
