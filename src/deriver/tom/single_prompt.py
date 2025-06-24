@@ -108,7 +108,9 @@ class UserRepresentationOutput(BaseModel):
 @track("Tom Inference")
 @with_langfuse()
 @llm.call(
-    provider="groq", model="llama-3.3-70b-versatile", response_model=TomInferenceOutput
+    provider="groq",
+    model="llama-3.3-70b-versatile",
+    response_model=TomInferenceOutput,
 )
 async def tom_inference(
     chat_history: str,
