@@ -23,10 +23,6 @@ from src.utils.model_client import ModelClient, ModelProvider
 # Configure logging
 logger = logging.getLogger(__name__)
 
-USER_REPRESENTATION_METAMESSAGE_TYPE = (
-    settings.AGENT.USER_REPRESENTATION_METAMESSAGE_TYPE
-)
-
 QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
     Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
     For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.

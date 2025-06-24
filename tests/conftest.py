@@ -1,5 +1,4 @@
 import logging  # noqa: I001
-import os
 import jwt
 from nanoid import generate as generate_nanoid
 from unittest.mock import patch, MagicMock, AsyncMock

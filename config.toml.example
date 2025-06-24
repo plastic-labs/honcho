@@ -13,6 +13,7 @@ FASTAPI_PORT = 8000
 [db]
 CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 SCHEMA = "public"
+POOL_CLASS = "default"
 POOL_PRE_PING = true
 POOL_SIZE = 10
 MAX_OVERFLOW = 20
@@ -20,10 +21,11 @@ POOL_TIMEOUT = 30  # seconds
 POOL_RECYCLE = 300  # seconds
 POOL_USE_LIFO = true
 SQL_DEBUG = false
+TRACING = false
 
 # Authentication settings
 [auth]
-USE_AUTH = true
+USE_AUTH = false
 JWT_SECRET = "your-secret-key-here"  # Must be set if USE_AUTH is true
 
 # Sentry settings
@@ -32,10 +34,6 @@ ENABLED = false
 DSN = ""
 TRACES_SAMPLE_RATE = 0.1
 PROFILES_SAMPLE_RATE = 0.1
-
-# OpenTelemetry settings
-[opentelemetry]
-ENABLED = false
 
 # LLM settings
 [llm]
@@ -55,6 +53,14 @@ SUMMARY_PROVIDER = "gemini"
 SUMMARY_MODEL = "gemini-2.0-flash-lite"
 SUMMARY_MAX_TOKENS_SHORT = 1000
 SUMMARY_MAX_TOKENS_LONG = 2000
+
+# API Keys for LLM providers 
+# ANTHROPIC_API_KEY = "your-api-key"
+# OPENAI_API_KEY = "your-api-key"
+# OPENAI_COMPATIBLE_API_KEY = "your-api-key"
+# GEMINI_API_KEY = "your-api-key"
+# GROQ_API_KEY = "your-api-key"
+# OPENAI_COMPATIBLE_BASE_URL = "your-api-key"
 
 # Agent settings
 [agent]

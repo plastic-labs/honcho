@@ -1,7 +1,8 @@
 import os
+
 import sentry_sdk
 from anthropic import Anthropic
-from anthropic.types import MessageParam, TextBlock
+from anthropic.types import MessageParam
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
 

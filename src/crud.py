@@ -8,7 +8,6 @@ from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
@@ -16,9 +15,7 @@ from src.config import settings
 
 from . import models, schemas
 from .exceptions import (
-    ConflictException,
     ResourceNotFoundException,
-    ValidationException,
 )
 from .utils.model_client import ModelClient, ModelProvider
 

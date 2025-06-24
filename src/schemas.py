@@ -1,7 +1,7 @@
 import datetime
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 

@@ -6,7 +6,6 @@ import tomllib
 from dotenv import load_dotenv
 from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
-from pydantic_core.core_schema import ValidationInfo
 from pydantic_settings import (
     BaseSettings,
     DotEnvSettingsSource,
@@ -49,7 +48,6 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DB": "db",
         "AUTH": "auth",
         "SENTRY": "sentry",
-        "OPENTELEMETRY": "opentelemetry",
         "LLM": "llm",
         "AGENT": "agent",
         "DERIVER": "deriver",
@@ -160,11 +158,6 @@ class SentrySettings(HonchoSettings):
     PROFILES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
 
 
-class OpenTelemetrySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="OPENTELEMETRY_")
-    ENABLED: bool = False
-
-
 class LLMSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="LLM_")
 
@@ -209,7 +202,6 @@ class AgentSettings(HonchoSettings):
         float, Field(default=0.85, ge=0.0, le=1.0)
     ] = 0.85  # Max distance for semantic search relevance
     TOM_INFERENCE_METHOD: str = "single_prompt"
-    USER_REPRESENTATION_METAMESSAGE_TYPE: str = "honcho_user_representation"
 
 
 class DeriverSettings(HonchoSettings):
@@ -235,9 +227,7 @@ class HistorySettings(HonchoSettings):
 
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
-    model_config = SettingsConfigDict(
-        env_prefix="", env_nested_delimiter="__"
-    )
+    model_config = SettingsConfigDict(env_prefix="", env_nested_delimiter="__")
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
@@ -248,7 +238,6 @@ class AppSettings(HonchoSettings):
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
-    OPENTELEMETRY: OpenTelemetrySettings = Field(default_factory=OpenTelemetrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
     AGENT: AgentSettings = Field(default_factory=AgentSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
