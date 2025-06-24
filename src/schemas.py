@@ -246,12 +246,60 @@ class DialecticResponse(BaseModel):
     content: str
 
 
+class SessionCounts(BaseModel):
+    """Counts for a specific session in queue processing."""
+    completed: int
+    in_progress: int
+    pending: int
+
+
+class QueueCounts(BaseModel):
+    """Aggregated counts for queue processing status."""
+    total: int
+    completed: int
+    in_progress: int
+    pending: int
+    sessions: dict[str, SessionCounts]
+
+
+class QueueStatusRow(BaseModel):
+    """Represents a row from the queue status SQL query result."""
+    session_id: str | None
+    total: int
+    completed: int
+    in_progress: int
+    pending: int
+    session_total: int
+    session_completed: int
+    session_in_progress: int
+    session_pending: int
+
+
+class PeerConfigResult(BaseModel):
+    """Result from querying peer configuration data."""
+    peer_name: str
+    peer_configuration: dict[str, Any]
+    session_peer_configuration: dict[str, Any]
+
+
+class SessionPeerData(BaseModel):
+    """Data for managing session peer relationships."""
+    peer_names: dict[str, SessionPeerConfig]
+
+
+class MessageBulkData(BaseModel):
+    """Data for bulk message operations."""
+    messages: list[MessageCreate]
+    session_name: str
+    workspace_name: str
+
+
 class DeriverStatus(BaseModel):
-    peer_id: Optional[str] = Field(
+    peer_id: str | None = Field(
         default=None,
         description="ID of the peer (optional when filtering by session only)",
     )
-    session_id: Optional[str] = Field(
+    session_id: str | None = Field(
         default=None, description="Session ID if filtered by session"
     )
     total_work_units: int = Field(description="Total work units")
@@ -260,6 +308,6 @@ class DeriverStatus(BaseModel):
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
-    sessions: Optional[dict[str, "DeriverStatus"]] = Field(
+    sessions: dict[str, "DeriverStatus"] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )

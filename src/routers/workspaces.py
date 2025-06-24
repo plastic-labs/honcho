@@ -114,14 +114,14 @@ async def search_workspace(
 )
 async def get_deriver_status(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: Optional[str] = Query(None, description="Optional peer ID to filter by"),
-    session_id: Optional[str] = Query(
+    peer_id: str | None = Query(None, description="Optional peer ID to filter by"),
+    session_id: str | None = Query(
         None, description="Optional session ID to filter by"
     ),
     include_sender: bool = Query(
         False, description="Include work units triggered by this peer"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get the deriver processing status, optionally scoped to a peer and/or session"""
     # Validate that at least one of peer_id or session_id is provided

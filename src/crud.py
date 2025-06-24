@@ -8,11 +8,11 @@ from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from src.config import settings
-from src.models import Session, Workspace
 
 from . import models, schemas
 from .exceptions import (
@@ -89,7 +89,7 @@ async def get_or_create_workspace(
 
 async def get_all_workspaces(
     filter: dict[str, Any] | None = None,
-) -> Select[tuple[Workspace]]:
+) -> Select[tuple[models.Workspace]]:
     """
     Get all workspaces.
 
@@ -100,7 +100,7 @@ async def get_all_workspaces(
     stmt = select(models.Workspace)
     if filter is not None:
         stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
-    stmt: Select[tuple[Workspace]] = stmt.order_by(models.Workspace.created_at)
+    stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
 
 
@@ -296,7 +296,7 @@ async def get_sessions_for_peer(
     peer_name: str,
     is_active: bool | None = None,
     filter: dict[str, Any] | None = None,
-) -> Select[tuple[Session]]:
+) -> Select[tuple[models.Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
 
@@ -326,7 +326,7 @@ async def get_sessions_for_peer(
     if filter is not None:
         stmt = stmt.where(models.Session.h_metadata.contains(filter))
 
-    stmt: Select[tuple[Session]] = stmt.order_by(models.Session.created_at)
+    stmt: Select[tuple[models.Session]] = stmt.order_by(models.Session.created_at)
 
     return stmt
 
@@ -340,7 +340,7 @@ async def get_sessions(
     workspace_name: str,
     is_active: bool | None = None,
     filter: dict[str, Any] | None = None,
-) -> Select[tuple[Session]]:
+) -> Select[tuple[models.Session]]:
     """
     Get all sessions in a workspace.
     """
@@ -730,7 +730,7 @@ async def get_peers_from_session(
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
-) -> Select[tuple[str, dict[str, Any], Any]]:
+) -> Select[tuple[str, dict[str, Any], dict[str, Any]]]:
     """
     Get configuration from both SessionPeer and Peer tables for active peers in a session.
 
@@ -741,7 +741,7 @@ async def get_session_peer_configuration(
     Returns:
         Select statement returning peer_name, peer_configuration, and session_peer_configuration
     """
-    stmt: Select[tuple[str, dict[str, Any], Any]] = (
+    stmt: Select[tuple[str, dict[str, Any], dict[str, Any]]] = (
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.configuration.label("peer_configuration"),
@@ -1676,8 +1676,8 @@ async def get_duplicate_documents(
 async def get_deriver_status(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: Optional[str] = None,
-    session_name: Optional[str] = None,
+    peer_name: str | None = None,
+    session_name: str | None = None,
     include_sender: bool = False,
 ) -> schemas.DeriverStatus:
     """
@@ -1717,10 +1717,10 @@ async def get_deriver_status(
 
 def _build_queue_status_query(
     workspace_name: str,
-    peer_name: Optional[str],
-    session_name: Optional[str],
+    peer_name: str | None,
+    session_name: str | None,
     include_sender: bool,
-):
+) -> Select[Any]:
     """Build SQL query for queue status with validation and aggregation."""
     from sqlalchemy import case, func
 
@@ -1799,72 +1799,77 @@ def _build_queue_status_query(
     return stmt
 
 
-def _process_queue_rows(rows):
+def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
     """Process query results that already contain aggregated counts."""
     if not rows:
-        return {
-            "total": 0,
-            "completed": 0,
-            "in_progress": 0,
-            "pending": 0,
-            "sessions": {},
-        }
+        return schemas.QueueCounts(
+            total=0,
+            completed=0,
+            in_progress=0,
+            pending=0,
+            sessions={},
+        )
 
     # Since we're using window functions, all rows have the same overall totals
     # We just need the first row for overall counts
     first_row = rows[0]
 
     # Build sessions dictionary from unique session_ids
-    sessions = {}
-    seen_sessions = set()
+    sessions: dict[str, schemas.SessionCounts] = {}
+    seen_sessions: set[str] = set()
 
     for row in rows:
         if row.session_id and row.session_id not in seen_sessions:
-            sessions[row.session_id] = {
-                "completed": row.session_completed,
-                "in_progress": row.session_in_progress,
-                "pending": row.session_pending,
-            }
+            sessions[row.session_id] = schemas.SessionCounts(
+                completed=row.session_completed,
+                in_progress=row.session_in_progress,
+                pending=row.session_pending,
+            )
             seen_sessions.add(row.session_id)
 
-    return {
-        "total": first_row.total,
-        "completed": first_row.completed,
-        "in_progress": first_row.in_progress,
-        "pending": first_row.pending,
-        "sessions": sessions,
-    }
+    return schemas.QueueCounts(
+        total=first_row.total,
+        completed=first_row.completed,
+        in_progress=first_row.in_progress,
+        pending=first_row.pending,
+        sessions=sessions,
+    )
 
 
 def _build_status_response(
-    peer_name: Optional[str], session_name: Optional[str], counts: dict
-):
+    peer_name: str | None, session_name: str | None, counts: schemas.QueueCounts
+) -> schemas.DeriverStatus:
     """Build the final response object."""
-    base_response = {
-        "peer_id": peer_name,
-        "total_work_units": counts["total"],
-        "completed_work_units": counts["completed"],
-        "in_progress_work_units": counts["in_progress"],
-        "pending_work_units": counts["pending"],
-    }
 
     if session_name:
-        return schemas.DeriverStatus(session_id=session_name, **base_response)
+        return schemas.DeriverStatus(
+            session_id=session_name,
+            peer_id=peer_name,
+            total_work_units=counts.total,
+            completed_work_units=counts.completed,
+            in_progress_work_units=counts.in_progress,
+            pending_work_units=counts.pending,
+        )
 
-    sessions = {}
-    for session_id, data in counts["sessions"].items():
-        total = data["completed"] + data["in_progress"] + data["pending"]
+    sessions: dict[str, schemas.DeriverStatus] = {}
+    for session_id, data in counts.sessions.items():
+        total = data.completed + data.in_progress + data.pending
         sessions[session_id] = schemas.DeriverStatus(
             peer_id=peer_name,
             session_id=session_id,
             total_work_units=total,
-            completed_work_units=data["completed"],
-            in_progress_work_units=data["in_progress"],
-            pending_work_units=data["pending"],
+            completed_work_units=data.completed,
+            in_progress_work_units=data.in_progress,
+            pending_work_units=data.pending,
         )
 
     return schemas.DeriverStatus(
-        sessions=sessions if sessions else None, **base_response
+        sessions=sessions if sessions else None,
+        peer_id=peer_name,
+        total_work_units=counts.total,
+        completed_work_units=counts.completed,
+        in_progress_work_units=counts.in_progress,
+        pending_work_units=counts.pending,
     )
 
 
