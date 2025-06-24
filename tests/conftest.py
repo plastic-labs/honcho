@@ -1,5 +1,4 @@
 import logging  # noqa: I001
-import os
 import jwt
 from nanoid import generate as generate_nanoid
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -21,6 +20,7 @@ from src.dependencies import get_db
 from src.exceptions import HonchoException
 from src.security import create_admin_jwt, create_jwt, JWTParams
 from src.main import app
+from src.config import settings
 
 
 # Create a custom handler that doesn't get closed prematurely
@@ -45,18 +45,16 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 # Test database URL
 # TODO use environment variable
-CONNECTION_URI = make_url(
-    os.getenv(
-        "CONNECTION_URI",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/postgres",
-    )
+DB_URI = (
+    settings.DB.CONNECTION_URI
+    or "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 )
+CONNECTION_URI = make_url(DB_URI)
 TEST_DB_URL = CONNECTION_URI.set(database="test_db")
 DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 
-# Test API authorization
-USE_AUTH = os.getenv("USE_AUTH", "False").lower() == "true"
-AUTH_JWT_SECRET = os.getenv("AUTH_JWT_SECRET", "test-secret")
+# Test API authorization - no longer needed as module-level constants
+# We'll use settings.AUTH directly where needed
 
 
 def create_test_database(db_url):
@@ -118,6 +116,15 @@ async def db_engine():
     create_test_database(TEST_DB_URL)
     engine = await setup_test_database(TEST_DB_URL)
 
+    # Force the schema to 'public' for tests
+    # Save the original schema to restore later
+    original_schema = Base.metadata.schema
+    Base.metadata.schema = "public"
+    
+    # Update all table schemas to public
+    for table in Base.metadata.tables.values():
+        table.schema = "public"
+
     # Drop all tables first to ensure clean state
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
@@ -127,6 +134,11 @@ async def db_engine():
     yield engine
 
     await engine.dispose()
+
+    # Restore original schema
+    Base.metadata.schema = original_schema
+    for table in Base.metadata.tables.values():
+        table.schema = original_schema
 
     drop_database(TEST_DB_URL)
 
@@ -157,7 +169,7 @@ async def client(db_session):
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
-        if USE_AUTH:
+        if settings.AUTH.USE_AUTH:
             # give the test client the admin JWT
             c.headers["Authorization"] = f"Bearer {create_admin_jwt()}"
         yield c
@@ -181,11 +193,8 @@ def auth_client(client, request, monkeypatch):
     Always ensures USE_AUTH is set to True.
     """
     # Ensure USE_AUTH is always True for this fixture
-    import src.routers.keys as keys_module
-    import src.security as security
-
-    monkeypatch.setattr(keys_module, "USE_AUTH", "true")
-    monkeypatch.setattr(security, "USE_AUTH", "true")
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
 
     # Clear any existing Authorization header
     client.headers.pop("Authorization", None)

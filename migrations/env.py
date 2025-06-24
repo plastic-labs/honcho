@@ -1,5 +1,4 @@
 import logging
-import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -7,6 +6,8 @@ from pathlib import Path
 from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool, text
+
+from src.config import settings
 
 # Import your models
 from src.db import Base
@@ -20,7 +21,7 @@ logging.getLogger("alembic").setLevel(logging.DEBUG)
 sys.path.append(str(Path(__file__).parents[1]))
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -44,9 +45,9 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    url = os.getenv("CONNECTION_URI")
+    url = settings.DB.CONNECTION_URI
     if url is None:
-        raise ValueError("CONNECTION_URI environment variable is not set")
+        raise ValueError("DB_CONNECTION_URI not set")
     return url
 
 

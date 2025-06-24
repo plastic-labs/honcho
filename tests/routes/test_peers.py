@@ -5,7 +5,7 @@ def test_get_or_create_peer(client, sample_data):
     test_workspace, _ = sample_data
     name = str(generate_nanoid())
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
     assert response.status_code == 200
@@ -22,7 +22,7 @@ def test_get_or_create_peer_with_configuration(client, sample_data):
     configuration = {"experimental": True, "beta": False}
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "configuration": configuration},
     )
     assert response.status_code == 200
@@ -39,7 +39,7 @@ def test_get_or_create_peer_with_all_optional_params(client, sample_data):
     configuration = {"feature1": True, "feature2": False}
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
@@ -55,7 +55,7 @@ def test_get_or_create_existing_peer(client, sample_data):
 
     # Create the peer
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
     assert response.status_code == 200
@@ -63,7 +63,7 @@ def test_get_or_create_existing_peer(client, sample_data):
 
     # Try to create the same peer again - should return existing peer
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": name, "metadata": {"peer_key": "peer_value"}},
     )
     assert response.status_code == 200
@@ -79,21 +79,21 @@ def test_get_peers(client, sample_data):
 
     # Create a few peers with metadata
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": str(generate_nanoid()), "metadata": {"peer_key": "peer_value"}},
     )
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": str(generate_nanoid()), "metadata": {"peer_key": "peer_value"}},
     )
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers",
+        f"/v2/workspaces/{test_workspace.name}/peers",
         json={"name": str(generate_nanoid()), "metadata": {"peer_key": "peer_value2"}},
     )
 
     # Get all peers
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/list",
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={},
     )
     assert response.status_code == 200
@@ -103,7 +103,7 @@ def test_get_peers(client, sample_data):
 
     # Get peers with filter
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/list",
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={"filter": {"peer_key": "peer_value"}},
     )
     assert response.status_code == 200
@@ -118,7 +118,7 @@ def test_get_peers_with_empty_filter(client, sample_data):
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/list", json={"filter": {}}
+        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filter": {}}
     )
     assert response.status_code == 200
     data = response.json()
@@ -131,7 +131,7 @@ def test_get_peers_with_null_filter(client, sample_data):
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/list", json={"filter": None}
+        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filter": None}
     )
     assert response.status_code == 200
     data = response.json()
@@ -142,7 +142,7 @@ def test_get_peers_with_null_filter(client, sample_data):
 def test_update_peer(client, sample_data):
     test_workspace, test_peer = sample_data
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
@@ -156,7 +156,7 @@ def test_update_peer_with_configuration(client, sample_data):
     configuration = {"new_feature": True, "legacy_feature": False}
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"configuration": configuration},
     )
     assert response.status_code == 200
@@ -171,7 +171,7 @@ def test_update_peer_with_all_optional_params(client, sample_data):
     configuration = {"experimental": True, "beta": True}
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
@@ -186,13 +186,13 @@ def test_update_peer_with_null_metadata(client, sample_data):
 
     # First set some metadata
     client.put(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"metadata": {"temp": "value"}},
     )
 
     # Then clear it with null
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"metadata": None},
     )
     assert response.status_code == 200
@@ -205,7 +205,7 @@ def test_update_peer_with_null_configuration(client, sample_data):
     test_workspace, test_peer = sample_data
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
         json={"configuration": None},
     )
     assert response.status_code == 200
@@ -218,7 +218,7 @@ def test_get_sessions_for_peer_no_sessions(client, sample_data):
 
     # Get sessions for the peer
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
         json={},
     )
     assert response.status_code == 200
@@ -232,7 +232,7 @@ def test_get_sessions_for_peer(client, sample_data):
     # Create session for the peer
     session_name = str(generate_nanoid())
     create_response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_name, "peer_names": {test_peer.name: {}}},
     )
     assert create_response.status_code == 200
@@ -241,7 +241,7 @@ def test_get_sessions_for_peer(client, sample_data):
 
     # Now get sessions for the peer and validate the session is returned
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
     )
     assert response.status_code == 200
     data = response.json()
@@ -259,14 +259,14 @@ def test_get_sessions_for_peer_with_is_active_filter(client, sample_data):
     # Create and then delete a session to have inactive session
     session_name = str(generate_nanoid())
     client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_name, "peer_names": {test_peer.name: {}}},
     )
-    client.delete(f"/v1/workspaces/{test_workspace.name}/sessions/{session_name}")
+    client.delete(f"/v2/workspaces/{test_workspace.name}/sessions/{session_name}")
 
     # Test getting inactive sessions
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
         json={"is_active": False},
     )
     assert response.status_code == 200
@@ -282,7 +282,7 @@ def test_get_sessions_for_peer_with_empty_filter(client, sample_data):
     test_workspace, test_peer = sample_data
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
         json={"filter": {}},
     )
     assert response.status_code == 200
@@ -296,7 +296,7 @@ def test_create_and_get_messages_for_peer(client, sample_data):
 
     # Create messages for the peer
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
         json={
             "messages": [
                 {
@@ -321,7 +321,7 @@ def test_create_and_get_messages_for_peer(client, sample_data):
 
     # Get messages for the peer
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
         json={},
     )
     assert response.status_code == 200
@@ -340,7 +340,7 @@ def test_get_messages_for_peer_with_reverse(client, sample_data):
 
     # Create messages
     client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
         json={
             "messages": [
                 {"content": "First message", "peer_id": test_peer.name},
@@ -351,7 +351,7 @@ def test_get_messages_for_peer_with_reverse(client, sample_data):
 
     # Test normal order
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
         json={},
     )
     assert response.status_code == 200
@@ -359,7 +359,7 @@ def test_get_messages_for_peer_with_reverse(client, sample_data):
 
     # Test reversed order
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list?reverse=true",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list?reverse=true",
         json={},
     )
     assert response.status_code == 200
@@ -375,7 +375,7 @@ def test_get_messages_for_peer_with_empty_filter(client, sample_data):
     test_workspace, test_peer = sample_data
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
         json={"filter": {}},
     )
     assert response.status_code == 200
@@ -389,7 +389,7 @@ def test_get_messages_for_peer_with_null_filter(client, sample_data):
     test_workspace, test_peer = sample_data
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
         json={"filter": None},
     )
     assert response.status_code == 200
@@ -404,7 +404,7 @@ def test_chat(client, sample_data):
 
     # Test chat endpoint
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         json={
             "queries": "Hello, how are you?",
             "stream": False,
@@ -424,13 +424,13 @@ def test_chat_with_optional_params(client, sample_data):
 
     # Create a session first
     client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Test chat without optional parameters
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         json={
             "queries": "Hello, how are you?",
             "stream": False,
@@ -449,13 +449,13 @@ def test_get_peer_representation_with_session(client, sample_data):
 
     # Create a session first
     client.post(
-        f"/v1/workspaces/{test_workspace.name}/sessions",
+        f"/v2/workspaces/{test_workspace.name}/sessions",
         json={"id": session_id, "peer_names": {test_peer.name: {}}},
     )
 
     # Test representation scoped to session
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/representation",
         json={
             "session_id": session_id,
             "queries": "Hello, how are you?",
@@ -470,7 +470,7 @@ def test_search_peer(client, sample_data):
 
     # Add some messages to search through
     client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
         json={
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},
@@ -481,7 +481,7 @@ def test_search_peer(client, sample_data):
 
     # Search with a query
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
         json="search query",
     )
     assert response.status_code == 200
@@ -501,7 +501,7 @@ def test_search_peer_empty_query(client, sample_data):
 
     # Search with empty query
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{test_peer.name}/search", json=""
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search", json=""
     )
     assert response.status_code == 200
     data = response.json()
@@ -517,7 +517,7 @@ def test_search_peer_nonexistent(client, sample_data):
     nonexistent_peer_id = str(generate_nanoid())
 
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/peers/{nonexistent_peer_id}/search",
+        f"/v2/workspaces/{test_workspace.name}/peers/{nonexistent_peer_id}/search",
         json="test query",
     )
     # This should probably return 404 or handle gracefully

@@ -1,17 +1,17 @@
 import logging
-import os
 import re
 import uuid
 from contextlib import asynccontextmanager
 
 import sentry_sdk
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
 from src.routers import (
@@ -24,18 +24,14 @@ from src.routers import (
 from src.security import create_admin_jwt
 
 
-def get_log_level(env_var="LOG_LEVEL", default="INFO"):
+def get_log_level() -> int:
     """
-    Convert log level string from environment variable to logging module constant.
-
-    Args:
-        env_var: Name of the environment variable to check
-        default: Default log level if environment variable is not set
+    Convert log level string from settings to logging module constant.
 
     Returns:
         int: The logging level constant (e.g., logging.INFO)
     """
-    log_level_str = os.getenv(env_var, default).upper()
+    log_level_str = settings.LOG_LEVEL.upper()
 
     log_levels = {
         "CRITICAL": logging.CRITICAL,  # 50
@@ -64,7 +60,7 @@ async def setup_admin_jwt():
 
 
 # Sentry Setup
-SENTRY_ENABLED = os.getenv("SENTRY_ENABLED", "False").lower() == "true"
+SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
 
     def before_send(event, hint):
@@ -83,9 +79,9 @@ if SENTRY_ENABLED:
     # For custom log levels, use the LoggingIntegration class:
     # sentry_sdk.init(..., integrations=[LoggingIntegration(level=logging.INFO, event_level=logging.ERROR)])
     sentry_sdk.init(
-        dsn=os.getenv("SENTRY_DSN"),
-        traces_sample_rate=0.4,
-        profiles_sample_rate=0.4,
+        dsn=settings.SENTRY.DSN,
+        traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
+        profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
         before_send=before_send,
         integrations=[
             StarletteIntegration(
@@ -114,7 +110,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.0.0",
+    version="2.0.1",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -127,7 +123,12 @@ app = FastAPI(
     },
 )
 
-origins = ["http://localhost", "http://127.0.0.1:8000", "https://demo.honcho.dev"]
+origins = [
+    "http://localhost",
+    "http://127.0.0.1:8000",
+    "https://demo.honcho.dev",
+    "https://api.honcho.dev",
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -137,15 +138,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
-
 add_pagination(app)
 
-app.include_router(workspaces.router, prefix="/v1")
-app.include_router(peers.router, prefix="/v1")
-app.include_router(sessions.router, prefix="/v1")
-app.include_router(messages.router, prefix="/v1")
-app.include_router(keys.router, prefix="/v1")
+app.include_router(workspaces.router, prefix="/v2")
+app.include_router(peers.router, prefix="/v2")
+app.include_router(sessions.router, prefix="/v2")
+app.include_router(messages.router, prefix="/v2")
+app.include_router(keys.router, prefix="/v2")
 
 
 # Global exception handlers
@@ -173,6 +172,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 @app.middleware("http")
 async def track_request(request: Request, call_next):
+    if not settings.DB.TRACING:
+        return await call_next(request)
     # Create a request ID that includes endpoint information
     endpoint = re.sub(r"/[A-Za-z0-9_-]{21}", "", request.url.path).replace("/", "_")
     request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"

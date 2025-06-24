@@ -15,9 +15,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Batch message operations and enhanced message querying with token and message count limits
 - Search and summary functionalities scoped by workspace, peer, and session
 - Session context retrieval with summaries and token allocation
+- HNSW Index for Documents Table
+- Centralized Configuration via Environment Variables or `config.toml` file
 
 ### Changed
 
+- API route is now /v2/
 - New architecture centered around the concept of a "peer" replaces the former
   "app"/"user"/"session" paradigm
 - Workspaces replace "apps" as top-level namespace
@@ -37,6 +40,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 
 - Improved error handling and validation for batch message operations and metadata
+- Database Sessions to be more atomic to reduce idle in transaction time
 
 ### Removed
 

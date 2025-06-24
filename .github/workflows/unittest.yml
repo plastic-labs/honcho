@@ -2,9 +2,9 @@ name: FastAPI Tests with PostgreSQL and uv
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   test:
@@ -27,31 +27,27 @@ jobs:
           --health-retries 5
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v2
-      with:
-        enable-cache: true
-        cache-dependency-glob: "uv.lock"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v2
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
-    - name: "Set up Python"
-      uses: actions/setup-python@v5
-      with:
-        python-version-file: "pyproject.toml"
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "pyproject.toml"
 
-    - name : Install the project
-      run: uv sync --all-extras --dev
+      - name: Install the project
+        run: uv sync --all-extras --dev
 
-    - name: Run Tests
-      run: uv run pytest -x
-      env:
-        CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
-        USE_AUTH: false
-        SENTRY_ENABLED: false
-        OPENTELEMETRY_ENABLED: false
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-
-
+      - name: Run Tests
+        run: uv run pytest -x
+        env:
+          DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
+          AUTH_USE_AUTH: false
+          SENTRY_ENABLED: false
+          LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
