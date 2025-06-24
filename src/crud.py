@@ -1,15 +1,15 @@
 import os
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Optional
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
-from sqlalchemy import Select, cast, func, insert, select, update
+from sqlalchemy import Select, and_, cast, func, insert, not_, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.types import BigInteger
+from sqlalchemy.types import BigInteger, Numeric
 
 from src.config import settings
 
@@ -32,6 +32,330 @@ SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
 # Create a ModelClient instance for embeddings
 # Using OpenAI provider for embeddings as it's the most common
 embedding_client = ModelClient(provider=ModelProvider.OPENAI)
+
+
+def apply_filter(stmt: Select, filter: dict[str, Any] | None = None) -> Select:
+    """
+    Apply advanced filter to a SQL statement based on filter dictionary.
+
+    Supports logical operators (AND, OR, NOT), comparison operators
+    (gte, lte, gt, lt, ne, contains, icontains, in), and wildcard character (*).
+
+    Examples:
+        # Simple filters (backward compatible)
+        {"peer_name": "alice", "metadata": {"type": "user"}}
+
+        # Logical operators
+        {"AND": [{"peer_name": "alice"}, {"created_at": {"gte": "2024-01-01"}}]}
+        {"OR": [{"peer_name": "alice"}, {"peer_name": "bob"}]}
+        {"NOT": [{"peer_name": "alice"}]}
+
+        # Comparison operators
+        {"created_at": {"gte": "2024-01-01", "lte": "2024-12-31"}}
+        {"peer_name": {"in": ["alice", "bob"]}}
+        {"content": {"contains": "hello"}}
+
+        # Wildcards (matches everything for that field)
+        {"peer_name": "*"}
+
+    Args:
+        stmt: SQLAlchemy Select statement to modify
+        filter: Optional filter dictionary
+
+    Returns:
+        Modified Select statement with filter applied if provided
+    """
+    if filter is None:
+        return stmt
+
+    # Get the model class from the statement's columns
+    model_class = stmt.column_descriptions[0]["entity"]
+
+    conditions = _build_filter_conditions(filter, model_class)
+    if conditions is not None:
+        stmt = stmt.where(conditions)
+
+    return stmt
+
+
+def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
+    """
+    Recursively build filter conditions from a filter dictionary.
+
+    Args:
+        filter_dict: Filter dictionary that may contain logical operators
+        model_class: SQLAlchemy model class for column access
+
+    Returns:
+        SQLAlchemy condition object or None
+    """
+    conditions = []
+
+    # Handle logical operators
+    if "AND" in filter_dict:
+        and_conditions = []
+        for sub_filter in filter_dict["AND"]:
+            sub_condition = _build_filter_conditions(sub_filter, model_class)
+            if sub_condition is not None:
+                and_conditions.append(sub_condition)
+        if and_conditions:
+            conditions.append(and_(*and_conditions))
+
+    if "OR" in filter_dict:
+        or_conditions = []
+        for sub_filter in filter_dict["OR"]:
+            sub_condition = _build_filter_conditions(sub_filter, model_class)
+            if sub_condition is not None:
+                or_conditions.append(sub_condition)
+        if or_conditions:
+            conditions.append(or_(*or_conditions))
+
+    if "NOT" in filter_dict:
+        not_conditions = []
+        for sub_filter in filter_dict["NOT"]:
+            sub_condition = _build_filter_conditions(sub_filter, model_class)
+            if sub_condition is not None:
+                not_conditions.append(sub_condition)
+        if not_conditions:
+            conditions.append(not_(and_(*not_conditions)))
+
+    # Handle field-level conditions (skip logical operator keys)
+    logical_keys = {"AND", "OR", "NOT"}
+    for key, value in filter_dict.items():
+        if key in logical_keys:
+            continue
+
+        condition = _build_field_condition(key, value, model_class)
+        if condition is not None:
+            conditions.append(condition)
+
+    # Combine all conditions with AND
+    if len(conditions) == 0:
+        return None
+    elif len(conditions) == 1:
+        return conditions[0]
+    else:
+        return and_(*conditions)
+
+
+def _build_field_condition(key: str, value: Any, model_class) -> Any:
+    """
+    Build a condition for a single field.
+
+    Args:
+        key: Field name
+        value: Field value or comparison dict
+        model_class: SQLAlchemy model class
+
+    Returns:
+        SQLAlchemy condition object or None
+    """
+    # Map 'metadata' to 'h_metadata' for all models
+    column_name = "h_metadata" if key == "metadata" else key
+
+    # Check if the column exists on the model
+    if not hasattr(model_class, column_name):
+        return None
+
+    column = getattr(model_class, column_name)
+
+    # Handle wildcard - matches everything, so no condition needed
+    if value == "*":
+        return None
+
+    # Handle comparison operators vs regular values
+    if isinstance(value, dict):
+        # Check if this is a comparison operators dict by looking for known operators
+        comparison_operators = {
+            "gte",
+            "lte",
+            "gt",
+            "lt",
+            "ne",
+            "in",
+            "contains",
+            "icontains",
+        }
+        is_comparison_dict = any(key in comparison_operators for key in value)
+
+        if is_comparison_dict:
+            return _build_comparison_conditions(column, column_name, value)
+        else:
+            # This is a regular value that happens to be a dict
+            # For JSONB metadata, check if it contains nested comparison operators
+            if column_name == "h_metadata":
+                return _build_nested_metadata_conditions(column, value, model_class)
+            else:
+                return column == value
+    else:
+        # Simple equality or contains for JSONB
+        if column_name == "h_metadata":
+            return column.contains(value)
+        else:
+            return column == value
+
+
+def _build_nested_metadata_conditions(
+    column, metadata_dict: dict[str, Any], model_class
+) -> Any:
+    """
+    Build conditions for nested metadata fields with comparison operators.
+
+    Args:
+        column: SQLAlchemy JSONB column object
+        metadata_dict: Dictionary containing nested field conditions
+        model_class: SQLAlchemy model class
+
+    Returns:
+        Combined SQLAlchemy condition object or None
+    """
+    conditions = []
+    comparison_operators = {
+        "gte",
+        "lte",
+        "gt",
+        "lt",
+        "ne",
+        "in",
+        "contains",
+        "icontains",
+    }
+
+    for field_name, field_value in metadata_dict.items():
+        if isinstance(field_value, dict) and any(
+            op in comparison_operators for op in field_value
+        ):
+            # This field has comparison operators
+            field_conditions = []
+            for operator, op_value in field_value.items():
+                if op_value == "*":
+                    continue
+
+                condition = None
+
+                if operator == "gte":
+                    # For numeric comparisons, cast to numeric; otherwise use string comparison
+                    if isinstance(op_value, int | float):
+                        field_accessor = cast(column[field_name].astext, Numeric)
+                        condition = field_accessor >= op_value
+                    else:
+                        condition = column[field_name].astext >= str(op_value)
+                elif operator == "lte":
+                    if isinstance(op_value, int | float):
+                        field_accessor = cast(column[field_name].astext, Numeric)
+                        condition = field_accessor <= op_value
+                    else:
+                        condition = column[field_name].astext <= str(op_value)
+                elif operator == "gt":
+                    if isinstance(op_value, int | float):
+                        field_accessor = cast(column[field_name].astext, Numeric)
+                        condition = field_accessor > op_value
+                    else:
+                        condition = column[field_name].astext > str(op_value)
+                elif operator == "lt":
+                    if isinstance(op_value, int | float):
+                        field_accessor = cast(column[field_name].astext, Numeric)
+                        condition = field_accessor < op_value
+                    else:
+                        condition = column[field_name].astext < str(op_value)
+                elif operator == "ne":
+                    # For ne, we need to handle both numeric and text comparisons
+                    if isinstance(op_value, int | float):
+                        field_accessor = cast(column[field_name].astext, Numeric)
+                        condition = field_accessor != op_value
+                    else:
+                        condition = column[field_name].astext != str(op_value)
+                elif operator == "in":
+                    if isinstance(op_value, list):
+                        condition = column[field_name].astext.in_(
+                            [str(v) for v in op_value]
+                        )
+                elif operator == "contains" or operator == "icontains":
+                    condition = column[field_name].astext.ilike(f"%{op_value}%")
+
+                if condition is not None:
+                    field_conditions.append(condition)
+
+            if field_conditions:
+                if len(field_conditions) == 1:
+                    conditions.append(field_conditions[0])
+                else:
+                    conditions.append(and_(*field_conditions))
+        else:
+            # Regular field equality - use JSONB contains for nested object matching
+            conditions.append(column.contains({field_name: field_value}))
+
+    # Combine all field conditions with AND
+    if len(conditions) == 0:
+        return None
+    elif len(conditions) == 1:
+        return conditions[0]
+    else:
+        return and_(*conditions)
+
+
+def _build_comparison_conditions(
+    column, column_name: str, comparisons: dict[str, Any]
+) -> Any:
+    """
+    Build comparison conditions for a single column.
+
+    Args:
+        column: SQLAlchemy column object
+        column_name: Name of the column
+        comparisons: Dictionary of comparison operators and values
+
+    Returns:
+        Combined SQLAlchemy condition object or None
+    """
+    conditions = []
+
+    for operator, op_value in comparisons.items():
+        if op_value == "*":
+            # Wildcard for this operator - skip condition
+            continue
+
+        condition = None
+
+        if operator == "gte":
+            condition = column >= op_value
+        elif operator == "lte":
+            condition = column <= op_value
+        elif operator == "gt":
+            condition = column > op_value
+        elif operator == "lt":
+            condition = column < op_value
+        elif operator == "ne":
+            condition = column != op_value
+        elif operator == "in":
+            if isinstance(op_value, list):
+                # Check if the list contains wildcard - if so, skip condition (match all)
+                if "*" in op_value:
+                    continue
+                else:
+                    condition = column.in_(op_value)
+        elif operator == "contains":
+            if column_name == "h_metadata":
+                # For JSONB columns, use JSONB contains
+                condition = column.contains(op_value)
+            else:
+                # For text columns, use ILIKE
+                condition = column.ilike(f"%{op_value}%")
+        elif operator == "icontains":
+            # Case-insensitive contains for text columns
+            condition = column.ilike(f"%{op_value}%")
+
+        if condition is not None:
+            conditions.append(condition)
+
+    # Combine all conditions for this field with AND
+    if len(conditions) == 0:
+        return None
+    elif len(conditions) == 1:
+        return conditions[0]
+    else:
+        return and_(*conditions)
+
 
 ########################################################
 # workspace methods
@@ -87,8 +411,7 @@ async def get_all_workspaces(
         filter: Filter the workspaces by a dictionary of metadata
     """
     stmt = select(models.Workspace)
-    if filter is not None:
-        stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, filter)
     stmt = stmt.order_by(models.Workspace.created_at)
     return stmt
 
@@ -235,8 +558,7 @@ async def get_peers(
 ) -> Select:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
-    if filter is not None:
-        stmt = stmt.where(models.Peer.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, filter)
 
     stmt = stmt.order_by(models.Peer.created_at)
 
@@ -312,8 +634,7 @@ async def get_sessions_for_peer(
     if is_active is not None:
         stmt = stmt.where(models.Session.is_active == is_active)
 
-    if filter is not None:
-        stmt = stmt.where(models.Session.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, filter)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -338,8 +659,7 @@ async def get_sessions(
     if is_active:
         stmt = stmt.where(models.Session.is_active.is_(True))
 
-    if filter is not None:
-        stmt = stmt.where(models.Session.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, filter)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -1275,13 +1595,10 @@ async def get_messages(
         models.Message.session_name == session_name,
     ]
 
-    # Add metadata filter if provided
-    if filter is not None:
-        base_conditions.append(models.Message.h_metadata.contains(filter))
-
     # Apply message count limit first (takes precedence over token limit)
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
+        stmt = apply_filter(stmt, filter)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
@@ -1291,7 +1608,6 @@ async def get_messages(
             stmt = stmt.order_by(models.Message.id.desc())
         else:
             stmt = stmt.order_by(models.Message.id.asc())
-
     elif token_limit is not None:
         # Apply token limit logic
         # Create a subquery that calculates running sum of tokens for most recent messages
@@ -1312,16 +1628,17 @@ async def get_messages(
             .join(token_subquery, models.Message.id == token_subquery.c.id)
             .where(token_subquery.c.running_token_sum <= token_limit)
         )
+        stmt = apply_filter(stmt, filter)
 
         # Apply final ordering based on reverse parameter
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
             stmt = stmt.order_by(models.Message.id.asc())
-
     else:
         # Default case - no limits applied
         stmt = select(models.Message).where(*base_conditions)
+        stmt = apply_filter(stmt, filter)
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
@@ -1394,8 +1711,7 @@ async def get_messages_for_peer(
         .where(models.Message.session_name.is_(None))
     )
 
-    if filter is not None:
-        stmt = stmt.where(models.Message.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, filter)
 
     if reverse:
         stmt = stmt.order_by(models.Message.id.desc())
@@ -1535,8 +1851,7 @@ async def query_documents(
         stmt = stmt.where(
             models.Document.embedding.cosine_distance(embedding_query) < max_distance
         )
-    if filter is not None:
-        stmt = stmt.where(models.Document.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, filter)
     stmt = stmt.limit(top_k).order_by(
         models.Document.embedding.cosine_distance(embedding_query)
     )

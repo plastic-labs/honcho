@@ -13,7 +13,7 @@ from fastapi import (
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
 
 from src import agent, crud, schemas
 from src.dependencies import db
@@ -51,7 +51,7 @@ async def get_peers(
         if filter_param == {}:
             filter_param = None
 
-    return await paginate(
+    return await apaginate(
         db,
         await crud.get_peers(workspace_name=workspace_id, filter=filter_param),
     )
@@ -138,7 +138,7 @@ async def get_sessions_for_peer(
         if hasattr(options, "is_active"):
             is_active = options.is_active
 
-    return await paginate(
+    return await apaginate(
         db,
         await crud.get_sessions_for_peer(
             workspace_name=workspace_id,
@@ -286,7 +286,7 @@ async def get_messages_for_peer(
             reverse=reverse,
         )
 
-        return await paginate(db, messages_query)
+        return await apaginate(db, messages_query)
     except ValueError as e:
         logger.warning(f"Failed to get messages for peer {peer_id}: {str(e)}")
         raise ResourceNotFoundException("Peer not found") from e
@@ -336,4 +336,4 @@ async def search_peer(
     """Search a Peer"""
     stmt = await crud.search(query, workspace_name=workspace_id, peer_name=peer_id)
 
-    return await paginate(db, stmt)
+    return await apaginate(db, stmt)
