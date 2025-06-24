@@ -31,132 +31,138 @@ See the [Storage API](/v2/api-reference/introduction) to learn how to use the da
 
 ## Core Concepts
 
-<AccordionGroup>
-  <Accordion title="Workspaces" icon="building">
-    Workspaces are the top-level containers that provide complete isolation between different applications or environments.
+### <Icon icon="building" /> Workspaces
 
-    **Key Features:**
-    - **Isolation**: Complete data separation between workspaces
-    - **Multi-tenancy**: Support multiple applications or environments  
-    - **Configuration**: Workspace-level settings and metadata
-    - **Access Control**: Authentication scoped to workspace level
+Workspaces are the top-level containers that provide complete isolation between different applications or environments.
 
-    **Use Cases:**
-    - Separate development/staging/production environments
-    - Multi-tenant SaaS applications
-    - Different product lines or use cases
-    - Complete data separation between teams
+**Key Features:**
+- **Isolation**: Complete data separation between workspaces
+- **Multi-tenancy**: Support multiple applications or environments  
+- **Configuration**: Workspace-level settings and metadata
+- **Access Control**: Authentication scoped to workspace level
 
-    ```json
-    {
-      "name": "my-production-app",
-      "metadata": {
-        "environment": "production",
-        "version": "1.0.0"
-      },
-      "configuration": {
-        "deriver_enabled": true
-      }
+**Use Cases:**
+- Separate development/staging/production environments
+- Multi-tenant SaaS applications
+- Different product lines or use cases
+- Complete data separation between teams
+
+```json
+{
+  "name": "my-production-app",
+  "metadata": {
+    "environment": "production",
+    "version": "1.0.0"
+  },
+  "configuration": {
+    "deriver_enabled": true
+  }
+}
+```
+
+---
+
+### <Icon icon="user" /> Peers
+
+Peers represent individual users, agents, or entities in a workspace. They are the primary subjects for memory and context management.
+
+**Key Features:**
+- **Identity**: Unique identifier within a workspace
+- **Memory Storage**: Personal memory and context accumulation
+- **Configuration**: Per-peer behavioral settings
+- **Cross-Session Context**: Memory persists across all sessions
+
+**Use Cases:**
+- Individual users in chatbot applications
+- AI agents interacting with users or other agents
+- Customer profiles in support systems
+- Student profiles in educational platforms
+
+```json
+{
+  "name": "user-123",
+  "metadata": {
+    "email": "user@example.com",
+    "preferences": {
+      "language": "en",
+      "timezone": "UTC"
     }
-    ```
-  </Accordion>
+  },
+  "configuration": {
+    "observe_me": true
+  }
+}
+```
 
-  <Accordion title="Peers" icon="user">
-    Peers represent individual users, agents, or entities in a workspace. They are the primary subjects for memory and context management.
+---
 
-    **Key Features:**
-    - **Identity**: Unique identifier within a workspace
-    - **Memory Storage**: Personal memory and context accumulation
-    - **Configuration**: Per-peer behavioral settings
-    - **Cross-Session Context**: Memory persists across all sessions
+### <Icon icon="message" /> Sessions
 
-    **Use Cases:**
-    - Individual users in chatbot applications
-    - AI agents interacting with users or other agents
-    - Customer profiles in support systems
-    - Student profiles in educational platforms
+Sessions represent individual conversation threads or interaction contexts between peers.
 
-    ```json
-    {
-      "name": "user-123",
-      "metadata": {
-        "email": "user@example.com",
-        "preferences": {
-          "language": "en",
-          "timezone": "UTC"
-        }
-      },
-      "configuration": {
-        "observe_me": true
-      }
+**Key Features:**
+- **Multi-Peer**: Support multiple peers in a single session
+- **Temporal Boundaries**: Clear start/end to conversation threads
+- **Context Scoping**: Session-specific memory and context
+- **Configuration**: Session-level behavioral controls
+
+**Use Cases:**
+- Individual chat conversations
+- Support tickets
+- Meeting transcripts
+- Learning sessions
+
+```json
+{
+  "id": "conversation-456",
+  "peers": {
+    "user-123": {
+      "observe_others": true,
+      "observe_me": true
+    },
+    "assistant-ai": {
+      "observe_others": false,
+      "observe_me": false
     }
-    ```
-  </Accordion>
+  },
+  "metadata": {
+    "topic": "product-support",
+    "priority": "high"
+  }
+}
+```
 
-  <Accordion title="Sessions" icon="message">
-    Sessions represent individual conversation threads or interaction contexts between peers.
+---
 
-    **Key Features:**
-    - **Multi-Peer**: Support multiple peers in a single session
-    - **Temporal Boundaries**: Clear start/end to conversation threads
-    - **Context Scoping**: Session-specific memory and context
-    - **Configuration**: Session-level behavioral controls
+### <Icon icon="envelope" /> Messages
 
-    **Use Cases:**
-    - Individual chat conversations
-    - Support tickets
-    - Meeting transcripts
-    - Learning sessions
+Messages are the fundamental units of interaction within sessions. They may also be used at the peer level to represent stored information of any kind.
 
-    ```json
-    {
-      "id": "conversation-456",
-      "peers": {
-        "user-123": {
-          "observe_others": true,
-          "observe_me": true
-        },
-        "assistant-ai": {
-          "observe_others": false,
-          "observe_me": false
-        }
-      },
-      "metadata": {
-        "topic": "product-support",
-        "priority": "high"
-      }
-    }
-    ```
-  </Accordion>
+**Key Features:**
+- **Rich Content**: Support for text, metadata, and structured data
+- **Attribution**: Clear association with sending peer
+- **Ordering**: Chronological sequence within sessions
+- **Processing**: Automatic background analysis and insight derivation
 
-  <Accordion title="Messages" icon="envelope">
-    Messages are the fundamental units of interaction within sessions. They may also be used at the peer level to represent stored information of any kind.
+**Message Types:**
+- User messages
+- AI responses
+- System notifications
+- Rich media content
 
-    **Key Features:**
-    - **Rich Content**: Support for text, metadata, and structured data
-    - **Attribution**: Clear association with sending peer
-    - **Ordering**: Chronological sequence within sessions
-    - **Processing**: Automatic background analysis and insight derivation
+```json
+{
+  "content": "I need help with my order",
+  "peer_id": "user-123",
+  "metadata": {
+    "intent": "support_request",
+    "urgency": "medium",
+    "order_id": "12345"
+  }
+}
+```
 
-    **Message Types:**
-    - User messages
-    - AI responses
-    - System notifications
-    - Rich media content
-
-    ```json
-    {
-      "content": "I need help with my order",
-      "peer_id": "user-123",
-      "metadata": {
-        "intent": "support_request",
-        "urgency": "medium",
-        "order_id": "12345"
-      }
-    }
-    ```
-  </Accordion>
-</AccordionGroup>
+---
 
 ## Deriver System
 
