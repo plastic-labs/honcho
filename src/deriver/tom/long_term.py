@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from src.config import settings
 from src.deriver.tom.single_prompt import UserRepresentationOutput
+from src.utils.clients import clients
 from src.utils.types import track
 
 # Configure logging
@@ -49,6 +50,7 @@ class FactExtraction(BaseModel):
     provider=settings.LLM.TOM_INFERENCE_PROVIDER,
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
+    client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
 async def get_user_representation_long_term(
     chat_history: str,
@@ -113,6 +115,7 @@ PERSISTENT FACTS ABOUT USER:
     provider=settings.LLM.TOM_INFERENCE_PROVIDER,
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=FactExtraction,
+    client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
 async def extract_facts_long_term(chat_history: str):
     return f"""

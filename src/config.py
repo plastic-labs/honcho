@@ -264,22 +264,3 @@ class AppSettings(HonchoSettings):
 
 # Create a single global instance of the settings
 settings: AppSettings = AppSettings()
-
-
-def setup_llm_environment_variables() -> None:
-    """Set up LLM API keys as environment variables."""
-    if settings.LLM.ANTHROPIC_API_KEY:
-        os.environ["ANTHROPIC_API_KEY"] = settings.LLM.ANTHROPIC_API_KEY
-
-    if settings.LLM.OPENAI_API_KEY:
-        os.environ["OPENAI_API_KEY"] = settings.LLM.OPENAI_API_KEY
-
-    if settings.LLM.GEMINI_API_KEY:
-        os.environ["GEMINI_API_KEY"] = settings.LLM.GEMINI_API_KEY
-
-    if settings.LLM.GROQ_API_KEY:
-        os.environ["GROQ_API_KEY"] = settings.LLM.GROQ_API_KEY
-
-
-# Set up environment variables immediately after settings instantiation
-setup_llm_environment_variables()

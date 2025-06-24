@@ -6,6 +6,7 @@ from mirascope.integrations.langfuse import with_langfuse
 from pydantic import BaseModel
 
 from src.config import settings
+from src.utils.clients import clients
 from src.utils.types import track
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class UserRepresentationOutput(BaseModel):
     provider=settings.LLM.TOM_INFERENCE_PROVIDER,
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=TomInferenceOutput,
+    client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
 async def tom_inference(
     chat_history: str,
@@ -163,6 +165,7 @@ expectation_violations: list of objects with:
     provider=settings.LLM.TOM_INFERENCE_PROVIDER,
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
+    client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
 async def user_representation(
     chat_history: str,

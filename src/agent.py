@@ -17,6 +17,7 @@ from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
 from src.deriver.tom.single_prompt import UserRepresentationOutput
 from src.utils import history, parse_xml_content
+from src.utils.clients import clients
 from src.utils.types import track
 
 # Configure logging
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 @llm.call(
     provider=settings.LLM.DIALECTIC_PROVIDER,
     model=settings.LLM.DIALECTIC_MODEL,
+    client=clients[settings.LLM.DIALECTIC_PROVIDER],
 )
 async def dialectic_call(
     query: str, working_representation: str, additional_context: str
@@ -47,6 +49,7 @@ You are operating as a context service that helps maintain psychological underst
     provider=settings.LLM.DIALECTIC_PROVIDER,
     model=settings.LLM.DIALECTIC_MODEL,
     stream=True,
+    client=clients[settings.LLM.DIALECTIC_PROVIDER],
 )
 async def dialectic_stream(
     query: str, working_representation: str, additional_context: str
@@ -69,6 +72,7 @@ class SemanticQueries(BaseModel):
     provider=settings.LLM.QUERY_GENERATION_PROVIDER,
     model=settings.LLM.QUERY_GENERATION_MODEL,
     response_model=SemanticQueries,
+    client=clients[settings.LLM.QUERY_GENERATION_PROVIDER],
 )
 async def generate_semantic_queries_llm(query: str):
     return f"""

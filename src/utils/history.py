@@ -8,6 +8,7 @@ from mirascope.integrations.langfuse import with_langfuse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.utils.clients import clients
 
 from .. import crud, models
 
@@ -65,6 +66,7 @@ class SummaryType(Enum):
     provider=settings.LLM.SUMMARY_PROVIDER,
     model=settings.LLM.SUMMARY_MODEL,
     call_params={"max_tokens": 1000},
+    client=clients[settings.LLM.SUMMARY_PROVIDER],
 )
 async def create_short_summary(
     messages: list[models.Message],
@@ -102,6 +104,7 @@ Return only the summary without any explanation or meta-commentary.
     provider=settings.LLM.SUMMARY_PROVIDER,
     model=settings.LLM.SUMMARY_MODEL,
     call_params={"max_tokens": 2000},
+    client=clients[settings.LLM.SUMMARY_PROVIDER],
 )
 async def create_long_summary(
     messages: list[models.Message],

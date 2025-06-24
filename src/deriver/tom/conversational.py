@@ -4,6 +4,7 @@ from mirascope import Messages, llm
 from mirascope.integrations.langfuse import with_langfuse
 
 from src.config import settings
+from src.utils.clients import clients
 from src.utils.types import track
 
 from .single_prompt import TomInferenceOutput, UserRepresentationOutput
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
     provider=settings.LLM.TOM_INFERENCE_PROVIDER,
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=TomInferenceOutput,
+    client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
 async def tom_inference_conversational(
     chat_history: str,
@@ -47,6 +49,7 @@ async def tom_inference_conversational(
     provider=settings.LLM.TOM_INFERENCE_PROVIDER,
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
+    client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
 async def user_representation_conversational(
     chat_history: str,
