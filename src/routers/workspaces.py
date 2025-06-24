@@ -7,7 +7,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import AuthenticationException, ResourceNotFoundException
+from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -142,6 +142,3 @@ async def get_deriver_status(
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e)) from e
-    except ResourceNotFoundException as e:
-        logger.warning(f"Failed to get deriver status: {str(e)}")
-        raise

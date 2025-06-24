@@ -1683,26 +1683,22 @@ async def get_deriver_status(
         DeriverStatus: Schema containing processing status
 
     Raises:
-        ResourceNotFoundException: If the peer or session does not exist
         ValueError: If neither peer_name nor session_name is provided
     """
-    if peer_name is None and session_name is None:
+    if (peer_name is None or peer_name == "") and (
+        session_name is None or session_name == ""
+    ):
         raise ValueError("At least one of peer_name or session_name must be provided")
 
+    # Normalize empty strings to None for consistent handling
+    normalized_peer_name = peer_name if peer_name else None
+    normalized_session_name = session_name if session_name else None
+
     stmt = _build_queue_status_query(
-        workspace_name, peer_name, session_name, include_sender
+        workspace_name, normalized_peer_name, normalized_session_name, include_sender
     )
     result = await db.execute(stmt)
     rows = result.fetchall()
-
-    if peer_name and not any(
-        row.peer_exists for row in rows if row.peer_exists is not None
-    ):
-        raise ResourceNotFoundException(f"Peer {peer_name} not found")
-    if session_name and not any(
-        row.session_exists for row in rows if row.session_exists is not None
-    ):
-        raise ResourceNotFoundException(f"Session {session_name} not found")
 
     counts = _process_queue_rows(rows)
     return _build_status_response(peer_name, session_name, counts)
@@ -1714,25 +1710,43 @@ def _build_queue_status_query(
     session_name: Optional[str],
     include_sender: bool,
 ):
-    """Build SQL query for queue status with validation."""
-    from sqlalchemy import case, literal
+    """Build SQL query for queue status with validation and aggregation."""
+    from sqlalchemy import case, func
 
     sender_name_expr = models.QueueItem.payload["sender_name"].astext
     target_name_expr = models.QueueItem.payload["target_name"].astext
     task_type_expr = models.QueueItem.payload["task_type"].astext
 
+    # Define conditions for cleaner window functions
+    is_completed = models.QueueItem.processed
+    is_in_progress = (~models.QueueItem.processed) & (
+        models.ActiveQueueSession.id.isnot(None)
+    )
+    is_pending = (~models.QueueItem.processed) & (
+        models.ActiveQueueSession.id.is_(None)
+    )
+
+    # Use window functions to calculate totals and per-session counts in SQL
     stmt = select(
         models.QueueItem.session_id,
-        models.QueueItem.processed,
-        models.ActiveQueueSession.id.label("active_id"),
-        case((models.Peer.name.isnot(None), True), else_=None).label("peer_exists")
-        if peer_name
-        else literal(None).label("peer_exists"),
-        case((models.Session.name.isnot(None), True), else_=None).label(
-            "session_exists"
-        )
-        if session_name
-        else literal(None).label("session_exists"),
+        # Overall totals using window functions
+        func.count().over().label("total"),
+        func.count(case((is_completed, 1))).over().label("completed"),
+        func.count(case((is_in_progress, 1))).over().label("in_progress"),
+        func.count(case((is_pending, 1))).over().label("pending"),
+        # Per-session totals using partitioned window functions
+        func.count()
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_total"),
+        func.count(case((is_completed, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_completed"),
+        func.count(case((is_in_progress, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_in_progress"),
+        func.count(case((is_pending, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_pending"),
     ).select_from(models.QueueItem)
 
     stmt = stmt.outerjoin(
@@ -1775,7 +1789,7 @@ def _build_queue_status_query(
 
 
 def _process_queue_rows(rows):
-    """Process query results efficiently in single pass."""
+    """Process query results that already contain aggregated counts."""
     if not rows:
         return {
             "total": 0,
@@ -1785,37 +1799,28 @@ def _process_queue_rows(rows):
             "sessions": {},
         }
 
-    completed = in_progress = pending = 0
+    # Since we're using window functions, all rows have the same overall totals
+    # We just need the first row for overall counts
+    first_row = rows[0]
+
+    # Build sessions dictionary from unique session_ids
     sessions = {}
+    seen_sessions = set()
 
     for row in rows:
-        if row.processed:
-            completed += 1
-        elif row.active_id:
-            in_progress += 1
-        else:
-            pending += 1
-
-        if row.session_id:
-            if row.session_id not in sessions:
-                sessions[row.session_id] = {
-                    "completed": 0,
-                    "in_progress": 0,
-                    "pending": 0,
-                }
-
-            if row.processed:
-                sessions[row.session_id]["completed"] += 1
-            elif row.active_id:
-                sessions[row.session_id]["in_progress"] += 1
-            else:
-                sessions[row.session_id]["pending"] += 1
+        if row.session_id and row.session_id not in seen_sessions:
+            sessions[row.session_id] = {
+                "completed": row.session_completed,
+                "in_progress": row.session_in_progress,
+                "pending": row.session_pending,
+            }
+            seen_sessions.add(row.session_id)
 
     return {
-        "total": completed + in_progress + pending,
-        "completed": completed,
-        "in_progress": in_progress,
-        "pending": pending,
+        "total": first_row.total,
+        "completed": first_row.completed,
+        "in_progress": first_row.in_progress,
+        "pending": first_row.pending,
         "sessions": sessions,
     }
 
