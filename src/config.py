@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Optional
+from typing import Annotated, Any, ClassVar
 
 import tomllib
 from dotenv import load_dotenv
@@ -140,7 +140,7 @@ class AuthSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AUTH_")
 
     USE_AUTH: bool = False
-    JWT_SECRET: Optional[str] = None  # Must be set if USE_AUTH is true
+    JWT_SECRET: str | None = None  # Must be set if USE_AUTH is true
 
     @model_validator(mode="after")
     def _require_jwt_secret(self) -> "AuthSettings":
@@ -153,7 +153,7 @@ class SentrySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SENTRY_")
 
     ENABLED: bool = False
-    DSN: Optional[str] = None
+    DSN: str | None = None
     TRACES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
     PROFILES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
 
@@ -162,12 +162,12 @@ class LLMSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="LLM_")
 
     # API Keys for LLM providers
-    ANTHROPIC_API_KEY: Optional[str] = None
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_COMPATIBLE_API_KEY: Optional[str] = None
-    GEMINI_API_KEY: Optional[str] = None
-    GROQ_API_KEY: Optional[str] = None  # Added missing GROQ API key
-    OPENAI_COMPATIBLE_BASE_URL: Optional[str] = None
+    ANTHROPIC_API_KEY: str | None = None
+    OPENAI_API_KEY: str | None = None
+    OPENAI_COMPATIBLE_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+    GROQ_API_KEY: str | None = None  # Added missing GROQ API key
+    OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 1000

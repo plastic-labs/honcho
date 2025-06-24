@@ -1,17 +1,13 @@
 import datetime
 import logging
-from typing import Annotated, Optional
-import os
 from typing import Annotated
 
 import jwt
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.dependencies import get_db
 
 from .exceptions import AuthenticationException
 

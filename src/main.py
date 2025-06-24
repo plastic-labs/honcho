@@ -6,8 +6,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 import sentry_sdk
-from fastapi import FastAPI, Request
-from fastapi import APIRouter, FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination

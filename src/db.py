@@ -1,6 +1,4 @@
 import contextvars
-from typing import Optional
-import os
 
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

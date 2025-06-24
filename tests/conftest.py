@@ -1,5 +1,4 @@
 import logging  # noqa: I001
-import os
 from collections.abc import AsyncGenerator
 from typing import Any
 from collections.abc import Callable
@@ -306,12 +305,15 @@ def mock_mirascope_functions():
     with (
         patch("src.utils.history.create_short_summary") as mock_short_summary,
         patch("src.utils.history.create_long_summary") as mock_long_summary,
-        patch("src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock) as mock_tom_inference,
+        patch(
+            "src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock
+        ) as mock_tom_inference,
         patch(
             "src.deriver.tom.single_prompt.user_representation_inference"
         ) as mock_user_rep_inference,
         patch(
-            "src.deriver.tom.single_prompt.get_tom_inference_single_prompt", new_callable=AsyncMock
+            "src.deriver.tom.single_prompt.get_tom_inference_single_prompt",
+            new_callable=AsyncMock,
         ) as mock_single_tom,
         patch(
             "src.deriver.tom.single_prompt.get_user_representation_single_prompt"
@@ -322,7 +324,9 @@ def mock_mirascope_functions():
         patch(
             "src.deriver.tom.long_term.extract_facts_long_term"
         ) as mock_extract_facts,
-        patch("src.agent.dialectic_call", new_callable=AsyncMock) as mock_dialectic_call,
+        patch(
+            "src.agent.dialectic_call", new_callable=AsyncMock
+        ) as mock_dialectic_call,
         patch("src.agent.dialectic_stream") as mock_dialectic_stream,
         patch("src.agent.generate_semantic_queries_llm") as mock_semantic_queries,
     ):
@@ -360,12 +364,12 @@ def mock_mirascope_functions():
             updates=[],
         )
         mock_extract_facts.return_value = MagicMock(facts=["fact 1", "fact 2"])
-        
+
         # Create a proper async mock result for dialectic_call
         mock_dialectic_result = MagicMock()
         mock_dialectic_result.content = "Test dialectic response"
         mock_dialectic_call.return_value = mock_dialectic_result
-        
+
         mock_dialectic_stream.return_value = AsyncMock()
         mock_semantic_queries.return_value = ["test query 1", "test query 2"]
 
@@ -433,7 +437,9 @@ def mock_agent_api_calls():
         patch(
             "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
         ) as mock_get_facts,
-        patch("src.agent.dialectic_call", new_callable=AsyncMock) as mock_dialectic_call,
+        patch(
+            "src.agent.dialectic_call", new_callable=AsyncMock
+        ) as mock_dialectic_call,
         patch("src.agent.dialectic_stream") as mock_dialectic_stream,
     ):
         # Mock semantic query generation

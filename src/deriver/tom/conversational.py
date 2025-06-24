@@ -4,12 +4,9 @@ import sentry_sdk
 from anthropic import Anthropic
 from anthropic.types import MessageParam
 from langfuse.decorators import langfuse_context, observe
-from anthropic.types import MessageParam, TextBlock
-from langfuse.decorators import langfuse_context, observe  # pyright: ignore
-
-from src.utils.types import track
 
 from src.utils.model_client import ModelClient
+from src.utils.types import track
 
 model_client = ModelClient()
 
