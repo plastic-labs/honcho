@@ -1,4 +1,29 @@
 {
   "python.analysis.typeCheckingMode": "basic",
-  "files.exclude": {}
+  "files.exclude": {},
+  
+  // Python interpreter - points to the uv virtual environment
+  "python.defaultInterpreterPath": "./.venv/bin/python",
+  
+  // Ruff configuration
+  "python.formatting.provider": "none",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit",
+      "source.fixAll.ruff": "explicit"
+    }
+  },
+  
+  // Ruff extension settings
+  "ruff.enable": true,
+  "ruff.organizeImports": true,
+  "ruff.fixAll": true,
+  "ruff.showNotifications": "always",
+  
+  // General editor settings
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": false,
+  "editor.formatOnType": false
 }

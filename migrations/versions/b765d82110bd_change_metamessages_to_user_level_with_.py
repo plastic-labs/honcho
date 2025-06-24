@@ -33,13 +33,21 @@ def upgrade() -> None:
 
     # 1. Add new columns to metamessages table if they don't exist
     if "user_id" not in existing_columns:
-        op.add_column("metamessages", sa.Column("user_id", sa.TEXT(), nullable=True), schema=schema)
+        op.add_column(
+            "metamessages",
+            sa.Column("user_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
         print("Added user_id column")
     else:
         print("user_id column already exists")
 
     if "session_id" not in existing_columns:
-        op.add_column("metamessages", sa.Column("session_id", sa.TEXT(), nullable=True), schema=schema)
+        op.add_column(
+            "metamessages",
+            sa.Column("session_id", sa.TEXT(), nullable=True),
+            schema=schema,
+        )
         print("Added session_id column")
     else:
         print("session_id column already exists")
@@ -56,7 +64,7 @@ def upgrade() -> None:
                 "metamessages",
                 "users",
                 ["user_id"],
-                ["public_id"]
+                ["public_id"],
             )
             print("Created user_id foreign key")
         except IntegrityError:
@@ -78,7 +86,11 @@ def upgrade() -> None:
     # 3. Make message_id nullable if it's not already
     try:
         op.alter_column(
-            "metamessages", "message_id", existing_type=sa.TEXT(), nullable=True, schema=schema
+            "metamessages",
+            "message_id",
+            existing_type=sa.TEXT(),
+            nullable=True,
+            schema=schema,
         )
         print("Made message_id nullable")
     except (ProgrammingError, IntegrityError) as e:
@@ -235,7 +247,11 @@ def upgrade() -> None:
         if null_user_count == 0:
             try:
                 op.alter_column(
-                    "metamessages", "user_id", existing_type=sa.TEXT(), nullable=False, schema=schema
+                    "metamessages",
+                    "user_id",
+                    existing_type=sa.TEXT(),
+                    nullable=False,
+                    schema=schema,
                 )
                 print("Made user_id not nullable")
             except Exception as e:
@@ -247,7 +263,11 @@ def upgrade() -> None:
     else:
         try:
             op.alter_column(
-                "metamessages", "user_id", existing_type=sa.TEXT(), nullable=False, schema=schema
+                "metamessages",
+                "user_id",
+                existing_type=sa.TEXT(),
+                nullable=False,
+                schema=schema,
             )
             print("Made user_id not nullable")
         except Exception as e:
@@ -260,7 +280,9 @@ def downgrade() -> None:
 
     # 1. Remove the check constraint
     try:
-        op.drop_constraint("message_requires_session", "metamessages", type_="check", schema=schema)
+        op.drop_constraint(
+            "message_requires_session", "metamessages", type_="check", schema=schema
+        )
     except Exception as e:
         print(f"Error dropping message_requires_session constraint: {e}")
 
@@ -278,14 +300,20 @@ def downgrade() -> None:
     # 3. Remove foreign key constraints
     try:
         op.drop_constraint(
-            "fk_metamessages_session_id_sessions", "metamessages", type_="foreignkey", schema=schema
+            "fk_metamessages_session_id_sessions",
+            "metamessages",
+            type_="foreignkey",
+            schema=schema,
         )
     except Exception as e:
         print(f"Error dropping session_id foreign key: {e}")
 
     try:
         op.drop_constraint(
-            "fk_metamessages_user_id_users", "metamessages", type_="foreignkey", schema=schema
+            "fk_metamessages_user_id_users",
+            "metamessages",
+            type_="foreignkey",
+            schema=schema,
         )
     except Exception as e:
         print(f"Error dropping user_id foreign key: {e}")
@@ -296,7 +324,11 @@ def downgrade() -> None:
             DELETE FROM metamessages WHERE message_id IS NULL
         """)
         op.alter_column(
-            "metamessages", "message_id", existing_type=sa.TEXT(), nullable=False, schema=schema
+            "metamessages",
+            "message_id",
+            existing_type=sa.TEXT(),
+            nullable=False,
+            schema=schema,
         )
     except Exception as e:
         print(f"Error making message_id not nullable: {e}")
