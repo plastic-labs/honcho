@@ -6,7 +6,8 @@ from anthropic.types import MessageParam
 from langfuse.decorators import langfuse_context, observe
 from anthropic.types import MessageParam, TextBlock
 from langfuse.decorators import langfuse_context, observe  # pyright: ignore
-from sentry_sdk.ai.monitoring import ai_track
+
+from src.utils.types import track
 
 from src.utils.model_client import ModelClient
 
@@ -19,7 +20,7 @@ anthropic = Anthropic(
 )
 
 
-@ai_track("Tom Inference")
+@track("Tom Inference")
 @observe()
 async def get_tom_inference_conversational(
     chat_history: str, user_representation: str = "None"
@@ -87,7 +88,7 @@ async def get_tom_inference_conversational(
         return response
 
 
-@ai_track("User Representation")
+@track("User Representation")
 @observe()
 async def get_user_representation_conversational(
     chat_history: str,

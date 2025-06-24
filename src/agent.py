@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 from mirascope import llm
 from mirascope.integrations.langfuse import with_langfuse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,14 +27,6 @@ from src.utils.types import track
 # Configure logging
 logger = logging.getLogger(__name__)
 
-QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
-    Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
-    For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
-    
-    Format your response as a JSON array of strings, with each string being a search query. 
-    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
-    Example:
-    ["query about interests", "query about personality", "query about experiences"]"""
 
 
 @track("Dialectic Call")
@@ -66,8 +59,12 @@ You are operating as a context service that helps maintain psychological underst
 """
 
 
+class SemanticQueries(BaseModel):
+    queries: list[str]
+
+
 @with_langfuse()
-@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=list[str])
+@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
 async def generate_semantic_queries_llm(query: str):
     return f"""
 Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
@@ -333,7 +330,7 @@ async def generate_semantic_queries(query: str) -> list[str]:
     logger.debug("Calling LLM for query generation")
     try:
         queries_result = await generate_semantic_queries_llm(query)
-        queries = list(queries_result) if queries_result else [query]
+        queries = queries_result.queries
 
         # Ensure we always include the original query
         if query not in queries:
