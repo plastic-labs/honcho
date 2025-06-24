@@ -1,6 +1,5 @@
 import logging
 
-from anthropic import AsyncMessageStreamManager
 from fastapi import (
     APIRouter,
     BackgroundTasks,
