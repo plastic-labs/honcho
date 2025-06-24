@@ -1088,10 +1088,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
     else:
         # Fetch the latest global level user representation
@@ -1105,10 +1105,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
 
     return latest_representation
