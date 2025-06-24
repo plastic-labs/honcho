@@ -3,9 +3,53 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import Select, and_, cast, not_, or_
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
 
 logger = getLogger(__name__)
+
+# Module-level constants for comparison operators
+COMPARISON_OPERATORS = {
+    "gte",
+    "lte",
+    "gt",
+    "lt",
+    "ne",
+    "in",
+    "contains",
+    "icontains",
+}
+
+NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
+
+
+def _is_jsonb_column(column) -> bool:
+    """
+    Reliably check if a column is a JSONB column type.
+
+    This function properly detects JSONB columns by checking the column type
+    against the actual JSONB type class rather than relying on string matching.
+
+    Args:
+        column: SQLAlchemy column object
+
+    Returns:
+        bool: True if the column is a JSONB column, False otherwise
+    """
+    if JSONB is None:
+        # Fallback to string-based detection if JSONB type is not available
+        return (
+            hasattr(column.type, "python_type")
+            and hasattr(column.type, "impl")
+            and "JSONB" in str(column.type)
+        )
+
+    # Check if the column type is directly JSONB
+    if isinstance(column.type, JSONB):
+        return True
+
+    # Check if the column type has an impl that is JSONB (for wrapped types)
+    return bool(hasattr(column.type, "impl") and isinstance(column.type.impl, JSONB))
 
 
 def apply_filter(
@@ -154,17 +198,7 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
     # Handle comparison operators vs regular values
     if isinstance(value, dict):
         # Check if this is a comparison operators dict by looking for known operators
-        comparison_operators = {
-            "gte",
-            "lte",
-            "gt",
-            "lt",
-            "ne",
-            "in",
-            "contains",
-            "icontains",
-        }
-        is_comparison_dict = any(key in comparison_operators for key in value)
+        is_comparison_dict = any(key in COMPARISON_OPERATORS for key in value)
 
         if is_comparison_dict:
             return _build_comparison_conditions(column, column_name, value)
@@ -172,22 +206,14 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
             # Check if this column is a JSONB column by checking the column type
-            is_jsonb_column = (
-                hasattr(column.type, "python_type")
-                and hasattr(column.type, "impl")
-                and "JSONB" in str(column.type)
-            )
+            is_jsonb_column = _is_jsonb_column(column)
             if column_name in ("h_metadata", "configuration") or is_jsonb_column:
                 return _build_nested_metadata_conditions(column, value)
             else:
                 return column == value
     else:
         # Simple equality or contains for JSONB
-        is_jsonb_column = (
-            hasattr(column.type, "python_type")
-            and hasattr(column.type, "impl")
-            and "JSONB" in str(column.type)
-        )
+        is_jsonb_column = _is_jsonb_column(column)
         if column_name in ("h_metadata", "configuration") or is_jsonb_column:
             return column.contains(value)
         else:
@@ -247,9 +273,7 @@ def _build_comparison_condition(
     field_accessor = column[field_name].astext
 
     # Mapping of operators to their SQLAlchemy methods
-    numeric_operators = {"gte", "lte", "gt", "lt", "ne"}
-
-    if operator in numeric_operators:
+    if operator in NUMERIC_OPERATORS:
         safe_accessor, safe_value = _safe_numeric_cast(field_accessor, op_value)
         operator_map = {
             "gte": lambda a, v: a >= v,
@@ -280,20 +304,10 @@ def _build_nested_metadata_conditions(column, metadata_dict: dict[str, Any]) -> 
         Combined SQLAlchemy condition object or None
     """
     conditions = []
-    comparison_operators = {
-        "gte",
-        "lte",
-        "gt",
-        "lt",
-        "ne",
-        "in",
-        "contains",
-        "icontains",
-    }
 
     for field_name, field_value in metadata_dict.items():
         if isinstance(field_value, dict) and any(
-            op in comparison_operators for op in field_value
+            op in COMPARISON_OPERATORS for op in field_value
         ):
             # This field has comparison operators
             field_conditions = []
@@ -350,8 +364,6 @@ def _build_comparison_conditions(
     Returns:
         Combined SQLAlchemy condition object or None
     """
-    from sqlalchemy import text
-
     conditions = []
 
     # Check if this is a datetime column
@@ -368,8 +380,14 @@ def _build_comparison_conditions(
 
         # For datetime columns, cast string values to timestamp
         if is_datetime_column and isinstance(op_value, str):
-            # Use PostgreSQL's timestamp casting
-            casted_value = text(f"'{op_value}'::timestamp")
+            # Validate datetime string to prevent SQL injection
+            validated_datetime = _validate_datetime_string(op_value)
+            if validated_datetime is None:
+                # Skip this condition if datetime validation fails
+                logger.warning(f"Skipping invalid datetime value: {op_value}")
+                continue
+            # Use the validated datetime object directly instead of string interpolation
+            casted_value = validated_datetime
         else:
             casted_value = op_value
 
@@ -390,12 +408,21 @@ def _build_comparison_conditions(
                     continue
                 else:
                     if is_datetime_column:
-                        # Cast each datetime string value
-                        casted_values = [
-                            text(f"'{val}'::timestamp") if isinstance(val, str) else val
-                            for val in op_value
-                        ]
-                        condition = column.in_(casted_values)
+                        # Validate and cast each datetime string value
+                        casted_values = []
+                        for val in op_value:
+                            if isinstance(val, str):
+                                validated_datetime = _validate_datetime_string(val)
+                                if validated_datetime is None:
+                                    logger.warning(
+                                        f"Skipping invalid datetime value in list: {val}"
+                                    )
+                                    continue
+                                casted_values.append(validated_datetime)
+                            else:
+                                casted_values.append(val)
+                        if casted_values:
+                            condition = column.in_(casted_values)
                     else:
                         condition = column.in_(op_value)
         elif operator == "contains":
@@ -419,3 +446,49 @@ def _build_comparison_conditions(
         return conditions[0]
     else:
         return and_(*conditions)
+
+
+def _validate_datetime_string(value: str) -> datetime.datetime | None:
+    """
+    Safely validate and parse a datetime string to prevent SQL injection.
+
+    This function attempts to parse the datetime string using multiple common formats
+    to ensure it's a valid datetime before allowing it to be used in SQL queries.
+
+    Args:
+        value: String value to validate as datetime
+
+    Returns:
+        Parsed datetime object if valid, None if invalid
+    """
+    # Strip whitespace and check for obviously malicious content
+    value = value.strip()
+    if not value or "'" in value or ";" in value or "--" in value:
+        logger.warning(f"Potentially malicious datetime string rejected: {value}")
+        return None
+
+    # Try to parse with various common datetime formats
+    datetime_formats = [
+        "%Y-%m-%d %H:%M:%S",  # 2024-01-01 12:00:00
+        "%Y-%m-%d %H:%M:%S.%f",  # 2024-01-01 12:00:00.123456
+        "%Y-%m-%dT%H:%M:%S",  # 2024-01-01T12:00:00 (ISO format)
+        "%Y-%m-%dT%H:%M:%S.%f",  # 2024-01-01T12:00:00.123456
+        "%Y-%m-%dT%H:%M:%SZ",  # 2024-01-01T12:00:00Z (UTC)
+        "%Y-%m-%dT%H:%M:%S.%fZ",  # 2024-01-01T12:00:00.123456Z
+        "%Y-%m-%d",  # 2024-01-01
+    ]
+
+    for fmt in datetime_formats:
+        try:
+            return datetime.datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+
+    # Try fromisoformat as a fallback (Python 3.7+)
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        pass
+
+    logger.warning(f"Invalid datetime format rejected: {value}")
+    return None
