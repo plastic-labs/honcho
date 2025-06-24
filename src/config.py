@@ -189,8 +189,8 @@ class LLMSettings(HonchoSettings):
     # Tom Inference specific
     # TOM_INFERENCE_PROVIDER: Provider = "groq"
     # TOM_INFERENCE_MODEL: str = "llama-3.3-70b-versatile"
-    TOM_INFERENCE_PROVIDER: Provider = "gemini"
-    TOM_INFERENCE_MODEL: str = "gemini-2.0-flash-lite"
+    TOM_INFERENCE_PROVIDER: Provider = "anthropic"
+    TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
 
     # Summarization specific
     SUMMARY_PROVIDER: str = "gemini"
