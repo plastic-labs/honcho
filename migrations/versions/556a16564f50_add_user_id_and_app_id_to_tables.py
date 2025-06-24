@@ -554,3 +554,4 @@ def downgrade():
     # Drop the column
     op.drop_column("sessions", "app_id", schema=schema)
     print("Dropped app_id column from sessions table")
+

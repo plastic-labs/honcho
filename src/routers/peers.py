@@ -325,12 +325,8 @@ async def search_peer(
 async def get_deriver_status(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    session_name: Optional[str] = Query(
-        None, description="Optional session name to filter by"
-    ),
-    include_sender: bool = Query(
-        False, description="Include work units triggered by this peer"
-    ),
+    session_name: Optional[str] = Query(None, description="Optional session name to filter by"),
+    include_sender: bool = Query(False, description="Include work units triggered by this peer"),
     db=db,
 ):
     """Get the deriver processing status for a peer, optionally scoped to a session"""
