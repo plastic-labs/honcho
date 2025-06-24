@@ -4,7 +4,6 @@ from typing import Annotated, Any, ClassVar
 
 import tomllib
 from dotenv import load_dotenv
-from mirascope import Provider
 from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
@@ -14,6 +13,8 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+
+from src.utils.clients import Providers
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
@@ -187,11 +188,11 @@ class LLMSettings(HonchoSettings):
     # Tom Inference specific
     # TOM_INFERENCE_PROVIDER: Provider = "groq"
     # TOM_INFERENCE_MODEL: str = "llama-3.3-70b-versatile"
-    TOM_INFERENCE_PROVIDER: Provider = "anthropic"
+    TOM_INFERENCE_PROVIDER: Providers = "anthropic"
     TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
 
     # Summarization specific
-    SUMMARY_PROVIDER: Provider = "google"
+    SUMMARY_PROVIDERS: Providers = "google"
     SUMMARY_MODEL: str = (
         "gemini-1.5-flash-latest"  # Consider specific model version if needed
     )
