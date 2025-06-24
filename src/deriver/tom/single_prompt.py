@@ -154,14 +154,6 @@ expectation_violations: list of objects with:
 """
 
 
-async def get_tom_inference_single_prompt(
-    chat_history: str,
-    user_representation: str | None = None,
-) -> TomInferenceOutput:
-    inference = await tom_inference(chat_history, user_representation)
-    return inference
-
-
 @track("User Representation")
 @with_langfuse()
 @llm.call(
@@ -169,7 +161,7 @@ async def get_tom_inference_single_prompt(
     model="llama-3.3-70b-versatile",
     response_model=UserRepresentationOutput,
 )
-async def user_representation_inference(
+async def user_representation(
     chat_history: str,
     user_representation: str | None = None,
     tom_inference: str | None = None,
@@ -230,14 +222,3 @@ updates:
 {tom_inference or "Not provided"}
 </tom_analysis>
 """
-
-
-async def get_user_representation_single_prompt(
-    chat_history: str,
-    user_representation: str | None = None,
-    tom_inference: str | None = None,
-):
-    representation = await user_representation_inference(
-        chat_history, user_representation, tom_inference
-    )
-    return representation.model_dump_json()

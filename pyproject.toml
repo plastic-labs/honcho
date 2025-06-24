@@ -25,6 +25,7 @@ dependencies = [
     "mirascope[anthropic,google,groq,langfuse]>=1.25.1",
     "openai>=1.91.0",
     "pydantic>=2.11.7",
+    "pydantic-settings>=2.10.1",
 ]
 [tool.uv]
 dev-dependencies = [

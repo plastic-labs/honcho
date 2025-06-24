@@ -7,13 +7,10 @@ Create Date: 2025-05-19 17:00:18.151735
 """
 
 from collections.abc import Sequence
-from typing import Union
 from os import getenv
 
 from alembic import op
 from sqlalchemy import text
-
-from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "66e63cf2cf77"

@@ -290,10 +290,8 @@ def mock_langfuse():
 @pytest.fixture(autouse=True)
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
-    with patch("src.crud.openai_client.embeddings.create") as mock_create:
-        mock_response = AsyncMock()
-        mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
-        mock_create.return_value = mock_response
+    with patch("src.crud.embedding_client.embed") as mock_create:
+        mock_create.return_value = [0.1] * 1536
         yield mock_create
 
 
@@ -309,15 +307,8 @@ def mock_mirascope_functions():
             "src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock
         ) as mock_tom_inference,
         patch(
-            "src.deriver.tom.single_prompt.user_representation_inference"
+            "src.deriver.tom.single_prompt.user_representation", new_callable=AsyncMock
         ) as mock_user_rep_inference,
-        patch(
-            "src.deriver.tom.single_prompt.get_tom_inference_single_prompt",
-            new_callable=AsyncMock,
-        ) as mock_single_tom,
-        patch(
-            "src.deriver.tom.single_prompt.get_user_representation_single_prompt"
-        ) as mock_single_rep,
         patch(
             "src.deriver.tom.long_term.get_user_representation_long_term"
         ) as mock_long_rep,
@@ -336,26 +327,6 @@ def mock_mirascope_functions():
         mock_tom_inference.return_value = MagicMock(inference="Test tom inference")
         mock_user_rep_inference.return_value = "Test user representation"
         # Mock single_tom to return a proper Pydantic object
-        from src.deriver.tom.single_prompt import (
-            CurrentState,
-            TentativeInference,
-            TomInferenceOutput,
-        )
-
-        mock_tom_obj = TomInferenceOutput(
-            current_state=CurrentState(
-                immediate_context="test context",
-                active_goals="test goals",
-                present_mood="test mood",
-            ),
-            tentative_inferences=[
-                TentativeInference(interpretation="test inference", basis="test basis")
-            ],
-            knowledge_gaps=[],
-            expectation_violations=[],
-        )
-        mock_single_tom.return_value = mock_tom_obj
-        mock_single_rep.return_value = "Test user representation"
         mock_long_rep.return_value = MagicMock(
             current_state="Test state",
             tentative_patterns=[],
@@ -378,8 +349,6 @@ def mock_mirascope_functions():
             "long_summary": mock_long_summary,
             "tom_inference": mock_tom_inference,
             "user_rep_inference": mock_user_rep_inference,
-            "single_tom": mock_single_tom,
-            "single_rep": mock_single_rep,
             "long_rep": mock_long_rep,
             "extract_facts": mock_extract_facts,
             "dialectic_call": mock_dialectic_call,

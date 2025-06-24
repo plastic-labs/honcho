@@ -1,4 +1,3 @@
-from os import getenv
 
 import sqlalchemy as sa
 from alembic import op

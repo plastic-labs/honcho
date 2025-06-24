@@ -96,7 +96,7 @@ class HonchoSettings(BaseSettings):
     """
 
     @classmethod
-    def settings_customise_sources(
+    def settings_customise_sources(  # pyright: ignore
         cls,
         settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
@@ -115,7 +115,7 @@ class HonchoSettings(BaseSettings):
 
 
 class DBSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DB_")
+    model_config = SettingsConfigDict(env_prefix="DB_")  # pyright: ignore
 
     CONNECTION_URI: str = (
         "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
@@ -137,12 +137,12 @@ class DBSettings(HonchoSettings):
 
 
 class AuthSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTH_")
+    model_config = SettingsConfigDict(env_prefix="AUTH_")  # pyright: ignore
 
     USE_AUTH: bool = False
     JWT_SECRET: str | None = None  # Must be set if USE_AUTH is true
 
-    @model_validator(mode="after")
+    @model_validator(mode="after")  # type: ignore
     def _require_jwt_secret(self) -> "AuthSettings":
         if self.USE_AUTH and not self.JWT_SECRET:
             raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
@@ -150,7 +150,7 @@ class AuthSettings(HonchoSettings):
 
 
 class SentrySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="SENTRY_")
+    model_config = SettingsConfigDict(env_prefix="SENTRY_")  # pyright: ignore
 
     ENABLED: bool = False
     DSN: str | None = None
@@ -159,7 +159,7 @@ class SentrySettings(HonchoSettings):
 
 
 class LLMSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="LLM_")
+    model_config = SettingsConfigDict(env_prefix="LLM_")  # pyright: ignore
 
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
@@ -195,7 +195,7 @@ class LLMSettings(HonchoSettings):
 
 
 class AgentSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENT_")
+    model_config = SettingsConfigDict(env_prefix="AGENT_")  # pyright: ignore
 
     SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
     SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
@@ -205,7 +205,7 @@ class AgentSettings(HonchoSettings):
 
 
 class DeriverSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DERIVER_")
+    model_config = SettingsConfigDict(env_prefix="DERIVER_")  # pyright: ignore
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = (
@@ -219,7 +219,7 @@ class DeriverSettings(HonchoSettings):
 
 
 class HistorySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="HISTORY_")
+    model_config = SettingsConfigDict(env_prefix="HISTORY_")  # pyright: ignore
 
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
@@ -227,7 +227,9 @@ class HistorySettings(HonchoSettings):
 
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
-    model_config = SettingsConfigDict(env_prefix="", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="", env_nested_delimiter="__"
+    )
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"

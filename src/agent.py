@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 
-from langfuse.decorators import langfuse_context, observe
+from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 from mirascope import llm
 from mirascope.integrations.langfuse import with_langfuse
 from pydantic import BaseModel
@@ -12,8 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
+from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
+from src.deriver.tom.single_prompt import UserRepresentationOutput
 from src.utils import history, parse_xml_content
 from src.utils.types import track
 
@@ -374,11 +376,13 @@ async def generate_user_representation(
         # Generate the new user representation
         logger.debug("Calling get_user_representation")
         gen_start_time = asyncio.get_event_loop().time()
-        user_representation_response = await get_user_representation_long_term(
-            chat_history=chat_history,
-            facts=facts,
-            user_representation=latest_representation,
-            tom_inference=tom_inference,
+        user_representation_response: UserRepresentationOutput = (
+            await get_user_representation_long_term(
+                chat_history=chat_history,
+                facts=facts,
+                user_representation=latest_representation,
+                tom_inference=tom_inference,
+            )
         )
         gen_time = asyncio.get_event_loop().time() - gen_start_time
         logger.debug(f"get_user_representation completed in {gen_time:.2f}s")
@@ -390,13 +394,13 @@ async def generate_user_representation(
 CURRENT STATE: {user_representation_response.current_state}
 
 TENTATIVE PATTERNS:
-{chr(10).join(user_representation_response.tentative_patterns)}
+{chr(10).join([pattern.pattern for pattern in user_representation_response.tentative_patterns])}
 
 KNOWLEDGE GAPS:
-{chr(10).join(user_representation_response.knowledge_gaps)}
+{chr(10).join([gap.missing_info for gap in user_representation_response.knowledge_gaps])}
 
 RECENT UPDATES:
-{chr(10).join(user_representation_response.updates)}
+{chr(10).join([update.detail for update in user_representation_response.updates.new_information])}
 """
         else:
             # Fallback to XML parsing for backwards compatibility

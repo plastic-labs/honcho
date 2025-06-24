@@ -74,7 +74,7 @@ def create_jwt(params: JWTParams) -> str:
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
     if not settings.AUTH.JWT_SECRET:
         raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
-    return jwt.encode(
+    return jwt.encode(  # pyright: ignore
         payload, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithm="HS256"
     )
 
@@ -86,7 +86,7 @@ async def verify_jwt(token: str) -> JWTParams:
     try:
         if not settings.AUTH.JWT_SECRET:
             raise ValueError("AUTH_JWT_SECRET is not set, cannot verify JWT.")
-        decoded = jwt.decode(
+        decoded = jwt.decode(  # pyright: ignore
             token, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )
         if "t" in decoded:

@@ -55,7 +55,7 @@ async def test_generate_semantic_queries_llm_function_exists():
 @pytest.mark.asyncio
 async def test_run_tom_inference_function():
     """Test that run_tom_inference function works with new Pydantic objects"""
-    with patch("src.agent.get_tom_inference_single_prompt") as mock_tom:
+    with patch("src.agent.get_tom_inference") as mock_tom:
         from src.deriver.tom.single_prompt import (
             CurrentState,
             TentativeInference,

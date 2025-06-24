@@ -213,7 +213,7 @@ class DocumentCreate(DocumentBase):
 
 class DocumentUpdate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
 
 
 class DialecticOptions(BaseModel):

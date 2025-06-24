@@ -1,7 +1,7 @@
 import os
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Any
+from typing import Any, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -18,21 +18,31 @@ from . import models, schemas
 from .exceptions import (
     ResourceNotFoundException,
 )
-from .utils.model_client import ModelClient, ModelProvider
 
 load_dotenv(override=True)
 
-openai_client = AsyncOpenAI(api_key=settings.LLM.OPENAI_API_KEY)
+
+@final
+class EmbeddingClient:
+    def __init__(self, api_key: str | None):
+        if api_key is None:
+            raise ValueError("API key is required")
+        self.client = AsyncOpenAI(api_key=api_key)
+
+    async def embed(self, query: str) -> list[float]:
+        response = await self.client.embeddings.create(
+            input=query, model="text-embedding-3-small"
+        )
+        return response.data[0].embedding
+
+
+embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
 
 logger = getLogger(__name__)
 
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
 
 SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
-
-# Create a ModelClient instance for embeddings
-# Using OpenAI provider for embeddings as it's the most common
-embedding_client = ModelClient(provider=ModelProvider.OPENAI)
 
 ########################################################
 # workspace methods

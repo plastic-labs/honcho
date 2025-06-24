@@ -20,7 +20,7 @@ if settings.DB.POOL_CLASS == "null":
     engine_kwargs["poolclass"] = NullPool
 else:
     # Only add pool-related kwargs for pooled connections
-    engine_kwargs.update(
+    engine_kwargs.update(  # pyright: ignore
         {
             "pool_pre_ping": settings.DB.POOL_PRE_PING,
             "pool_size": settings.DB.POOL_SIZE,

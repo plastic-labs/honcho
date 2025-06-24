@@ -52,8 +52,8 @@ class QueueManager:
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
         # Initialize from settings
-        self.workers = settings.DERIVER.WORKERS
-        self.semaphore = asyncio.Semaphore(self.workers)
+        self.workers: int = settings.DERIVER.WORKERS
+        self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:

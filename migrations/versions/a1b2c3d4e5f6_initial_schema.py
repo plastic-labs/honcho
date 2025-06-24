@@ -7,8 +7,6 @@ Create Date: 2024-01-01 00:00:00.000000
 """
 
 from collections.abc import Sequence
-from typing import Union
-from os import getenv
 
 import sqlalchemy as sa
 from alembic import op
@@ -361,7 +359,7 @@ def upgrade() -> None:
             server_default="{}",
         ),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("embedding", Vector(1536), nullable=True),
+        sa.Column("embedding", Vector(1536), nullable=True),  # pyright: ignore
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

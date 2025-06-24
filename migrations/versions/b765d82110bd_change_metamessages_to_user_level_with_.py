@@ -7,8 +7,6 @@ Create Date: 2025-04-03 15:32:16.733312
 """
 
 from collections.abc import Sequence
-from typing import Union
-from os import getenv
 
 import sqlalchemy as sa
 from alembic import op
@@ -159,10 +157,15 @@ def upgrade() -> None:
     }
 
     # Helper function to create index if not exists
-    def create_index_if_not_exists(index_name, table_name, columns, **kwargs):
+    def create_index_if_not_exists(
+        index_name: str,
+        table_name: str,
+        columns: list[str | sa.TextClause],
+        schema: str,
+    ):
         if index_name not in existing_indices:
             try:
-                op.create_index(index_name, table_name, columns, **kwargs)
+                op.create_index(index_name, table_name, columns, schema=schema)
                 print(f"Created index {index_name}")
             except Exception as e:
                 print(f"Error creating index {index_name}: {e}")
