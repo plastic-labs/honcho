@@ -156,7 +156,7 @@ class SessionCreate(SessionBase):
 
 class SessionGet(SessionBase):
     filter: dict | None = None
-    is_active: bool = False
+    is_active: bool | None = None
 
 
 class SessionUpdate(SessionBase):
