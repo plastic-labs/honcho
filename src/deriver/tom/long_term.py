@@ -4,6 +4,7 @@ from mirascope import llm
 from mirascope.integrations.langfuse import with_langfuse
 from pydantic import BaseModel
 
+from src.config import settings
 from src.deriver.tom.single_prompt import UserRepresentationOutput
 from src.utils.types import track
 
@@ -45,8 +46,8 @@ class FactExtraction(BaseModel):
 @track("User Representation")
 @with_langfuse()
 @llm.call(
-    provider="groq",
-    model="llama-3.3-70b-versatile",
+    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
 )
 async def get_user_representation_long_term(

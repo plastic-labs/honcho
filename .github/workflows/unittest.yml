@@ -51,5 +51,3 @@ jobs:
           SENTRY_ENABLED: false
           LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_GROQ_API_KEY: "testing"
-          GROQ_API_KEY: "testing"

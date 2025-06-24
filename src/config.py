@@ -4,6 +4,7 @@ from typing import Annotated, Any, ClassVar
 
 import tomllib
 from dotenv import load_dotenv
+from mirascope import Provider
 from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
@@ -179,9 +180,17 @@ class LLMSettings(HonchoSettings):
     # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
 
     # Query Generation specific
-    QUERY_GENERATION_PROVIDER: str = "groq"
-    QUERY_GENERATION_MODEL: str = "llama3-8b-8192"
+    # QUERY_GENERATION_PROVIDER: str = "gemini"
+    # QUERY_GENERATION_MODEL: str = "llama3-8b-8192"
+    QUERY_GENERATION_PROVIDER: str = "gemini"
+    QUERY_GENERATION_MODEL: str = "gemini-2.0-flash-lite"
     # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
+
+    # Tom Inference specific
+    # TOM_INFERENCE_PROVIDER: Provider = "groq"
+    # TOM_INFERENCE_MODEL: str = "llama-3.3-70b-versatile"
+    TOM_INFERENCE_PROVIDER: Provider = "gemini"
+    TOM_INFERENCE_MODEL: str = "gemini-2.0-flash-lite"
 
     # Summarization specific
     SUMMARY_PROVIDER: str = "gemini"

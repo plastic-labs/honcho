@@ -3,6 +3,7 @@ import logging
 from mirascope import Messages, llm
 from mirascope.integrations.langfuse import with_langfuse
 
+from src.config import settings
 from src.utils.types import track
 
 from .single_prompt import TomInferenceOutput, UserRepresentationOutput
@@ -13,7 +14,9 @@ logger = logging.getLogger(__name__)
 @track("Tom Inference")
 @with_langfuse()
 @llm.call(
-    provider="groq", model="llama-3.3-70b-versatile", response_model=TomInferenceOutput
+    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    model=settings.LLM.TOM_INFERENCE_MODEL,
+    response_model=TomInferenceOutput,
 )
 async def tom_inference_conversational(
     chat_history: str,
@@ -41,8 +44,8 @@ async def tom_inference_conversational(
 @track("User Representation")
 @with_langfuse()
 @llm.call(
-    provider="groq",
-    model="llama-3.3-70b-versatile",
+    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
 )
 async def user_representation_conversational(
