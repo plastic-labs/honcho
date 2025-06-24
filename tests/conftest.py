@@ -301,30 +301,47 @@ def mock_mirascope_functions():
 
     # Create mock responses for different function types
     with (
-        patch("src.utils.history.create_short_summary") as mock_short_summary,
-        patch("src.utils.history.create_long_summary") as mock_long_summary,
+        patch(
+            "src.utils.history.create_short_summary", new_callable=AsyncMock
+        ) as mock_short_summary,
+        patch(
+            "src.utils.history.create_long_summary", new_callable=AsyncMock
+        ) as mock_long_summary,
         patch(
             "src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock
         ) as mock_tom_inference,
         patch(
+            "src.deriver.tom.tom_inference_single_prompt",
+            new_callable=AsyncMock,
+        ) as mock_tom_inference_conversational,
+        patch(
             "src.deriver.tom.single_prompt.user_representation", new_callable=AsyncMock
         ) as mock_user_rep_inference,
         patch(
-            "src.deriver.tom.long_term.get_user_representation_long_term"
+            "src.deriver.tom.long_term.get_user_representation_long_term",
+            new_callable=AsyncMock,
         ) as mock_long_rep,
         patch(
-            "src.deriver.tom.long_term.extract_facts_long_term"
+            "src.deriver.tom.long_term.extract_facts_long_term",
+            new_callable=AsyncMock,
         ) as mock_extract_facts,
         patch(
             "src.agent.dialectic_call", new_callable=AsyncMock
         ) as mock_dialectic_call,
-        patch("src.agent.dialectic_stream") as mock_dialectic_stream,
-        patch("src.agent.generate_semantic_queries_llm") as mock_semantic_queries,
+        patch(
+            "src.agent.dialectic_stream", new_callable=AsyncMock
+        ) as mock_dialectic_stream,
+        patch(
+            "src.agent.generate_semantic_queries_llm", new_callable=AsyncMock
+        ) as mock_semantic_queries,
     ):
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
-        mock_tom_inference.return_value = MagicMock(inference="Test tom inference")
+        mock_tom_inference.return_value = AsyncMock(inference="Test tom inference")
+        mock_tom_inference_conversational.return_value = AsyncMock(
+            inference="Test tom inference"
+        )
         mock_user_rep_inference.return_value = "Test user representation"
         # Mock single_tom to return a proper Pydantic object
         mock_long_rep.return_value = MagicMock(
@@ -348,6 +365,7 @@ def mock_mirascope_functions():
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "tom_inference": mock_tom_inference,
+            "tom_inference_conversational": mock_tom_inference_conversational,
             "user_rep_inference": mock_user_rep_inference,
             "long_rep": mock_long_rep,
             "extract_facts": mock_extract_facts,
