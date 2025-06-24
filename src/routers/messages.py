@@ -185,7 +185,11 @@ async def enqueue(payload: list[dict]):
                 )
 
                 observe_me = (
-                    sender_session_peer_config.observe_me
+                    (
+                        sender_session_peer_config.observe_me
+                        if sender_session_peer_config.observe_me is not None
+                        else sender_peer_config.observe_me
+                    )
                     if sender_session_peer_config
                     else sender_peer_config.observe_me
                 )
