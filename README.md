@@ -57,7 +57,7 @@ authentication, no SLA, and should only be used for testing and getting familiar
 with Honcho.
 
 For a production ready version of Honcho sign up for an account at
-https://app.honcho.dev and get started. When you sign up you'll be prompted to
+[https://app.honcho.dev](https://app.honcho.dev) and get started. When you sign up you'll be prompted to
 join an organization which will have a dedicated instance of Honcho.
 
 Provision API keys and change your base url to point to
