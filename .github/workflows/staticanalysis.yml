@@ -1,6 +1,9 @@
 name: Static Analysis
 on: [push]
 
+permissions:
+  contents: read
+
 jobs:
   basedpyright:
     runs-on: ubuntu-latest
