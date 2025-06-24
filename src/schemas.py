@@ -130,6 +130,7 @@ class MessageBatchCreate(BaseModel):
 class SessionBase(BaseModel):
     pass
 
+
 class SessionPeerConfig(BaseModel):
     observe_others: bool = Field(
         default=False,
@@ -222,10 +223,19 @@ class DialecticResponse(BaseModel):
 
 
 class DeriverStatus(BaseModel):
-    peer_id: str = Field(description="ID of the peer")
-    session_id: Optional[str] = Field(default=None, description="Session ID if filtered by session")
-    total_work_units: int = Field(description="Total work units for this peer")
+    peer_id: Optional[str] = Field(
+        default=None,
+        description="ID of the peer (optional when filtering by session only)",
+    )
+    session_id: Optional[str] = Field(
+        default=None, description="Session ID if filtered by session"
+    )
+    total_work_units: int = Field(description="Total work units")
     completed_work_units: int = Field(description="Completed work units")
-    in_progress_work_units: int = Field(description="Work units currently being processed")
+    in_progress_work_units: int = Field(
+        description="Work units currently being processed"
+    )
     pending_work_units: int = Field(description="Work units waiting to be processed")
-    sessions: Optional[dict[str, "DeriverStatus"]] = Field(default=None, description="Per-session status when not filtered by session")
+    sessions: Optional[dict[str, "DeriverStatus"]] = Field(
+        default=None, description="Per-session status when not filtered by session"
+    )

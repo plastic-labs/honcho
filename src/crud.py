@@ -779,7 +779,6 @@ async def set_peers_for_session(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-
     # Soft delete specified session peers by setting left_at timestamp
     update_stmt = (
         update(models.SessionPeer)
@@ -1140,7 +1139,6 @@ async def set_working_representation(
         )
     await db.execute(stmt)
     await db.commit()
-
 
 
 ########################################################
@@ -1668,58 +1666,66 @@ async def get_duplicate_documents(
 async def get_deriver_status(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
-    session_name: Optional[str] = None,
+    peer_name: Optional[str] = None,
+    session_id: Optional[str] = None,
     include_sender: bool = False,
 ) -> schemas.DeriverStatus:
     """
-    Get the deriver processing status for a peer.
+    Get the deriver processing status, optionally filtered by peer and/or session.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        session_name: Optional session to filter by
+        peer_name: Optional name of the peer to filter by
+        session_id: Optional session ID to filter by
         include_sender: Whether to include work units where peer is the sender
 
     Returns:
         DeriverStatus: Schema containing processing status
 
     Raises:
-        ResourceNotFoundException: If the peer does not exist
+        ResourceNotFoundException: If the peer or session does not exist
+        ValueError: If neither peer_name nor session_id is provided
     """
-    # Verify peer exists
-    await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+    # Require at least one filter parameter
+    if peer_name is None and session_id is None:
+        raise ValueError("At least one of peer_name or session_id must be provided")
 
-    # Resolve session_name to session_id if provided
+    # Verify peer exists if provided
+    if peer_name is not None:
+        await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+
+    # Resolve session_id to internal session_id if provided
     resolved_session_id = None
-    if session_name:
+    if session_id:
         session_stmt = select(models.Session.id).where(
-            models.Session.name == session_name,
-            models.Session.workspace_name == workspace_name
+            models.Session.name == session_id,
+            models.Session.workspace_name == workspace_name,
         )
         session_result = await db.execute(session_stmt)
         resolved_session_id = session_result.scalar_one_or_none()
         if resolved_session_id is None:
-            raise ResourceNotFoundException(f"Session {session_name} not found")
+            raise ResourceNotFoundException(f"Session {session_id} not found")
 
-    # Build the query (pass resolved ID, but keep parameter name for compatibility)
-    stmt = _build_queue_status_query(workspace_name, peer_name, resolved_session_id, include_sender)
+    # Build the query
+    stmt = _build_queue_status_query(
+        workspace_name, peer_name, resolved_session_id, include_sender
+    )
     result = await db.execute(stmt)
     rows = result.fetchall()
 
     # Process results
     counts = _process_queue_rows(rows)
-    
+
     # Build response
-    return _build_status_response(peer_name, session_name, counts, rows)
+    return _build_status_response(peer_name, session_id, counts, rows)
 
 
 def _build_queue_status_query(
-    workspace_name: str, 
-    peer_name: str, 
-    session_name: Optional[str], 
-    include_sender: bool
+    workspace_name: str,
+    peer_name: Optional[str],
+    session_name: Optional[str],
+    include_sender: bool,
 ):
     """Build the SQL query for queue status."""
     sender_name_expr = models.QueueItem.payload["sender_name"].astext
@@ -1727,32 +1733,31 @@ def _build_queue_status_query(
     task_type_expr = models.QueueItem.payload["task_type"].astext
 
     # Base query
-    stmt = (
-        select(
-            models.QueueItem.session_id,
-            models.QueueItem.processed,
-            models.ActiveQueueSession.id.label("active_id"),
-        )
-        .outerjoin(
-            models.ActiveQueueSession,
-            (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
-            & (sender_name_expr == models.ActiveQueueSession.sender_name)
-            & (target_name_expr == models.ActiveQueueSession.target_name)
-            & (task_type_expr == models.ActiveQueueSession.task_type),
-        )
+    stmt = select(
+        models.QueueItem.session_id,
+        models.QueueItem.processed,
+        models.ActiveQueueSession.id.label("active_id"),
+    ).outerjoin(
+        models.ActiveQueueSession,
+        (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
+        & (sender_name_expr == models.ActiveQueueSession.sender_name)
+        & (target_name_expr == models.ActiveQueueSession.target_name)
+        & (task_type_expr == models.ActiveQueueSession.task_type),
     )
 
-    # Add peer filter
-    if include_sender:
-        from sqlalchemy import or_
-        stmt = stmt.where(
-            or_(
-                target_name_expr == peer_name,
-                sender_name_expr == peer_name,
+    # Add peer filter if peer_name is provided
+    if peer_name is not None:
+        if include_sender:
+            from sqlalchemy import or_
+
+            stmt = stmt.where(
+                or_(
+                    target_name_expr == peer_name,
+                    sender_name_expr == peer_name,
+                )
             )
-        )
-    else:
-        stmt = stmt.where(target_name_expr == peer_name)
+        else:
+            stmt = stmt.where(target_name_expr == peer_name)
 
     # Add session filter if provided (session_name is actually resolved session_id at this point)
     if session_name:
@@ -1766,14 +1771,18 @@ def _process_queue_rows(rows):
     completed = sum(1 for row in rows if row.processed)
     in_progress = sum(1 for row in rows if not row.processed and row.active_id)
     pending = sum(1 for row in rows if not row.processed and not row.active_id)
-    
+
     # Group by session
     sessions = {}
     for row in rows:
         if row.session_id:
             if row.session_id not in sessions:
-                sessions[row.session_id] = {"completed": 0, "in_progress": 0, "pending": 0}
-            
+                sessions[row.session_id] = {
+                    "completed": 0,
+                    "in_progress": 0,
+                    "pending": 0,
+                }
+
             if row.processed:
                 sessions[row.session_id]["completed"] += 1
             elif row.active_id:
@@ -1790,7 +1799,9 @@ def _process_queue_rows(rows):
     }
 
 
-def _build_status_response(peer_name: str, session_name: Optional[str], counts: dict, rows):
+def _build_status_response(
+    peer_name: Optional[str], session_name: Optional[str], counts: dict, rows
+):
     """Build the final response object."""
     base_response = {
         "peer_id": peer_name,
@@ -1802,11 +1813,8 @@ def _build_status_response(peer_name: str, session_name: Optional[str], counts: 
 
     if session_name:
         # Single session response
-        return schemas.DeriverStatus(
-            session_id=session_name,
-            **base_response
-        )
-    
+        return schemas.DeriverStatus(session_id=session_name, **base_response)
+
     # Multi-session response
     sessions = {}
     for session_id, data in counts["sessions"].items():
@@ -1821,8 +1829,7 @@ def _build_status_response(peer_name: str, session_name: Optional[str], counts: 
         )
 
     return schemas.DeriverStatus(
-        sessions=sessions if sessions else None,
-        **base_response
+        sessions=sessions if sessions else None, **base_response
     )
 
 
