@@ -4,7 +4,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.sql import insert
 
 from src import crud, schemas
@@ -333,7 +333,7 @@ async def get_messages(
             reverse=reverse,
         )
 
-        return await paginate(db, messages_query)
+        return await apaginate(db, messages_query)
     except ValueError as e:
         logger.warning(f"Failed to get messages for session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e

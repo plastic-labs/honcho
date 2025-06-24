@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
 
 from src import crud, schemas
 from src.dependencies import db
@@ -94,7 +94,7 @@ async def get_sessions(
         if hasattr(options, "is_active"):  # Check if is_active is present
             is_active_param = options.is_active
 
-    return await paginate(
+    return await apaginate(
         db,
         await crud.get_sessions(
             workspace_name=workspace_id,
@@ -365,7 +365,7 @@ async def get_session_peers(
         peers_query = await crud.get_peers_from_session(
             workspace_name=workspace_id, session_name=session_name
         )
-        return await paginate(db, peers_query)
+        return await apaginate(db, peers_query)
     except ValueError as e:
         logger.warning(f"Failed to get peers from session {session_name}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
@@ -472,4 +472,4 @@ async def search_session(
         query, workspace_name=workspace_id, session_name=session_id
     )
 
-    return await paginate(db, stmt)
+    return await apaginate(db, stmt)
