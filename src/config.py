@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import Annotated, Any, ClassVar
 
@@ -265,3 +266,16 @@ class AppSettings(HonchoSettings):
 
 # Create a single global instance of the settings
 settings: AppSettings = AppSettings()
+
+
+if settings.LLM.ANTHROPIC_API_KEY:
+    os.environ["ANTHROPIC_API_KEY"] = settings.LLM.ANTHROPIC_API_KEY
+
+if settings.LLM.OPENAI_API_KEY:
+    os.environ["OPENAI_API_KEY"] = settings.LLM.OPENAI_API_KEY
+
+if settings.LLM.GEMINI_API_KEY:
+    os.environ["GEMINI_API_KEY"] = settings.LLM.GEMINI_API_KEY
+
+if settings.LLM.GROQ_API_KEY:
+    os.environ["GROQ_API_KEY"] = settings.LLM.GROQ_API_KEY
