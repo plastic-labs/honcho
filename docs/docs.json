@@ -173,7 +173,7 @@
             "tab": "Changelog",
             "groups": [
               {
-                "group": "Changelog",
+                "group": "Overview",
                 "pages": [
                   "changelog/introduction",
                   "changelog/compatibility-guide"
@@ -334,7 +334,7 @@
             "tab": "Changelog",
             "groups": [
               {
-                "group": "Changelog",
+                "group": "Overview",
                 "pages": [
                   "changelog/introduction",
                   "changelog/compatibility-guide"
