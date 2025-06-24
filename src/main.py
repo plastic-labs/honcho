@@ -4,7 +4,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 import sentry_sdk
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
@@ -138,15 +138,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-router = APIRouter(prefix="/apps/{app_id}/users/{user_id}")
-
 add_pagination(app)
 
-app.include_router(workspaces.router, prefix="/v1")
-app.include_router(peers.router, prefix="/v1")
-app.include_router(sessions.router, prefix="/v1")
-app.include_router(messages.router, prefix="/v1")
-app.include_router(keys.router, prefix="/v1")
+app.include_router(workspaces.router, prefix="/v2")
+app.include_router(peers.router, prefix="/v2")
+app.include_router(sessions.router, prefix="/v2")
+app.include_router(messages.router, prefix="/v2")
+app.include_router(keys.router, prefix="/v2")
 
 
 # Global exception handlers

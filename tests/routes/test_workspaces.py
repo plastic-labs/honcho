@@ -5,8 +5,8 @@ from nanoid import generate as generate_nanoid
 def test_get_or_create_workspace(client):
     name = str(generate_nanoid())
 
-    # This should create the workspace using POST /v1/workspaces
-    response = client.post("/v1/workspaces", json={"name": name})
+    # This should create the workspace using POST /v2/workspaces
+    response = client.post("/v2/workspaces", json={"name": name})
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == name
@@ -19,7 +19,7 @@ def test_get_or_create_workspace_with_configuration(client):
     configuration = {"feature1": True, "feature2": False}
 
     response = client.post(
-        "/v1/workspaces", json={"name": name, "configuration": configuration}
+        "/v2/workspaces", json={"name": name, "configuration": configuration}
     )
     assert response.status_code == 200
     data = response.json()
@@ -34,7 +34,7 @@ def test_get_or_create_workspace_with_all_optional_params(client):
     configuration = {"experimental": True, "beta": False}
 
     response = client.post(
-        "/v1/workspaces",
+        "/v2/workspaces",
         json={"name": name, "metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
@@ -49,14 +49,14 @@ def test_get_or_create_existing_workspace(client):
 
     # Create the workspace
     response = client.post(
-        "/v1/workspaces", json={"name": name, "metadata": {"key": "value"}}
+        "/v2/workspaces", json={"name": name, "metadata": {"key": "value"}}
     )
     assert response.status_code == 200
     workspace1 = response.json()
 
     # Try to create the same workspace again - should return existing workspace
     response = client.post(
-        "/v1/workspaces", json={"name": name, "metadata": {"key": "value"}}
+        "/v2/workspaces", json={"name": name, "metadata": {"key": "value"}}
     )
     assert response.status_code == 200
     workspace2 = response.json()
@@ -70,7 +70,7 @@ def test_get_or_create_existing_workspace(client):
 async def test_get_all_workspaces(client, db_session, sample_data):
     # create a test workspace with metadata
     response = client.post(
-        "/v1/workspaces",
+        "/v2/workspaces",
         json={
             "name": "test_workspace",
             "metadata": {"test_key": "test_value"},
@@ -78,7 +78,7 @@ async def test_get_all_workspaces(client, db_session, sample_data):
     )
 
     response = client.post(
-        "/v1/workspaces/list",
+        "/v2/workspaces/list",
         json={},
     )
     assert response.status_code == 200
@@ -87,7 +87,7 @@ async def test_get_all_workspaces(client, db_session, sample_data):
     assert len(data["items"]) > 0
 
     response = client.post(
-        "/v1/workspaces/list",
+        "/v2/workspaces/list",
         json={"filter": {"test_key": "test_value"}},
     )
     assert response.status_code == 200
@@ -100,7 +100,7 @@ async def test_get_all_workspaces(client, db_session, sample_data):
 @pytest.mark.asyncio
 async def test_get_all_workspaces_with_empty_filter(client, db_session, sample_data):
     """Test workspace listing with empty filter object"""
-    response = client.post("/v1/workspaces/list", json={"filter": {}})
+    response = client.post("/v2/workspaces/list", json={"filter": {}})
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
@@ -110,7 +110,7 @@ async def test_get_all_workspaces_with_empty_filter(client, db_session, sample_d
 @pytest.mark.asyncio
 async def test_get_all_workspaces_with_null_filter(client, db_session, sample_data):
     """Test workspace listing with null filter"""
-    response = client.post("/v1/workspaces/list", json={"filter": None})
+    response = client.post("/v2/workspaces/list", json={"filter": None})
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
@@ -121,7 +121,7 @@ def test_update_workspace(client, sample_data):
     test_workspace, _ = sample_data
     _new_name = str(generate_nanoid())
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}",
+        f"/v2/workspaces/{test_workspace.name}",
         json={"metadata": {"new_key": "new_value"}},
     )
     assert response.status_code == 200
@@ -135,7 +135,7 @@ def test_update_workspace_with_configuration(client, sample_data):
     configuration = {"new_feature": True, "legacy_feature": False}
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}", json={"configuration": configuration}
+        f"/v2/workspaces/{test_workspace.name}", json={"configuration": configuration}
     )
     assert response.status_code == 200
     data = response.json()
@@ -149,7 +149,7 @@ def test_update_workspace_with_all_optional_params(client, sample_data):
     configuration = {"experimental": True, "beta": True}
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}",
+        f"/v2/workspaces/{test_workspace.name}",
         json={"metadata": metadata, "configuration": configuration},
     )
     assert response.status_code == 200
@@ -164,12 +164,12 @@ def test_update_workspace_with_null_metadata(client, sample_data):
 
     # First set some metadata
     client.put(
-        f"/v1/workspaces/{test_workspace.name}", json={"metadata": {"temp": "value"}}
+        f"/v2/workspaces/{test_workspace.name}", json={"metadata": {"temp": "value"}}
     )
 
     # Then clear it with null
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}", json={"metadata": None}
+        f"/v2/workspaces/{test_workspace.name}", json={"metadata": None}
     )
     assert response.status_code == 200
     data = response.json()
@@ -183,7 +183,7 @@ def test_update_workspace_with_null_configuration(client, sample_data):
     test_workspace, _ = sample_data
 
     response = client.put(
-        f"/v1/workspaces/{test_workspace.name}", json={"configuration": None}
+        f"/v2/workspaces/{test_workspace.name}", json={"configuration": None}
     )
     assert response.status_code == 200
     data = response.json()
@@ -193,11 +193,11 @@ def test_update_workspace_with_null_configuration(client, sample_data):
 def test_create_duplicate_workspace_name(client):
     # Create an workspace
     name = str(generate_nanoid())
-    response = client.post("/v1/workspaces", json={"name": name})
+    response = client.post("/v2/workspaces", json={"name": name})
     assert response.status_code == 200
 
     # Try to create another workspace with the same name - should return existing workspace
-    response = client.post("/v1/workspaces", json={"name": name})
+    response = client.post("/v2/workspaces", json={"name": name})
 
     # Should return the existing workspace with 200 status (get_or_create behavior)
     assert response.status_code == 200
@@ -211,7 +211,7 @@ def test_search_workspace(client, sample_data):
 
     # Test search with a query
     response = client.post(
-        f"/v1/workspaces/{test_workspace.name}/search", json="test search query"
+        f"/v2/workspaces/{test_workspace.name}/search", json="test search query"
     )
     assert response.status_code == 200
     data = response.json()
@@ -229,7 +229,7 @@ def test_search_workspace_empty_query(client, sample_data):
     test_workspace, _ = sample_data
 
     # Test search with empty query
-    response = client.post(f"/v1/workspaces/{test_workspace.name}/search", json="")
+    response = client.post(f"/v2/workspaces/{test_workspace.name}/search", json="")
     assert response.status_code == 200
     data = response.json()
 
@@ -243,6 +243,6 @@ def test_search_workspace_nonexistent(client):
     nonexistent_workspace_id = str(generate_nanoid())
 
     response = client.post(
-        f"/v1/workspaces/{nonexistent_workspace_id}/search", json="test query"
+        f"/v2/workspaces/{nonexistent_workspace_id}/search", json="test query"
     )
     assert response.status_code == 200
