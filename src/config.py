@@ -181,9 +181,7 @@ class LLMSettings(HonchoSettings):
     # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
 
     # Query Generation specific
-    # QUERY_GENERATION_PROVIDER: str = "gemini"
-    # QUERY_GENERATION_MODEL: str = "llama3-8b-8192"
-    QUERY_GENERATION_PROVIDER: Provider = "gemini"
+    QUERY_GENERATION_PROVIDER: Provider = "google"
     QUERY_GENERATION_MODEL: str = "gemini-2.0-flash-lite"
     # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
 
@@ -194,7 +192,7 @@ class LLMSettings(HonchoSettings):
     TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
 
     # Summarization specific
-    SUMMARY_PROVIDER: Provider = "gemini"
+    SUMMARY_PROVIDER: Provider = "google"
     SUMMARY_MODEL: str = (
         "gemini-1.5-flash-latest"  # Consider specific model version if needed
     )
