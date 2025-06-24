@@ -2,9 +2,13 @@ import os
 
 import sentry_sdk
 from anthropic import Anthropic
-from anthropic.types import MessageParam, TextBlock
+from anthropic.types import MessageParam
 from langfuse.decorators import langfuse_context, observe
 from sentry_sdk.ai.monitoring import ai_track
+
+from src.utils.model_client import ModelClient
+
+model_client = ModelClient()
 
 # Initialize the Anthropic client
 anthropic = Anthropic(
@@ -70,17 +74,15 @@ async def get_tom_inference_conversational(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
-        message = anthropic.messages.create(
-            model="claude-3-5-sonnet-20240620",
+        # Use ModelClient instead of direct Anthropic client
+
+        response = await model_client.generate(
+            messages=[dict(msg) for msg in messages],
             max_tokens=1000,
-            temperature=0,
-            messages=messages,
+            temperature=0.0,
         )
-        # skip blocks that are not text and return the first text block
-        for block in message.content:
-            if isinstance(block, TextBlock):
-                return block.text
-        raise RuntimeError("No text block returned by LLM")
+
+        return response
 
 
 @ai_track("User Representation")
@@ -144,14 +146,12 @@ async def get_user_representation_conversational(
         langfuse_context.update_current_observation(
             input=messages, model="claude-3-5-sonnet-20240620"
         )
-        message = anthropic.messages.create(
-            model="claude-3-5-sonnet-20240620",
+        # Use ModelClient instead of direct Anthropic client
+        response = await model_client.generate(
+            messages=[dict(msg) for msg in messages],
             max_tokens=1000,
-            temperature=0,
-            messages=messages,
+            temperature=0.0,
         )
+
         # skip blocks that are not text and return the first text block
-        for block in message.content:
-            if isinstance(block, TextBlock):
-                return block.text
-        raise RuntimeError("No text block returned by LLM")
+        return response

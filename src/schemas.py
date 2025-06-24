@@ -192,6 +192,11 @@ class DocumentCreate(DocumentBase):
     metadata: dict = {}
 
 
+class DocumentUpdate(DocumentBase):
+    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    metadata: dict | None = None
+
+
 class DialecticOptions(BaseModel):
     session_id: Optional[str] = Field(
         None, description="ID of the session to scope the representation to"

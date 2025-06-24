@@ -1,13 +1,12 @@
 import contextvars
-import os
 from typing import Optional
 
-from dotenv import load_dotenv
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool
 
-load_dotenv()
+from src.config import settings
 
 connect_args = {"prepare_threshold": None}
 
@@ -16,16 +15,28 @@ request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "request_context", default=None
 )
 
+engine_kwargs = {}
+
+if settings.DB.POOL_CLASS == "null":
+    engine_kwargs["poolclass"] = NullPool
+else:
+    # Only add pool-related kwargs for pooled connections
+    engine_kwargs.update(
+        {
+            "pool_pre_ping": settings.DB.POOL_PRE_PING,
+            "pool_size": settings.DB.POOL_SIZE,
+            "max_overflow": settings.DB.MAX_OVERFLOW,
+            "pool_timeout": settings.DB.POOL_TIMEOUT,
+            "pool_recycle": settings.DB.POOL_RECYCLE,
+            "pool_use_lifo": settings.DB.POOL_USE_LIFO,
+        }
+    )
+
 engine = create_async_engine(
-    os.environ["CONNECTION_URI"],
+    settings.DB.CONNECTION_URI,
     connect_args=connect_args,
-    echo=os.getenv("SQL_DEBUG", "false").lower() == "true",  # Only enable in debug mode
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=30,
-    pool_recycle=300,  # Recycle connections after 5 minutes
-    pool_use_lifo=True,  # Use last-in-first-out (LIFO) to prevent connection spread
+    echo=settings.DB.SQL_DEBUG,
+    **engine_kwargs,
 )
 
 SessionLocal = async_sessionmaker(
@@ -35,7 +46,7 @@ SessionLocal = async_sessionmaker(
     bind=engine,
 )
 
-table_schema = os.getenv("DATABASE_SCHEMA", "public")
+table_schema = settings.DB.SCHEMA
 meta = MetaData()
 meta.schema = table_schema
 Base = declarative_base(metadata=meta)
@@ -48,9 +59,9 @@ def init_db():
 
     # Create a sync engine for schema operations
     sync_engine = create_engine(
-        os.environ["CONNECTION_URI"],
-        pool_pre_ping=True,
-        echo=os.getenv("SQL_DEBUG", "false").lower() == "true",
+        settings.DB.CONNECTION_URI,
+        pool_pre_ping=settings.DB.POOL_PRE_PING,
+        echo=settings.DB.SQL_DEBUG,
     )
 
     with sync_engine.connect() as connection:

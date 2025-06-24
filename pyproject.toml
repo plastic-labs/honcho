@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.0.0"
+version = "2.0.1"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -22,9 +22,11 @@ dependencies = [
     "anthropic>=0.36.0",
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
-    "langfuse>=2.57.1",
+    "langfuse>=2.57.1,<3.0.0",
     "pyjwt>=2.10.0",
     "google-genai>=1.10.0",
+    "pydantic-settings>=2.9.1",
+    "tomli>=2.0.0; python_version < '3.11'",
     "tiktoken>=0.9.0",
 ]
 [tool.uv]

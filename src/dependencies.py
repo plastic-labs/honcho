@@ -5,7 +5,8 @@ from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .db import SessionLocal, request_context
+from src.config import settings
+from src.db import SessionLocal, request_context
 
 
 async def get_db():
@@ -15,7 +16,8 @@ async def get_db():
 
     db: AsyncSession = SessionLocal()
     try:
-        await db.execute(text(f"SET application_name = '{context}'"))
+        if settings.DB.TRACING:
+            await db.execute(text(f"SET application_name = '{context}'"))
         yield db
     except Exception:
         await db.rollback()
@@ -41,9 +43,10 @@ async def tracked_db(operation_name=None):
     db = SessionLocal()
 
     try:
-        await db.execute(
-            text(f"SET application_name = '{context or f'task:{operation_name}'}'")
-        )
+        if settings.DB.TRACING:
+            await db.execute(
+                text(f"SET application_name = '{context or f'task:{operation_name}'}'")
+            )
 
         yield db
         # Explicitly end transaction if still open
