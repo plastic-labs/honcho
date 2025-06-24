@@ -51,14 +51,16 @@ along with various guides.
 
 ## Usage
 
-Currently, there is a demo server of Honcho running at https://demo.honcho.dev.
-This server is not production ready and does not have an reliability guarantees.
-It is purely there for evaluation purposes.
+When you first install the SDKs they will be ready to go, pointing at
+https://demo.honcho.dev which is a demo server of Honcho. This server has no
+authentication, no SLA, and should only be used for testing and getting familiar
+with Honcho.
 
-A private beta for a tenant isolated production ready version of Honcho is
-currently underway. If interested fill out this
-[typeform](https://plasticlabs.typeform.com/honchobeta) and the Plastic Labs
-team will reach out to onboard users.
+For a production ready version of Honcho sign up for an account at
+https://app.honcho.dev and get started. When you sign up you'll be prompted to
+join an organization which will have a dedicated instance of Honcho.
+
+Provision API keys and change your base url to point to https://api.honcho.dev
 
 Additionally, Honcho can be self-hosted for testing and evaluation purposes. See
 the [Local Development](#local-development) section below for details on how to set up a local
@@ -369,7 +371,10 @@ The `Message` represents an atomic data unit that can exist at two levels:
 - **Session-level Messages**: Communication between peers within a session context
 - **Peer-level Messages**: Arbitrary data ingested by a peer to enhance its global representation (independent of any session)
 
-All messages are labeled by their source peer and can be processed asynchronously to update theory-of-mind models. This flexible design allows for both conversational interactions and broader data ingestion for personality modeling.
+All messages are labeled by their source peer and can be processed
+asynchronously to update theory-of-mind models. This flexible design allows for
+both conversational interactions and broader data ingestion for personality
+modeling.
 
 #### Collections
 
@@ -378,10 +383,8 @@ familiar with RAG based applications will be familiar with these. `Collections`
 store vector embedded data that developers and agents can retrieve against using
 functions like cosine similarity.
 
-Developers can create multiple `Collections` for a peer for different purposes
-such as modeling different personas, adding third-party data such as emails and
-PDF files, and more. Collections are also used internally by Honcho to store
-theory-of-mind representations.
+Collections are also used internally by Honcho while creating theory-of-mind
+representations of peers.
 
 #### Documents
 

@@ -38,8 +38,9 @@ git checkout -b fix/your-bug-fix-name
 ```
 
 **Branch naming conventions:**
+
 - `feature/description` - for new features
-- `fix/description` - for bug fixes  
+- `fix/description` - for bug fixes
 - `docs/description` - for documentation updates
 - `refactor/description` - for code refactoring
 - `test/description` - for adding or updating tests
@@ -64,6 +65,7 @@ type(scope): description
 ```
 
 **Types:**
+
 - `feat`: A new feature
 - `fix`: A bug fix
 - `docs`: Documentation only changes
@@ -73,6 +75,7 @@ type(scope): description
 - `chore`: Changes to the build process or auxiliary tools
 
 **Examples:**
+
 ```bash
 git commit -m "feat(api): add new dialectic endpoint for user insights"
 git commit -m "fix(db): resolve connection pool timeout issue"
@@ -82,6 +85,7 @@ git commit -m "docs(readme): update installation instructions"
 ### 5. Submit a Pull Request
 
 1. Push your branch to your fork:
+
    ```bash
    git push origin your-branch-name
    ```
