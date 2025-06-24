@@ -136,8 +136,8 @@ class SessionPeerConfig(BaseModel):
         default=False,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
     )
-    observe_me: bool = Field(
-        default=True,
+    observe_me: bool | None = Field(
+        default=None,
         description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
     )
 
@@ -190,6 +190,11 @@ class DocumentBase(BaseModel):
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict = {}
+
+
+class DocumentUpdate(DocumentBase):
+    content: Annotated[str, Field(min_length=1, max_length=100000)]
+    metadata: dict | None = None
 
 
 class DialecticOptions(BaseModel):

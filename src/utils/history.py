@@ -5,6 +5,7 @@ from typing import Optional, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.utils.model_client import ModelClient, ModelProvider
 
 from .. import crud, models
@@ -47,8 +48,8 @@ __all__ = [
 
 
 # Configuration constants for summaries
-MESSAGES_PER_SHORT_SUMMARY = 20  # How often to create short summaries
-MESSAGES_PER_LONG_SUMMARY = 60  # How often to create long summaries
+MESSAGES_PER_SHORT_SUMMARY = settings.HISTORY.MESSAGES_PER_SHORT_SUMMARY
+MESSAGES_PER_LONG_SUMMARY = settings.HISTORY.MESSAGES_PER_LONG_SUMMARY
 
 
 # The types of summary to store in the session metadata
@@ -58,8 +59,8 @@ class SummaryType(Enum):
 
 
 # Default model settings for summary generation
-DEFAULT_PROVIDER = ModelProvider.GEMINI
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
+# DEFAULT_PROVIDER = ModelProvider.GEMINI
+# DEFAULT_MODEL = "gemini-2.0-flash-lite"
 
 
 async def get_summary(
@@ -170,12 +171,19 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
 Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} summary that captures the key points and context."""
 
     # Create a model client
-    client = ModelClient(provider=DEFAULT_PROVIDER, model=DEFAULT_MODEL)
+    client = ModelClient(
+        provider=ModelProvider(settings.LLM.SUMMARY_PROVIDER),
+        model=settings.LLM.SUMMARY_MODEL,
+    )
 
     # Generate the summary
     llm_messages = [{"role": "user", "content": user_prompt}]
 
-    max_tokens = max_tokens or (1000 if summary_type == SummaryType.SHORT else 2000)
+    max_tokens = max_tokens or (
+        settings.LLM.SUMMARY_MAX_TOKENS_SHORT
+        if summary_type == SummaryType.SHORT
+        else settings.LLM.SUMMARY_MAX_TOKENS_LONG
+    )
 
     try:
         summary_text = await client.generate(
@@ -202,9 +210,11 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
         # Fallback to a basic summary in case of error
         # Do not save this failed summary to the session metadata.
         return Summary(
-            content=f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
-            if messages
-            else "No messages to summarize!",
+            content=(
+                f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
+                if messages
+                else "No messages to summarize!"
+            ),
             message_count=0,
             summary_type=summary_type.value,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),

@@ -8,6 +8,8 @@ from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
+
 from .. import crud
 from ..utils import history
 from .tom.embeddings import CollectionEmbeddingStore
@@ -18,8 +20,8 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=False)
 
-TOM_METHOD = os.getenv("TOM_METHOD", "single_prompt")
-USER_REPRESENTATION_METHOD = os.getenv("USER_REPRESENTATION_METHOD", "long_term")
+TOM_METHOD = settings.DERIVER.TOM_METHOD
+USER_REPRESENTATION_METHOD = settings.DERIVER.USER_REPRESENTATION_METHOD
 
 
 class PayloadSchema(BaseModel):
@@ -75,9 +77,11 @@ async def process_item(db: AsyncSession, payload: dict):
             "Finished processing message %s in %s %s",
             validated_payload.message_id,
             "session" if validated_payload.session_name else "peer",
-            validated_payload.session_name
-            if validated_payload.session_name
-            else validated_payload.sender_name,
+            (
+                validated_payload.session_name
+                if validated_payload.session_name
+                else validated_payload.sender_name
+            ),
         )
     await summarize_if_needed(
         db,

@@ -1,4 +1,9 @@
 {
   "python.analysis.typeCheckingMode": "basic",
-  "files.exclude": {}
+  "files.exclude": {},
+  "python.testing.pytestArgs": [
+    "tests"
+  ],
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestEnabled": true
 }
