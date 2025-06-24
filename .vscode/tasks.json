@@ -2,9 +2,9 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "start",
+      "label": "sync",
       "type": "shell",
-      "command": "uv sync && uv run fastapi dev src/main.py",
+      "command": "uv sync",
       "group": "none",
       "presentation": {
         "reveal": "always",

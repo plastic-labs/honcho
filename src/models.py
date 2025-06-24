@@ -1,5 +1,6 @@
 import datetime
 from logging import getLogger
+from typing import Any, final
 
 import tiktoken
 from dotenv import load_dotenv
@@ -23,7 +24,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
+from typing_extensions import override
 
 from .db import Base
 
@@ -93,19 +96,20 @@ session_peers_table = Table(
 )
 
 
+@final
 class Workspace(Base):
-    __tablename__ = "workspaces"
+    __tablename__: str = "workspaces"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     peers = relationship("Peer", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
-    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -114,12 +118,13 @@ class Workspace(Base):
     )
 
 
+@final
 class Peer(Base):
-    __tablename__ = "peers"
+    __tablename__: str = "peers"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -128,7 +133,7 @@ class Peer(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     workspace = relationship("Workspace", back_populates="peers")
     sessions = relationship(
@@ -148,13 +153,14 @@ class Peer(Base):
         return f"Peer(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, created_at={self.created_at}, h_metadata={self.h_metadata}, configuration={self.configuration})"
 
 
+@final
 class Session(Base):
-    __tablename__ = "sessions"
+    __tablename__: str = "sessions"
     id: Mapped[str] = mapped_column(TEXT, primary_key=True, default=generate_nanoid)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     is_active: Mapped[bool] = mapped_column(default=True)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -164,7 +170,7 @@ class Session(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    configuration: Mapped[dict] = mapped_column(JSONB, default=dict)
+    configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
     peers = relationship(
         "Peer", secondary=session_peers_table, back_populates="sessions"
@@ -181,8 +187,9 @@ class Session(Base):
         return f"Session(id={self.id}, name={self.name}, workspace_name={self.workspace_name}, is_active={self.is_active}, created_at={self.created_at}, h_metadata={self.h_metadata})"
 
 
+@final
 class Message(Base):
-    __tablename__ = "messages"
+    __tablename__: str = "messages"
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
@@ -191,8 +198,8 @@ class Message(Base):
     )
     session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
     content: Mapped[str] = mapped_column(TEXT)
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -234,26 +241,28 @@ class Message(Base):
         ),
     )
 
+    @override
     def __repr__(self) -> str:
         return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
 
 
 @event.listens_for(Message, "before_insert")
-def calculate_token_count_on_insert(_mapper, _connection, target):
+def calculate_token_count_on_insert(_mapper: Any, _connection: Any, target: Message):
     """Calculate token count before inserting a new message."""
     target.token_count = count_tokens(target.content)
 
 
+@final
 class Collection(Base):
-    __tablename__ = "collections"
+    __tablename__: str = "collections"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
-    h_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
-    internal_metadata: Mapped[dict] = mapped_column(
+    h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     documents = relationship(
@@ -280,14 +289,15 @@ class Collection(Base):
     )
 
 
+@final
 class Document(Base):
-    __tablename__ = "documents"
+    __tablename__: str = "documents"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    internal_metadata: Mapped[dict] = mapped_column(
+    internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding = mapped_column(Vector(1536))
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -326,20 +336,22 @@ class Document(Base):
     )
 
 
+@final
 class QueueItem(Base):
-    __tablename__ = "queue"
+    __tablename__: str = "queue"
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id"), index=True, nullable=True
     )
-    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+@final
 class ActiveQueueSession(Base):
-    __tablename__ = "active_queue_sessions"
+    __tablename__: str = "active_queue_sessions"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     session_id: Mapped[str | None] = mapped_column(
@@ -363,5 +375,15 @@ class ActiveQueueSession(Base):
     )
 
 
+@final
 class SessionPeer(Base):
-    __table__ = session_peers_table
+    __table__: Table = session_peers_table
+
+    # Type annotations for the columns
+    workspace_name: Mapped[str]
+    session_name: Mapped[str]
+    peer_name: Mapped[str]
+    configuration: Mapped[dict[str, Any]]
+    internal_metadata: Mapped[dict[str, Any]]
+    joined_at: Mapped[datetime.datetime]
+    left_at: Mapped[datetime.datetime | None]

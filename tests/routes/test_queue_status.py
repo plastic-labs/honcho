@@ -1,5 +1,7 @@
 import pytest
+from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 
@@ -8,7 +10,11 @@ from src import models
 class TestDeriverStatusEndpoint:
     """Test suite for the /deriver/status endpoint"""
 
-    async def test_get_deriver_status_peer_only(self, client, db_session, sample_data):
+    async def test_get_deriver_status_peer_only(
+        self,
+        client: TestClient,
+        sample_data: tuple[models.Workspace, models.Peer],
+    ):
         """Test getting deriver status filtered by peer only"""
         test_workspace, test_peer = sample_data
 
@@ -31,10 +37,13 @@ class TestDeriverStatusEndpoint:
         assert isinstance(data["pending_work_units"], int)
 
     async def test_get_deriver_status_session_only(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test getting deriver status filtered by session only"""
-        test_workspace, test_peer = sample_data
+        test_workspace, _ = sample_data
 
         # Create a test session
         test_session = models.Session(
@@ -59,7 +68,10 @@ class TestDeriverStatusEndpoint:
         assert isinstance(data["total_work_units"], int)
 
     async def test_get_deriver_status_peer_and_session(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test getting deriver status filtered by both peer and session"""
         test_workspace, test_peer = sample_data
@@ -86,7 +98,9 @@ class TestDeriverStatusEndpoint:
         assert "pending_work_units" in data
 
     async def test_get_deriver_status_with_include_sender_true(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test getting deriver status with include_sender=True"""
         test_workspace, test_peer = sample_data
@@ -101,7 +115,9 @@ class TestDeriverStatusEndpoint:
         assert "total_work_units" in data
 
     async def test_get_deriver_status_with_include_sender_false(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test getting deriver status with include_sender=False (default)"""
         test_workspace, test_peer = sample_data
@@ -115,7 +131,9 @@ class TestDeriverStatusEndpoint:
         assert data["peer_id"] == test_peer.name
         assert "total_work_units" in data
 
-    async def test_get_deriver_status_no_parameters(self, client, sample_data):
+    async def test_get_deriver_status_no_parameters(
+        self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
+    ):
         """Test getting deriver status without required parameters returns 400"""
         test_workspace, _ = sample_data
 
@@ -128,7 +146,9 @@ class TestDeriverStatusEndpoint:
             in data["detail"]
         )
 
-    async def test_get_deriver_status_nonexistent_peer(self, client, sample_data):
+    async def test_get_deriver_status_nonexistent_peer(
+        self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
+    ):
         """Test getting deriver status for nonexistent peer returns empty result"""
         test_workspace, _ = sample_data
         nonexistent_peer = str(generate_nanoid())
@@ -144,7 +164,9 @@ class TestDeriverStatusEndpoint:
         assert data["in_progress_work_units"] == 0
         assert data["pending_work_units"] == 0
 
-    async def test_get_deriver_status_nonexistent_session(self, client, sample_data):
+    async def test_get_deriver_status_nonexistent_session(
+        self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
+    ):
         """Test getting deriver status for nonexistent session returns empty result"""
         test_workspace, _ = sample_data
         nonexistent_session = str(generate_nanoid())
@@ -160,7 +182,7 @@ class TestDeriverStatusEndpoint:
         assert data["in_progress_work_units"] == 0
         assert data["pending_work_units"] == 0
 
-    async def test_get_deriver_status_nonexistent_workspace(self, client):
+    async def test_get_deriver_status_nonexistent_workspace(self, client: TestClient):
         """Test getting deriver status for nonexistent workspace returns empty result"""
         nonexistent_workspace = str(generate_nanoid())
         fake_peer = str(generate_nanoid())
@@ -178,7 +200,10 @@ class TestDeriverStatusEndpoint:
         assert data["pending_work_units"] == 0
 
     async def test_get_deriver_status_with_queue_items(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test getting deriver status when there are actual queue items"""
         test_workspace, test_peer = sample_data
@@ -230,7 +255,10 @@ class TestDeriverStatusEndpoint:
         assert data["pending_work_units"] >= 1
 
     async def test_get_deriver_status_with_sessions_breakdown(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test getting deriver status shows sessions breakdown when appropriate"""
         test_workspace, test_peer = sample_data
@@ -288,7 +316,9 @@ class TestDeriverStatusEndpoint:
                 assert "in_progress_work_units" in session_data
                 assert "pending_work_units" in session_data
 
-    async def test_get_deriver_status_empty_parameters(self, client, sample_data):
+    async def test_get_deriver_status_empty_parameters(
+        self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
+    ):
         """Test various edge cases with empty or invalid parameters"""
         test_workspace, _ = sample_data
 
@@ -305,7 +335,7 @@ class TestDeriverStatusEndpoint:
         assert response.status_code == 400
 
     async def test_get_deriver_status_boolean_parameter_variations(
-        self, client, sample_data
+        self, client: TestClient, sample_data: tuple[models.Workspace, models.Peer]
     ):
         """Test different boolean parameter formats for include_sender"""
         test_workspace, test_peer = sample_data
@@ -335,7 +365,10 @@ class TestDeriverStatusEndpoint:
         assert response.status_code == 200
 
     async def test_get_deriver_status_response_consistency(
-        self, client, db_session, sample_data
+        self,
+        client: TestClient,
+        db_session: AsyncSession,
+        sample_data: tuple[models.Workspace, models.Peer],
     ):
         """Test that response structure is consistent across different parameter combinations"""
         test_workspace, test_peer = sample_data

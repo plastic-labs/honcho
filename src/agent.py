@@ -1,127 +1,103 @@
 import asyncio
-import json
 import logging
 import os
-from typing import Any, Optional
 
-import sentry_sdk
-from anthropic import MessageStreamManager
-from langfuse.decorators import langfuse_context, observe
-from sentry_sdk.ai.monitoring import ai_track
+from langfuse.decorators import langfuse_context, observe  # pyright: ignore
+from mirascope import llm
+from mirascope.integrations.langfuse import with_langfuse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models, schemas
+from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.tom import get_tom_inference
 from src.deriver.tom.embeddings import CollectionEmbeddingStore
 from src.deriver.tom.long_term import get_user_representation_long_term
+from src.deriver.tom.single_prompt import UserRepresentationOutput
 from src.utils import history, parse_xml_content
-from src.utils.model_client import ModelClient, ModelProvider
+from src.utils.clients import clients
+from src.utils.types import track
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-QUERY_GENERATION_SYSTEM = """Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user.
-    Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
-    For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
-    
-    Format your response as a JSON array of strings, with each string being a search query. 
-    Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
-    Example:
-    ["query about interests", "query about personality", "query about experiences"]"""
+
+@track("Dialectic Call")
+@with_langfuse()
+@llm.call(
+    provider=(
+        settings.LLM.DIALECTIC_PROVIDER
+        if settings.LLM.DIALECTIC_PROVIDER != "custom"
+        else "openai"
+    ),
+    model=settings.LLM.DIALECTIC_MODEL,
+    client=clients[settings.LLM.DIALECTIC_PROVIDER],
+)
+async def dialectic_call(
+    query: str, working_representation: str, additional_context: str
+):
+    return f"""
+You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None".
+
+<query>{query}</query>
+<context>{working_representation}</context>
+<conversation_history>{additional_context}</conversation_history>
+"""
 
 
-class Dialectic:
-    def __init__(self, agent_input: str, user_representation: str, chat_history: str):
-        self.agent_input = agent_input
-        self.user_representation = user_representation
-        self.chat_history = chat_history
-        self.client = ModelClient(
-            provider=ModelProvider(settings.LLM.DIALECTIC_PROVIDER),
-            model=settings.LLM.DIALECTIC_MODEL,
-        )
-        self.system_prompt = """You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None"."""
+@track("Dialectic Stream")
+@with_langfuse()
+@llm.call(
+    provider=(
+        settings.LLM.DIALECTIC_PROVIDER
+        if settings.LLM.DIALECTIC_PROVIDER != "custom"
+        else "openai"
+    ),
+    model=settings.LLM.DIALECTIC_MODEL,
+    stream=True,
+    client=clients[settings.LLM.DIALECTIC_PROVIDER],
+)
+async def dialectic_stream(
+    query: str, working_representation: str, additional_context: str
+):
+    return f"""
+You are operating as a context service that helps maintain psychological understanding of users across applications. Alongside a query, you'll receive: 1) previously collected psychological context about the user that I've maintained, 2) a series of long-term facts about the user, and 3) their current conversation/interaction from the requesting application. Your goal is to analyze this information and provide theory-of-mind insights that help applications personalize their responses.  Please respond in a brief, matter-of-fact, and appropriate manner to convey as much relevant information to the application based on its query and the user's most recent message. You are encouraged to provide any context from the provided resources that helps provide a more complete or nuanced understanding of the user, as long as it is somewhat relevant to the query. If the context provided doesn't help address the query, write absolutely NOTHING but "None".
 
-    @ai_track("Dialectic Call")
-    @observe()
-    async def call(self):
-        with sentry_sdk.start_transaction(
-            op="dialectic-inference", name="Dialectic API Response"
-        ):
-            logger.debug(
-                f"Starting call() method with query length: {len(self.agent_input)}"
-            )
-            call_start = asyncio.get_event_loop().time()
+<query>{query}</query>
+<context>{working_representation}</context>
+<conversation_history>{additional_context}</conversation_history>
+"""
 
-            prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history>
-            """
-            logger.debug(
-                f"Prompt constructed with context length: {len(self.user_representation)} chars"
-            )
 
-            # Create a properly formatted message
-            message: dict[str, Any] = {"role": "user", "content": prompt}
+class SemanticQueries(BaseModel):
+    queries: list[str]
 
-            # Generate the response
-            logger.debug("Calling model for generation")
-            model_start = asyncio.get_event_loop().time()
-            response = await self.client.generate(
-                messages=[message],
-                system=self.system_prompt,
-                max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
-            )
-            model_time = asyncio.get_event_loop().time() - model_start
-            logger.debug(
-                f"Model response received in {model_time:.2f}s: {len(response)} chars"
-            )
 
-            total_time = asyncio.get_event_loop().time() - call_start
-            logger.debug(f"call() completed in {total_time:.2f}s")
-            return [{"text": response}]
+@with_langfuse()
+@llm.call(
+    provider=(
+        settings.LLM.QUERY_GENERATION_PROVIDER
+        if settings.LLM.QUERY_GENERATION_PROVIDER != "custom"
+        else "openai"
+    ),
+    model=settings.LLM.QUERY_GENERATION_MODEL,
+    response_model=SemanticQueries,
+    client=clients[settings.LLM.QUERY_GENERATION_PROVIDER],
+)
+async def generate_semantic_queries_llm(query: str):
+    return f"""
+Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
+For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
 
-    @ai_track("Dialectic Call")
-    @observe()
-    async def stream(self):
-        with sentry_sdk.start_transaction(
-            op="dialectic-inference", name="Dialectic API Response"
-        ):
-            logger.debug(
-                f"Starting stream() method with query length: {len(self.agent_input)}"
-            )
-            stream_start = asyncio.get_event_loop().time()
+Format your response as a JSON array of strings, with each string being a search query. 
+Respond only in valid JSON, without markdown formatting or quotes, and nothing else.
+Example:
+["query about interests", "query about personality", "query about experiences"]
 
-            prompt = f"""
-            <query>{self.agent_input}</query>
-            <context>{self.user_representation}</context>
-            <conversation_history>{self.chat_history}</conversation_history> 
-            """
-            logger.debug(
-                f"Prompt constructed with context length: {len(self.user_representation)} chars"
-            )
-
-            # Create a properly formatted message
-            message: dict[str, Any] = {"role": "user", "content": prompt}
-
-            # Stream the response
-            logger.debug("Calling model for streaming")
-            model_start = asyncio.get_event_loop().time()
-            stream = await self.client.stream(
-                messages=[message],
-                system=self.system_prompt,
-                max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
-            )
-
-            stream_setup_time = asyncio.get_event_loop().time() - model_start
-            logger.debug(f"Stream started in {stream_setup_time:.2f}s")
-
-            total_time = asyncio.get_event_loop().time() - stream_start
-            logger.debug(f"stream() setup completed in {total_time:.2f}s")
-            return stream
+<query>{query}</query>
+"""
 
 
 @observe()
@@ -131,7 +107,7 @@ async def chat(
     session_name: str | None,
     queries: str | list[str],
     stream: bool = False,
-) -> schemas.DialecticResponse | MessageStreamManager:
+) -> llm.Stream | llm.CallResponse:
     """
     Chat with the Dialectic API using on-demand user representation generation.
 
@@ -160,8 +136,6 @@ async def chat(
 
     logger.debug(f"Received query: {final_query} for session {session_name}")
     logger.debug("Starting on-demand user representation generation")
-
-    start_time = asyncio.get_event_loop().time()
 
     # Setup phase - create resources we'll need for all operations
 
@@ -237,15 +211,7 @@ async def chat(
         f"User representation generated: {len(user_representation)} characters"
     )
 
-    # Create a Dialectic chain with the fresh user representation
-    chain = Dialectic(
-        agent_input=final_query,
-        user_representation=user_representation,
-        chat_history=chat_history,
-    )
-
-    generation_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(f"User representation generation completed in {generation_time:.2f}s")
+    # Call dialectic with enhanced context
 
     langfuse_context.update_current_trace(
         session_id=session_name,
@@ -256,21 +222,16 @@ async def chat(
 
     # Use streaming or non-streaming response based on the request
     logger.debug(f"Calling Dialectic with streaming={stream}")
-    query_start_time = asyncio.get_event_loop().time()
     if stream:
-        response_stream = await chain.stream()
-        logger.debug(
-            f"Dialectic stream started after {asyncio.get_event_loop().time() - query_start_time:.2f}s"
+        logger.debug("Calling Dialectic with streaming")
+        response = await dialectic_stream(
+            final_query, user_representation, chat_history
         )
-        return response_stream
-
-    response = await chain.call()
-    query_time = asyncio.get_event_loop().time() - query_start_time
-    total_time = asyncio.get_event_loop().time() - start_time
-    logger.debug(
-        f"Dialectic response received in {query_time:.2f}s (total: {total_time:.2f}s)"
-    )
-    return schemas.DialecticResponse(content=response[0]["text"])
+        return response
+    else:
+        logger.debug("Calling Dialectic with non-streaming")
+        response = await dialectic_call(final_query, user_representation, chat_history)
+        return response
 
 
 async def get_long_term_facts(
@@ -324,7 +285,7 @@ async def get_long_term_facts(
     all_facts_lists = await asyncio.gather(*query_tasks)
 
     # Combine all facts into a single set to remove duplicates
-    retrieved_facts = set()
+    retrieved_facts: set[str] = set()
     for facts in all_facts_lists:
         retrieved_facts.update(facts)
 
@@ -360,7 +321,14 @@ async def run_tom_inference(chat_history: str) -> str:
     tom_time = asyncio.get_event_loop().time() - tom_start_time
 
     logger.debug(f"ToM inference completed in {tom_time:.2f}s")
-    prediction = parse_xml_content(tom_inference_response, "prediction")
+
+    # Create a prediction summary from the structured Pydantic object
+    prediction = (
+        f"Current context: {tom_inference_response.current_state.immediate_context}"
+    )
+    if tom_inference_response.tentative_inferences:
+        prediction += f"\nKey inferences: {', '.join([inf.interpretation for inf in tom_inference_response.tentative_inferences[:3]])}"
+
     logger.debug(f"Prediction length: {len(prediction)} characters")
 
     return prediction
@@ -381,47 +349,9 @@ async def generate_semantic_queries(query: str) -> list[str]:
     query_start = asyncio.get_event_loop().time()
 
     logger.debug("Calling LLM for query generation")
-    llm_start = asyncio.get_event_loop().time()
-
     try:
-        provider = ModelProvider(settings.LLM.QUERY_GENERATION_PROVIDER)
-    except ValueError as e:
-        logger.error(
-            f"Invalid query-generation provider '{settings.LLM.QUERY_GENERATION_PROVIDER}': {e}"
-        )
-        raise
-
-    # Create a new model client
-    client = ModelClient(
-        provider=provider,
-        model=settings.LLM.QUERY_GENERATION_MODEL,
-    )
-
-    # Prepare the messages for Anthropic
-    messages: list[dict[str, Any]] = [{"role": "user", "content": query}]
-
-    # Generate the response
-    try:
-        result = await client.generate(
-            messages=messages,
-            system=QUERY_GENERATION_SYSTEM,
-            max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
-            use_caching=True,  # Likely not caching because the system prompt is under 1000 tokens
-        )
-        llm_time = asyncio.get_event_loop().time() - llm_start
-        logger.debug(f"LLM response received in {llm_time:.2f}s: {result[:100]}...")
-
-        # Parse the JSON response to get a list of queries
-        try:
-            queries = json.loads(result)
-            if not isinstance(queries, list):
-                # Fallback if response is not a valid list
-                logger.debug("LLM response not a list, using as single query")
-                queries = [result]
-        except json.JSONDecodeError:
-            # Fallback if response is not valid JSON
-            logger.debug("Failed to parse JSON response, using raw response as query")
-            queries = [query]  # Fall back to the original query
+        queries_result = await generate_semantic_queries_llm(query)
+        queries = queries_result.queries
 
         # Ensure we always include the original query
         if query not in queries:
@@ -433,8 +363,8 @@ async def generate_semantic_queries(query: str) -> list[str]:
 
         return queries
     except Exception as e:
-        logger.error(f"Error during API call: {str(e)}")
-        raise
+        logger.error(f"Error during query generation: {str(e)}")
+        return [query]  # Fallback to original query
 
 
 async def generate_user_representation(
@@ -445,7 +375,7 @@ async def generate_user_representation(
     tom_inference: str,
     facts: list[str],
     db: AsyncSession,
-    message_id: Optional[str] = None,
+    message_id: str | None = None,
     with_inference: bool = False,
 ) -> str:
     """
@@ -473,19 +403,37 @@ async def generate_user_representation(
         # Generate the new user representation
         logger.debug("Calling get_user_representation")
         gen_start_time = asyncio.get_event_loop().time()
-        user_representation_response = await get_user_representation_long_term(
-            chat_history=chat_history,
-            facts=facts,
-            user_representation=latest_representation,
-            tom_inference=tom_inference,
+        user_representation_response: UserRepresentationOutput = (
+            await get_user_representation_long_term(
+                chat_history=chat_history,
+                facts=facts,
+                user_representation=latest_representation,
+                tom_inference=tom_inference,
+            )
         )
         gen_time = asyncio.get_event_loop().time() - gen_start_time
         logger.debug(f"get_user_representation completed in {gen_time:.2f}s")
 
         # Extract the representation from the response
-        representation = parse_xml_content(
-            user_representation_response, "representation"
-        )
+        if hasattr(user_representation_response, "current_state"):
+            # New Mirascope response model
+            representation = f"""
+CURRENT STATE: {user_representation_response.current_state}
+
+TENTATIVE PATTERNS:
+{chr(10).join([pattern.pattern for pattern in user_representation_response.tentative_patterns])}
+
+KNOWLEDGE GAPS:
+{chr(10).join([gap.missing_info for gap in user_representation_response.knowledge_gaps])}
+
+RECENT UPDATES:
+{chr(10).join([update.detail for update in user_representation_response.updates.new_information])}
+"""
+        else:
+            # Fallback to XML parsing for backwards compatibility
+            representation = parse_xml_content(
+                str(user_representation_response), "representation"
+            )
         logger.debug(f"Extracted representation: {len(representation)} characters")
     else:
         representation = f"""

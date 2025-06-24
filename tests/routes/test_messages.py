@@ -1,11 +1,16 @@
 import pytest
+from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models  # Import your SQLAlchemy models
+from src.models import Peer, Workspace
 
 
 @pytest.mark.asyncio
-async def test_create_message(client, db_session, sample_data):
+async def test_create_message(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Create a test session
@@ -39,7 +44,9 @@ async def test_create_message(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_create_batch_messages_with_metadata(client, db_session, sample_data):
+async def test_create_batch_messages_with_metadata(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test batch message creation with metadata for each message"""
     test_workspace, test_peer = sample_data
 
@@ -81,7 +88,9 @@ async def test_create_batch_messages_with_metadata(client, db_session, sample_da
 
 
 @pytest.mark.asyncio
-async def test_create_batch_messages_without_metadata(client, db_session, sample_data):
+async def test_create_batch_messages_without_metadata(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test batch message creation without metadata (should default to empty dict)"""
     test_workspace, test_peer = sample_data
 
@@ -112,7 +121,7 @@ async def test_create_batch_messages_without_metadata(client, db_session, sample
 
 @pytest.mark.asyncio
 async def test_create_batch_messages_with_null_metadata(
-    client, db_session, sample_data
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
     """Test batch message creation with null metadata"""
     test_workspace, test_peer = sample_data
@@ -144,7 +153,9 @@ async def test_create_batch_messages_with_null_metadata(
 
 
 @pytest.mark.asyncio
-async def test_get_messages(client, db_session, sample_data):
+async def test_get_messages(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Create a test session and message
@@ -178,7 +189,9 @@ async def test_get_messages(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_messages_with_reverse(client, db_session, sample_data):
+async def test_get_messages_with_reverse(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test getting messages with reverse parameter"""
     test_workspace, test_peer = sample_data
 
@@ -232,7 +245,9 @@ async def test_get_messages_with_reverse(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_messages_with_empty_filter(client, db_session, sample_data):
+async def test_get_messages_with_empty_filter(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test getting messages with empty filter object"""
     test_workspace, test_peer = sample_data
 
@@ -263,7 +278,9 @@ async def test_get_messages_with_empty_filter(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_messages_with_null_filter(client, db_session, sample_data):
+async def test_get_messages_with_null_filter(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test getting messages with null filter"""
     test_workspace, test_peer = sample_data
 
@@ -294,7 +311,9 @@ async def test_get_messages_with_null_filter(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_messages_no_body(client, db_session, sample_data):
+async def test_get_messages_no_body(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test getting messages without any request body"""
     test_workspace, test_peer = sample_data
 
@@ -324,7 +343,9 @@ async def test_get_messages_no_body(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_filtered_messages(client, db_session, sample_data):
+async def test_get_filtered_messages(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Create a test session and messages
@@ -368,7 +389,7 @@ async def test_get_filtered_messages(client, db_session, sample_data):
 
 @pytest.mark.asyncio
 async def test_get_filtered_messages_with_complex_filter(
-    client, db_session, sample_data
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
 ):
     """Test getting messages with complex metadata filter"""
     test_workspace, test_peer = sample_data
@@ -419,7 +440,9 @@ async def test_get_filtered_messages_with_complex_filter(
 
 
 @pytest.mark.asyncio
-async def test_update_message(client, db_session, sample_data):
+async def test_update_message(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Create a test session and message
@@ -448,7 +471,9 @@ async def test_update_message(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_update_message_with_complex_metadata(client, db_session, sample_data):
+async def test_update_message_with_complex_metadata(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test updating message with complex metadata structure"""
     test_workspace, test_peer = sample_data
 
@@ -485,7 +510,9 @@ async def test_update_message_with_complex_metadata(client, db_session, sample_d
 
 
 @pytest.mark.asyncio
-async def test_update_message_empty_metadata(client, db_session, sample_data):
+async def test_update_message_empty_metadata(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     # note that this should not change the metadata of the message.
     # this test is to ensure that the metadata is not changed when it is set to None.
 
@@ -524,7 +551,9 @@ async def test_update_message_empty_metadata(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_update_message_with_empty_dict_metadata(client, db_session, sample_data):
+async def test_update_message_with_empty_dict_metadata(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test updating message with empty dictionary metadata"""
     test_workspace, test_peer = sample_data
 
@@ -555,7 +584,9 @@ async def test_update_message_with_empty_dict_metadata(client, db_session, sampl
 
 
 @pytest.mark.asyncio
-async def test_get_single_message(client, db_session, sample_data):
+async def test_get_single_message(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # Create a test session and message
@@ -587,9 +618,11 @@ async def test_get_single_message(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_nonexistent_message(client, db_session, sample_data):
+async def test_get_nonexistent_message(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test getting a message that doesn't exist"""
-    test_workspace, test_peer = sample_data
+    test_workspace, _ = sample_data
 
     # Create a test session
     test_session = models.Session(
@@ -606,9 +639,11 @@ async def test_get_nonexistent_message(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_update_nonexistent_message(client, db_session, sample_data):
+async def test_update_nonexistent_message(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test updating a message that doesn't exist"""
-    test_workspace, test_peer = sample_data
+    test_workspace, _ = sample_data
 
     # Create a test session
     test_session = models.Session(
@@ -626,7 +661,9 @@ async def test_update_nonexistent_message(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_create_messages_for_nonexistent_session(client, sample_data):
+async def test_create_messages_for_nonexistent_session(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test creating messages for a session that doesn't exist - should create the session"""
     test_workspace, test_peer = sample_data
 
@@ -653,9 +690,11 @@ async def test_create_messages_for_nonexistent_session(client, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_messages_for_nonexistent_session(client, sample_data):
+async def test_get_messages_for_nonexistent_session(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test getting messages for a session that doesn't exist - should return empty list"""
-    test_workspace, test_peer = sample_data
+    test_workspace, _ = sample_data
 
     nonexistent_session_id = str(generate_nanoid())
     response = client.post(
@@ -670,9 +709,11 @@ async def test_get_messages_for_nonexistent_session(client, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_create_empty_batch_messages(client, db_session, sample_data):
+async def test_create_empty_batch_messages(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test creating an empty batch of messages"""
-    test_workspace, test_peer = sample_data
+    test_workspace, _ = sample_data
 
     # Create a test session
     test_session = models.Session(
@@ -690,7 +731,9 @@ async def test_create_empty_batch_messages(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_create_batch_messages_max_limit(client, db_session, sample_data):
+async def test_create_batch_messages_max_limit(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
     """Test creating batch messages at the maximum limit (100 messages)"""
     test_workspace, test_peer = sample_data
 

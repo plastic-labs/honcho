@@ -1,13 +1,18 @@
 import logging
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import sentry_sdk
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
+
+if TYPE_CHECKING:
+    from sentry_sdk._types import Event, Hint
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -63,9 +68,9 @@ async def setup_admin_jwt():
 SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
 
-    def before_send(event, hint):
+    def before_send(event: Event, hint: Hint) -> Event | None:
         if "exc_info" in hint:
-            exc_type, exc_value, _ = hint["exc_info"]
+            _, exc_value, _ = hint["exc_info"]
             # Filter out HonchoExceptions from being sent to Sentry
             if isinstance(exc_value, HonchoException):
                 return None
@@ -95,7 +100,7 @@ if SENTRY_ENABLED:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
     yield
     await engine.dispose()
 
@@ -149,7 +154,7 @@ app.include_router(keys.router, prefix="/v2")
 
 # Global exception handlers
 @app.exception_handler(HonchoException)
-async def honcho_exception_handler(request: Request, exc: HonchoException):
+async def honcho_exception_handler(_request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
     logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
     return JSONResponse(
@@ -159,7 +164,7 @@ async def honcho_exception_handler(request: Request, exc: HonchoException):
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
+async def global_exception_handler(_request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
     if SENTRY_ENABLED:
@@ -171,9 +176,9 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 @app.middleware("http")
-async def track_request(request: Request, call_next):
-    if not settings.DB.TRACING:
-        return await call_next(request)
+async def track_request(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+):
     # Create a request ID that includes endpoint information
     endpoint = re.sub(r"/[A-Za-z0-9_-]{21}", "", request.url.path).replace("/", "_")
     request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"
