@@ -14,7 +14,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from src.utils.clients import Providers
+from src.utils.types import Providers
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
@@ -176,23 +176,23 @@ class LLMSettings(HonchoSettings):
     DEFAULT_TEMPERATURE: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)] = 0.0
 
     # Dialectic specific
-    DIALECTIC_PROVIDER: Provider = "anthropic"
+    DIALECTIC_PROVIDER: Providers = "anthropic"
     DIALECTIC_MODEL: str = "claude-3-5-haiku-20241022"
     # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
 
     # Query Generation specific
-    QUERY_GENERATION_PROVIDER: Provider = "google"
+    QUERY_GENERATION_PROVIDER: Providers = "google"
     QUERY_GENERATION_MODEL: str = "gemini-2.0-flash-lite"
     # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
 
     # Tom Inference specific
-    # TOM_INFERENCE_PROVIDER: Provider = "groq"
+    # TOM_INFERENCE_PROVIDER: Providers = "groq"
     # TOM_INFERENCE_MODEL: str = "llama-3.3-70b-versatile"
     TOM_INFERENCE_PROVIDER: Providers = "anthropic"
     TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
 
     # Summarization specific
-    SUMMARY_PROVIDERS: Providers = "google"
+    SUMMARY_PROVIDER: Providers = "google"
     SUMMARY_MODEL: str = (
         "gemini-1.5-flash-latest"  # Consider specific model version if needed
     )

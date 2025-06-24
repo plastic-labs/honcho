@@ -1,13 +1,10 @@
-from typing import Literal
 from anthropic import AsyncAnthropic
 from google import genai
 from groq import Groq
-from mirascope import Provider
 from openai import AsyncOpenAI
 
 from src.config import settings
-
-Providers = Provider | Literal["custom"]
+from src.utils.types import Providers
 
 clients: dict[Providers, AsyncAnthropic | AsyncOpenAI | genai.Client | Groq] = {}
 

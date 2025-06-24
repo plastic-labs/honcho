@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 @track("Dialectic Call")
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.DIALECTIC_PROVIDER,
+    provider=(
+        settings.LLM.DIALECTIC_PROVIDER
+        if settings.LLM.DIALECTIC_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.DIALECTIC_MODEL,
     client=clients[settings.LLM.DIALECTIC_PROVIDER],
 )
@@ -46,7 +50,11 @@ You are operating as a context service that helps maintain psychological underst
 @track("Dialectic Stream")
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.DIALECTIC_PROVIDER,
+    provider=(
+        settings.LLM.DIALECTIC_PROVIDER
+        if settings.LLM.DIALECTIC_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.DIALECTIC_MODEL,
     stream=True,
     client=clients[settings.LLM.DIALECTIC_PROVIDER],
@@ -69,7 +77,11 @@ class SemanticQueries(BaseModel):
 
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.QUERY_GENERATION_PROVIDER,
+    provider=(
+        settings.LLM.QUERY_GENERATION_PROVIDER
+        if settings.LLM.QUERY_GENERATION_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.QUERY_GENERATION_MODEL,
     response_model=SemanticQueries,
     client=clients[settings.LLM.QUERY_GENERATION_PROVIDER],

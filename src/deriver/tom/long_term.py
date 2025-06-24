@@ -47,7 +47,11 @@ class FactExtraction(BaseModel):
 @track("User Representation")
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    provider=(
+        settings.LLM.TOM_INFERENCE_PROVIDER
+        if settings.LLM.TOM_INFERENCE_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
@@ -112,7 +116,11 @@ PERSISTENT FACTS ABOUT USER:
 @track("Fact Extraction")
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    provider=(
+        settings.LLM.TOM_INFERENCE_PROVIDER
+        if settings.LLM.TOM_INFERENCE_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=FactExtraction,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],

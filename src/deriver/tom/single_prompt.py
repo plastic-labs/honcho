@@ -110,7 +110,11 @@ class UserRepresentationOutput(BaseModel):
 @track("Tom Inference")
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    provider=(
+        settings.LLM.TOM_INFERENCE_PROVIDER
+        if settings.LLM.TOM_INFERENCE_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=TomInferenceOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
@@ -162,7 +166,11 @@ expectation_violations: list of objects with:
 @track("User Representation")
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    provider=(
+        settings.LLM.TOM_INFERENCE_PROVIDER
+        if settings.LLM.TOM_INFERENCE_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.TOM_INFERENCE_MODEL,
     response_model=UserRepresentationOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],

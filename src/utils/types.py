@@ -1,6 +1,7 @@
 from collections.abc import Callable
-from typing import ParamSpec, TypeVar
+from typing import Literal, ParamSpec, TypeVar
 
+from mirascope import Provider
 from sentry_sdk.ai.monitoring import ai_track
 
 R = TypeVar("R")
@@ -16,3 +17,6 @@ def track(description: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
         return _inner
 
     return decorator
+
+
+Providers = Provider | Literal["custom"]

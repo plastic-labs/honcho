@@ -63,7 +63,11 @@ class SummaryType(Enum):
 # Mirascope functions for summaries
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.SUMMARY_PROVIDER,
+    provider=(
+        settings.LLM.SUMMARY_PROVIDER
+        if settings.LLM.SUMMARY_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.SUMMARY_MODEL,
     call_params={"max_tokens": 1000},
     client=clients[settings.LLM.SUMMARY_PROVIDER],
@@ -101,7 +105,11 @@ Return only the summary without any explanation or meta-commentary.
 
 @with_langfuse()
 @llm.call(
-    provider=settings.LLM.SUMMARY_PROVIDER,
+    provider=(
+        settings.LLM.SUMMARY_PROVIDER
+        if settings.LLM.SUMMARY_PROVIDER != "custom"
+        else "openai"
+    ),
     model=settings.LLM.SUMMARY_MODEL,
     call_params={"max_tokens": 2000},
     client=clients[settings.LLM.SUMMARY_PROVIDER],
