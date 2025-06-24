@@ -136,7 +136,7 @@ async def get_deriver_status(
             db,
             workspace_name=workspace_id,
             peer_name=peer_id,
-            session_id=session_id,
+            session_name=session_id,
             include_sender=include_sender,
         )
     except ValueError as e:
@@ -144,4 +144,4 @@ async def get_deriver_status(
         raise HTTPException(status_code=400, detail=str(e)) from e
     except ResourceNotFoundException as e:
         logger.warning(f"Failed to get deriver status: {str(e)}")
-        raise ResourceNotFoundException("Peer or session not found") from e
+        raise
