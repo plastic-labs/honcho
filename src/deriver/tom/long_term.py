@@ -110,7 +110,9 @@ PERSISTENT FACTS ABOUT USER:
 @track("Fact Extraction")
 @with_langfuse()
 @llm.call(
-    provider="google", model="gemini-2.0-flash-lite", response_model=FactExtraction
+    provider=settings.LLM.TOM_INFERENCE_PROVIDER,
+    model=settings.LLM.TOM_INFERENCE_MODEL,
+    response_model=FactExtraction,
 )
 async def extract_facts_long_term(chat_history: str):
     return f"""

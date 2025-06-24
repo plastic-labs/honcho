@@ -25,7 +25,10 @@ logger = logging.getLogger(__name__)
 
 @track("Dialectic Call")
 @with_langfuse()
-@llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219")
+@llm.call(
+    provider=settings.LLM.DIALECTIC_PROVIDER,
+    model=settings.LLM.DIALECTIC_MODEL,
+)
 async def dialectic_call(
     query: str, working_representation: str, additional_context: str
 ):
@@ -40,7 +43,11 @@ You are operating as a context service that helps maintain psychological underst
 
 @track("Dialectic Stream")
 @with_langfuse()
-@llm.call(provider="anthropic", model="claude-3-7-sonnet-20250219", stream=True)
+@llm.call(
+    provider=settings.LLM.DIALECTIC_PROVIDER,
+    model=settings.LLM.DIALECTIC_MODEL,
+    stream=True,
+)
 async def dialectic_stream(
     query: str, working_representation: str, additional_context: str
 ):
@@ -58,7 +65,11 @@ class SemanticQueries(BaseModel):
 
 
 @with_langfuse()
-@llm.call(provider="groq", model="llama-3.1-8b-instant", response_model=SemanticQueries)
+@llm.call(
+    provider=settings.LLM.QUERY_GENERATION_PROVIDER,
+    model=settings.LLM.QUERY_GENERATION_MODEL,
+    response_model=SemanticQueries,
+)
 async def generate_semantic_queries_llm(query: str):
     return f"""
 Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.

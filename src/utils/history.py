@@ -62,8 +62,8 @@ class SummaryType(Enum):
 # Mirascope functions for summaries
 @with_langfuse()
 @llm.call(
-    provider="google",
-    model="gemini-2.0-flash-lite",
+    provider=settings.LLM.SUMMARY_PROVIDER,
+    model=settings.LLM.SUMMARY_MODEL,
     call_params={"max_tokens": 1000},
 )
 async def create_short_summary(
@@ -99,8 +99,8 @@ Return only the summary without any explanation or meta-commentary.
 
 @with_langfuse()
 @llm.call(
-    provider="google",
-    model="gemini-2.0-flash-lite",
+    provider=settings.LLM.SUMMARY_PROVIDER,
+    model=settings.LLM.SUMMARY_MODEL,
     call_params={"max_tokens": 2000},
 )
 async def create_long_summary(

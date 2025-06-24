@@ -168,7 +168,7 @@ class LLMSettings(HonchoSettings):
     OPENAI_API_KEY: str | None = None
     OPENAI_COMPATIBLE_API_KEY: str | None = None
     GEMINI_API_KEY: str | None = None
-    GROQ_API_KEY: str | None = None  # Added missing GROQ API key
+    GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # General LLM settings
@@ -176,14 +176,14 @@ class LLMSettings(HonchoSettings):
     DEFAULT_TEMPERATURE: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)] = 0.0
 
     # Dialectic specific
-    DIALECTIC_PROVIDER: str = "anthropic"
-    DIALECTIC_MODEL: str = "claude-3-haiku-20240307"
+    DIALECTIC_PROVIDER: Provider = "anthropic"
+    DIALECTIC_MODEL: str = "claude-3-5-haiku-20241022"
     # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
 
     # Query Generation specific
     # QUERY_GENERATION_PROVIDER: str = "gemini"
     # QUERY_GENERATION_MODEL: str = "llama3-8b-8192"
-    QUERY_GENERATION_PROVIDER: str = "gemini"
+    QUERY_GENERATION_PROVIDER: Provider = "gemini"
     QUERY_GENERATION_MODEL: str = "gemini-2.0-flash-lite"
     # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
 
@@ -194,7 +194,7 @@ class LLMSettings(HonchoSettings):
     TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
 
     # Summarization specific
-    SUMMARY_PROVIDER: str = "gemini"
+    SUMMARY_PROVIDER: Provider = "gemini"
     SUMMARY_MODEL: str = (
         "gemini-1.5-flash-latest"  # Consider specific model version if needed
     )
@@ -268,14 +268,20 @@ class AppSettings(HonchoSettings):
 settings: AppSettings = AppSettings()
 
 
-if settings.LLM.ANTHROPIC_API_KEY:
-    os.environ["ANTHROPIC_API_KEY"] = settings.LLM.ANTHROPIC_API_KEY
+def setup_llm_environment_variables() -> None:
+    """Set up LLM API keys as environment variables."""
+    if settings.LLM.ANTHROPIC_API_KEY:
+        os.environ["ANTHROPIC_API_KEY"] = settings.LLM.ANTHROPIC_API_KEY
 
-if settings.LLM.OPENAI_API_KEY:
-    os.environ["OPENAI_API_KEY"] = settings.LLM.OPENAI_API_KEY
+    if settings.LLM.OPENAI_API_KEY:
+        os.environ["OPENAI_API_KEY"] = settings.LLM.OPENAI_API_KEY
 
-if settings.LLM.GEMINI_API_KEY:
-    os.environ["GEMINI_API_KEY"] = settings.LLM.GEMINI_API_KEY
+    if settings.LLM.GEMINI_API_KEY:
+        os.environ["GEMINI_API_KEY"] = settings.LLM.GEMINI_API_KEY
 
-if settings.LLM.GROQ_API_KEY:
-    os.environ["GROQ_API_KEY"] = settings.LLM.GROQ_API_KEY
+    if settings.LLM.GROQ_API_KEY:
+        os.environ["GROQ_API_KEY"] = settings.LLM.GROQ_API_KEY
+
+
+# Set up environment variables immediately after settings instantiation
+setup_llm_environment_variables()
