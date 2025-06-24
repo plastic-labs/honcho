@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi_pagination.ext.sqlalchemy import paginate
 
 from src import crud, schemas
 from src.dependencies import db
@@ -65,7 +65,7 @@ async def get_all_workspaces(
         if filter_param == {}:
             filter_param = None
 
-    return await apaginate(
+    return await paginate(
         db,
         await crud.get_all_workspaces(filter=filter_param),
     )
@@ -104,4 +104,4 @@ async def search_workspace(
     """Search a Workspace"""
     stmt = await crud.search(query, workspace_name=workspace_id)
 
-    return await apaginate(db, stmt)
+    return await paginate(db, stmt)

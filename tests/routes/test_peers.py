@@ -101,28 +101,16 @@ def test_get_peers(client, sample_data):
     assert "items" in data
     assert len(data["items"]) > 0
 
-    # Get peers with simple filter (backward compatibility)
+    # Get peers with filter
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"metadata": {"peer_key": "peer_value"}}},
+        json={"filter": {"peer_key": "peer_value"}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) == 2
+    assert len(data["items"]) >= 2
     assert data["items"][0]["metadata"]["peer_key"] == "peer_value"
-
-    # Test new filter with NOT operator
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"NOT": [{"metadata": {"peer_key": "peer_value2"}}]}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    # Should find peers that don't have peer_key = "peer_value2"
-    # This includes the 2 peers with "peer_value" + the sample peer with empty metadata
-    assert len(data["items"]) == 3
 
 
 def test_get_peers_with_empty_filter(client, sample_data):

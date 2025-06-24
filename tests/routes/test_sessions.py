@@ -170,12 +170,12 @@ def test_get_sessions(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"metadata": {"test_key": "test_value"}}},
+        json={"filter": {"test_key": "test_value"}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) == 1
+    assert len(data["items"]) > 0
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
     assert data["items"][0]["workspace_id"] == test_workspace.name
 

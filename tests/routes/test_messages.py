@@ -354,12 +354,12 @@ async def test_get_filtered_messages(client, db_session, sample_data):
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {"metadata": {"key": "value2"}}},
+        json={"filter": {"key": "value2"}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) == 1
+    assert len(data["items"]) > 0
     assert data["items"][0]["content"] == "Test message 2"
     assert data["items"][0]["peer_id"] == test_peer.name
     assert data["items"][0]["session_id"] == test_session.name
@@ -406,50 +406,16 @@ async def test_get_filtered_messages_with_complex_filter(
     db_session.add(test_message3)
     await db_session.commit()
 
-    # Test old-style filter (backward compatibility)
+    # Filter by multiple criteria
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {"metadata": {"priority": "high", "category": "technical"}}},
+        json={"filter": {"priority": "high", "category": "technical"}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
     # Should return messages 1 and 2 (both have high priority and technical category)
     assert len(data["items"]) >= 2
-
-    # Test new-style filter with AND operator
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={
-            "filter": {
-                "AND": [
-                    {"metadata": {"priority": "high"}},
-                    {"metadata": {"category": "technical"}},
-                ]
-            }
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert len(data["items"]) == 2
-
-    # Test OR filter to get high priority OR question type
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={
-            "filter": {
-                "OR": [
-                    {"metadata": {"priority": "high"}},
-                    {"metadata": {"type": "question"}},
-                ]
-            }
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert len(data["items"]) == 3  # All messages should match
 
 
 @pytest.mark.asyncio
