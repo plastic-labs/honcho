@@ -52,7 +52,7 @@ along with various guides.
 ## Usage
 
 When you first install the SDKs they will be ready to go, pointing at
-https://demo.honcho.dev which is a demo server of Honcho. This server has no
+[https://demo.honcho.dev](https://demo.honcho.dev) which is a demo server of Honcho. This server has no
 authentication, no SLA, and should only be used for testing and getting familiar
 with Honcho.
 
@@ -60,7 +60,8 @@ For a production ready version of Honcho sign up for an account at
 https://app.honcho.dev and get started. When you sign up you'll be prompted to
 join an organization which will have a dedicated instance of Honcho.
 
-Provision API keys and change your base url to point to https://api.honcho.dev
+Provision API keys and change your base url to point to
+[https://api.honcho.dev](https://api.honcho.dev)
 
 Additionally, Honcho can be self-hosted for testing and evaluation purposes. See
 the [Local Development](#local-development) section below for details on how to set up a local
