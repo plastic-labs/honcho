@@ -9,8 +9,10 @@ from src.utils.model_client import ModelClient, ModelProvider
 
 logger = logging.getLogger(__name__)
 
-DEF_PROVIDER = ModelProvider.GROQ
-DEF_MODEL = "llama-3.3-70b-versatile"
+# DEF_PROVIDER = ModelProvider.GROQ
+# DEF_MODEL = "llama-3.3-70b-versatile"
+DEF_PROVIDER = ModelProvider.OPENAI
+DEF_MODEL = "gpt-4"
 
 TOM_SYSTEM_PROMPT = """You are a system for analyzing conversations to make evidence-based inferences about user mental states.
 
