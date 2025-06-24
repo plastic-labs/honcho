@@ -237,13 +237,13 @@ async def test_wildcard_filters(
         json={"name": peer2_name, "metadata": {"type": "human"}},
     )
 
-    # Test wildcard for name field - should match all peers regardless of name
+    # Test wildcard for peer_id field
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={
             "filter": {
                 "AND": [
-                    {"name": "*"},  # Wildcard matches all names
+                    {"id": "*"},
                     {"metadata": {"type": "bot"}},
                 ]
             }
@@ -260,7 +260,7 @@ async def test_wildcard_filters(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={
             "filter": {
-                "name": {"in": ["*"]}  # Wildcard in comparison should also match all
+                "id": {"in": ["*"]}  # Wildcard in comparison should also match all
             }
         },
     )
@@ -452,7 +452,7 @@ async def test_filter_edge_cases(
     # Test nested empty operators
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"OR": [{"AND": []}, {"name": test_peer.name}]}},
+        json={"filter": {"OR": [{"AND": []}, {"id": test_peer.name}]}},
     )
     assert response.status_code == 200
 
@@ -469,8 +469,8 @@ async def test_filter_edge_cases(
         json={
             "filter": {
                 "AND": [
-                    {"name": "*"},  # Wildcard
-                    {"name": test_peer.name},  # Regular value
+                    {"id": "*"},  # Wildcard
+                    {"id": test_peer.name},  # Regular value
                 ]
             }
         },
@@ -512,7 +512,7 @@ async def test_backward_compatibility(
     # Test multiple field simple filter (implicit AND)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"metadata": {"role": "admin"}, "name": peer_name}},
+        json={"filter": {"metadata": {"role": "admin"}, "id": peer_name}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -591,3 +591,784 @@ async def test_range_queries_with_dates(
     assert session1_id in found_sessions  # priority 5
     assert session3_id in found_sessions  # priority 8
     assert session2_id not in found_sessions  # priority 3
+
+
+@pytest.mark.asyncio
+async def test_all_workspace_columns_filtering(client: TestClient):
+    """Test filtering by all available workspace columns"""
+    # Create additional workspaces for testing
+    workspace1_name = str(generate_nanoid())
+    workspace2_name = str(generate_nanoid())
+
+    client.post(
+        "/v2/workspaces",
+        json={
+            "name": workspace1_name,
+            "metadata": {"env": "dev", "version": "1.0", "active": True},
+            "configuration": {"max_sessions": 100, "timeout": 30},
+        },
+    )
+    client.post(
+        "/v2/workspaces",
+        json={
+            "name": workspace2_name,
+            "metadata": {"env": "prod", "version": "2.0", "active": False},
+            "configuration": {"max_sessions": 500, "timeout": 60},
+        },
+    )
+
+    # Test filtering by id (maps to name internally)
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"id": workspace1_name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == workspace1_name
+
+    # Test filtering by id with comparison operators
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"id": {"in": [workspace1_name, workspace2_name]}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert workspace1_name in found_names
+    assert workspace2_name in found_names
+
+    # Test filtering by metadata (maps to h_metadata internally)
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"metadata": {"env": "dev"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert workspace1_name in found_names
+    assert workspace2_name not in found_names
+
+    # Test filtering by metadata with comparison operators
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"metadata": {"version": {"gte": "2.0"}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert workspace2_name in found_names
+    assert workspace1_name not in found_names
+
+    # Test filtering by configuration
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"configuration": {"max_sessions": {"gte": 500}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert workspace2_name in found_names
+    assert workspace1_name not in found_names
+
+    # Test filtering by created_at (datetime field)
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"created_at": {"gte": "2020-01-01"}}},
+    )
+    assert response.status_code == 200
+    # Should return all workspaces created after 2020
+
+
+@pytest.mark.asyncio
+async def test_all_peer_columns_filtering(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test filtering by all available peer columns"""
+    test_workspace, test_peer = sample_data
+
+    # Create additional peers for testing
+    peer1_name = str(generate_nanoid())
+    peer2_name = str(generate_nanoid())
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": peer1_name,
+            "metadata": {"role": "user", "level": 1, "active": True},
+            "configuration": {"notifications": True, "theme": "dark"},
+        },
+    )
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": peer2_name,
+            "metadata": {"role": "admin", "level": 5, "active": False},
+            "configuration": {"notifications": False, "theme": "light"},
+        },
+    )
+
+    # Test filtering by id (maps to name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"id": peer1_name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == peer1_name
+
+    # Test filtering by workspace_id (maps to workspace_name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"workspace_id": test_workspace.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should return all peers in the workspace
+    assert len(data["items"]) >= 3  # test_peer + peer1 + peer2
+
+    # Test filtering by metadata
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"metadata": {"role": "admin"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer2_name in found_names
+    assert peer1_name not in found_names
+
+    # Test filtering by metadata with comparison operators
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"metadata": {"level": {"gte": 3}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer2_name in found_names
+    assert peer1_name not in found_names
+
+    # Test filtering by configuration
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"configuration": {"notifications": True}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer1_name in found_names
+    assert peer2_name not in found_names
+
+    # Test filtering by created_at
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"created_at": {"gte": "2020-01-01"}}},
+    )
+    assert response.status_code == 200
+    # Should return all peers created after 2020
+
+
+@pytest.mark.asyncio
+async def test_all_session_columns_filtering(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test filtering by all available session columns"""
+    test_workspace, test_peer = sample_data
+
+    # Create additional sessions for testing
+    session1_id = str(generate_nanoid())
+    session2_id = str(generate_nanoid())
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session1_id,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"type": "chat", "priority": 1, "active": True},
+            "configuration": {"auto_save": True, "timeout": 30},
+        },
+    )
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session2_id,
+            "peer_names": {test_peer.name: {}},
+            "metadata": {"type": "support", "priority": 5, "active": False},
+            "configuration": {"auto_save": False, "timeout": 60},
+        },
+    )
+
+    # Test filtering by id (maps to name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"id": session1_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == session1_id
+
+    # Test filtering by workspace_id (maps to workspace_name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"workspace_id": test_workspace.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should return all sessions in the workspace
+    assert len(data["items"]) >= 2
+
+    # Test filtering by is_active (boolean field)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"is_active": True}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_sessions = [item["id"] for item in data["items"]]
+    assert session1_id in found_sessions
+    # session2 should not be in results since is_active=False by default in get_sessions
+
+    # Test filtering by metadata
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"metadata": {"type": "chat"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_sessions = [item["id"] for item in data["items"]]
+    assert session1_id in found_sessions
+
+    # Test filtering by metadata with comparison operators
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"metadata": {"priority": {"gte": 3}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_sessions = [item["id"] for item in data["items"]]
+    assert session2_id in found_sessions
+    assert session1_id not in found_sessions
+
+    # Test filtering by configuration
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"configuration": {"auto_save": True}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_sessions = [item["id"] for item in data["items"]]
+    assert session1_id in found_sessions
+
+    # Test filtering by created_at
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"created_at": {"gte": "2020-01-01"}}},
+    )
+    assert response.status_code == 200
+    # Should return all sessions created after 2020
+
+
+@pytest.mark.asyncio
+async def test_all_message_columns_filtering(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test filtering by all available message columns"""
+    test_workspace, test_peer = sample_data
+
+    # Create session and messages for testing
+    session_id = str(generate_nanoid())
+    session_response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+    assert session_response.status_code == 200
+
+    # Create messages with various data
+    messages_response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Hello world message",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "greeting", "priority": 1, "urgent": True},
+                },
+                {
+                    "content": "Technical support request",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "support", "priority": 5, "urgent": False},
+                },
+                {
+                    "content": "Follow up message",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "followup", "priority": 3, "urgent": True},
+                },
+            ]
+        },
+    )
+    assert messages_response.status_code == 200
+    created_messages = messages_response.json()
+
+    # Test filtering by id (for messages, this should map to public_id)
+    message_id = created_messages[0]["id"]
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"id": message_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == message_id
+
+    # Test filtering by session_id (maps to session_name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"session_id": session_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 3  # All messages in the session
+
+    # Test filtering by peer_id (maps to peer_name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"peer_id": test_peer.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 3  # All messages from the peer
+
+    # Test filtering by workspace_id (maps to workspace_name internally)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"workspace_id": test_workspace.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 3  # All messages in the workspace
+
+    # Test filtering by content (text field)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"content": "Hello world message"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert "Hello world" in data["items"][0]["content"]
+
+    # Test filtering by content with contains operator
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"content": {"contains": "support"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert "support" in data["items"][0]["content"]
+
+    # Test filtering by metadata
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"type": "greeting"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+
+    # Test filtering by metadata with comparison operators
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"priority": {"gte": 3}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 2  # priority 5 and 3
+
+    # Test filtering by token_count (integer field) - this should exist after message creation
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"token_count": {"gte": 0}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 3  # All messages should have token_count >= 0
+
+    # Test filtering by created_at
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"created_at": {"gte": "2020-01-01"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 3  # All messages created after 2020
+
+
+@pytest.mark.asyncio
+async def test_id_field_interpolation_consistency(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that id field interpolation works consistently across all models"""
+    test_workspace, test_peer = sample_data
+
+    # Create test data
+    workspace_name = str(generate_nanoid())
+    peer_name = str(generate_nanoid())
+    session_id = str(generate_nanoid())
+
+    # Create workspace
+    client.post(
+        "/v2/workspaces",
+        json={"name": workspace_name, "metadata": {"test": "value"}},
+    )
+
+    # Create peer
+    client.post(
+        f"/v2/workspaces/{workspace_name}/peers",
+        json={"name": peer_name, "metadata": {"test": "value"}},
+    )
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{workspace_name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {peer_name: {}},
+            "metadata": {"test": "value"},
+        },
+    )
+
+    # Create message
+    messages_response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message",
+                    "peer_id": peer_name,
+                    "metadata": {"test": "value"},
+                }
+            ]
+        },
+    )
+    message_id = messages_response.json()[0]["id"]
+
+    # Test that filtering by "id" returns the expected items for each model
+
+    # Workspace: id should map to name
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"id": workspace_name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == workspace_name
+
+    # Peer: id should map to name
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/list",
+        json={"filter": {"id": peer_name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == peer_name
+
+    # Session: id should map to name
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/list",
+        json={"filter": {"id": session_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == session_id
+
+    # Message: id should map to public_id (not name since messages don't have a user-visible name)
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
+        json={"filter": {"id": message_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert data["items"][0]["id"] == message_id
+
+
+@pytest.mark.asyncio
+async def test_foreign_key_field_interpolation(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that foreign key _id fields map to _name fields correctly"""
+    test_workspace, test_peer = sample_data
+
+    # Create test data
+    peer_name = str(generate_nanoid())
+    session_id = str(generate_nanoid())
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer_name, "metadata": {"role": "test"}},
+    )
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {peer_name: {}},
+            "metadata": {"type": "test"},
+        },
+    )
+
+    # Create message
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message",
+                    "peer_id": peer_name,
+                    "metadata": {"test": "value"},
+                }
+            ]
+        },
+    )
+
+    # Test workspace_id filtering for peers (maps to workspace_name)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"workspace_id": test_workspace.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    peer_names = [item["id"] for item in data["items"]]
+    assert peer_name in peer_names
+    assert test_peer.name in peer_names
+
+    # Test workspace_id filtering for sessions (maps to workspace_name)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/list",
+        json={"filter": {"workspace_id": test_workspace.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    session_names = [item["id"] for item in data["items"]]
+    assert session_id in session_names
+
+    # Test session_id filtering for messages (maps to session_name)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"session_id": session_id}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+
+    # Test peer_id filtering for messages (maps to peer_name)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"peer_id": peer_name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+
+    # Test workspace_id filtering for messages (maps to workspace_name)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"workspace_id": test_workspace.name}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_metadata_field_interpolation(client: TestClient):
+    """Test that metadata field maps to h_metadata column correctly"""
+    # Create test data with metadata
+    workspace_name = str(generate_nanoid())
+    peer_name = str(generate_nanoid())
+    session_id = str(generate_nanoid())
+
+    client.post(
+        "/v2/workspaces",
+        json={
+            "name": workspace_name,
+            "metadata": {"env": "test", "version": "1.0", "active": True},
+        },
+    )
+
+    client.post(
+        f"/v2/workspaces/{workspace_name}/peers",
+        json={
+            "name": peer_name,
+            "metadata": {"role": "user", "level": 5, "premium": True},
+        },
+    )
+
+    client.post(
+        f"/v2/workspaces/{workspace_name}/sessions",
+        json={
+            "id": session_id,
+            "peer_names": {peer_name: {}},
+            "metadata": {"type": "chat", "duration": 120, "archived": False},
+        },
+    )
+
+    client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "sentiment": "positive",
+                        "confidence": 0.95,
+                        "flagged": False,
+                    },
+                }
+            ]
+        },
+    )
+
+    # Test metadata filtering for all models
+
+    # Workspace metadata
+    response = client.post(
+        "/v2/workspaces/list",
+        json={"filter": {"metadata": {"env": "test"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert workspace_name in found_names
+
+    # Peer metadata
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/list",
+        json={"filter": {"metadata": {"role": "user"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer_name in found_names
+
+    # Session metadata
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/list",
+        json={"filter": {"metadata": {"type": "chat"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert session_id in found_names
+
+    # Message metadata
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"sentiment": "positive"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+
+    # Test metadata with comparison operators
+
+    # Numeric metadata comparison
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/list",
+        json={"filter": {"metadata": {"level": {"gte": 3}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer_name in found_names
+
+    # Boolean metadata comparison
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/list",
+        json={"filter": {"metadata": {"archived": {"ne": True}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert session_id in found_names
+
+    # Float metadata comparison
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"confidence": {"gte": 0.9}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_nonexistent_columns_ignored_gracefully(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that filtering by non-existent columns is ignored gracefully"""
+    test_workspace, test_peer = sample_data
+
+    # Create test data
+    peer_name = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer_name, "metadata": {"role": "test"}},
+    )
+
+    # Test filtering by non-existent columns - should not crash and should return all items
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"nonexistent_column": "value"}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should return all peers since the filter is ignored
+    peer_names = [item["id"] for item in data["items"]]
+    assert peer_name in peer_names
+    assert test_peer.name in peer_names
+
+    # Test combining real and non-existent columns
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {
+                "AND": [
+                    {"metadata": {"role": "test"}},  # Real filter
+                    {"fake_column": "fake_value"},  # Non-existent filter
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should only apply the real filter
+    peer_names = [item["id"] for item in data["items"]]
+    assert peer_name in peer_names
+    assert test_peer.name not in peer_names  # test_peer doesn't have role="test"
+
+    # Test with complex nested filters containing non-existent columns
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {
+                "OR": [
+                    {"nonexistent_field": "value"},
+                    {"metadata": {"role": "test"}},
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should apply only the valid metadata filter
+    peer_names = [item["id"] for item in data["items"]]
+    assert peer_name in peer_names
