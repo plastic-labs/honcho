@@ -8,7 +8,9 @@ from sqlalchemy.types import Numeric
 logger = getLogger(__name__)
 
 
-def apply_filter(stmt: Select, filter: dict[str, Any] | None = None) -> Select:
+def apply_filter(
+    stmt: Select, model_class, filter: dict[str, Any] | None = None
+) -> Select:
     """
     Apply advanced filter to a SQL statement based on filter dictionary.
 
@@ -38,6 +40,7 @@ def apply_filter(stmt: Select, filter: dict[str, Any] | None = None) -> Select:
 
     Args:
         stmt: SQLAlchemy Select statement to modify
+        model_class: SQLAlchemy model class for column access
         filter: Optional filter dictionary
 
     Returns:
@@ -45,9 +48,6 @@ def apply_filter(stmt: Select, filter: dict[str, Any] | None = None) -> Select:
     """
     if filter is None:
         return stmt
-
-    # Get the model class from the statement's columns
-    model_class = stmt.column_descriptions[0]["entity"]
 
     conditions = _build_filter_conditions(filter, model_class)
     if conditions is not None:

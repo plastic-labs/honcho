@@ -89,7 +89,7 @@ async def get_all_workspaces(
         filter: Filter the workspaces by a dictionary of metadata
     """
     stmt = select(models.Workspace)
-    stmt = apply_filter(stmt, filter)
+    stmt = apply_filter(stmt, models.Workspace, filter)
     stmt = stmt.order_by(models.Workspace.created_at)
     return stmt
 
@@ -236,7 +236,7 @@ async def get_peers(
 ) -> Select:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
-    stmt = apply_filter(stmt, filter)
+    stmt = apply_filter(stmt, models.Peer, filter)
 
     stmt = stmt.order_by(models.Peer.created_at)
 
@@ -312,7 +312,7 @@ async def get_sessions_for_peer(
     if is_active is not None:
         stmt = stmt.where(models.Session.is_active == is_active)
 
-    stmt = apply_filter(stmt, filter)
+    stmt = apply_filter(stmt, models.Session, filter)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -337,7 +337,7 @@ async def get_sessions(
     if is_active:
         stmt = stmt.where(models.Session.is_active.is_(True))
 
-    stmt = apply_filter(stmt, filter)
+    stmt = apply_filter(stmt, models.Session, filter)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -1276,7 +1276,7 @@ async def get_messages(
     # Apply message count limit first (takes precedence over token limit)
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
-        stmt = apply_filter(stmt, filter)
+        stmt = apply_filter(stmt, models.Message, filter)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
@@ -1306,7 +1306,7 @@ async def get_messages(
             .join(token_subquery, models.Message.id == token_subquery.c.id)
             .where(token_subquery.c.running_token_sum <= token_limit)
         )
-        stmt = apply_filter(stmt, filter)
+        stmt = apply_filter(stmt, models.Message, filter)
 
         # Apply final ordering based on reverse parameter
         if reverse:
@@ -1316,7 +1316,7 @@ async def get_messages(
     else:
         # Default case - no limits applied
         stmt = select(models.Message).where(*base_conditions)
-        stmt = apply_filter(stmt, filter)
+        stmt = apply_filter(stmt, models.Message, filter)
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
@@ -1389,7 +1389,7 @@ async def get_messages_for_peer(
         .where(models.Message.session_name.is_(None))
     )
 
-    stmt = apply_filter(stmt, filter)
+    stmt = apply_filter(stmt, models.Message, filter)
 
     if reverse:
         stmt = stmt.order_by(models.Message.id.desc())
@@ -1529,7 +1529,7 @@ async def query_documents(
         stmt = stmt.where(
             models.Document.embedding.cosine_distance(embedding_query) < max_distance
         )
-    stmt = apply_filter(stmt, filter)
+    stmt = apply_filter(stmt, models.Document, filter)
     stmt = stmt.limit(top_k).order_by(
         models.Document.embedding.cosine_distance(embedding_query)
     )
