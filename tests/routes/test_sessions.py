@@ -146,7 +146,7 @@ def test_create_session_with_too_many_peers(
 
     session_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"name": "test_session"}},
+        json={"filter": {"id": "test_session"}},
     )
     assert session_response.status_code == 200
     assert len(session_response.json()["items"]) == 0

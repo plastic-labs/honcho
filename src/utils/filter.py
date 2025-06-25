@@ -28,26 +28,24 @@ COMPARISON_OPERATORS = {
 
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
 
-EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
-    "metadata": "h_metadata",
+ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
     "id": "name",
+    "created_at": "created_at",
+    "is_active": "is_active",
     "workspace_id": "workspace_name",
     "session_id": "session_name",
     "peer_id": "peer_name",
-}
-
-EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
     "metadata": "h_metadata",
-    "id": "public_id",
+}
+
+ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
     "workspace_id": "workspace_name",
     "session_id": "session_name",
     "peer_id": "peer_name",
+    "token_count": "token_count",
+    "created_at": "created_at",
+    "metadata": "h_metadata",
 }
-
-DISALLOWED_INTERNAL_COLUMNS = [
-    "internal_metadata",
-    ## TODO any others?
-]
 
 
 def apply_filter(
@@ -75,7 +73,6 @@ def apply_filter(
         # Comparison operators
         {"created_at": {"gte": "2024-01-01", "lte": "2024-12-31"}}
         {"peer_id": {"in": ["alice", "bob"]}}
-        {"content": {"contains": "hello"}}
 
         # Wildcards (matches everything for that field)
         {"peer_id": "*"}
@@ -194,12 +191,14 @@ def _build_field_condition(
         SQLAlchemy condition object or None
     """
     if model_class.__name__ == "Message":
-        column_name = EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key, key)
+        column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
     else:
-        column_name = EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key, key)
+        column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key)
 
-    if column_name in DISALLOWED_INTERNAL_COLUMNS:
-        raise FilterError(f"Column '{key}' is not allowed to be filtered on")
+    if column_name is None:
+        raise FilterError(
+            f"Column '{key}' is not allowed to be filtered on or does not exist on {model_class.__name__}"
+        )
 
     # Check if the column exists on the model
     if not hasattr(model_class, column_name):

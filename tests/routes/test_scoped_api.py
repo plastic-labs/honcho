@@ -168,7 +168,7 @@ def test_get_peer_by_name_with_auth(
     # Use POST /list endpoint to get peers
     response = auth_client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"name": test_peer.name}},
+        json={"filter": {"id": test_peer.name}},
     )
 
     # Admin JWT or JWT with matching workspace should be allowed

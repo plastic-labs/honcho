@@ -198,25 +198,6 @@ async def test_comparison_operators_filters(
     data = response.json()
     assert len(data["items"]) == 2  # Messages with category "high" and "low"
 
-    # Test contains operator for text content
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"content": {"contains": "score 10"}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1
-    assert "score 10" in data["items"][0]["content"]
-
-    # Test icontains operator (case-insensitive)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"content": {"icontains": "MESSAGE"}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 3  # All messages contain "message" (case-insensitive)
-
 
 @pytest.mark.asyncio
 async def test_wildcard_filters(
@@ -661,17 +642,6 @@ async def test_all_workspace_columns_filtering(client: TestClient):
     assert workspace2_name in found_names
     assert workspace1_name not in found_names
 
-    # Test filtering by configuration
-    response = client.post(
-        "/v2/workspaces/list",
-        json={"filter": {"configuration": {"max_sessions": {"gte": 500}}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    found_names = [item["id"] for item in data["items"]]
-    assert workspace2_name in found_names
-    assert workspace1_name not in found_names
-
     # Test filtering by created_at (datetime field)
     response = client.post(
         "/v2/workspaces/list",
@@ -750,17 +720,6 @@ async def test_all_peer_columns_filtering(
     found_names = [item["id"] for item in data["items"]]
     assert peer2_name in found_names
     assert peer1_name not in found_names
-
-    # Test filtering by configuration
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"configuration": {"notifications": True}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    found_names = [item["id"] for item in data["items"]]
-    assert peer1_name in found_names
-    assert peer2_name not in found_names
 
     # Test filtering by created_at
     response = client.post(
@@ -853,16 +812,6 @@ async def test_all_session_columns_filtering(
     assert session2_id in found_sessions
     assert session1_id not in found_sessions
 
-    # Test filtering by configuration
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"configuration": {"auto_save": True}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    found_sessions = [item["id"] for item in data["items"]]
-    assert session1_id in found_sessions
-
     # Test filtering by created_at
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
@@ -911,18 +860,6 @@ async def test_all_message_columns_filtering(
         },
     )
     assert messages_response.status_code == 200
-    created_messages = messages_response.json()
-
-    # Test filtering by id (for messages, this should map to public_id)
-    message_id = created_messages[0]["id"]
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"id": message_id}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1
-    assert data["items"][0]["id"] == message_id
 
     # Test filtering by session_id (maps to session_name internally)
     response = client.post(
@@ -951,25 +888,19 @@ async def test_all_message_columns_filtering(
     data = response.json()
     assert len(data["items"]) == 3  # All messages in the workspace
 
-    # Test filtering by content (text field)
+    # Test filtering by content (text field) (not allowed)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filter": {"content": "Hello world message"}},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1
-    assert "Hello world" in data["items"][0]["content"]
+    assert response.status_code == 422
 
-    # Test filtering by content with contains operator
+    # Test filtering by content with contains operator (not allowed)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
         json={"filter": {"content": {"contains": "support"}}},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1
-    assert "support" in data["items"][0]["content"]
+    assert response.status_code == 422
 
     # Test filtering by metadata
     response = client.post(
@@ -1085,15 +1016,12 @@ async def test_id_field_interpolation_consistency(client: TestClient):
     assert len(data["items"]) == 1
     assert data["items"][0]["id"] == session_id
 
-    # Message: id should map to public_id (not name since messages don't have a user-visible name)
+    # Message: id is not allowed to be filtered on
     response = client.post(
         f"/v2/workspaces/{workspace_name}/sessions/{session_id}/messages/list",
         json={"filter": {"id": message_id}},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1
-    assert data["items"][0]["id"] == message_id
+    assert response.status_code == 422
 
 
 @pytest.mark.asyncio
