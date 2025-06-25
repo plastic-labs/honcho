@@ -3,6 +3,8 @@ Tests for advanced filter functionality including logical operators,
 comparison operators, and wildcards across multiple models.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
@@ -461,7 +463,7 @@ async def test_filter_edge_cases(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={"filter": {"non_existent_column": "value"}},
     )
-    assert response.status_code == 200  # Should not crash
+    assert response.status_code == 422
 
     # Test mixed wildcards and regular values
     response = client.post(
@@ -1324,17 +1326,12 @@ async def test_nonexistent_columns_ignored_gracefully(
         json={"name": peer_name, "metadata": {"role": "test"}},
     )
 
-    # Test filtering by non-existent columns - should not crash and should return all items
+    # Test filtering by non-existent columns
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={"filter": {"nonexistent_column": "value"}},
     )
-    assert response.status_code == 200
-    data = response.json()
-    # Should return all peers since the filter is ignored
-    peer_names = [item["id"] for item in data["items"]]
-    assert peer_name in peer_names
-    assert test_peer.name in peer_names
+    assert response.status_code == 422
 
     # Test combining real and non-existent columns
     response = client.post(
@@ -1348,12 +1345,7 @@ async def test_nonexistent_columns_ignored_gracefully(
             }
         },
     )
-    assert response.status_code == 200
-    data = response.json()
-    # Should only apply the real filter
-    peer_names = [item["id"] for item in data["items"]]
-    assert peer_name in peer_names
-    assert test_peer.name not in peer_names  # test_peer doesn't have role="test"
+    assert response.status_code == 422
 
     # Test with complex nested filters containing non-existent columns
     response = client.post(
@@ -1367,8 +1359,764 @@ async def test_nonexistent_columns_ignored_gracefully(
             }
         },
     )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_not_logic_correctness(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that NOT logic works correctly - THIS WILL LIKELY FAIL due to broken NOT logic"""
+    test_workspace, test_peer = sample_data
+
+    # Create peers with specific metadata
+    peer1_name = str(generate_nanoid())
+    peer2_name = str(generate_nanoid())
+    peer3_name = str(generate_nanoid())
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": peer1_name,
+            "metadata": {"role": "admin", "department": "engineering"},
+        },
+    )
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": peer2_name,
+            "metadata": {"role": "user", "department": "engineering"},
+        },
+    )
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer3_name, "metadata": {"role": "admin", "department": "sales"}},
+    )
+
+    # Test multiple NOT conditions - this exposes the bug
+    # User expectation: NOT admin AND NOT engineering = exclude admin users AND exclude engineering users
+    # Current broken code: NOT(admin AND engineering) = exclude users who are BOTH admin AND engineering
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {
+                "NOT": [
+                    {"metadata": {"role": "admin"}},
+                    {"metadata": {"department": "engineering"}},
+                ]
+            }
+        },
+    )
     assert response.status_code == 200
     data = response.json()
-    # Should apply only the valid metadata filter
-    peer_names = [item["id"] for item in data["items"]]
-    assert peer_name in peer_names
+    found_names = [item["id"] for item in data["items"]]
+
+    # This assertion will FAIL with current broken logic
+    # We expect only peers that are NOT admin AND NOT in engineering
+    # With broken logic, we get peers that are not (admin AND engineering) = peer2 and peer3
+    # With correct logic, we should get only peers that are (NOT admin) AND (NOT engineering) = none of our test peers
+    assert peer1_name not in found_names  # admin + engineering - should be excluded
+    assert (
+        peer2_name not in found_names
+    )  # user + engineering - should be excluded (engineering)
+    assert peer3_name not in found_names  # admin + sales - should be excluded (admin)
+
+
+@pytest.mark.asyncio
+async def test_jsonb_type_casting_edge_cases(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test edge cases in JSONB type casting for numeric comparisons"""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Create messages with various data types in metadata
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Boolean true",
+                    "peer_id": test_peer.name,
+                    "metadata": {"active": True, "score": 10},
+                },
+                {
+                    "content": "Boolean false",
+                    "peer_id": test_peer.name,
+                    "metadata": {"active": False, "score": 5.5},
+                },
+                {
+                    "content": "String number",
+                    "peer_id": test_peer.name,
+                    "metadata": {"active": "true", "score": "15"},
+                },
+                {
+                    "content": "Large number",
+                    "peer_id": test_peer.name,
+                    "metadata": {"active": True, "score": 999999999},
+                },
+            ]
+        },
+    )
+
+    # Test boolean comparisons - PostgreSQL stores booleans as "true"/"false" strings
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"active": {"ne": False}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # This might fail if boolean casting isn't handled correctly
+    assert len(data["items"]) == 3  # All except the false one
+
+    # Test string vs numeric comparison
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"score": {"gt": 10}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should handle both numeric 15 (from string) and 999999999
+    contents = [item["content"] for item in data["items"]]
+    assert "String number" in contents or "Large number" in contents
+
+    # Test large number handling
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"score": {"gte": 999999999}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert "Large number" in data["items"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_real_datetime_column_filtering(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test filtering on actual datetime columns (not just metadata strings)"""
+    test_workspace, test_peer = sample_data
+
+    # Create peers at different times (this uses created_at datetime column)
+    peer1_name = str(generate_nanoid())
+    peer2_name = str(generate_nanoid())
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer1_name, "metadata": {"created": "early"}},
+    )
+
+    # Wait a bit to ensure different timestamps
+    import time
+
+    time.sleep(0.1)
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer2_name, "metadata": {"created": "late"}},
+    )
+
+    # Test datetime filtering with various formats
+    now = datetime.now(timezone.utc)
+    one_minute_ago = now - timedelta(minutes=1)
+
+    # Test ISO format
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"created_at": {"gte": one_minute_ago.isoformat()}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer1_name in found_names
+    assert peer2_name in found_names
+
+    # Test date-only format
+    today = datetime.now(timezone.utc).date().isoformat()
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"created_at": {"gte": today}}},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_invalid_datetime_handling(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test handling of invalid datetime strings"""
+    test_workspace, test_peer = sample_data
+
+    # Test malicious datetime strings (should be rejected by validation)
+    malicious_datetimes = [
+        "2024-01-01'; DROP TABLE peers; --",
+        "2024-01-01 OR 1=1",
+        "'; SELECT * FROM users; --",
+        "2024-01-01' UNION SELECT password FROM auth",
+    ]
+
+    for malicious_dt in malicious_datetimes:
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers/list",
+            json={"filter": {"created_at": {"gte": malicious_dt}}},
+        )
+        assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_nested_jsonb_filtering(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test complex nested JSONB object filtering"""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Create messages with deeply nested metadata
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Complex nested data",
+                    "peer_id": test_peer.name,
+                    "metadata": {
+                        "user": {
+                            "profile": {"level": 5, "premium": True},
+                            "settings": {"notifications": True},
+                        },
+                        "tags": ["important", "urgent"],
+                        "scores": [1, 2, 3, 4, 5],
+                    },
+                },
+                {
+                    "content": "Simple data",
+                    "peer_id": test_peer.name,
+                    "metadata": {
+                        "user": {"profile": {"level": 1, "premium": False}},
+                        "tags": ["normal"],
+                    },
+                },
+            ]
+        },
+    )
+
+    # Test nested object filtering - this might not work as expected
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"user": {"profile": {"premium": True}}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1
+    assert "Complex nested data" in data["items"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_multiple_operators_same_field(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test multiple comparison operators on the same field"""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Create messages with scores for range testing
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Low score",
+                    "peer_id": test_peer.name,
+                    "metadata": {"score": 1},
+                },
+                {
+                    "content": "Mid score",
+                    "peer_id": test_peer.name,
+                    "metadata": {"score": 5},
+                },
+                {
+                    "content": "High score",
+                    "peer_id": test_peer.name,
+                    "metadata": {"score": 10},
+                },
+                {
+                    "content": "Very high",
+                    "peer_id": test_peer.name,
+                    "metadata": {"score": 15},
+                },
+            ]
+        },
+    )
+
+    # Test range query: score >= 3 AND score <= 8
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"score": {"gte": 3, "lte": 8}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) == 1  # Only "Mid score" with score 5
+    assert "Mid score" in data["items"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_empty_and_null_filter_handling(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test handling of empty and null filters"""
+    test_workspace, test_peer = sample_data
+
+    # Test completely empty filter
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filter": {}}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should return all peers
+    assert len(data["items"]) >= 1
+
+    # Test null filter
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filter": None}
+    )
+    assert response.status_code == 200
+
+    # Test empty comparison dict
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"metadata": {"role": {}}}},
+    )
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_unicode_and_special_characters(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test filtering with unicode and special characters"""
+    test_workspace, test_peer = sample_data
+
+    # Create peer with unicode metadata
+    # NOTE: peer names are validated to only contain alphanumerics
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": test_peer.name,
+            "metadata": {
+                "description": "Héllo Wörld! 你好世界 🌍",
+                "tags": ["spëcial", "ünîcode", "émojis🎉"],
+            },
+        },
+    )
+
+    # Test unicode in metadata contains
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"metadata": {"description": {"icontains": "wörld"}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert test_peer.name in found_names
+
+
+@pytest.mark.asyncio
+async def test_case_sensitivity_edge_cases(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test case sensitivity in various contexts"""
+    test_workspace, test_peer = sample_data
+
+    # Create peers with mixed case data
+    peer1_name = str(generate_nanoid())
+    peer2_name = str(generate_nanoid())
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": peer1_name,
+            "metadata": {"Role": "Admin", "Department": "ENGINEERING"},
+        },
+    )
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={
+            "name": peer2_name,
+            "metadata": {"role": "admin", "department": "engineering"},
+        },
+    )
+
+    # Test exact case matching (should be case sensitive for JSONB)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"metadata": {"Role": "Admin"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer1_name in found_names
+    assert peer2_name not in found_names  # Different case
+
+    # Test icontains for case insensitive search
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"metadata": {"Department": {"icontains": "engineering"}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+    assert peer1_name in found_names  # Should match ENGINEERING
+
+
+@pytest.mark.asyncio
+async def test_malformed_filter_structures(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test handling of malformed filter structures"""
+    test_workspace, test_peer = sample_data
+
+    malformed_filters = [
+        # Invalid logical operator structures
+        {"AND": "not_a_list"},
+        {"OR": {"invalid": "structure"}},
+        {"NOT": None},
+        # Invalid comparison structures
+        {"metadata": {"score": {"gte": [1, 2, 3]}}},  # Array instead of single value
+        # Mixed valid/invalid
+        {"AND": [{"valid_field": "value"}, "invalid_structure"]},
+    ]
+
+    for malformed_filter in malformed_filters:
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers/list",
+            json={"filter": malformed_filter},
+        )
+        assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_performance_with_complex_filters(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test performance with very complex nested filters"""
+    test_workspace, test_peer = sample_data
+
+    # Create a very complex filter structure
+    complex_filter = {
+        "AND": [
+            {
+                "OR": [
+                    {"metadata": {"type": "A"}},
+                    {"metadata": {"type": "B"}},
+                    {"metadata": {"type": "C"}},
+                ]
+            },
+            {
+                "NOT": [
+                    {
+                        "AND": [
+                            {"metadata": {"status": "inactive"}},
+                            {"metadata": {"priority": {"lt": 5}}},
+                        ]
+                    }
+                ]
+            },
+            {
+                "OR": [
+                    {"metadata": {"score": {"gte": 80}}},
+                    {
+                        "AND": [
+                            {"metadata": {"premium": True}},
+                            {"metadata": {"level": {"in": [1, 2, 3, 4, 5]}}},
+                        ]
+                    },
+                ]
+            },
+        ]
+    }
+
+    # This should complete without timeout
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": complex_filter},
+    )
+    assert response.status_code == 200
+    # Should return results in reasonable time (this is more of a performance test)
+
+
+@pytest.mark.asyncio
+async def test_filter_precedence_and_grouping(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that filter precedence and grouping works as expected"""
+    test_workspace, test_peer = sample_data
+
+    # Create test data to verify precedence
+    peers_data = [
+        {
+            "name": str(generate_nanoid()),
+            "metadata": {"role": "admin", "dept": "eng", "level": 1},
+        },
+        {
+            "name": str(generate_nanoid()),
+            "metadata": {"role": "user", "dept": "eng", "level": 2},
+        },
+        {
+            "name": str(generate_nanoid()),
+            "metadata": {"role": "admin", "dept": "sales", "level": 3},
+        },
+        {
+            "name": str(generate_nanoid()),
+            "metadata": {"role": "user", "dept": "sales", "level": 4},
+        },
+    ]
+
+    for peer_data in peers_data:
+        client.post(f"/v2/workspaces/{test_workspace.name}/peers", json=peer_data)
+
+    # Test: (admin OR user) AND (eng OR high level)
+    # This should test that grouping works correctly
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {
+                "AND": [
+                    {
+                        "OR": [
+                            {"metadata": {"role": "admin"}},
+                            {"metadata": {"role": "user"}},
+                        ]
+                    },
+                    {
+                        "OR": [
+                            {"metadata": {"dept": "eng"}},
+                            {"metadata": {"level": {"gte": 3}}},
+                        ]
+                    },
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    found_names = [item["id"] for item in data["items"]]
+
+    # Should match:
+    # - admin+eng+1: matches (admin OR user) AND (eng OR level>=3) ✓
+    # - user+eng+2: matches (admin OR user) AND (eng OR level>=3) ✓
+    # - admin+sales+3: matches (admin OR user) AND (eng OR level>=3) ✓
+    # - user+sales+4: matches (admin OR user) AND (eng OR level>=3) ✓
+    # So all should match
+    assert len(found_names) == 4
+
+
+@pytest.mark.asyncio
+async def test_jsonb_contains_vs_equality_semantics(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test the difference between JSONB contains and equality"""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Create messages with different JSONB structures
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Exact match",
+                    "peer_id": test_peer.name,
+                    "metadata": {"role": "admin"},  # Simple key-value
+                },
+                {
+                    "content": "Superset",
+                    "peer_id": test_peer.name,
+                    "metadata": {
+                        "role": "admin",
+                        "department": "engineering",
+                    },  # Contains role=admin plus more
+                },
+                {
+                    "content": "Different",
+                    "peer_id": test_peer.name,
+                    "metadata": {"role": "user"},  # Different value
+                },
+            ]
+        },
+    )
+
+    # Test JSONB contains behavior - should match both exact and superset
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"role": "admin"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Exact match" in contents
+    assert "Superset" in contents  # JSONB contains should match this
+    assert "Different" not in contents
+
+
+@pytest.mark.asyncio
+async def test_wildcard_edge_cases_comprehensive(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test comprehensive edge cases for wildcard behavior"""
+    test_workspace, test_peer = sample_data
+
+    peer_name = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": peer_name, "metadata": {"role": "admin", "level": 5}},
+    )
+
+    # Test wildcard with comparison operators
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {"metadata": {"level": {"gte": "*"}}}  # Wildcard in comparison
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Wildcard in comparison should be ignored, returning all peers
+    assert len(data["items"]) >= 2
+
+    # Test wildcard in array (in operator)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {
+                "metadata": {"role": {"in": ["*", "admin"]}}
+            }  # Mixed wildcard and value
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should return all peers since "*" in array means match all
+    assert len(data["items"]) >= 2
+
+    # Test multiple wildcards
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filter": {
+                "AND": [
+                    {"id": "*"},
+                    {"metadata": {"role": "*"}},
+                    {"metadata": {"level": {"gte": 3}}},  # Only this should filter
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should only apply the level filter
+    found_names = [item["id"] for item in data["items"]]
+    assert peer_name in found_names
+
+
+@pytest.mark.asyncio
+async def test_error_logging_and_debugging(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that errors are logged appropriately for debugging"""
+    test_workspace, test_peer = sample_data
+
+    # Test scenarios that should generate an error
+    problematic_filters = [
+        {"nonexistent_column": "value"},
+        {"created_at": {"gte": "invalid-date"}},
+    ]
+
+    for filter_dict in problematic_filters:
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers/list",
+            json={"filter": filter_dict},
+        )
+        assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_boundary_conditions_numeric(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test boundary conditions for numeric comparisons"""
+    test_workspace, test_peer = sample_data
+
+    session_id = str(generate_nanoid())
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Create messages with boundary values
+    boundary_values = [
+        {"content": "Zero", "metadata": {"score": 0}},
+        {"content": "Negative", "metadata": {"score": -1}},
+        {"content": "Float", "metadata": {"score": 3.14159}},
+        {"content": "Large int", "metadata": {"score": 2147483647}},  # Max 32-bit int
+        {
+            "content": "Very large",
+            "metadata": {"score": 9223372036854775807},
+        },  # Max 64-bit int
+        {"content": "Small float", "metadata": {"score": 0.0000001}},
+    ]
+
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {
+                    "content": msg["content"],
+                    "peer_id": test_peer.name,
+                    "metadata": msg["metadata"],
+                }
+                for msg in boundary_values
+            ]
+        },
+    )
+
+    # Test boundary conditions
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"score": {"gte": 0}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should include zero and all positive values
+    contents = [item["content"] for item in data["items"]]
+    assert "Zero" in contents
+    assert "Negative" not in contents
+
+    # Test floating point precision
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
+        json={"filter": {"metadata": {"score": {"gt": 3.14}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Float" in contents  # 3.14159 > 3.14

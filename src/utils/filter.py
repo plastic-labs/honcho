@@ -3,8 +3,9 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import Select, and_, cast, not_, or_
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import Numeric
+
+from ..exceptions import FilterError
 
 logger = getLogger(__name__)
 
@@ -22,34 +23,26 @@ COMPARISON_OPERATORS = {
 
 NUMERIC_OPERATORS = {"gte", "lte", "gt", "lt", "ne"}
 
+EXTERNAL_TO_INTERNAL_COLUMN_MAPPING = {
+    "metadata": "h_metadata",
+    "id": "name",
+    "workspace_id": "workspace_name",
+    "session_id": "session_name",
+    "peer_id": "peer_name",
+}
 
-def _is_jsonb_column(column) -> bool:
-    """
-    Reliably check if a column is a JSONB column type.
+EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
+    "metadata": "h_metadata",
+    "id": "public_id",
+    "workspace_id": "workspace_name",
+    "session_id": "session_name",
+    "peer_id": "peer_name",
+}
 
-    This function properly detects JSONB columns by checking the column type
-    against the actual JSONB type class rather than relying on string matching.
-
-    Args:
-        column: SQLAlchemy column object
-
-    Returns:
-        bool: True if the column is a JSONB column, False otherwise
-    """
-    if JSONB is None:
-        # Fallback to string-based detection if JSONB type is not available
-        return (
-            hasattr(column.type, "python_type")
-            and hasattr(column.type, "impl")
-            and "JSONB" in str(column.type)
-        )
-
-    # Check if the column type is directly JSONB
-    if isinstance(column.type, JSONB):
-        return True
-
-    # Check if the column type has an impl that is JSONB (for wrapped types)
-    return bool(hasattr(column.type, "impl") and isinstance(column.type.impl, JSONB))
+DISALLOWED_INTERNAL_COLUMNS = [
+    "internal_metadata",
+    ## TODO any others?
+]
 
 
 def apply_filter(
@@ -89,6 +82,9 @@ def apply_filter(
 
     Returns:
         Modified Select statement with filter applied if provided
+
+    Raises:
+        FilterError: When the filter contains invalid configuration or values
     """
     if filter is None:
         return stmt
@@ -115,6 +111,10 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
 
     # Handle logical operators
     if "AND" in filter_dict:
+        if not isinstance(filter_dict["AND"], list):
+            raise FilterError(
+                f"AND operator must contain a list, got {type(filter_dict['AND']).__name__}"
+            )
         and_conditions = []
         for sub_filter in filter_dict["AND"]:
             sub_condition = _build_filter_conditions(sub_filter, model_class)
@@ -124,6 +124,10 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
             conditions.append(and_(*and_conditions))
 
     if "OR" in filter_dict:
+        if not isinstance(filter_dict["OR"], list):
+            raise FilterError(
+                f"OR operator must contain a list, got {type(filter_dict['OR']).__name__}"
+            )
         or_conditions = []
         for sub_filter in filter_dict["OR"]:
             sub_condition = _build_filter_conditions(sub_filter, model_class)
@@ -133,13 +137,21 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
             conditions.append(or_(*or_conditions))
 
     if "NOT" in filter_dict:
+        if filter_dict["NOT"] is None:
+            raise FilterError("NOT operator cannot be None")
+        if not isinstance(filter_dict["NOT"], list):
+            raise FilterError(
+                f"NOT operator must contain a list, got {type(filter_dict['NOT']).__name__}"
+            )
         not_conditions = []
         for sub_filter in filter_dict["NOT"]:
             sub_condition = _build_filter_conditions(sub_filter, model_class)
             if sub_condition is not None:
-                not_conditions.append(sub_condition)
+                not_conditions.append(
+                    not_(sub_condition)
+                )  # Apply NOT to each condition individually
         if not_conditions:
-            conditions.append(not_(and_(*not_conditions)))
+            conditions.append(and_(*not_conditions))  # Then AND them together
 
     # Handle field-level conditions (skip logical operator keys)
     logical_keys = {"AND", "OR", "NOT"}
@@ -172,22 +184,17 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
     Returns:
         SQLAlchemy condition object or None
     """
-    # Map 'metadata' to 'h_metadata' for all models
-    column_name = "h_metadata" if key == "metadata" else key
-    if column_name == "id":
-        # For Message model, id maps to public_id, for others it maps to name
-        column_name = "public_id" if model_class.__name__ == "Message" else "name"
-    # Only apply _id to _name mapping for fields that are actually foreign keys
-    # and not already mapped to public_id
-    elif column_name.endswith("_id"):
-        column_name = column_name[:-3] + "_name"
+    if model_class.__name__ == "Message":
+        column_name = EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key, key)
+    else:
+        column_name = EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key, key)
+
+    if column_name in DISALLOWED_INTERNAL_COLUMNS:
+        raise FilterError(f"Column '{key}' is not allowed to be filtered on")
 
     # Check if the column exists on the model
     if not hasattr(model_class, column_name):
-        logger.debug(
-            f"Column {column_name} does not exist on model {model_class.__name__}"
-        )
-        return None
+        raise FilterError(f"Column '{key}' does not exist on {model_class.__name__}")
 
     column = getattr(model_class, column_name)
 
@@ -205,16 +212,12 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
         else:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
-            # Check if this column is a JSONB column by checking the column type
-            is_jsonb_column = _is_jsonb_column(column)
-            if column_name in ("h_metadata", "configuration") or is_jsonb_column:
+            if column_name in ("h_metadata", "configuration"):
                 return _build_nested_metadata_conditions(column, value)
             else:
                 return column == value
     else:
-        # Simple equality or contains for JSONB
-        is_jsonb_column = _is_jsonb_column(column)
-        if column_name in ("h_metadata", "configuration") or is_jsonb_column:
+        if column_name in ("h_metadata", "configuration"):
             return column.contains(value)
         else:
             return column == value
@@ -236,20 +239,31 @@ def _safe_numeric_cast(column_accessor, op_value):
         # For boolean values, compare with the string representation
         # PostgreSQL JSONB stores booleans as "true"/"false" strings when extracted with ->>
         return column_accessor, str(op_value).lower()
-    elif isinstance(op_value, (int, float)):
-        try:
-            # Cast to numeric for proper numeric comparison
-            numeric_accessor = cast(column_accessor, Numeric)
-            return numeric_accessor, op_value
-        except Exception:
-            # Fall back to string comparison if casting fails
-            logger.debug(
-                "Failed to cast JSONB value to numeric, using string comparison"
-            )
-            return column_accessor, str(op_value)
+    elif isinstance(op_value, int | float):
+        # Cast to numeric for proper numeric comparison
+        numeric_accessor = cast(column_accessor, Numeric)
+        return numeric_accessor, op_value
     else:
-        # Non-numeric, non-boolean value, use string comparison
-        return column_accessor, str(op_value)
+        # Try to parse as numeric (handles both strings and other types)
+        try:
+            # Try int first, then float, then string for lexicographic comparison
+            parsed_value = int(op_value)
+            numeric_accessor = cast(column_accessor, Numeric)
+            return numeric_accessor, parsed_value
+        except (ValueError, TypeError):
+            try:
+                parsed_value = float(op_value)
+                numeric_accessor = cast(column_accessor, Numeric)
+                return numeric_accessor, parsed_value
+            except (ValueError, TypeError):
+                if isinstance(op_value, str):
+                    # If it's not numeric, treat as string comparison (e.g., dates, text)
+                    # This allows date strings like "2024-02-01" to be compared lexicographically
+                    return column_accessor, str(op_value)
+                else:
+                    raise FilterError(
+                        f"Invalid value for numeric operator: {op_value}. Expected a number, got {type(op_value).__name__}"
+                    ) from None
 
 
 def _build_comparison_condition(
@@ -267,6 +281,11 @@ def _build_comparison_condition(
     Returns:
         SQLAlchemy condition object or None
     """
+    # Validate that the operator is supported
+    if operator not in COMPARISON_OPERATORS:
+        raise FilterError(f"Unsupported comparison operator: {operator}")
+
+    # Handle wildcard - matches everything, so no condition needed
     if op_value == "*":
         return None
 
@@ -284,8 +303,15 @@ def _build_comparison_condition(
         }
         return operator_map[operator](safe_accessor, safe_value)
     elif operator == "in":
-        if isinstance(op_value, list):
+        if hasattr(op_value, "__iter__") and not isinstance(op_value, str | bytes):
+            # Handle wildcard in iterable - if present, matches everything, so no condition needed
+            if "*" in op_value:
+                return None
             return field_accessor.in_([str(v) for v in op_value])
+        else:
+            raise FilterError(
+                f"Invalid value for 'in' operator: {op_value}. Expected an iterable (list, tuple, set), got {type(op_value).__name__}"
+            )
     elif operator in ("contains", "icontains"):
         return field_accessor.ilike(f"%{op_value}%")
 
@@ -325,6 +351,9 @@ def _build_nested_metadata_conditions(column, metadata_dict: dict[str, Any]) -> 
                     else and_(*field_conditions)
                 )
         else:
+            # Handle wildcard - matches everything, so no condition needed
+            if field_value == "*":
+                continue
             # Regular field equality - use JSONB contains for nested object matching
             conditions.append(column.contains({field_name: field_value}))
 
@@ -372,8 +401,12 @@ def _build_comparison_conditions(
     )
 
     for operator, op_value in comparisons.items():
+        # Validate that the operator is supported
+        if operator not in COMPARISON_OPERATORS:
+            raise FilterError(f"Unsupported comparison operator: {operator}")
+
+        # Handle wildcard - matches everything, so no condition needed
         if op_value == "*":
-            # Wildcard for this operator - skip condition
             continue
 
         condition = None
@@ -383,13 +416,22 @@ def _build_comparison_conditions(
             # Validate datetime string to prevent SQL injection
             validated_datetime = _validate_datetime_string(op_value)
             if validated_datetime is None:
-                # Skip this condition if datetime validation fails
-                logger.warning(f"Skipping invalid datetime value: {op_value}")
-                continue
+                # Raise error if datetime validation fails
+                raise FilterError(f"Invalid datetime value: {op_value}")
+
             # Use the validated datetime object directly instead of string interpolation
             casted_value = validated_datetime
         else:
-            casted_value = op_value
+            # if the operator is a numeric operator, the value must cast to a number
+            if operator in NUMERIC_OPERATORS:
+                try:
+                    casted_value = float(op_value)
+                except ValueError:
+                    raise FilterError(
+                        f"Invalid numeric value: {op_value}. Expected a number, got {type(op_value).__name__}"
+                    ) from None
+            else:
+                casted_value = op_value
 
         if operator == "gte":
             condition = column >= casted_value
@@ -402,8 +444,8 @@ def _build_comparison_conditions(
         elif operator == "ne":
             condition = column != casted_value
         elif operator == "in":
-            if isinstance(op_value, list):
-                # Check if the list contains wildcard - if so, skip condition (match all)
+            if hasattr(op_value, "__iter__") and not isinstance(op_value, str | bytes):
+                # Handle wildcard in iterable - if present, matches everything, so no condition needed
                 if "*" in op_value:
                     continue
                 else:
@@ -414,17 +456,20 @@ def _build_comparison_conditions(
                             if isinstance(val, str):
                                 validated_datetime = _validate_datetime_string(val)
                                 if validated_datetime is None:
-                                    logger.warning(
-                                        f"Skipping invalid datetime value in list: {val}"
+                                    raise FilterError(
+                                        f"Invalid datetime value in list: {val}"
                                     )
-                                    continue
                                 casted_values.append(validated_datetime)
                             else:
                                 casted_values.append(val)
                         if casted_values:
                             condition = column.in_(casted_values)
                     else:
-                        condition = column.in_(op_value)
+                        condition = column.in_(list(op_value))
+            else:
+                raise FilterError(
+                    f"Invalid value for 'in' operator: {op_value}. Expected an iterable (list, tuple, set), got {type(op_value).__name__}"
+                )
         elif operator == "contains":
             if column_name == "h_metadata":
                 # For JSONB columns, use JSONB contains
@@ -461,11 +506,8 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
     Returns:
         Parsed datetime object if valid, None if invalid
     """
-    # Strip whitespace and check for obviously malicious content
+    # Strip whitespace
     value = value.strip()
-    if not value or "'" in value or ";" in value or "--" in value:
-        logger.warning(f"Potentially malicious datetime string rejected: {value}")
-        return None
 
     # Try to parse with various common datetime formats
     datetime_formats = [
@@ -490,5 +532,5 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
     except ValueError:
         pass
 
-    logger.warning(f"Invalid datetime format rejected: {value}")
+    # Return None for invalid datetime - let the caller handle the error
     return None

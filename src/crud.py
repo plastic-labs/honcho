@@ -293,7 +293,6 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    is_active: bool | None = None,
     filter: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
@@ -302,7 +301,6 @@ async def get_sessions_for_peer(
     Args:
         workspace_name: Name of the workspace
         peer_name: Name of the peer
-        is_active: Filter by active status (True/False/None for all)
         filter: Filter sessions by metadata
 
     Returns:
@@ -319,9 +317,6 @@ async def get_sessions_for_peer(
         .where(models.Session.workspace_name == workspace_name)
     )
 
-    if is_active is not None:
-        stmt = stmt.where(models.Session.is_active == is_active)
-
     stmt = apply_filter(stmt, models.Session, filter)
 
     stmt: Select[tuple[models.Session]] = stmt.order_by(models.Session.created_at)
@@ -336,16 +331,12 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    is_active: bool | None = None,
     filter: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
     Get all sessions in a workspace.
     """
     stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
-
-    if is_active:
-        stmt = stmt.where(models.Session.is_active.is_(True))
 
     stmt = apply_filter(stmt, models.Session, filter)
 

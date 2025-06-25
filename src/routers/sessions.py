@@ -84,23 +84,14 @@ async def get_sessions(
 ):
     """Get All Sessions in a Workspace"""
     filter_param = None
-    is_active_param = False  # Default from schema
 
-    if options:
-        if hasattr(options, "filter") and options.filter:
-            filter_param = options.filter
-            if filter_param == {}:  # Explicitly check for empty dict
-                filter_param = None
-        if hasattr(options, "is_active"):  # Check if is_active is present
-            is_active_param = options.is_active
+    if options and hasattr(options, "filter") and options.filter:
+        filter_param = options.filter
+        if filter_param == {}:  # Explicitly check for empty dict
+            filter_param = None
 
     return await apaginate(
-        db,
-        await crud.get_sessions(
-            workspace_name=workspace_id,
-            is_active=is_active_param,
-            filter=filter_param,
-        ),
+        db, await crud.get_sessions(workspace_name=workspace_id, filter=filter_param)
     )
 
 

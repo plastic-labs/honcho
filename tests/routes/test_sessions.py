@@ -196,32 +196,6 @@ def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert data["items"][0]["workspace_id"] == test_workspace.name
 
 
-def test_get_sessions_with_is_active_filter(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Test session listing with is_active parameter"""
-    test_workspace, test_peer = sample_data
-
-    # Create and then delete a session to have inactive session
-    session_id = str(generate_nanoid())
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
-    )
-    client.delete(f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}")
-
-    # Test getting inactive sessions
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"is_active": False}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    # Should find at least our deleted session
-    inactive_sessions = [s for s in data["items"] if not s["is_active"]]
-    assert len(inactive_sessions) > 0
-
-
 def test_get_sessions_with_empty_filter(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
@@ -382,7 +356,7 @@ def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Check that session is marked as inactive
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"is_active": False},
+        json={"filter": {"is_active": False}},
     )
     data = response.json()
     # Find our session in the inactive sessions

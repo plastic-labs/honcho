@@ -128,22 +128,17 @@ async def get_sessions_for_peer(
 ):
     """Get All Sessions for a Peer"""
     filter_param = None
-    is_active = True
 
-    if options:
-        if hasattr(options, "filter"):
-            filter_param = options.filter
-            if filter_param == {}:
-                filter_param = None
-        if hasattr(options, "is_active"):
-            is_active = options.is_active
+    if options and hasattr(options, "filter"):
+        filter_param = options.filter
+        if filter_param == {}:
+            filter_param = None
 
     return await apaginate(
         db,
         await crud.get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
-            is_active=is_active,
             filter=filter_param,
         ),
     )
