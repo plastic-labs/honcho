@@ -1,6 +1,5 @@
 import contextvars
 
-from alembic import command
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
@@ -54,6 +53,7 @@ Base = declarative_base(metadata=meta)
 
 def init_db():
     """Initialize the database using Alembic migrations"""
+    from alembic import command
     from alembic.config import Config
 
     # Create a sync engine for schema operations
