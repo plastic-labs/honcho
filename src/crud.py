@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, final
 
+import tiktoken
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
@@ -34,6 +35,92 @@ class EmbeddingClient:
             input=query, model="text-embedding-3-small"
         )
         return response.data[0].embedding
+
+    async def batch_embed(
+        self,
+        id_text_dict: dict[str, str],
+    ) -> dict[str, list[float]]:
+        """
+        Generate embeddings for multiple texts with batching and token limits.
+        Note that OpenAI preserves the order of the embeddings in the response, but this
+        may not be the case for other providers
+
+        Args:
+            id_text_dict: Dictionary mapping text IDs to text content (e.g. message IDs to message content)
+
+        Returns:
+            Dictionary mapping text IDs to embedding vectors (e.g. message IDs to embedding vectors)
+        """
+
+        # Get the tokenizer for the model
+        encoding = tiktoken.get_encoding("cl100k_base")  # Used by embedding models
+
+        # Batch encode all texts upfront for efficiency
+        all_texts = list(id_text_dict.values())
+        all_ids = list(id_text_dict.keys())
+        all_encoded = encoding.encode_batch(all_texts)
+        all_token_counts = [len(encoded) for encoded in all_encoded]
+
+        batches = []
+        current_batch_ids = []
+        current_batch_texts = []
+        current_batch_tokens = 0
+
+        # OpenAI's official limits for embeddings API:
+        # - Max 300,000 tokens per request (total across all inputs)
+        # - Max 8,192 tokens per individual input
+        # Note: Schema limits ensure we'll never exceed the 2,048 inputs per request limit
+        MAX_TOKENS_PER_REQUEST = 300_000
+        MAX_TOKENS_PER_INPUT = 8192
+
+        for i, (text_id, text) in enumerate(zip(all_ids, all_texts, strict=False)):
+            # Get pre-computed token count
+            text_tokens = all_token_counts[i]
+
+            # Skip if single text exceeds per-input limit. This is a safety measure but realistically shouldn't really happen
+            if text_tokens > MAX_TOKENS_PER_INPUT:
+                logger.warning(
+                    f"Skipping embedding for {text_id} - {text_tokens} tokens exceeds limit"
+                )
+                continue
+
+            # Check if adding this text would exceed token limits
+            would_exceed_tokens = (
+                current_batch_tokens + text_tokens > MAX_TOKENS_PER_REQUEST
+            )
+
+            if would_exceed_tokens:
+                # Save current batch and start new one
+                if current_batch_ids:
+                    batches.append(
+                        (current_batch_ids.copy(), current_batch_texts.copy())
+                    )
+                current_batch_ids = [text_id]
+                current_batch_texts = [text]
+                current_batch_tokens = text_tokens
+            else:
+                # Add to current batch
+                current_batch_ids.append(text_id)
+                current_batch_texts.append(text)
+                current_batch_tokens += text_tokens
+
+        # Append remaining batch
+        if current_batch_ids:
+            batches.append((current_batch_ids, current_batch_texts))
+
+        # Process all batches
+        all_embeddings = {}
+        for batch_ids, batch_texts in batches:
+            response = await self.client.embeddings.create(
+                model="text-embedding-3-small", input=batch_texts
+            )
+
+            # Map embeddings back to IDs
+            for i, embedding_data in enumerate(response.data):
+                original_id = batch_ids[i]
+                all_embeddings[original_id] = embedding_data.embedding
+
+        return all_embeddings
 
 
 embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
