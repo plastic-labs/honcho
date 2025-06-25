@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
@@ -47,7 +47,7 @@ class Peer(BaseModel):
             ..., description="Reference to the parent Honcho client instance"
         ),
         *,
-        config: Optional[dict[str, object]] = Field(
+        config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
@@ -74,12 +74,12 @@ class Peer(BaseModel):
 
     def chat(
         self,
-        queries: Union[str, List[str]],
+        queries: str | list[str],
         *,
         stream: bool = False,
-        target: Optional[Union[str, "Peer"]] = None,
-        session_id: Optional[str] = None,
-    ) -> Optional[str]:
+        target: str | Peer | None = None,
+        session_id: str | None = None,
+    ) -> str | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -105,14 +105,14 @@ class Peer(BaseModel):
             workspace_id=self.workspace_id,
             queries=queries,
             stream=stream,
-            target=str(target.id) if hasattr(target, "id") else target,
+            target=str(target.id) if isinstance(target, Peer) else target,
             session_id=session_id,
         )
         if response.content == "" or response.content == "None":
             return None
         return response.content
 
-    def get_sessions(self) -> SyncPage["Session"]:
+    def get_sessions(self) -> SyncPage[Session]:
         """
         Get all sessions this peer is a member of.
 
@@ -135,7 +135,7 @@ class Peer(BaseModel):
     @validate_call
     def add_messages(
         self,
-        content: Union[str, MessageCreateParam, List[MessageCreateParam]] = Field(
+        content: str | MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Content to add to the peer's representation"
         ),
     ) -> None:
@@ -153,7 +153,7 @@ class Peer(BaseModel):
                      - Message: A single Message object to add
                      - List[Message]: Multiple Message objects to add in batch
         """
-        messages: List[MessageCreateParam]
+        messages: list[MessageCreateParam]
         if isinstance(content, str):
             messages = [
                 MessageCreateParam(peer_id=self.id, content=content, metadata=None)
@@ -173,7 +173,7 @@ class Peer(BaseModel):
     def get_messages(
         self,
         *,
-        filter: Optional[dict[str, object]] = Field(
+        filter: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
     ) -> SyncPage[Message]:
@@ -208,7 +208,7 @@ class Peer(BaseModel):
             ..., min_length=1, description="The text content for the message"
         ),
         *,
-        metadata: Optional[dict[str, object]] = Field(
+        metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
     ) -> MessageCreateParam:

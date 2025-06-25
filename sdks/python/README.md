@@ -91,7 +91,7 @@ anthropic_messages = context.to_anthropic(assistant="assistant")
 ### Async Support
 
 ```python
-from honcho_coreimport AsyncHoncho
+from honcho import AsyncHoncho
 
 async def main():
     client = AsyncHoncho(api_key="your-api-key")
@@ -132,7 +132,7 @@ response = alice.chat("What does Bob think about this project?",
 
 ```bash
 export HONCHO_API_KEY="your-api-key"
-export HONCHO_URL="https://api.honcho.dev"  # Optional
+export HONCHO_BASE_URL="https://api.honcho.dev"  # Optional
 export HONCHO_WORKSPACE_ID="your-workspace"  # Optional
 ```
 

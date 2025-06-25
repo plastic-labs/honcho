@@ -1,4 +1,5 @@
-from typing import Callable, Iterator, List, Optional, TypeVar
+from collections.abc import Iterator
+from typing import Callable, Optional, TypeVar
 
 from honcho_core.pagination import SyncPage as SyncPageCore
 from pydantic import Field, validate_call
@@ -58,7 +59,7 @@ class SyncPage(SyncPageCore[U]):
         return len(self._original_page)
 
     @property
-    def data(self) -> List[U]:
+    def data(self) -> list[U]:
         """Get all optionally transformed data as a list."""
         if self._transform_func is not None:
             return [self._transform_func(item) for item in self._original_page.data]

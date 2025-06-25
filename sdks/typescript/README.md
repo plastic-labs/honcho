@@ -4,10 +4,8 @@ A high-level, ergonomic TypeScript SDK for the Honcho conversational memory plat
 
 ## Installation
 
-Clone this repo and install dependencies:
-
-```sh
-npm install
+```
+npm install @honcho-ai/sdk
 ```
 
 ## Usage

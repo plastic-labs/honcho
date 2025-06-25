@@ -1,7 +1,8 @@
 import os
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
+from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -13,22 +14,19 @@ if TYPE_CHECKING:
     from .peer import AsyncPeer
 
 try:
-    DEFAULT_CONTEXT_TOKENS = (
-        int(os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS"))
-        if os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
-        else None
-    )
+    env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
+    DEFAULT_CONTEXT_TOKENS = int(env_val) if env_val else None
 except (ValueError, TypeError):
     DEFAULT_CONTEXT_TOKENS = None
 
 
 class SessionPeerConfig(BaseModel):
-    observe_others: bool = Field(
-        False,
+    observe_others: bool | None = Field(
+        None,
         description="Whether this peer should form a session-level theory-of-mind representation of other peers in the session",
     )
-    observe_me: bool = Field(
-        True,
+    observe_me: bool | None = Field(
+        None,
         description="Whether other peers in this session should try to form a session-level theory-of-mind representation of this peer",
     )
 
@@ -121,9 +119,9 @@ class AsyncSession(BaseModel):
             "AsyncPeer",
             tuple[str, SessionPeerConfig],
             tuple["AsyncPeer", SessionPeerConfig],
-            List[Union["AsyncPeer", str]],
-            List[tuple[Union["AsyncPeer", str], SessionPeerConfig]],
-            List[
+            list[Union["AsyncPeer", str]],
+            list[tuple[Union["AsyncPeer", str], SessionPeerConfig]],
+            list[
                 Union[
                     "AsyncPeer", str, tuple[Union["AsyncPeer", str], SessionPeerConfig]
                 ]
@@ -175,9 +173,9 @@ class AsyncSession(BaseModel):
             "AsyncPeer",
             tuple[str, SessionPeerConfig],
             tuple["AsyncPeer", SessionPeerConfig],
-            List[Union["AsyncPeer", str]],
-            List[tuple[Union["AsyncPeer", str], SessionPeerConfig]],
-            List[
+            list[Union["AsyncPeer", str]],
+            list[tuple[Union["AsyncPeer", str], SessionPeerConfig]],
+            list[
                 Union[
                     "AsyncPeer", str, tuple[Union["AsyncPeer", str], SessionPeerConfig]
                 ]
@@ -223,7 +221,7 @@ class AsyncSession(BaseModel):
 
     async def remove_peers(
         self,
-        peers: Union[str, "AsyncPeer", List[Union["AsyncPeer", str]]] = Field(
+        peers: Union[str, "AsyncPeer", list[Union["AsyncPeer", str]]] = Field(
             ..., description="Peers to remove from the session"
         ),
     ) -> None:
@@ -277,10 +275,16 @@ class AsyncSession(BaseModel):
         """
         Get the configuration for a peer in this session.
         """
-        return await self._client.workspaces.sessions.peers.get_config(
-            peer_id=str(peer.id) if hasattr(peer, "id") else peer,
-            workspace_id=self.workspace_id,
-            session_id=self.id,
+        peer_get_config_response = (
+            await self._client.workspaces.sessions.peers.get_config(
+                peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
+                workspace_id=self.workspace_id,
+                session_id=self.id,
+            )
+        )
+        return SessionPeerConfig(
+            observe_others=peer_get_config_response.observe_others,
+            observe_me=peer_get_config_response.observe_me,
         )
 
     async def set_peer_config(
@@ -290,17 +294,19 @@ class AsyncSession(BaseModel):
         Set the configuration for a peer in this session.
         """
         await self._client.workspaces.sessions.peers.set_config(
-            peer_id=str(peer.id) if hasattr(peer, "id") else peer,
+            peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            observe_others=config.observe_others,
-            observe_me=config.observe_me,
+            observe_others=NOT_GIVEN
+            if config.observe_others is None
+            else config.observe_others,
+            observe_me=NOT_GIVEN if config.observe_me is None else config.observe_me,
         )
 
     @validate_call
     async def add_messages(
         self,
-        messages: Union[MessageCreateParam, List[MessageCreateParam]] = Field(
+        messages: MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Messages to add to the session"
         ),
     ) -> None:
@@ -472,9 +478,9 @@ class AsyncSession(BaseModel):
 
     async def working_rep(
         self,
-        peer: Union[str, "AsyncPeer"],
+        peer: "str | AsyncPeer",
         *,
-        target: Optional[Union[str, "AsyncPeer"]] = None,
+        target: "str | AsyncPeer | None" = None,
     ) -> dict[str, object]:
         """
         Get the current working representation of the peer in this session.
@@ -488,10 +494,10 @@ class AsyncSession(BaseModel):
             A dictionary containing information about the peer.
         """
         return await self._client.workspaces.peers.working_representation(
-            str(peer.id) if hasattr(peer, "id") else peer,
+            str(peer.id) if isinstance(peer, AsyncPeer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            target=str(target.id) if hasattr(target, "id") else target,
+            target=str(target.id) if isinstance(target, AsyncPeer) else target,
         )
 
     def __repr__(self) -> str:

@@ -1,11 +1,7 @@
 import logging
-import sys
-from pathlib import Path
 
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-from src import Honcho  # noqa: E402
+from honcho import Honcho
+from honcho.session import SessionPeerConfig
 
 logging.basicConfig(level=logging.INFO)
 
@@ -40,7 +36,9 @@ response = alice.chat("what did alice have for breakfast today?")
 my_session = honcho.session(id="session_1")
 
 # API call
-my_session.add_peers([alice, (assistant, {"observe_me": False})])
+my_session.add_peers(
+    [alice, (assistant, SessionPeerConfig(observe_others=False, observe_me=False))]
+)
 
 # adding/removing peers from sessions creates a bidirectional relationship,
 # so no need for operations like `alice.join(my_session)`.

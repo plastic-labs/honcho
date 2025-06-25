@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
@@ -65,8 +65,8 @@ class AsyncPeer(BaseModel):
         workspace_id: str,
         client: AsyncHonchoCore,
         *,
-        config: Optional[dict[str, object]] = None,
-    ) -> "AsyncPeer":
+        config: dict[str, object] | None = None,
+    ) -> AsyncPeer:
         """
         Create a new AsyncPeer with optional configuration.
 
@@ -93,12 +93,12 @@ class AsyncPeer(BaseModel):
 
     async def chat(
         self,
-        queries: Union[str, List[str]],
+        queries: str | list[str],
         *,
         stream: bool = False,
-        target: Optional[Union[str, "AsyncPeer"]] = None,
-        session_id: Optional[str] = None,
-    ) -> Optional[str]:
+        target: str | AsyncPeer | None = None,
+        session_id: str | None = None,
+    ) -> str | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -124,14 +124,15 @@ class AsyncPeer(BaseModel):
             workspace_id=self.workspace_id,
             queries=queries,
             stream=stream,
-            target=str(target.id) if hasattr(target, "id") else target,
+            target=str(target.id) if isinstance(target, AsyncPeer) else target,
             session_id=session_id,
         )
-        if response.content == "" or response.content == "None":
+        # "If the context provided doesn't help address the query, write absolutely NOTHING but "None""
+        if response.content in ("", None, "None"):
             return None
         return response.content
 
-    async def get_sessions(self) -> AsyncPage["AsyncSession"]:
+    async def get_sessions(self) -> AsyncPage[AsyncSession]:
         """
         Get all sessions this peer is a member of.
 
@@ -156,7 +157,7 @@ class AsyncPeer(BaseModel):
     @validate_call
     async def add_messages(
         self,
-        content: Union[str, MessageCreateParam, List[MessageCreateParam]] = Field(
+        content: str | MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Content to add to the peer's representation"
         ),
     ) -> None:
@@ -174,7 +175,7 @@ class AsyncPeer(BaseModel):
                      - Message: A single Message object to add
                      - List[Message]: Multiple Message objects to add in batch
         """
-        messages: List[MessageCreateParam]
+        messages: list[MessageCreateParam]
         if isinstance(content, str):
             messages = [
                 MessageCreateParam(peer_id=self.id, content=content, metadata=None)
@@ -194,7 +195,7 @@ class AsyncPeer(BaseModel):
     async def get_messages(
         self,
         *,
-        filter: Optional[dict[str, object]] = Field(
+        filter: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
     ) -> AsyncPage[Message]:
@@ -229,7 +230,7 @@ class AsyncPeer(BaseModel):
             ..., min_length=1, description="The text content for the message"
         ),
         *,
-        metadata: Optional[dict[str, object]] = Field(
+        metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
     ) -> MessageCreateParam:

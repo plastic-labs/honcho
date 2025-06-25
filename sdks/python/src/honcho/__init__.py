@@ -6,7 +6,7 @@ Provides tools for managing peers, sessions, and conversation context
 across multi-party interactions.
 
 Usage:
-    from honcho_core import Honcho
+    from honcho import Honcho
 
     # Initialize client
     client = Honcho(api_key="your-api-key")

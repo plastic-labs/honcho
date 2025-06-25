@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, List, Union
+from typing import TYPE_CHECKING, Union
 
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, Field, validate_call
@@ -22,7 +22,7 @@ class SessionContext(BaseModel):
     session_id: str = Field(
         ..., description="ID of the session this context belongs to"
     )
-    messages: List[Message] = Field(
+    messages: list[Message] = Field(
         ..., description="List of Message objects to include in the context"
     )
     summary: str = Field(
@@ -35,7 +35,7 @@ class SessionContext(BaseModel):
         session_id: str = Field(
             ..., description="ID of the session this context belongs to"
         ),
-        messages: List[Message] = Field(
+        messages: list[Message] = Field(
             ..., description="List of Message objects to include in the context"
         ),
         summary: str = Field(
@@ -59,7 +59,7 @@ class SessionContext(BaseModel):
         self,
         *,
         assistant: Union[str, "Peer"],
-    ) -> List[dict[str, object]]:
+    ) -> list[dict[str, object]]:
         """
         Convert the context to OpenAI-compatible message format.
 
@@ -79,7 +79,7 @@ class SessionContext(BaseModel):
         Raises:
             ValidationError: If assistant parameter is invalid
         """
-        assistant_id = assistant.id if hasattr(assistant, "id") else assistant
+        assistant_id = assistant.id if isinstance(assistant, Peer) else assistant
         return [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",
@@ -92,7 +92,7 @@ class SessionContext(BaseModel):
         self,
         *,
         assistant: Union[str, "Peer"],
-    ) -> List[dict[str, object]]:
+    ) -> list[dict[str, object]]:
         """
         Convert the context to Anthropic-compatible message format.
 
@@ -117,7 +117,7 @@ class SessionContext(BaseModel):
             Future versions may implement role alternation requirements for
             Anthropic's API compatibility
         """
-        assistant_id = assistant.id if hasattr(assistant, "id") else assistant
+        assistant_id = assistant.id if isinstance(assistant, Peer) else assistant
         return [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",

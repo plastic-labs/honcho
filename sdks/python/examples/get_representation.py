@@ -1,12 +1,7 @@
 import random
-import sys
 import uuid
-from pathlib import Path
 
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root))
-
-from src import Honcho  # noqa: E402
+from honcho import Honcho
 
 # Create a Honcho client with the default workspace
 honcho = Honcho(environment="local")

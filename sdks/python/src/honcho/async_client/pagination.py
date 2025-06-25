@@ -1,4 +1,5 @@
-from typing import AsyncIterator, Callable, List, Optional, TypeVar
+from collections.abc import AsyncIterator
+from typing import Callable, Optional, TypeVar
 
 from honcho_core.pagination import AsyncPage as AsyncPageCore
 from pydantic import Field, validate_call
@@ -58,7 +59,7 @@ class AsyncPage(AsyncPageCore[U]):
         return len(self._original_page)
 
     @property
-    async def data(self) -> List[U]:
+    async def data(self) -> list[U]:
         """Get all optionally transformed data as a list."""
         data = await self._original_page.data
         if self._transform_func is not None:

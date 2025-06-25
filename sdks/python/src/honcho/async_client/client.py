@@ -1,6 +1,7 @@
 import logging
 import os
-from typing import List, Literal, Mapping, Optional
+from collections.abc import Mapping
+from typing import Literal, Optional
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core import Honcho as HonchoCore
@@ -258,7 +259,7 @@ class AsyncHoncho(BaseModel):
         """
         await self._client.workspaces.update(self.workspace_id, metadata=metadata)
 
-    async def get_workspaces(self) -> List[str]:
+    async def get_workspaces(self) -> list[str]:
         """
         Get all workspace IDs from the Honcho instance.
 
