@@ -465,7 +465,7 @@ async def search_session(
     search: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters "
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     query, use_semantic_search = search.query, search.use_semantic_search
     embed_messages_enabled = settings.LLM.EMBED_MESSAGES

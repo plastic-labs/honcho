@@ -61,9 +61,9 @@ class EmbeddingClient:
         all_encoded = encoding.encode_batch(all_texts)
         all_token_counts = [len(encoded) for encoded in all_encoded]
 
-        batches = []
-        current_batch_ids = []
-        current_batch_texts = []
+        batches: list[tuple[list[str], list[str]]] = []
+        current_batch_ids: list[str] = []
+        current_batch_texts: list[str] = []
         current_batch_tokens = 0
 
         # OpenAI's official limits for embeddings API:
@@ -109,7 +109,7 @@ class EmbeddingClient:
             batches.append((current_batch_ids, current_batch_texts))
 
         # Process all batches
-        all_embeddings = {}
+        all_embeddings: dict[str, list[float]] = {}
         for batch_ids, batch_texts in batches:
             response = await self.client.embeddings.create(
                 model="text-embedding-3-small", input=batch_texts

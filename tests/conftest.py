@@ -298,7 +298,9 @@ def mock_openai_embeddings():
         mock_embed.return_value = [0.1] * 1536
 
         # Mock the batch_embed method to return a dict of fake embedding vectors
-        async def mock_batch_embed_func(id_text_dict):
+        async def mock_batch_embed_func(
+            id_text_dict: dict[str, str],
+        ) -> dict[str, list[float]]:
             return {text_id: [0.1] * 1536 for text_id in id_text_dict}
 
         mock_batch_embed.side_effect = mock_batch_embed_func

@@ -336,7 +336,7 @@ async def search_peer(
     search: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters "
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Search a Peer"""
     embed_messages_enabled = settings.LLM.EMBED_MESSAGES

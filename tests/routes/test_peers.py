@@ -569,7 +569,9 @@ def test_search_peer_nonexistent(
     assert response.status_code in [200, 404, 422]
 
 
-def test_search_peer_with_semantic_search_false(client, sample_data):
+def test_search_peer_with_semantic_search_false(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer search with use_semantic_search=false"""
     test_workspace, test_peer = sample_data
 
@@ -600,7 +602,9 @@ def test_search_peer_with_semantic_search_false(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_search_peer_with_semantic_search_true_disabled(client, sample_data):
+def test_search_peer_with_semantic_search_true_disabled(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test peer search with use_semantic_search=true when EMBED_MESSAGES is disabled"""
     test_workspace, test_peer = sample_data
 
