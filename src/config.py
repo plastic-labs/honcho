@@ -201,6 +201,9 @@ class LLMSettings(HonchoSettings):
     # SUMMARY_SYSTEM_PROMPT_SHORT_FILE: Optional[str] = "prompts/summary_short_system.txt"
     # SUMMARY_SYSTEM_PROMPT_LONG_FILE: Optional[str] = "prompts/summary_long_system.txt"
 
+    # Embed all messages that are sent by peers
+    EMBED_MESSAGES: bool = False
+
 
 class AgentSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="AGENT_")  # pyright: ignore

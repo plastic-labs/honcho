@@ -203,6 +203,7 @@ class Message(Base):
         "internal_metadata", JSONB, default=dict
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    embedding = mapped_column(Vector(1536), nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -238,6 +239,14 @@ class Message(Base):
             "idx_messages_content_gin",
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
+        ),
+        # HNSW index on embedding column for vector similarity search
+        Index(
+            "idx_messages_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
 

@@ -6,9 +6,11 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
+from src.config import settings
 from src.dependencies import db
 from src.exceptions import (
     AuthenticationException,
+    DisabledException,
     ResourceNotFoundException,
     ValidationException,
 )
@@ -460,12 +462,24 @@ async def get_session_context(
 async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    query: str = Body(..., description="Search query"),
-    db: AsyncSession = db,
+    search: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters "
+    ),
+    db=db,
 ):
+    query, use_semantic_search = search.query, search.use_semantic_search
+    embed_messages_enabled = settings.LLM.EMBED_MESSAGES
+    if use_semantic_search and not embed_messages_enabled:
+        raise DisabledException(
+            "Semantic search requires EMBED_MESSAGES flag to be enabled"
+        )
+
     """Search a Session"""
     stmt = await crud.search(
-        query, workspace_name=workspace_id, session_name=session_id
+        query,
+        workspace_name=workspace_id,
+        session_name=session_id,
+        use_semantic_search=use_semantic_search,
     )
 
     return await paginate(db, stmt)

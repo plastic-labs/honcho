@@ -1001,6 +1001,7 @@ async def search(
     workspace_name: str,
     session_name: str | None = None,
     peer_name: str | None = None,
+    use_semantic_search: bool = False,
 ) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
@@ -1196,16 +1197,22 @@ async def create_messages(
     )
 
     # Create list of message objects (this will trigger the before_insert event)
-    message_objects = [
-        models.Message(
+    message_objects: list[models.Message] = []
+    for message in messages:
+        message_obj = models.Message(
             session_name=session_name,
             peer_name=message.peer_name,
             content=message.content,
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
+            public_id=generate_nanoid(),
         )
-        for message in messages
-    ]
+        message_objects.append(message_obj)
+
+    id_text_dict = {message.public_id: message.content for message in message_objects}
+    embedding_dict = await embedding_client.batch_embed(id_text_dict)
+    for message_obj in message_objects:
+        message_obj.embedding = embedding_dict[message_obj.public_id]
 
     # Add all messages and commit
     db.add_all(message_objects)
@@ -1239,16 +1246,23 @@ async def create_messages_for_peer(
         db, workspace_name=workspace_name, peers=[schemas.PeerCreate(name=peer_name)]
     )
     # Create list of message objects (this will trigger the before_insert event)
-    message_objects = [
-        models.Message(
+    message_objects: list[models.Message] = []
+
+    for message in messages:
+        message_obj = models.Message(
             session_name=None,
             peer_name=peer_name,
             content=message.content,
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
+            public_id=generate_nanoid(),
         )
-        for message in messages
-    ]
+        message_objects.append(message_obj)
+
+    id_text_dict = {message.public_id: message.content for message in message_objects}
+    embedding_dict = await embedding_client.batch_embed(id_text_dict)
+    for message_obj in message_objects:
+        message_obj.embedding = embedding_dict[message_obj.public_id]
 
     # Add all messages and commit
     db.add_all(message_objects)

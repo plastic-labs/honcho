@@ -216,6 +216,14 @@ class DocumentUpdate(DocumentBase):
     metadata: dict[str, Any] | None = None
 
 
+class MessageSearchOptions(BaseModel):
+    query: str = Field(..., description="Search query")
+    use_semantic_search: bool = Field(
+        False,
+        description="Whether to use semantic search to filter the results",
+    )
+
+
 class DialecticOptions(BaseModel):
     session_id: str | None = Field(
         None, description="ID of the session to scope the representation to"

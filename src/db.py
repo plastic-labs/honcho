@@ -53,7 +53,6 @@ Base = declarative_base(metadata=meta)
 
 def init_db():
     """Initialize the database using Alembic migrations"""
-    from alembic import command
     from alembic.config import Config
 
     # Create a sync engine for schema operations
@@ -72,7 +71,7 @@ def init_db():
 
     # Run Alembic migrations
     alembic_cfg = Config("alembic.ini")
-    command.upgrade(alembic_cfg, "head")
+    # command.upgrade(alembic_cfg, "head")
 
     # Clean up
     sync_engine.dispose()
