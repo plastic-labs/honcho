@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
@@ -521,7 +522,7 @@ def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search query", "use_semantic_search": False},
+        json={"query": "search query"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -543,7 +544,7 @@ def test_search_peer_empty_query(
     # Search with empty query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "", "use_semantic_search": False},
+        json={"query": ""},
     )
     assert response.status_code == 200
     data = response.json()
@@ -562,7 +563,7 @@ def test_search_peer_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{nonexistent_peer_id}/search",
-        json={"query": "test query", "use_semantic_search": False},
+        json={"query": "test query"},
     )
     # This should probably return 404 or handle gracefully
     # The exact behavior depends on the crud.search implementation
@@ -572,7 +573,7 @@ def test_search_peer_nonexistent(
 def test_search_peer_with_semantic_search_false(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test peer search with use_semantic_search=false"""
+    """Test peer search with semantic=false"""
     test_workspace, test_peer = sample_data
 
     # Add some messages to search through
@@ -586,10 +587,10 @@ def test_search_peer_with_semantic_search_false(
         },
     )
 
-    # Search with use_semantic_search=false
+    # Search with semantic=false
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search", "use_semantic_search": False},
+        json={"query": "search", "semantic": False},
     )
     assert response.status_code == 200
     data = response.json()
@@ -603,9 +604,14 @@ def test_search_peer_with_semantic_search_false(
 
 
 def test_search_peer_with_semantic_search_true_disabled(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    """Test peer search with use_semantic_search=true when EMBED_MESSAGES is disabled"""
+    """Test peer search with semantic=true when EMBED_MESSAGES is disabled"""
+    # Override the EMBED_MESSAGES setting to False for this test
+    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", False)
+
     test_workspace, test_peer = sample_data
 
     # Add some messages to search through
@@ -619,10 +625,10 @@ def test_search_peer_with_semantic_search_true_disabled(
         },
     )
 
-    # Search with use_semantic_search=true (should fail if EMBED_MESSAGES is disabled)
+    # Search with semantic=true (should fail if EMBED_MESSAGES is disabled)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search", "use_semantic_search": True},
+        json={"query": "search", "semantic": True},
     )
 
     assert response.status_code == 405

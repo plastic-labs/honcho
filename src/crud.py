@@ -18,6 +18,7 @@ from src.exceptions import ValidationException
 
 from . import models, schemas
 from .exceptions import (
+    DisabledException,
     ResourceNotFoundException,
     ValidationException,
 )
@@ -1107,7 +1108,7 @@ async def search(
     workspace_name: str,
     session_name: str | None = None,
     peer_name: str | None = None,
-    use_semantic_search: bool = False,
+    semantic: bool | None = None,
 ) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
@@ -1123,7 +1124,10 @@ async def search(
         workspace_name: Name of the workspace
         session_name: Optional name of the session
         peer_name: Optional name of the peer
-        use_semantic_search: Whether to use semantic search with embeddings
+        semantic: Optional boolean to configure semantic search:
+            - None: try semantic search if embed_messages is set, else fall back to full text
+            - True: try semantic search if embed_messages is set, else throw error
+            - False: use full text search
 
     Returns:
         List of messages that match the search query, ordered by relevance
@@ -1135,7 +1139,22 @@ async def search(
     # Base query conditions
     base_conditions = [models.Message.workspace_name == workspace_name]
 
-    if use_semantic_search:
+    should_use_semantic_search = False
+
+    if semantic is None:
+        # Try semantic search if embed_messages is set, else fall back to full text
+        should_use_semantic_search = settings.LLM.EMBED_MESSAGES
+    elif semantic is True:
+        # Try semantic search if embed_messages is set, else throw error
+        if settings.LLM.EMBED_MESSAGES:
+            should_use_semantic_search = True
+        else:
+            raise DisabledException(
+                "Semantic search requires EMBED_MESSAGES flag to be enabled"
+            )
+    # If semantic is False, should_use_semantic remains False (use full text search)
+
+    if should_use_semantic_search:
         # Generate embedding for the search query
         try:
             embedding_query = await embedding_client.embed(query)
@@ -1338,11 +1357,11 @@ async def create_messages(
         message_objects.append(message_obj)
 
     if settings.LLM.EMBED_MESSAGES:
-        id_text_dict = {
+        id_resource_dict = {
             message.public_id: (message.content, message.token_count)
             for message in message_objects
         }
-        embedding_dict = await embedding_client.batch_embed(id_text_dict)
+        embedding_dict = await embedding_client.batch_embed(id_resource_dict)
         for message_obj in message_objects:
             message_obj.embedding = embedding_dict[message_obj.public_id]
 

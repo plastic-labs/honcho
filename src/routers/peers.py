@@ -16,11 +16,9 @@ from mirascope.llm import Stream
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import agent, crud, schemas
-from src.config import settings
 from src.dependencies import db
 from src.exceptions import (
     AuthenticationException,
-    DisabledException,
     ResourceNotFoundException,
 )
 from src.routers.messages import enqueue
@@ -339,17 +337,11 @@ async def search_peer(
     db: AsyncSession = db,
 ):
     """Search a Peer"""
-    embed_messages_enabled = settings.LLM.EMBED_MESSAGES
-    if search.use_semantic_search and not embed_messages_enabled:
-        raise DisabledException(
-            "Semantic search requires EMBED_MESSAGES flag to be enabled"
-        )
-
     stmt = await crud.search(
         search.query,
         workspace_name=workspace_id,
         peer_name=peer_id,
-        use_semantic_search=search.use_semantic_search,
+        semantic=search.semantic,
     )
 
     return await paginate(db, stmt)

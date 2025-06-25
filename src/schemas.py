@@ -240,9 +240,9 @@ class DocumentUpdate(DocumentBase):
 
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
-    use_semantic_search: bool = Field(
-        default=False,
-        description="Whether to use semantic search to filter the results",
+    semantic: bool | None = Field(
+        default=None,
+        description="Whether to explicitly use semantic search to filter the results",
     )
 
 

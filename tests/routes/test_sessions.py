@@ -799,7 +799,7 @@ def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search query", "use_semantic_search": False},
+        json={"query": "search query"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -828,7 +828,7 @@ def test_search_session_empty_query(
     # Search with empty query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "", "use_semantic_search": False},
+        json={"query": ""},
     )
     assert response.status_code == 200
     data = response.json()
@@ -847,7 +847,7 @@ def test_search_session_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/search",
-        json={"query": "test query", "use_semantic_search": False},
+        json={"query": "test query"},
     )
     # This should probably return 404 or handle gracefully
     # The exact behavior depends on the crud.search implementation
@@ -881,7 +881,7 @@ def test_search_session_with_semantic_search_false(
     # Search with use_semantic_search=false
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search", "use_semantic_search": False},
+        json={"query": "search", "semantic": False},
     )
     assert response.status_code == 200
     data = response.json()
@@ -895,9 +895,14 @@ def test_search_session_with_semantic_search_false(
 
 
 def test_search_session_with_semantic_search_true_disabled(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    """Test session search with use_semantic_search=true when EMBED_MESSAGES is disabled"""
+    """Test session search with semantic=true when EMBED_MESSAGES is disabled"""
+    # Override the EMBED_MESSAGES setting to False for this test
+    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", False)
+
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -918,10 +923,10 @@ def test_search_session_with_semantic_search_true_disabled(
         },
     )
 
-    # Search with use_semantic_search=true (should fail if EMBED_MESSAGES is disabled)
+    # Search with semantic=true (should fail if EMBED_MESSAGES is disabled)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search", "use_semantic_search": True},
+        json={"query": "search", "semantic": True},
     )
 
     assert response.status_code == 405

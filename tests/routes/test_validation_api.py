@@ -68,20 +68,23 @@ def test_message_validations_api(
     )
     assert session_response.status_code == 200
 
-    # Test content too long
+    # Test content exceeding token limit (8192 tokens)
+    long_content = (
+        "The quick brown fox jumps over the lazy dog. This sentence contains various words that will generate tokens. "
+        * 500  # Increase repetitions to ensure we exceed 8192 tokens
+    )
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
-                {"content": "a" * 50001, "peer_id": test_peer.name, "metadata": {}}
+                {"content": long_content, "peer_id": test_peer.name, "metadata": {}}
             ]
         },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
-    assert "content" in str(error["loc"])
-    assert error["msg"] == "String should have at most 50000 characters"
-    assert error["type"] == "string_too_long"
+    assert "Content exceeds maximum token limit" in error["msg"]
+    assert error["type"] == "value_error"
 
 
 def test_session_validations_api(

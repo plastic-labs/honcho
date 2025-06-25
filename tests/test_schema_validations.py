@@ -84,10 +84,15 @@ class TestMessageValidations:
         assert msg.metadata == {}
 
     def test_message_content_too_long(self):
+        long_content = (
+            "The quick brown fox jumps over the lazy dog. This sentence contains various words that will generate tokens. "
+            * 500
+        )
+
         with pytest.raises(ValidationError) as exc_info:
-            MessageCreate(content="a" * 50001, peer_id="12345", metadata={})
+            MessageCreate(content=long_content, peer_id="12345", metadata={})
         error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "string_too_long"
+        assert error_dict["type"] == "value_error"
 
 
 class TestDocumentValidations:
