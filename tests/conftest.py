@@ -1,35 +1,48 @@
 import logging  # noqa: I001
-import jwt
-from nanoid import generate as generate_nanoid
-from unittest.mock import patch, MagicMock, AsyncMock
+from collections.abc import AsyncGenerator
+from typing import Any
+from collections.abc import Callable
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import jwt
 import pytest
 import pytest_asyncio
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from nanoid import generate as generate_nanoid
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.engine.url import make_url
+from sqlalchemy.engine.url import URL, make_url
 from sqlalchemy.exc import OperationalError, ProgrammingError
-from sqlalchemy_utils import create_database, database_exists, drop_database
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+from sqlalchemy_utils import (
+    create_database,  # pyright: ignore[reportUnknownVariableType]
+    database_exists,  # pyright: ignore[reportUnknownVariableType]
+    drop_database,  # pyright: ignore[reportUnknownVariableType]
+)
 
 from src import models
 from src.db import Base
 from src.dependencies import get_db
 from src.exceptions import HonchoException
-from src.security import create_admin_jwt, create_jwt, JWTParams
 from src.main import app
 from src.config import settings
+from src.models import Peer, Workspace
+from src.security import JWTParams, create_admin_jwt, create_jwt
 
 
 # Create a custom handler that doesn't get closed prematurely
 class TestHandler(logging.Handler):
     def __init__(self):
         super().__init__()
-        self.records = []
+        self.records: list[logging.LogRecord] = []
 
-    def emit(self, record):
+    def emit(self, record: logging.LogRecord):
         self.records.append(record)
 
 
@@ -57,7 +70,7 @@ DEFAULT_DB_URL = str(CONNECTION_URI.set(database="postgres"))
 # We'll use settings.AUTH directly where needed
 
 
-def create_test_database(db_url):
+def create_test_database(db_url: URL):
     """Helper function create a database if it does not already exist
     uses the `sqlalchemy_utils` library to create the database and takes a DB URL
     as the input
@@ -78,7 +91,7 @@ def create_test_database(db_url):
         raise
 
 
-async def setup_test_database(db_url):
+async def setup_test_database(db_url: URL):
     """Helper function to setup the test database
     takes a DB URL as input and returns a SQLAlchemy engine
 
@@ -120,7 +133,7 @@ async def db_engine():
     # Save the original schema to restore later
     original_schema = Base.metadata.schema
     Base.metadata.schema = "public"
-    
+
     # Update all table schemas to public
     for table in Base.metadata.tables.values():
         table.schema = "public"
@@ -144,7 +157,7 @@ async def db_engine():
 
 
 @pytest_asyncio.fixture(scope="function")
-async def db_session(db_engine):
+async def db_session(db_engine: AsyncEngine):
     """Create a database session for the scope of a single test function"""
     Session = async_sessionmaker(bind=db_engine, expire_on_commit=False)
     async with Session() as session:
@@ -153,12 +166,14 @@ async def db_session(db_engine):
 
 
 @pytest.fixture(scope="function")
-async def client(db_session):
+async def client(db_session: AsyncSession):
     """Create a FastAPI TestClient for the scope of a single test function"""
 
     # Register exception handlers for tests
     @app.exception_handler(HonchoException)
-    async def test_exception_handler(request: Request, exc: HonchoException):
+    async def test_exception_handler(  # pyright: ignore
+        _: Request, exc: HonchoException
+    ):
         return JSONResponse(
             status_code=exc.status_code,
             content={"detail": exc.detail},
@@ -176,7 +191,13 @@ async def client(db_session):
 
 
 def create_invalid_jwt() -> str:
-    return jwt.encode({"ad": "invalid"}, "this is not the secret", algorithm="HS256")
+    return jwt.encode(  # pyright: ignore[reportUnknownMemberType]
+        {"ad": "invalid"}, "this is not the secret", algorithm="HS256"
+    )
+
+
+class AuthClient(TestClient):
+    auth_type: str | None = None
 
 
 @pytest.fixture(
@@ -187,7 +208,11 @@ def create_invalid_jwt() -> str:
         ("admin", create_admin_jwt),  # Admin JWT
     ]
 )
-def auth_client(client, request, monkeypatch):
+def auth_client(
+    client: AuthClient,
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+):
     """
     Fixture that provides a client with different authentication states.
     Always ensures USE_AUTH is set to True.
@@ -210,7 +235,9 @@ def auth_client(client, request, monkeypatch):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def sample_data(db_session):
+async def sample_data(
+    db_session: AsyncSession,
+) -> AsyncGenerator[tuple[Workspace, Peer], Any]:
     """Helper function to create test data"""
     # Create test app
     test_workspace = models.Workspace(name=str(generate_nanoid()))
@@ -237,7 +264,10 @@ def mock_langfuse():
         patch("langfuse.decorators.langfuse_context") as mock_context,
     ):
         # Mock the decorator to just return the function
-        mock_observe.return_value = lambda func: func
+        def return_value(func: Callable[..., Any]):
+            return func
+
+        mock_observe.return_value = return_value
 
         # Mock the context object
         mock_context_obj = MagicMock()
@@ -260,56 +290,98 @@ def mock_langfuse():
 @pytest.fixture(autouse=True)
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
-    with patch("src.crud.openai_client.embeddings.create") as mock_create:
-        mock_response = AsyncMock()
-        mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
-        mock_create.return_value = mock_response
+    with patch("src.crud.embedding_client.embed") as mock_create:
+        mock_create.return_value = [0.1] * 1536
         yield mock_create
 
 
 @pytest.fixture(autouse=True)
-def mock_model_client(request):
-    """Mock ModelClient to avoid needing API keys during tests"""
-    # Skip mocking for ModelClient unit tests
-    if "test_model_client" in request.node.name or "test_model_client.py" in str(
-        request.fspath
-    ):
-        yield None
-        return
+def mock_mirascope_functions():
+    """Mock Mirascope LLM functions to avoid needing API keys during tests"""
 
-    # Create a mock instance
-    mock_client_instance = MagicMock()
-    mock_client_instance.generate = AsyncMock(return_value="Test summary content")
-    mock_client_instance.stream = AsyncMock()
-
+    # Create mock responses for different function types
     with (
-        patch("src.utils.history.ModelClient") as mock_history_client,
-        patch("src.deriver.tom.single_prompt.ModelClient") as mock_single_prompt_client,
-        patch("src.deriver.tom.long_term.ModelClient") as mock_long_term_client,
-        patch("src.agent.ModelClient") as mock_agent_client,
+        patch(
+            "src.utils.history.create_short_summary", new_callable=AsyncMock
+        ) as mock_short_summary,
+        patch(
+            "src.utils.history.create_long_summary", new_callable=AsyncMock
+        ) as mock_long_summary,
+        patch(
+            "src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock
+        ) as mock_tom_inference,
+        patch(
+            "src.deriver.tom.tom_inference_single_prompt",
+            new_callable=AsyncMock,
+        ) as mock_tom_inference_conversational,
+        patch(
+            "src.deriver.tom.single_prompt.user_representation", new_callable=AsyncMock
+        ) as mock_user_rep_inference,
+        patch(
+            "src.deriver.tom.long_term.get_user_representation_long_term",
+            new_callable=AsyncMock,
+        ) as mock_long_rep,
+        patch(
+            "src.deriver.tom.long_term.extract_facts_long_term",
+            new_callable=AsyncMock,
+        ) as mock_extract_facts,
+        patch(
+            "src.agent.dialectic_call", new_callable=AsyncMock
+        ) as mock_dialectic_call,
+        patch(
+            "src.agent.dialectic_stream", new_callable=AsyncMock
+        ) as mock_dialectic_stream,
+        patch(
+            "src.agent.generate_semantic_queries_llm", new_callable=AsyncMock
+        ) as mock_semantic_queries,
     ):
-        # Make all class constructors return our mock instance
-        mock_history_client.return_value = mock_client_instance
-        mock_single_prompt_client.return_value = mock_client_instance
-        mock_long_term_client.return_value = mock_client_instance
-        mock_agent_client.return_value = mock_client_instance
+        # Mock return values for different function types
+        mock_short_summary.return_value = "Test short summary content"
+        mock_long_summary.return_value = "Test long summary content"
+        mock_tom_inference.return_value = AsyncMock(inference="Test tom inference")
+        mock_tom_inference_conversational.return_value = AsyncMock(
+            inference="Test tom inference"
+        )
+        mock_user_rep_inference.return_value = "Test user representation"
+        # Mock single_tom to return a proper Pydantic object
+        mock_long_rep.return_value = MagicMock(
+            current_state="Test state",
+            tentative_patterns=[],
+            knowledge_gaps=[],
+            expectation_violations=[],
+            updates=[],
+        )
+        mock_extract_facts.return_value = MagicMock(facts=["fact 1", "fact 2"])
+
+        # Create a proper async mock result for dialectic_call
+        mock_dialectic_result = MagicMock()
+        mock_dialectic_result.content = "Test dialectic response"
+        mock_dialectic_call.return_value = mock_dialectic_result
+
+        mock_dialectic_stream.return_value = AsyncMock()
+        mock_semantic_queries.return_value = ["test query 1", "test query 2"]
 
         yield {
-            "history": mock_history_client,
-            "single_prompt": mock_single_prompt_client,
-            "long_term": mock_long_term_client,
-            "agent": mock_agent_client,
-            "instance": mock_client_instance,
+            "short_summary": mock_short_summary,
+            "long_summary": mock_long_summary,
+            "tom_inference": mock_tom_inference,
+            "tom_inference_conversational": mock_tom_inference_conversational,
+            "user_rep_inference": mock_user_rep_inference,
+            "long_rep": mock_long_rep,
+            "extract_facts": mock_extract_facts,
+            "dialectic_call": mock_dialectic_call,
+            "dialectic_stream": mock_dialectic_stream,
+            "semantic_queries": mock_semantic_queries,
         }
 
 
 @pytest.fixture(autouse=True)
-def mock_tracked_db(db_session):
+def mock_tracked_db(db_session: AsyncSession):
     """Mock tracked_db to use the test database session"""
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
-    async def mock_tracked_db_context(operation_name=None):
+    async def mock_tracked_db_context(_: str | None = None):
         yield db_session
 
     with patch("src.dependencies.tracked_db", mock_tracked_db_context):
@@ -324,11 +396,11 @@ def mock_crud_collection_operations():
     from src import models
 
     async def mock_get_or_create_collection(
-        db, workspace_name, peer_name, collection_name
+        _: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
-            name="honcho",
+            name=collection_name,
             workspace_name=workspace_name,
             peer_name=peer_name,
         )
@@ -343,26 +415,22 @@ def mock_crud_collection_operations():
 
 
 @pytest.fixture(autouse=True)
-def mock_agent_api_calls(request):
+def mock_agent_api_calls():
     """Mock API calls made by the agent during tests"""
     # Mock the agent-specific functions
     with (
         patch("src.agent.generate_semantic_queries") as mock_generate_queries,
-        patch("src.deriver.tom.get_tom_inference") as mock_tom_inference,
         patch("src.agent.get_user_representation_long_term") as mock_user_rep,
         patch(
             "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
         ) as mock_get_facts,
-        patch("src.agent.Dialectic.call") as mock_dialectic_call,
-        patch("src.agent.Dialectic.stream") as mock_dialectic_stream,
+        patch(
+            "src.agent.dialectic_call", new_callable=AsyncMock
+        ) as mock_dialectic_call,
+        patch("src.agent.dialectic_stream") as mock_dialectic_stream,
     ):
         # Mock semantic query generation
         mock_generate_queries.return_value = ["test query 1", "test query 2"]
-
-        # Mock ToM inference
-        mock_tom_inference.return_value = (
-            "<prediction>Test prediction about user mental state</prediction>"
-        )
 
         # Mock user representation generation
         mock_user_rep.return_value = (
@@ -373,12 +441,13 @@ def mock_agent_api_calls(request):
         mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
 
         # Mock Dialectic API calls
-        mock_dialectic_call.return_value = [{"text": "Test dialectic response"}]
+        mock_dialectic_result = MagicMock()
+        mock_dialectic_result.content = "Test dialectic response"
+        mock_dialectic_call.return_value = mock_dialectic_result
         mock_dialectic_stream.return_value = AsyncMock()
 
         yield {
             "generate_queries": mock_generate_queries,
-            "tom_inference": mock_tom_inference,
             "user_rep": mock_user_rep,
             "get_facts": mock_get_facts,
             "dialectic_call": mock_dialectic_call,

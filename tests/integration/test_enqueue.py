@@ -1,12 +1,13 @@
-from typing import Optional
-from unittest.mock import patch
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from nanoid import generate as generate_nanoid
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.models import QueueItem
+from src.models import Peer, QueueItem, Workspace
 from src.routers.messages import enqueue
 
 
@@ -17,10 +18,10 @@ class TestEnqueueFunction:
     # Helper methods
     def create_sample_payload(
         self,
-        workspace_name="test_workspace",
-        session_name: Optional[str] = "test_session",
-        peer_name="test_peer",
-        count=1,
+        workspace_name: str = "test_workspace",
+        session_name: str | None = "test_session",
+        peer_name: str = "test_peer",
+        count: int = 1,
     ):
         """Create sample payload for testing"""
         return [
@@ -35,14 +36,14 @@ class TestEnqueueFunction:
             for i in range(count)
         ]
 
-    async def count_queue_items(self, db_session):
+    async def count_queue_items(self, db_session: AsyncSession):
         """Helper to count queue items in database"""
         result = await db_session.execute(select(QueueItem))
         return len(result.scalars().all())
 
     # Edge Cases & Input Validation Tests
     @pytest.mark.asyncio
-    async def test_empty_payload_skips_enqueue(self, caplog):
+    async def test_empty_payload_skips_enqueue(self, caplog: pytest.LogCaptureFixture):
         """Test that empty payload list is handled gracefully"""
         with caplog.at_level("DEBUG"):
             await enqueue([])
@@ -50,7 +51,7 @@ class TestEnqueueFunction:
         assert "Empty payload list, skipping enqueue" in caplog.text
 
     @pytest.mark.asyncio
-    async def test_malformed_payload_logs_error(self, caplog):
+    async def test_malformed_payload_logs_error(self, caplog: pytest.LogCaptureFixture):
         """Test that malformed payload logs appropriate error"""
         malformed_payload = [{"incomplete": "data"}]
 
@@ -64,7 +65,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_none_session_with_observe_me_true(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test peer-only processing when observe_me=True"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -99,7 +103,11 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_none_session_with_observe_me_false(
-        self, mock_tracked_db, db_session, sample_data, caplog
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        caplog: pytest.LogCaptureFixture,
     ):
         """Test peer-only processing when observe_me=False"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -131,7 +139,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_session_with_deriver_disabled(
-        self, mock_tracked_db, db_session, sample_data, caplog
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test that deriver disabled sessions skip enqueue"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -163,7 +174,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_session_normal_processing_single_peer(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         mock_tracked_db.return_value.__aenter__.return_value = db_session
 
@@ -204,7 +218,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_session_with_multiple_peers_none_observe_others(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test session processing with multiple peers where some observe others"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -254,7 +271,7 @@ class TestEnqueueFunction:
 
         # Explicitly match up payloads by sender/target/task_type
         # For each message, we expect a representation and a summary queue item
-        expected_payloads = []
+        expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
                 {
@@ -280,7 +297,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_session_with_multiple_peers_all_observe_others(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test session processing with multiple peers where some observe others"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -329,7 +349,7 @@ class TestEnqueueFunction:
 
         # Explicitly match up payloads by sender/target/task_type
         # For each message, we expect a representation and a summary queue item
-        expected_payloads = []
+        expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
                 {
@@ -362,7 +382,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_session_with_multiple_peers_some_observe_others(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test session processing with multiple peers where some observe others"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -419,7 +442,7 @@ class TestEnqueueFunction:
 
         # Explicitly match up payloads by sender/target/task_type
         # For each message, we expect a representation and a summary queue item
-        expected_payloads = []
+        expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
                 {
@@ -456,7 +479,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_session_peer_config_overrides_peer_config(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test that session peer config overrides peer config"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -500,7 +526,10 @@ class TestEnqueueFunction:
     @pytest.mark.asyncio
     @patch("src.routers.messages.tracked_db")
     async def test_multi_sender_scenario(
-        self, mock_tracked_db, db_session, sample_data
+        self,
+        mock_tracked_db: AsyncMock,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
     ):
         """Test complex scenario with multiple peers and mixed configurations"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
@@ -562,7 +591,7 @@ class TestEnqueueFunction:
         queue_items = result.all()
 
         # Build expected payloads for this scenario
-        expected_payloads = []
+        expected_payloads: list[dict[str, Any]] = []
         # 2 messages: one from test_peer1, one from additional_sender_peer
         for sender in [test_peer1.name, additional_sender_peer.name]:
             # representation for sender (self)
