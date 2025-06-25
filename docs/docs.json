@@ -60,7 +60,7 @@
               },
               {
                 "group": "Application Interfaces",
-                "pages": ["v2/guides/discord"]
+                "pages": ["v2/guides/discord", "v2/guides/telegram"]
               },
               {
                 "group": "Personal Memory",
