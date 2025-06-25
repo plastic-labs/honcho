@@ -203,6 +203,10 @@ class LLMSettings(HonchoSettings):
 
     # Embed all messages that are sent by peers
     EMBED_MESSAGES: bool = False
+    MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
+    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300000, gt=0)] = (
+        300000
+    )
 
 
 class AgentSettings(HonchoSettings):

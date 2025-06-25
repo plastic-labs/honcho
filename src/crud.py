@@ -14,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from src.config import settings
+from src.exceptions import ValidationException
 
 from . import models, schemas
 from .exceptions import (
     ResourceNotFoundException,
+    ValidationException,
 )
 
 load_dotenv(override=True)
@@ -31,14 +33,29 @@ class EmbeddingClient:
         self.client = AsyncOpenAI(api_key=api_key)
 
     async def embed(self, query: str) -> list[float]:
-        response = await self.client.embeddings.create(
-            input=query, model="text-embedding-3-small"
-        )
-        return response.data[0].embedding
+        # Validate token count before sending to API
+        encoding = tiktoken.get_encoding("cl100k_base")
+        token_count = len(encoding.encode(query))
+
+        if token_count > settings.LLM.MAX_EMBEDDING_TOKENS:
+            raise ValueError(
+                f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS} tokens (got {token_count} tokens)"
+            )
+
+        try:
+            response = await self.client.embeddings.create(
+                input=query, model="text-embedding-3-small"
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(
+                f"Failed to generate embedding for query: {query} - {e.__class__.__name__}: {e}"
+            )
+            raise e
 
     async def batch_embed(
         self,
-        id_text_dict: dict[str, str],
+        id_resource_dict: dict[str, tuple[str, int]],
     ) -> dict[str, list[float]]:
         """
         Generate embeddings for multiple texts with batching and token limits.
@@ -46,20 +63,11 @@ class EmbeddingClient:
         may not be the case for other providers
 
         Args:
-            id_text_dict: Dictionary mapping text IDs to text content (e.g. message IDs to message content)
+            id_resource_dict: Dictionary mapping text IDs to (message content, token count) tuples
 
         Returns:
-            Dictionary mapping text IDs to embedding vectors (e.g. message IDs to embedding vectors)
+            Dictionary mapping text IDs to embedding vectors e.g. message IDs to embedding vectors
         """
-
-        # Get the tokenizer for the model
-        encoding = tiktoken.get_encoding("cl100k_base")  # Used by embedding models
-
-        # Batch encode all texts upfront for efficiency
-        all_texts = list(id_text_dict.values())
-        all_ids = list(id_text_dict.keys())
-        all_encoded = encoding.encode_batch(all_texts)
-        all_token_counts = [len(encoded) for encoded in all_encoded]
 
         batches: list[tuple[list[str], list[str]]] = []
         current_batch_ids: list[str] = []
@@ -70,16 +78,13 @@ class EmbeddingClient:
         # - Max 300,000 tokens per request (total across all inputs)
         # - Max 8,192 tokens per individual input
         # Note: Schema limits ensure we'll never exceed the 2,048 inputs per request limit
-        MAX_TOKENS_PER_REQUEST = 300_000
-        MAX_TOKENS_PER_INPUT = 8192
+        MAX_TOKENS_PER_REQUEST = settings.LLM.MAX_EMBEDDING_TOKENS_PER_REQUEST
+        MAX_TOKENS_PER_INPUT = settings.LLM.MAX_EMBEDDING_TOKENS
 
         # Track text IDs that are skipped due to token limits
         skipped_text_ids: list[str] = []
 
-        for i, (text_id, text) in enumerate(zip(all_ids, all_texts, strict=True)):
-            # Get pre-computed token count
-            text_tokens = all_token_counts[i]
-
+        for text_id, (text, text_tokens) in id_resource_dict.items():
             # Skip if single text exceeds per-input limit. This is a safety measure but realistically shouldn't really happen
             if text_tokens > MAX_TOKENS_PER_INPUT:
                 logger.warning(
@@ -115,9 +120,15 @@ class EmbeddingClient:
         # Process all batches
         all_embeddings: dict[str, list[float]] = {}
         for batch_ids, batch_texts in batches:
-            response = await self.client.embeddings.create(
-                model="text-embedding-3-small", input=batch_texts
-            )
+            try:
+                response = await self.client.embeddings.create(
+                    model="text-embedding-3-small", input=batch_texts
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to generate embeddings for batch: {e.__class__.__name__}: {e}"
+                )
+                raise e
 
             # Map embeddings back to IDs
             for i, embedding_data in enumerate(response.data):
@@ -1126,7 +1137,12 @@ async def search(
 
     if use_semantic_search:
         # Generate embedding for the search query
-        embedding_query = await embedding_client.embed(query)
+        try:
+            embedding_query = await embedding_client.embed(query)
+        except ValueError as e:
+            raise ValidationException(
+                f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS}."
+            ) from e
 
         # Use cosine distance for semantic search
         base_query = (
@@ -1317,12 +1333,14 @@ async def create_messages(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
+            token_count=message.token_count,
         )
         message_objects.append(message_obj)
 
     if settings.LLM.EMBED_MESSAGES:
         id_text_dict = {
-            message.public_id: message.content for message in message_objects
+            message.public_id: (message.content, message.token_count)
+            for message in message_objects
         }
         embedding_dict = await embedding_client.batch_embed(id_text_dict)
         for message_obj in message_objects:
@@ -1370,14 +1388,16 @@ async def create_messages_for_peer(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
+            token_count=message.token_count,
         )
         message_objects.append(message_obj)
 
     if settings.LLM.EMBED_MESSAGES:
-        id_text_dict = {
-            message.public_id: message.content for message in message_objects
+        id_resource_dict = {
+            message.public_id: (message.content, message.token_count)
+            for message in message_objects
         }
-        embedding_dict = await embedding_client.batch_embed(id_text_dict)
+        embedding_dict = await embedding_client.batch_embed(id_resource_dict)
         for message_obj in message_objects:
             message_obj.embedding = embedding_dict[message_obj.public_id]
 
@@ -1667,7 +1687,13 @@ async def query_documents(
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using ModelClient for embeddings
-    embedding_query = await embedding_client.embed(query)
+    try:
+        embedding_query = await embedding_client.embed(query)
+    except ValueError as e:
+        raise ValidationException(
+            f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS}."
+        ) from e
+
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)

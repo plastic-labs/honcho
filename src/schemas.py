@@ -1,8 +1,11 @@
 # pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+import tiktoken
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from src.config import settings
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -104,9 +107,28 @@ class MessageBase(BaseModel):
 
 
 class MessageCreate(MessageBase):
-    content: Annotated[str, Field(min_length=0, max_length=50000)]
+    content: Annotated[str, Field(min_length=0)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+    token_count: int = Field(
+        default=0,
+        exclude=True,  # exclude from the schema
+        description="Internal field - token count of content",
+    )
+
+    @model_validator(mode="after")
+    def validate_and_set_token_count(self) -> Self:
+        MAX_TOKENS = settings.LLM.MAX_EMBEDDING_TOKENS
+        encoding = tiktoken.get_encoding("cl100k_base")
+        token_count = len(encoding.encode(self.content))
+
+        if token_count > MAX_TOKENS:
+            raise ValueError(
+                f"Content exceeds maximum token limit of {MAX_TOKENS} tokens (got {token_count} tokens)"
+            )
+
+        self.token_count = token_count
+        return self
 
 
 class MessageGet(MessageBase):
