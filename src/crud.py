@@ -1549,7 +1549,7 @@ async def query_documents(
             models.Document.embedding.cosine_distance(embedding_query) < max_distance
         )
     if filter is not None:
-        stmt = stmt.where(models.Document.h_metadata.contains(filter))
+        stmt = stmt.where(models.Document.internal_metadata.contains(filter))
     stmt = stmt.limit(top_k).order_by(
         models.Document.embedding.cosine_distance(embedding_query)
     )

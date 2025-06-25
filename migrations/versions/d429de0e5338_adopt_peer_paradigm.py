@@ -34,7 +34,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade database schema to adopt peer paradigm."""
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = getenv("DB_SCHEMA", "public")
     inspector = sa.inspect(op.get_bind())
 
     # Step 1: Rename tables
@@ -77,7 +77,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade database schema to reverse peer paradigm adoption."""
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = getenv("DB_SCHEMA", "public")
     inspector = sa.inspect(op.get_bind())
 
     # Step 1: Add back app_id, user_id to peers and sessions

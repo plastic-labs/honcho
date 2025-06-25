@@ -17,7 +17,7 @@ revision: str = "66e63cf2cf77"
 down_revision: str | None = "20f89a421aff"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
-schema = getenv("DATABASE_SCHEMA", "public")
+schema = getenv("DB_SCHEMA", "public")
 
 
 def upgrade() -> None:
