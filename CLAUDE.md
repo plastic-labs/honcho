@@ -80,11 +80,12 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 ### Commands
 
 - Setup: `uv sync`
-- Run server: `fastapi dev src/main.py`
-- Run tests: `pytest tests/`
-- Run single test: `pytest tests/path/to/test_file.py::test_function`
-- Linting: `ruff check src/`
-- Format code: `ruff format src/`
+- Run server: `uv run fastapi dev src/main.py`
+- Run tests: `uv run pytest tests/`
+- Run single test: `uv run pytest tests/path/to/test_file.py::test_function`
+- Linting: `uv run ruff check src/`
+- Typechecking: `uv run basedpyright`
+- Format code: `uv run ruff format src/`
 
 ### Code Style
 

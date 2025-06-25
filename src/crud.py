@@ -1,13 +1,14 @@
 import os
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Optional
+from typing import Any, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
@@ -18,22 +19,31 @@ from .exceptions import (
     ResourceNotFoundException,
 )
 from .utils.filter import apply_filter
-from .utils.model_client import ModelClient, ModelProvider
 
 load_dotenv(override=True)
 
-openai_client = AsyncOpenAI(api_key=settings.LLM.OPENAI_API_KEY)
+
+@final
+class EmbeddingClient:
+    def __init__(self, api_key: str | None):
+        if api_key is None:
+            raise ValueError("API key is required")
+        self.client = AsyncOpenAI(api_key=api_key)
+
+    async def embed(self, query: str) -> list[float]:
+        response = await self.client.embeddings.create(
+            input=query, model="text-embedding-3-small"
+        )
+        return response.data[0].embedding
+
+
+embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
 
 logger = getLogger(__name__)
 
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
 
 SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
-
-# Create a ModelClient instance for embeddings
-# Using OpenAI provider for embeddings as it's the most common
-embedding_client = ModelClient(provider=ModelProvider.OPENAI)
-
 
 ########################################################
 # workspace methods
@@ -79,8 +89,8 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    filter: Optional[dict] = None,
-) -> Select:
+    filter: dict[str, Any] | None = None,
+) -> Select[tuple[models.Workspace]]:
     """
     Get all workspaces.
 
@@ -90,7 +100,7 @@ async def get_all_workspaces(
     """
     stmt = select(models.Workspace)
     stmt = apply_filter(stmt, models.Workspace, filter)
-    stmt = stmt.order_by(models.Workspace.created_at)
+    stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
 
 
@@ -232,8 +242,8 @@ async def get_peer(
 
 async def get_peers(
     workspace_name: str,
-    filter: Optional[dict] = None,
-) -> Select:
+    filter: dict[str, str] | None = None,
+) -> Select[tuple[models.Peer]]:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
     stmt = apply_filter(stmt, models.Peer, filter)
@@ -283,9 +293,9 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    is_active: Optional[bool] = None,
-    filter: Optional[dict] = None,
-) -> Select:
+    is_active: bool | None = None,
+    filter: dict[str, Any] | None = None,
+) -> Select[tuple[models.Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
 
@@ -314,7 +324,7 @@ async def get_sessions_for_peer(
 
     stmt = apply_filter(stmt, models.Session, filter)
 
-    stmt = stmt.order_by(models.Session.created_at)
+    stmt: Select[tuple[models.Session]] = stmt.order_by(models.Session.created_at)
 
     return stmt
 
@@ -326,9 +336,9 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    is_active: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
+    is_active: bool | None = None,
+    filter: dict[str, Any] | None = None,
+) -> Select[tuple[models.Session]]:
     """
     Get all sessions in a workspace.
     """
@@ -538,7 +548,7 @@ async def clone_session(
     db: AsyncSession,
     workspace_name: str,
     original_session_name: str,
-    cutoff_message_id: Optional[str] = None,
+    cutoff_message_id: str | None = None,
 ) -> models.Session:
     """
     Clone a session and its messages. If cutoff_message_id is provided,
@@ -690,7 +700,7 @@ async def remove_peers_from_session(
 async def get_peers_from_session(
     workspace_name: str,
     session_name: str,
-) -> Select:
+) -> Select[tuple[models.Peer]]:
     """
     Get all peers from a session.
 
@@ -717,7 +727,7 @@ async def get_peers_from_session(
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
-) -> Select:
+) -> Select[tuple[str, dict[str, Any], dict[str, Any]]]:
     """
     Get configuration from both SessionPeer and Peer tables for active peers in a session.
 
@@ -728,7 +738,7 @@ async def get_session_peer_configuration(
     Returns:
         Select statement returning peer_name, peer_configuration, and session_peer_configuration
     """
-    stmt = (
+    stmt: Select[tuple[str, dict[str, Any], dict[str, Any]]] = (
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.configuration.label("peer_configuration"),
@@ -986,9 +996,9 @@ async def search(
     query: str,
     *,
     workspace_name: str,
-    session_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-) -> Select:
+    session_name: str | None = None,
+    peer_name: str | None = None,
+) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
     - Uses PostgreSQL full text search for natural language queries
@@ -1247,11 +1257,11 @@ async def create_messages_for_peer(
 async def get_messages(
     workspace_name: str,
     session_name: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-    token_limit: Optional[int] = None,
-    message_count_limit: Optional[int] = None,
-) -> Select:
+    reverse: bool | None = False,
+    filter: dict[str, Any] | None = None,
+    token_limit: int | None = None,
+    message_count_limit: int | None = None,
+) -> Select[tuple[models.Message]]:
     """
     Get messages from a session. If token_limit is provided, the n most recent messages
     with token count adding up to the limit will be returned. If message_count_limit is provided,
@@ -1333,7 +1343,7 @@ async def get_messages_id_range(
     session_name: str | None,
     peer_name: str | None,
     start_id: int = 0,
-    end_id: Optional[int] = None,
+    end_id: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session or peer by primary key ID range.
@@ -1381,9 +1391,9 @@ async def get_messages_id_range(
 async def get_messages_for_peer(
     workspace_name: str,
     peer_name: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
+    reverse: bool | None = False,
+    filter: dict[str, Any] | None = None,
+) -> Select[tuple[models.Message]]:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1406,7 +1416,7 @@ async def get_message(
     workspace_name: str,
     session_name: str,
     message_id: str,
-) -> Optional[models.Message]:
+) -> models.Message | None:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1514,8 +1524,8 @@ async def query_documents(
     peer_name: str,
     collection_name: str,
     query: str,
-    filter: Optional[dict] = None,
-    max_distance: Optional[float] = None,
+    filter: dict[str, Any] | None = None,
+    max_distance: float | None = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using ModelClient for embeddings
@@ -1545,7 +1555,7 @@ async def create_document(
     workspace_name: str,
     peer_name: str,
     collection_name: str,
-    duplicate_threshold: Optional[float] = None,
+    duplicate_threshold: float | None = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.
@@ -1658,8 +1668,8 @@ async def get_duplicate_documents(
 async def get_deriver_status(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: Optional[str] = None,
-    session_name: Optional[str] = None,
+    peer_name: str | None = None,
+    session_name: str | None = None,
     include_sender: bool = False,
 ) -> schemas.DeriverStatus:
     """
@@ -1699,10 +1709,10 @@ async def get_deriver_status(
 
 def _build_queue_status_query(
     workspace_name: str,
-    peer_name: Optional[str],
-    session_name: Optional[str],
+    peer_name: str | None,
+    session_name: str | None,
     include_sender: bool,
-):
+) -> Select[Any]:
     """Build SQL query for queue status with validation and aggregation."""
     from sqlalchemy import case, func
 
@@ -1781,72 +1791,77 @@ def _build_queue_status_query(
     return stmt
 
 
-def _process_queue_rows(rows):
+def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
     """Process query results that already contain aggregated counts."""
     if not rows:
-        return {
-            "total": 0,
-            "completed": 0,
-            "in_progress": 0,
-            "pending": 0,
-            "sessions": {},
-        }
+        return schemas.QueueCounts(
+            total=0,
+            completed=0,
+            in_progress=0,
+            pending=0,
+            sessions={},
+        )
 
     # Since we're using window functions, all rows have the same overall totals
     # We just need the first row for overall counts
     first_row = rows[0]
 
     # Build sessions dictionary from unique session_ids
-    sessions = {}
-    seen_sessions = set()
+    sessions: dict[str, schemas.SessionCounts] = {}
+    seen_sessions: set[str] = set()
 
     for row in rows:
         if row.session_id and row.session_id not in seen_sessions:
-            sessions[row.session_id] = {
-                "completed": row.session_completed,
-                "in_progress": row.session_in_progress,
-                "pending": row.session_pending,
-            }
+            sessions[row.session_id] = schemas.SessionCounts(
+                completed=row.session_completed,
+                in_progress=row.session_in_progress,
+                pending=row.session_pending,
+            )
             seen_sessions.add(row.session_id)
 
-    return {
-        "total": first_row.total,
-        "completed": first_row.completed,
-        "in_progress": first_row.in_progress,
-        "pending": first_row.pending,
-        "sessions": sessions,
-    }
+    return schemas.QueueCounts(
+        total=first_row.total,
+        completed=first_row.completed,
+        in_progress=first_row.in_progress,
+        pending=first_row.pending,
+        sessions=sessions,
+    )
 
 
 def _build_status_response(
-    peer_name: Optional[str], session_name: Optional[str], counts: dict
-):
+    peer_name: str | None, session_name: str | None, counts: schemas.QueueCounts
+) -> schemas.DeriverStatus:
     """Build the final response object."""
-    base_response = {
-        "peer_id": peer_name,
-        "total_work_units": counts["total"],
-        "completed_work_units": counts["completed"],
-        "in_progress_work_units": counts["in_progress"],
-        "pending_work_units": counts["pending"],
-    }
 
     if session_name:
-        return schemas.DeriverStatus(session_id=session_name, **base_response)
+        return schemas.DeriverStatus(
+            session_id=session_name,
+            peer_id=peer_name,
+            total_work_units=counts.total,
+            completed_work_units=counts.completed,
+            in_progress_work_units=counts.in_progress,
+            pending_work_units=counts.pending,
+        )
 
-    sessions = {}
-    for session_id, data in counts["sessions"].items():
-        total = data["completed"] + data["in_progress"] + data["pending"]
+    sessions: dict[str, schemas.DeriverStatus] = {}
+    for session_id, data in counts.sessions.items():
+        total = data.completed + data.in_progress + data.pending
         sessions[session_id] = schemas.DeriverStatus(
             peer_id=peer_name,
             session_id=session_id,
             total_work_units=total,
-            completed_work_units=data["completed"],
-            in_progress_work_units=data["in_progress"],
-            pending_work_units=data["pending"],
+            completed_work_units=data.completed,
+            in_progress_work_units=data.in_progress,
+            pending_work_units=data.pending,
         )
 
     return schemas.DeriverStatus(
-        sessions=sessions if sessions else None, **base_response
+        sessions=sessions if sessions else None,
+        peer_id=peer_name,
+        total_work_units=counts.total,
+        completed_work_units=counts.completed,
+        in_progress_work_units=counts.in_progress,
+        pending_work_units=counts.pending,
     )
 
 

@@ -1,7 +1,5 @@
 import logging
-from typing import Optional
 
-from anthropic import AsyncMessageStreamManager
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -14,6 +12,8 @@ from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
+from mirascope.llm import Stream
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import agent, crud, schemas
 from src.dependencies import db
@@ -39,10 +39,10 @@ router = APIRouter(
 )
 async def get_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    options: Optional[schemas.PeerGet] = Body(
+    options: schemas.PeerGet | None = Body(
         None, description="Filtering options for the peers list"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get All Peers for a Workspace"""
     filter_param = None
@@ -65,7 +65,7 @@ async def get_or_create_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer: schemas.PeerCreate = Body(..., description="Peer creation parameters"),
     jwt_params: JWTParams = Depends(require_auth()),
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Get a Peer by ID
@@ -102,7 +102,7 @@ async def update_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer to update"),
     peer: schemas.PeerUpdate = Body(..., description="Updated peer parameters"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Update a Peer's name and/or metadata"""
     updated_peer = await crud.update_peer(
@@ -121,10 +121,10 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    options: Optional[schemas.SessionGet] = Body(
+    options: schemas.SessionGet | None = Body(
         None, description="Filtering options for the sessions list"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get All Sessions for a Peer"""
     filter_param = None
@@ -168,7 +168,7 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     # Get or create the peer to ensure it exists
     await crud.get_or_create_peers(
@@ -189,10 +189,11 @@ async def chat(
                 options.queries,
                 stream=True,
             )
-            if isinstance(stream, AsyncMessageStreamManager):
-                async with stream as stream_manager:
-                    async for text in stream_manager.text_stream:
-                        yield text
+            if isinstance(stream, Stream):
+                async for chunk, _ in stream:
+                    yield chunk.content
+            else:
+                raise HTTPException(status_code=500, detail="Invalid stream type")
         except Exception as e:
             logger.error(f"Error in stream: {str(e)}")
             raise HTTPException(status_code=500, detail=str(e)) from e
@@ -216,7 +217,7 @@ async def create_messages_for_peer(
     messages: schemas.MessageBatchCreate = Body(
         ..., description="Batch of messages to create"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Create messages for a peer"""
     workspace_name, peer_name = workspace_id, peer_id
@@ -263,13 +264,13 @@ async def create_messages_for_peer(
 async def get_messages_for_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    options: Optional[schemas.MessageGet] = Body(
+    options: schemas.MessageGet | None = Body(
         None, description="Filtering options for the messages list"
     ),
-    reverse: Optional[bool] = Query(
+    reverse: bool | None = Query(
         False, description="Whether to reverse the order of results"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get all messages for a peer"""
     try:
@@ -305,7 +306,7 @@ async def get_working_representation(
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get a peer's working representation for a session.
 
@@ -331,7 +332,7 @@ async def search_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
     query: str = Body(..., description="Search query"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Search a Peer"""
     stmt = await crud.search(query, workspace_name=workspace_id, peer_name=peer_id)

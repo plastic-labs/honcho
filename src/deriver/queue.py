@@ -1,5 +1,6 @@
 import asyncio
 import signal
+from _asyncio import Task
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -45,14 +46,14 @@ class WorkUnit:
 
 class QueueManager:
     def __init__(self):
-        self.shutdown_event = asyncio.Event()
-        self.active_tasks: set[asyncio.Task] = set()
+        self.shutdown_event: asyncio.Event = asyncio.Event()
+        self.active_tasks: set[asyncio.Task[None]] = set()
         self.owned_work_units: set[WorkUnit] = set()
-        self.queue_empty_flag = asyncio.Event()
+        self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
         # Initialize from settings
-        self.workers = settings.DERIVER.WORKERS
-        self.semaphore = asyncio.Semaphore(self.workers)
+        self.workers: int = settings.DERIVER.WORKERS
+        self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
@@ -64,7 +65,7 @@ class QueueManager:
                 integrations=[AsyncioIntegration()],
             )
 
-    def add_task(self, task: asyncio.Task):
+    def add_task(self, task: asyncio.Task[None]):
         """Track a new task"""
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
@@ -241,7 +242,7 @@ class QueueManager:
 
                                     # Create a new task for processing this work unit
                                     if not self.shutdown_event.is_set():
-                                        task = asyncio.create_task(
+                                        task: Task[None] = asyncio.create_task(
                                             self.process_work_unit(work_unit)
                                         )
                                         self.add_task(task)

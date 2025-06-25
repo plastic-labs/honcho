@@ -1,4 +1,8 @@
-def test_create_key_no_params(auth_client):
+from src.models import Peer, Workspace
+from tests.conftest import AuthClient
+
+
+def test_create_key_no_params(auth_client: AuthClient):
     """Test creating a key with no parameters"""
     response = auth_client.post("/v2/keys")
 
@@ -10,7 +14,9 @@ def test_create_key_no_params(auth_client):
         assert response.status_code == 401
 
 
-def test_create_key_with_params(auth_client, sample_data):
+def test_create_key_with_params(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     """Test creating a key with specific parameters"""
     test_workspace, test_peer = sample_data
 
@@ -46,7 +52,9 @@ def test_create_key_with_params(auth_client, sample_data):
     assert "key" in response.json()
 
 
-def test_create_key_with_expires_at(auth_client, sample_data):
+def test_create_key_with_expires_at(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     """Test creating a key with an expiration date"""
     response = auth_client.post("/v2/keys", params={"expires_at": "2025-01-01"})
 

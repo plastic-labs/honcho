@@ -1,8 +1,11 @@
 import pytest
+from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
+from src.models import Peer, Workspace
 
-def test_get_or_create_workspace(client):
+
+def test_get_or_create_workspace(client: TestClient):
     name = str(generate_nanoid())
 
     # This should create the workspace using POST /v2/workspaces
@@ -13,7 +16,7 @@ def test_get_or_create_workspace(client):
     assert "id" in data
 
 
-def test_get_or_create_workspace_with_configuration(client):
+def test_get_or_create_workspace_with_configuration(client: TestClient):
     """Test workspace creation with configuration parameter"""
     name = str(generate_nanoid())
     configuration = {"feature1": True, "feature2": False}
@@ -27,7 +30,7 @@ def test_get_or_create_workspace_with_configuration(client):
     assert data["configuration"] == configuration
 
 
-def test_get_or_create_workspace_with_all_optional_params(client):
+def test_get_or_create_workspace_with_all_optional_params(client: TestClient):
     """Test workspace creation with all optional parameters"""
     name = str(generate_nanoid())
     metadata = {"key": "value", "number": 42}
@@ -44,7 +47,7 @@ def test_get_or_create_workspace_with_all_optional_params(client):
     assert data["configuration"] == configuration
 
 
-def test_get_or_create_existing_workspace(client):
+def test_get_or_create_existing_workspace(client: TestClient):
     name = str(generate_nanoid())
 
     # Create the workspace
@@ -67,7 +70,7 @@ def test_get_or_create_existing_workspace(client):
 
 
 @pytest.mark.asyncio
-async def test_get_all_workspaces(client, db_session, sample_data):
+async def test_get_all_workspaces(client: TestClient):
     # create a test workspace with metadata
     response = client.post(
         "/v2/workspaces",
@@ -98,7 +101,7 @@ async def test_get_all_workspaces(client, db_session, sample_data):
 
 
 @pytest.mark.asyncio
-async def test_get_all_workspaces_with_empty_filter(client, db_session, sample_data):
+async def test_get_all_workspaces_with_empty_filter(client: TestClient):
     """Test workspace listing with empty filter object"""
     response = client.post("/v2/workspaces/list", json={"filter": {}})
     assert response.status_code == 200
@@ -108,7 +111,7 @@ async def test_get_all_workspaces_with_empty_filter(client, db_session, sample_d
 
 
 @pytest.mark.asyncio
-async def test_get_all_workspaces_with_null_filter(client, db_session, sample_data):
+async def test_get_all_workspaces_with_null_filter(client: TestClient):
     """Test workspace listing with null filter"""
     response = client.post("/v2/workspaces/list", json={"filter": None})
     assert response.status_code == 200
@@ -117,7 +120,7 @@ async def test_get_all_workspaces_with_null_filter(client, db_session, sample_da
     assert isinstance(data["items"], list)
 
 
-def test_update_workspace(client, sample_data):
+def test_update_workspace(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, _ = sample_data
     _new_name = str(generate_nanoid())
     response = client.put(
@@ -129,7 +132,9 @@ def test_update_workspace(client, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-def test_update_workspace_with_configuration(client, sample_data):
+def test_update_workspace_with_configuration(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test workspace update with configuration parameter"""
     test_workspace, _ = sample_data
     configuration = {"new_feature": True, "legacy_feature": False}
@@ -142,7 +147,9 @@ def test_update_workspace_with_configuration(client, sample_data):
     assert data["configuration"] == configuration
 
 
-def test_update_workspace_with_all_optional_params(client, sample_data):
+def test_update_workspace_with_all_optional_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test workspace update with both metadata and configuration"""
     test_workspace, _ = sample_data
     metadata = {"updated_key": "updated_value", "count": 100}
@@ -158,7 +165,9 @@ def test_update_workspace_with_all_optional_params(client, sample_data):
     assert data["configuration"] == configuration
 
 
-def test_update_workspace_with_null_metadata(client, sample_data):
+def test_update_workspace_with_null_metadata(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test workspace update with null metadata (should clear metadata)"""
     test_workspace, _ = sample_data
 
@@ -178,7 +187,9 @@ def test_update_workspace_with_null_metadata(client, sample_data):
     assert "metadata" in data
 
 
-def test_update_workspace_with_null_configuration(client, sample_data):
+def test_update_workspace_with_null_configuration(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test workspace update with null configuration"""
     test_workspace, _ = sample_data
 
@@ -190,7 +201,7 @@ def test_update_workspace_with_null_configuration(client, sample_data):
     assert "configuration" in data
 
 
-def test_create_duplicate_workspace_name(client):
+def test_create_duplicate_workspace_name(client: TestClient):
     # Create an workspace
     name = str(generate_nanoid())
     response = client.post("/v2/workspaces", json={"name": name})
@@ -205,7 +216,7 @@ def test_create_duplicate_workspace_name(client):
     assert data["id"] == name
 
 
-def test_search_workspace(client, sample_data):
+def test_search_workspace(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the workspace search functionality"""
     test_workspace, _ = sample_data
 
@@ -224,7 +235,9 @@ def test_search_workspace(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_search_workspace_empty_query(client, sample_data):
+def test_search_workspace_empty_query(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test the workspace search with empty query"""
     test_workspace, _ = sample_data
 
@@ -238,7 +251,7 @@ def test_search_workspace_empty_query(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_search_workspace_nonexistent(client):
+def test_search_workspace_nonexistent(client: TestClient):
     """Test searching a workspace that doesn't exist"""
     nonexistent_workspace_id = str(generate_nanoid())
 
