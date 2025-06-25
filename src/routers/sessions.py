@@ -467,6 +467,7 @@ async def search_session(
     ),
     db: AsyncSession = db,
 ):
+    """Search a Session"""
     query, use_semantic_search = search.query, search.use_semantic_search
     embed_messages_enabled = settings.LLM.EMBED_MESSAGES
     if use_semantic_search and not embed_messages_enabled:
@@ -474,7 +475,6 @@ async def search_session(
             "Semantic search requires EMBED_MESSAGES flag to be enabled"
         )
 
-    """Search a Session"""
     stmt = await crud.search(
         query,
         workspace_name=workspace_id,

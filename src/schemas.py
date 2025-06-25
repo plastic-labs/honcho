@@ -219,7 +219,7 @@ class DocumentUpdate(DocumentBase):
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
     use_semantic_search: bool = Field(
-        False,
+        default=False,
         description="Whether to use semantic search to filter the results",
     )
 
@@ -256,6 +256,7 @@ class DialecticResponse(BaseModel):
 
 class SessionCounts(BaseModel):
     """Counts for a specific session in queue processing."""
+
     completed: int
     in_progress: int
     pending: int
@@ -263,6 +264,7 @@ class SessionCounts(BaseModel):
 
 class QueueCounts(BaseModel):
     """Aggregated counts for queue processing status."""
+
     total: int
     completed: int
     in_progress: int
@@ -272,6 +274,7 @@ class QueueCounts(BaseModel):
 
 class QueueStatusRow(BaseModel):
     """Represents a row from the queue status SQL query result."""
+
     session_id: str | None
     total: int
     completed: int
@@ -285,6 +288,7 @@ class QueueStatusRow(BaseModel):
 
 class PeerConfigResult(BaseModel):
     """Result from querying peer configuration data."""
+
     peer_name: str
     peer_configuration: dict[str, Any]
     session_peer_configuration: dict[str, Any]
@@ -292,11 +296,13 @@ class PeerConfigResult(BaseModel):
 
 class SessionPeerData(BaseModel):
     """Data for managing session peer relationships."""
+
     peer_names: dict[str, SessionPeerConfig]
 
 
 class MessageBulkData(BaseModel):
     """Data for bulk message operations."""
+
     messages: list[MessageCreate]
     session_name: str
     workspace_name: str

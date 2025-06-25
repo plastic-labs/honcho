@@ -203,7 +203,7 @@ class Message(Base):
         "internal_metadata", JSONB, default=dict
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    embedding = mapped_column(Vector(1536), nullable=True)
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()

@@ -73,7 +73,10 @@ class EmbeddingClient:
         MAX_TOKENS_PER_REQUEST = 300_000
         MAX_TOKENS_PER_INPUT = 8192
 
-        for i, (text_id, text) in enumerate(zip(all_ids, all_texts, strict=False)):
+        # Track text IDs that are skipped due to token limits
+        skipped_text_ids: list[str] = []
+
+        for i, (text_id, text) in enumerate(zip(all_ids, all_texts, strict=True)):
             # Get pre-computed token count
             text_tokens = all_token_counts[i]
 
@@ -82,6 +85,7 @@ class EmbeddingClient:
                 logger.warning(
                     f"Skipping embedding for {text_id} - {text_tokens} tokens exceeds limit"
                 )
+                skipped_text_ids.append(text_id)
                 continue
 
             # Check if adding this text would exceed token limits
@@ -119,6 +123,10 @@ class EmbeddingClient:
             for i, embedding_data in enumerate(response.data):
                 original_id = batch_ids[i]
                 all_embeddings[original_id] = embedding_data.embedding
+
+        # Initialize empty embeddings for skipped texts
+        for skipped_id in skipped_text_ids:
+            all_embeddings[skipped_id] = []
 
         return all_embeddings
 
@@ -1312,10 +1320,13 @@ async def create_messages(
         )
         message_objects.append(message_obj)
 
-    id_text_dict = {message.public_id: message.content for message in message_objects}
-    embedding_dict = await embedding_client.batch_embed(id_text_dict)
-    for message_obj in message_objects:
-        message_obj.embedding = embedding_dict[message_obj.public_id]
+    if settings.LLM.EMBED_MESSAGES:
+        id_text_dict = {
+            message.public_id: message.content for message in message_objects
+        }
+        embedding_dict = await embedding_client.batch_embed(id_text_dict)
+        for message_obj in message_objects:
+            message_obj.embedding = embedding_dict[message_obj.public_id]
 
     # Add all messages and commit
     db.add_all(message_objects)
@@ -1362,10 +1373,13 @@ async def create_messages_for_peer(
         )
         message_objects.append(message_obj)
 
-    id_text_dict = {message.public_id: message.content for message in message_objects}
-    embedding_dict = await embedding_client.batch_embed(id_text_dict)
-    for message_obj in message_objects:
-        message_obj.embedding = embedding_dict[message_obj.public_id]
+    if settings.LLM.EMBED_MESSAGES:
+        id_text_dict = {
+            message.public_id: message.content for message in message_objects
+        }
+        embedding_dict = await embedding_client.batch_embed(id_text_dict)
+        for message_obj in message_objects:
+            message_obj.embedding = embedding_dict[message_obj.public_id]
 
     # Add all messages and commit
     db.add_all(message_objects)
