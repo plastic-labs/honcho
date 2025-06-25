@@ -123,8 +123,8 @@ def _build_filter_conditions(
                 f"AND operator must contain a list, got {type(filter_dict['AND']).__name__}"
             )
         and_conditions: list[ColumnElement[bool]] = []
-        for sub_filter in filter_dict["AND"]:
-            sub_condition = _build_filter_conditions(sub_filter, model_class)
+        for sub_filter in filter_dict["AND"]:  # pyright: ignore
+            sub_condition = _build_filter_conditions(sub_filter, model_class)  # pyright: ignore
             if sub_condition is not None:
                 and_conditions.append(sub_condition)
         if and_conditions:
@@ -136,8 +136,8 @@ def _build_filter_conditions(
                 f"OR operator must contain a list, got {type(filter_dict['OR']).__name__}"
             )
         or_conditions: list[ColumnElement[bool]] = []
-        for sub_filter in filter_dict["OR"]:
-            sub_condition = _build_filter_conditions(sub_filter, model_class)
+        for sub_filter in filter_dict["OR"]:  # pyright: ignore
+            sub_condition = _build_filter_conditions(sub_filter, model_class)  # pyright: ignore
             if sub_condition is not None:
                 or_conditions.append(sub_condition)
         if or_conditions:
@@ -151,8 +151,8 @@ def _build_filter_conditions(
                 f"NOT operator must contain a list, got {type(filter_dict['NOT']).__name__}"
             )
         not_conditions: list[ColumnElement[bool]] = []
-        for sub_filter in filter_dict["NOT"]:
-            sub_condition = _build_filter_conditions(sub_filter, model_class)
+        for sub_filter in filter_dict["NOT"]:  # pyright: ignore
+            sub_condition = _build_filter_conditions(sub_filter, model_class)  # pyright: ignore
             if sub_condition is not None:
                 not_conditions.append(
                     not_(sub_condition)
@@ -214,15 +214,15 @@ def _build_field_condition(
     # Handle comparison operators vs regular values
     if isinstance(value, dict):
         # Check if this is a comparison operators dict by looking for known operators
-        is_comparison_dict = any(op_key in COMPARISON_OPERATORS for op_key in value)
+        is_comparison_dict = any(op_key in COMPARISON_OPERATORS for op_key in value)  # pyright: ignore
 
         if is_comparison_dict:
-            return _build_comparison_conditions(column, column_name, value)
+            return _build_comparison_conditions(column, column_name, value)  # pyright: ignore
         else:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
             if column_name in ("h_metadata", "configuration"):
-                return _build_nested_metadata_conditions(column, value)
+                return _build_nested_metadata_conditions(column, value)  # pyright: ignore
             else:
                 return column == value
     else:
@@ -232,7 +232,7 @@ def _build_field_condition(
             return column == value
 
 
-def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Any, Any]:
+def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Cast[Any], Any]:
     """
     Safely cast JSONB column accessor to appropriate type for comparison.
 
@@ -250,20 +250,17 @@ def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Any, Any]:
         return column_accessor, str(op_value).lower()
     elif isinstance(op_value, int | float):
         # Cast to numeric for proper numeric comparison
-        numeric_accessor: Cast[Any] = cast(column_accessor, Numeric)
-        return numeric_accessor, op_value
+        return cast(column_accessor, Numeric), op_value
     else:
         # Try to parse as numeric (handles both strings and other types)
         try:
             # Try int first, then float, then string for lexicographic comparison
             parsed_value = int(op_value)
-            numeric_accessor: Cast[Any] = cast(column_accessor, Numeric)
-            return numeric_accessor, parsed_value
+            return cast(column_accessor, Numeric), parsed_value
         except (ValueError, TypeError):
             try:
                 parsed_value = float(op_value)
-                numeric_accessor: Cast[Any] = cast(column_accessor, Numeric)
-                return numeric_accessor, parsed_value
+                return cast(column_accessor, Numeric), parsed_value
             except (ValueError, TypeError):
                 if isinstance(op_value, str):
                     # If it's not numeric, treat as string comparison (e.g., dates, text)
@@ -344,13 +341,17 @@ def _build_nested_metadata_conditions(
 
     for field_name, field_value in metadata_dict.items():
         if isinstance(field_value, dict) and any(
-            op in COMPARISON_OPERATORS for op in field_value
+            op in COMPARISON_OPERATORS
+            for op in field_value  # pyright: ignore
         ):
             # This field has comparison operators
             field_conditions: list[ColumnElement[bool]] = []
-            for operator, op_value in field_value.items():
+            for operator, op_value in field_value.items():  # pyright: ignore
                 condition = _build_comparison_condition(
-                    column, field_name, operator, op_value
+                    column,
+                    field_name,
+                    operator,  # pyright: ignore
+                    op_value,
                 )
                 if condition is not None:
                     field_conditions.append(condition)

@@ -8,14 +8,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Peer, Workspace
 
 
 @pytest.mark.asyncio
 async def test_logical_operators_and_filters(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test AND, OR, NOT logical operators in filters"""
     test_workspace, _test_peer = sample_data
@@ -103,7 +102,7 @@ async def test_logical_operators_and_filters(
 
 @pytest.mark.asyncio
 async def test_comparison_operators_filters(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test comparison operators (gte, lte, gt, lt, ne, in, contains, icontains)"""
     test_workspace, test_peer = sample_data
@@ -221,7 +220,7 @@ async def test_comparison_operators_filters(
 
 @pytest.mark.asyncio
 async def test_wildcard_filters(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test wildcard (*) filters that match everything for a field"""
     test_workspace, _test_peer = sample_data
@@ -274,7 +273,7 @@ async def test_wildcard_filters(
 
 @pytest.mark.asyncio
 async def test_complex_nested_filters(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test complex nested logical operations"""
     test_workspace, test_peer = sample_data
@@ -363,7 +362,7 @@ async def test_complex_nested_filters(
 
 @pytest.mark.asyncio
 async def test_filters_across_different_models(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that filters work consistently across different models"""
     test_workspace, test_peer = sample_data
@@ -435,7 +434,7 @@ async def test_filters_across_different_models(
 
 @pytest.mark.asyncio
 async def test_filter_edge_cases(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test edge cases and error handling for filters"""
     test_workspace, test_peer = sample_data
@@ -486,7 +485,7 @@ async def test_filter_edge_cases(
 
 @pytest.mark.asyncio
 async def test_backward_compatibility(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that old simple filter format still works"""
     test_workspace, _test_peer = sample_data
@@ -524,7 +523,7 @@ async def test_backward_compatibility(
 
 @pytest.mark.asyncio
 async def test_range_queries_with_dates(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test range queries that might be used with date fields"""
     test_workspace, test_peer = sample_data
@@ -684,7 +683,7 @@ async def test_all_workspace_columns_filtering(client: TestClient):
 
 @pytest.mark.asyncio
 async def test_all_peer_columns_filtering(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test filtering by all available peer columns"""
     test_workspace, _test_peer = sample_data
@@ -774,7 +773,7 @@ async def test_all_peer_columns_filtering(
 
 @pytest.mark.asyncio
 async def test_all_session_columns_filtering(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test filtering by all available session columns"""
     test_workspace, test_peer = sample_data
@@ -875,7 +874,7 @@ async def test_all_session_columns_filtering(
 
 @pytest.mark.asyncio
 async def test_all_message_columns_filtering(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test filtering by all available message columns"""
     test_workspace, test_peer = sample_data
@@ -1010,9 +1009,7 @@ async def test_all_message_columns_filtering(
 
 
 @pytest.mark.asyncio
-async def test_id_field_interpolation_consistency(
-    client: TestClient, _db_session: AsyncSession
-):
+async def test_id_field_interpolation_consistency(client: TestClient):
     """Test that id field interpolation works consistently across all models"""
     # Create test data
     workspace_name = str(generate_nanoid())
@@ -1101,7 +1098,7 @@ async def test_id_field_interpolation_consistency(
 
 @pytest.mark.asyncio
 async def test_foreign_key_field_interpolation(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that foreign key _id fields map to _name fields correctly"""
     test_workspace, test_peer = sample_data
@@ -1312,7 +1309,7 @@ async def test_metadata_field_interpolation(client: TestClient):
 
 @pytest.mark.asyncio
 async def test_nonexistent_columns_ignored_gracefully(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that filtering by non-existent columns is ignored gracefully"""
     test_workspace, _test_peer = sample_data
@@ -1362,7 +1359,7 @@ async def test_nonexistent_columns_ignored_gracefully(
 
 @pytest.mark.asyncio
 async def test_not_logic_correctness(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that NOT logic works correctly - THIS WILL LIKELY FAIL due to broken NOT logic"""
     test_workspace, _test_peer = sample_data
@@ -1422,7 +1419,7 @@ async def test_not_logic_correctness(
 
 @pytest.mark.asyncio
 async def test_jsonb_type_casting_edge_cases(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test edge cases in JSONB type casting for numeric comparisons"""
     test_workspace, test_peer = sample_data
@@ -1496,7 +1493,7 @@ async def test_jsonb_type_casting_edge_cases(
 
 @pytest.mark.asyncio
 async def test_real_datetime_column_filtering(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test filtering on actual datetime columns (not just metadata strings)"""
     test_workspace, _test_peer = sample_data
@@ -1546,7 +1543,7 @@ async def test_real_datetime_column_filtering(
 
 @pytest.mark.asyncio
 async def test_invalid_datetime_handling(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test handling of invalid datetime strings"""
     test_workspace, _test_peer = sample_data
@@ -1569,7 +1566,7 @@ async def test_invalid_datetime_handling(
 
 @pytest.mark.asyncio
 async def test_nested_jsonb_filtering(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test complex nested JSONB object filtering"""
     test_workspace, test_peer = sample_data
@@ -1622,7 +1619,7 @@ async def test_nested_jsonb_filtering(
 
 @pytest.mark.asyncio
 async def test_multiple_operators_same_field(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test multiple comparison operators on the same field"""
     test_workspace, test_peer = sample_data
@@ -1675,7 +1672,7 @@ async def test_multiple_operators_same_field(
 
 @pytest.mark.asyncio
 async def test_empty_and_null_filter_handling(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test handling of empty and null filters"""
     test_workspace, _test_peer = sample_data
@@ -1705,7 +1702,7 @@ async def test_empty_and_null_filter_handling(
 
 @pytest.mark.asyncio
 async def test_unicode_and_special_characters(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test filtering with unicode and special characters"""
     test_workspace, test_peer = sample_data
@@ -1736,7 +1733,7 @@ async def test_unicode_and_special_characters(
 
 @pytest.mark.asyncio
 async def test_case_sensitivity_edge_cases(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test case sensitivity in various contexts"""
     test_workspace, _test_peer = sample_data
@@ -1784,7 +1781,7 @@ async def test_case_sensitivity_edge_cases(
 
 @pytest.mark.asyncio
 async def test_malformed_filter_structures(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test handling of malformed filter structures"""
     test_workspace, _test_peer = sample_data
@@ -1810,7 +1807,7 @@ async def test_malformed_filter_structures(
 
 @pytest.mark.asyncio
 async def test_performance_with_complex_filters(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test performance with very complex nested filters"""
     test_workspace, _test_peer = sample_data
@@ -1860,7 +1857,7 @@ async def test_performance_with_complex_filters(
 
 @pytest.mark.asyncio
 async def test_filter_precedence_and_grouping(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that filter precedence and grouping works as expected"""
     test_workspace, _test_peer = sample_data
@@ -1926,7 +1923,7 @@ async def test_filter_precedence_and_grouping(
 
 @pytest.mark.asyncio
 async def test_jsonb_contains_vs_equality_semantics(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test the difference between JSONB contains and equality"""
     test_workspace, test_peer = sample_data
@@ -1979,7 +1976,7 @@ async def test_jsonb_contains_vs_equality_semantics(
 
 @pytest.mark.asyncio
 async def test_wildcard_edge_cases_comprehensive(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test comprehensive edge cases for wildcard behavior"""
     test_workspace, _test_peer = sample_data
@@ -2038,7 +2035,7 @@ async def test_wildcard_edge_cases_comprehensive(
 
 @pytest.mark.asyncio
 async def test_error_logging_and_debugging(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test that errors are logged appropriately for debugging"""
     test_workspace, _test_peer = sample_data
@@ -2059,7 +2056,7 @@ async def test_error_logging_and_debugging(
 
 @pytest.mark.asyncio
 async def test_boundary_conditions_numeric(
-    client: TestClient, _db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     """Test boundary conditions for numeric comparisons"""
     test_workspace, test_peer = sample_data
