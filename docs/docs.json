@@ -52,7 +52,11 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": ["v2/guides/overview", "v2/guides/cursor-claude-setup"]
+                "pages": [
+                  "v2/guides/overview",
+                  "v2/guides/cursor-claude-setup",
+                  "v2/guides/using-filters"
+                ]
               },
               {
                 "group": "Application Interfaces",

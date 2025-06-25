@@ -557,6 +557,8 @@ const response = await openai.chat.completions.create({
 
 ### Metadata and Filtering
 
+See [Using Filters](/v2/guides/using-filters) for more examples on how to use filters.
+
 <CodeGroup>
 ```python Python
 # Add messages with metadata
@@ -572,8 +574,8 @@ session.add_messages([
 ])
 
 # Filter messages by metadata
-finance_messages = session.get_messages(filter={"topic": "finance"})
-action_items = session.get_messages(filter={"action_item": True})
+finance_messages = session.get_messages(filter={"metadata": {"topic": "finance"}})
+action_items = session.get_messages(filter={"metadata": {"action_item": True}})
 ```
 
 ```typescript TypeScript
@@ -595,10 +597,10 @@ await session.addMessages([
 
 // Filter messages by metadata
 const financeMessages = await session.getMessages({ 
-  filter: { topic: "finance" } 
+  filter: { metadata: { topic: "finance" } } 
 });
 const actionItems = await session.getMessages({ 
-  filter: { action_item: true } 
+  filter: { metadata: { action_item: true } } 
 });
 ```
 </CodeGroup>
