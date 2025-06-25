@@ -290,9 +290,20 @@ def mock_langfuse():
 @pytest.fixture(autouse=True)
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
-    with patch("src.crud.embedding_client.embed") as mock_create:
-        mock_create.return_value = [0.1] * 1536
-        yield mock_create
+    with (
+        patch("src.crud.embedding_client.embed") as mock_embed,
+        patch("src.crud.embedding_client.batch_embed") as mock_batch_embed,
+    ):
+        # Mock the embed method to return a fake embedding vector
+        mock_embed.return_value = [0.1] * 1536
+
+        # Mock the batch_embed method to return a dict of fake embedding vectors
+        async def mock_batch_embed_func(id_text_dict):
+            return {text_id: [0.1] * 1536 for text_id in id_text_dict}
+
+        mock_batch_embed.side_effect = mock_batch_embed_func
+
+        yield {"embed": mock_embed, "batch_embed": mock_batch_embed}
 
 
 @pytest.fixture(autouse=True)

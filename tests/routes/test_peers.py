@@ -521,7 +521,7 @@ def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json="search query",
+        json={"query": "search query", "use_semantic_search": False},
     )
     assert response.status_code == 200
     data = response.json()
@@ -542,7 +542,8 @@ def test_search_peer_empty_query(
 
     # Search with empty query
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search", json=""
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+        json={"query": "", "use_semantic_search": False},
     )
     assert response.status_code == 200
     data = response.json()
@@ -561,8 +562,68 @@ def test_search_peer_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{nonexistent_peer_id}/search",
-        json="test query",
+        json={"query": "test query", "use_semantic_search": False},
     )
     # This should probably return 404 or handle gracefully
     # The exact behavior depends on the crud.search implementation
     assert response.status_code in [200, 404, 422]
+
+
+def test_search_peer_with_semantic_search_false(client, sample_data):
+    """Test peer search with use_semantic_search=false"""
+    test_workspace, test_peer = sample_data
+
+    # Add some messages to search through
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        json={
+            "messages": [
+                {"content": "Search this content", "peer_id": test_peer.name},
+                {"content": "Another searchable message", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Search with use_semantic_search=false
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+        json={"query": "search", "use_semantic_search": False},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Response should have pagination structure
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "size" in data
+    assert isinstance(data["items"], list)
+
+
+def test_search_peer_with_semantic_search_true_disabled(client, sample_data):
+    """Test peer search with use_semantic_search=true when EMBED_MESSAGES is disabled"""
+    test_workspace, test_peer = sample_data
+
+    # Add some messages to search through
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        json={
+            "messages": [
+                {"content": "Search this content", "peer_id": test_peer.name},
+                {"content": "Another searchable message", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Search with use_semantic_search=true (should fail if EMBED_MESSAGES is disabled)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
+        json={"query": "search", "use_semantic_search": True},
+    )
+
+    assert response.status_code == 405
+
+    data = response.json()
+    assert "Semantic search requires EMBED_MESSAGES flag to be enabled" in data.get(
+        "detail", ""
+    )

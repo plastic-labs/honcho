@@ -1007,6 +1007,7 @@ async def search(
     Search across message content using a hybrid approach:
     - Uses PostgreSQL full text search for natural language queries
     - Falls back to exact string matching for queries with special characters
+    - Optionally uses semantic search with embeddings
 
     If a session or peer is provided, the search will be scoped to that
     session or peer. Otherwise, it will search across all messages in the workspace.
@@ -1016,6 +1017,7 @@ async def search(
         workspace_name: Name of the workspace
         session_name: Optional name of the session
         peer_name: Optional name of the peer
+        use_semantic_search: Whether to use semantic search with embeddings
 
     Returns:
         List of messages that match the search query, ordered by relevance
@@ -1024,50 +1026,64 @@ async def search(
 
     from sqlalchemy import func, or_
 
-    # Check if query contains special characters that FTS might not handle well
-    has_special_chars = bool(
-        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
-    )
-
     # Base query conditions
     base_conditions = [models.Message.workspace_name == workspace_name]
 
-    if has_special_chars:
-        # For queries with special characters, use exact string matching (ILIKE)
-        # This ensures we can find exact matches like "~special-uuid~"
-        search_condition = models.Message.content.ilike(f"%{query}%")
+    if use_semantic_search:
+        # Generate embedding for the search query
+        embedding_query = await embedding_client.embed(query)
 
+        # Use cosine distance for semantic search
         base_query = (
             select(models.Message)
-            .where(*base_conditions, search_condition)
-            .order_by(models.Message.created_at.desc())
-        )
-    else:
-        # For natural language queries, use full text search with ranking
-        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
-            func.plainto_tsquery("english", query)
-        )
-
-        # Combine FTS with ILIKE as fallback for better coverage
-        combined_condition = or_(
-            fts_condition, models.Message.content.ilike(f"%{query}%")
-        )
-
-        base_query = (
-            select(models.Message)
-            .where(*base_conditions, combined_condition)
+            .where(*base_conditions)
             .order_by(
-                # Order by FTS relevance first, then by creation time
-                func.coalesce(
-                    func.ts_rank(
-                        func.to_tsvector("english", models.Message.content),
-                        func.plainto_tsquery("english", query),
-                    ),
-                    0,
-                ).desc(),
+                models.Message.embedding.cosine_distance(embedding_query),
                 models.Message.created_at.desc(),
             )
         )
+    else:
+        # Check if query contains special characters that FTS might not handle well
+        has_special_chars = bool(
+            re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
+        )
+
+        if has_special_chars:
+            # For queries with special characters, use exact string matching (ILIKE)
+            # This ensures we can find exact matches like "~special-uuid~"
+            search_condition = models.Message.content.ilike(f"%{query}%")
+
+            base_query = (
+                select(models.Message)
+                .where(*base_conditions, search_condition)
+                .order_by(models.Message.created_at.desc())
+            )
+        else:
+            # For natural language queries, use full text search with ranking
+            fts_condition = func.to_tsvector("english", models.Message.content).op(
+                "@@"
+            )(func.plainto_tsquery("english", query))
+
+            # Combine FTS with ILIKE as fallback for better coverage
+            combined_condition = or_(
+                fts_condition, models.Message.content.ilike(f"%{query}%")
+            )
+
+            base_query = (
+                select(models.Message)
+                .where(*base_conditions, combined_condition)
+                .order_by(
+                    # Order by FTS relevance first, then by creation time
+                    func.coalesce(
+                        func.ts_rank(
+                            func.to_tsvector("english", models.Message.content),
+                            func.plainto_tsquery("english", query),
+                        ),
+                        0,
+                    ).desc(),
+                    models.Message.created_at.desc(),
+                )
+            )
 
     # Add additional filters based on parameters
     if session_name is not None:

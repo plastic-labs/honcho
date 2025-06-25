@@ -1,5 +1,6 @@
 import contextvars
 
+from alembic import command
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
@@ -71,7 +72,7 @@ def init_db():
 
     # Run Alembic migrations
     alembic_cfg = Config("alembic.ini")
-    # command.upgrade(alembic_cfg, "head")
+    command.upgrade(alembic_cfg, "head")
 
     # Clean up
     sync_engine.dispose()
