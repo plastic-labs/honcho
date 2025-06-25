@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 
 from langfuse.decorators import langfuse_context, observe  # pyright: ignore
 from mirascope import llm
@@ -216,8 +215,8 @@ async def chat(
     langfuse_context.update_current_trace(
         session_id=session_name,
         user_id=peer_name,
-        release=os.getenv("SENTRY_RELEASE"),
-        metadata={"environment": os.getenv("SENTRY_ENVIRONMENT")},
+        release=settings.SENTRY.RELEASE,
+        metadata={"environment": settings.SENTRY.ENVIRONMENT},
     )
 
     # Use streaming or non-streaming response based on the request

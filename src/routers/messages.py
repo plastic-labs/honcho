@@ -1,5 +1,4 @@
 import logging
-import os
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
@@ -9,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import insert
 
 from src import crud, schemas
+from src.config import settings
 from src.dependencies import db, tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.models import QueueItem
@@ -255,7 +255,7 @@ async def enqueue(payload: list[dict[str, Any]]):
 
         except Exception as e:
             logger.error(f"Failed to enqueue messages: {str(e)}", exc_info=True)
-            if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
+            if settings.SENTRY.ENABLED:
                 import sentry_sdk
 
                 sentry_sdk.capture_exception(e)

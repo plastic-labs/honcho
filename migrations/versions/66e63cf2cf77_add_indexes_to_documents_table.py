@@ -7,17 +7,18 @@ Create Date: 2025-05-19 17:00:18.151735
 """
 
 from collections.abc import Sequence
-from os import getenv
 
 from alembic import op
 from sqlalchemy import text
+
+from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "66e63cf2cf77"
 down_revision: str | None = "20f89a421aff"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
-schema = getenv("DB_SCHEMA", "public")
+schema = settings.DB.SCHEMA
 
 
 def upgrade() -> None:
