@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from src.config import settings
-from src.exceptions import ValidationException
 
 from . import models, schemas
 from .exceptions import (
@@ -1352,7 +1351,7 @@ async def create_messages(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message.token_count,
+            token_count=message._token_count,
         )
         message_objects.append(message_obj)
 
@@ -1407,7 +1406,7 @@ async def create_messages_for_peer(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message.token_count,
+            token_count=message._token_count,
         )
         message_objects.append(message_obj)
 

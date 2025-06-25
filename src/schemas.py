@@ -3,7 +3,14 @@ import datetime
 from typing import Annotated, Any, Self
 
 import tiktoken
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from src.config import settings
 
@@ -110,11 +117,8 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
-    token_count: int = Field(
-        default=0,
-        exclude=True,  # exclude from the schema
-        description="Internal field - token count of content",
-    )
+
+    _token_count: int = PrivateAttr(default=0)
 
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
@@ -127,7 +131,7 @@ class MessageCreate(MessageBase):
                 f"Content exceeds maximum token limit of {MAX_TOKENS} tokens (got {token_count} tokens)"
             )
 
-        self.token_count = token_count
+        self._token_count = token_count
         return self
 
 
