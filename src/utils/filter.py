@@ -1,13 +1,18 @@
 import datetime
+from collections.abc import Callable
 from logging import getLogger
-from typing import Any
+from typing import Any, TypeVar
 
-from sqlalchemy import Select, and_, cast, not_, or_
+from sqlalchemy import ColumnElement, Select, and_, cast, not_, or_
+from sqlalchemy.sql.elements import Cast
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
 
 logger = getLogger(__name__)
+
+# Type variable for SQLAlchemy model classes
+T = TypeVar("T")
 
 # Module-level constants for comparison operators
 COMPARISON_OPERATORS = {
@@ -46,8 +51,8 @@ DISALLOWED_INTERNAL_COLUMNS = [
 
 
 def apply_filter(
-    stmt: Select, model_class, filter: dict[str, Any] | None = None
-) -> Select:
+    stmt: Select[tuple[T]], model_class: type[T], filter: dict[str, Any] | None = None
+) -> Select[tuple[T]]:
     """
     Apply advanced filter to a SQL statement based on filter dictionary.
 
@@ -96,7 +101,9 @@ def apply_filter(
     return stmt
 
 
-def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
+def _build_filter_conditions(
+    filter_dict: dict[str, Any], model_class: type[Any]
+) -> ColumnElement[bool] | None:
     """
     Recursively build filter conditions from a filter dictionary.
 
@@ -107,7 +114,7 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
     Returns:
         SQLAlchemy condition object or None
     """
-    conditions = []
+    conditions: list[ColumnElement[bool]] = []
 
     # Handle logical operators
     if "AND" in filter_dict:
@@ -115,7 +122,7 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
             raise FilterError(
                 f"AND operator must contain a list, got {type(filter_dict['AND']).__name__}"
             )
-        and_conditions = []
+        and_conditions: list[ColumnElement[bool]] = []
         for sub_filter in filter_dict["AND"]:
             sub_condition = _build_filter_conditions(sub_filter, model_class)
             if sub_condition is not None:
@@ -128,7 +135,7 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
             raise FilterError(
                 f"OR operator must contain a list, got {type(filter_dict['OR']).__name__}"
             )
-        or_conditions = []
+        or_conditions: list[ColumnElement[bool]] = []
         for sub_filter in filter_dict["OR"]:
             sub_condition = _build_filter_conditions(sub_filter, model_class)
             if sub_condition is not None:
@@ -143,7 +150,7 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
             raise FilterError(
                 f"NOT operator must contain a list, got {type(filter_dict['NOT']).__name__}"
             )
-        not_conditions = []
+        not_conditions: list[ColumnElement[bool]] = []
         for sub_filter in filter_dict["NOT"]:
             sub_condition = _build_filter_conditions(sub_filter, model_class)
             if sub_condition is not None:
@@ -172,7 +179,9 @@ def _build_filter_conditions(filter_dict: dict[str, Any], model_class) -> Any:
         return and_(*conditions)
 
 
-def _build_field_condition(key: str, value: Any, model_class) -> Any:
+def _build_field_condition(
+    key: str, value: Any, model_class: type[Any]
+) -> ColumnElement[bool] | None:
     """
     Build a condition for a single field.
 
@@ -205,7 +214,7 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
     # Handle comparison operators vs regular values
     if isinstance(value, dict):
         # Check if this is a comparison operators dict by looking for known operators
-        is_comparison_dict = any(key in COMPARISON_OPERATORS for key in value)
+        is_comparison_dict = any(op_key in COMPARISON_OPERATORS for op_key in value)
 
         if is_comparison_dict:
             return _build_comparison_conditions(column, column_name, value)
@@ -223,7 +232,7 @@ def _build_field_condition(key: str, value: Any, model_class) -> Any:
             return column == value
 
 
-def _safe_numeric_cast(column_accessor, op_value):
+def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Any, Any]:
     """
     Safely cast JSONB column accessor to appropriate type for comparison.
 
@@ -241,19 +250,19 @@ def _safe_numeric_cast(column_accessor, op_value):
         return column_accessor, str(op_value).lower()
     elif isinstance(op_value, int | float):
         # Cast to numeric for proper numeric comparison
-        numeric_accessor = cast(column_accessor, Numeric)
+        numeric_accessor: Cast[Any] = cast(column_accessor, Numeric)
         return numeric_accessor, op_value
     else:
         # Try to parse as numeric (handles both strings and other types)
         try:
             # Try int first, then float, then string for lexicographic comparison
             parsed_value = int(op_value)
-            numeric_accessor = cast(column_accessor, Numeric)
+            numeric_accessor: Cast[Any] = cast(column_accessor, Numeric)
             return numeric_accessor, parsed_value
         except (ValueError, TypeError):
             try:
                 parsed_value = float(op_value)
-                numeric_accessor = cast(column_accessor, Numeric)
+                numeric_accessor: Cast[Any] = cast(column_accessor, Numeric)
                 return numeric_accessor, parsed_value
             except (ValueError, TypeError):
                 if isinstance(op_value, str):
@@ -267,8 +276,8 @@ def _safe_numeric_cast(column_accessor, op_value):
 
 
 def _build_comparison_condition(
-    column, field_name: str, operator: str, op_value: Any
-) -> Any:
+    column: Any, field_name: str, operator: str, op_value: Any
+) -> ColumnElement[bool] | None:
     """
     Build a single comparison condition for a JSONB field.
 
@@ -294,7 +303,7 @@ def _build_comparison_condition(
     # Mapping of operators to their SQLAlchemy methods
     if operator in NUMERIC_OPERATORS:
         safe_accessor, safe_value = _safe_numeric_cast(field_accessor, op_value)
-        operator_map = {
+        operator_map: dict[str, Callable[[Any, Any], ColumnElement[bool]]] = {
             "gte": lambda a, v: a >= v,
             "lte": lambda a, v: a <= v,
             "gt": lambda a, v: a > v,
@@ -318,7 +327,9 @@ def _build_comparison_condition(
     return None
 
 
-def _build_nested_metadata_conditions(column, metadata_dict: dict[str, Any]) -> Any:
+def _build_nested_metadata_conditions(
+    column: Any, metadata_dict: dict[str, Any]
+) -> ColumnElement[bool] | None:
     """
     Build conditions for nested metadata fields with comparison operators.
 
@@ -329,14 +340,14 @@ def _build_nested_metadata_conditions(column, metadata_dict: dict[str, Any]) -> 
     Returns:
         Combined SQLAlchemy condition object or None
     """
-    conditions = []
+    conditions: list[ColumnElement[bool]] = []
 
     for field_name, field_value in metadata_dict.items():
         if isinstance(field_value, dict) and any(
             op in COMPARISON_OPERATORS for op in field_value
         ):
             # This field has comparison operators
-            field_conditions = []
+            field_conditions: list[ColumnElement[bool]] = []
             for operator, op_value in field_value.items():
                 condition = _build_comparison_condition(
                     column, field_name, operator, op_value
@@ -361,7 +372,9 @@ def _build_nested_metadata_conditions(column, metadata_dict: dict[str, Any]) -> 
     return _combine_conditions_with_and(conditions)
 
 
-def _combine_conditions_with_and(conditions: list) -> Any:
+def _combine_conditions_with_and(
+    conditions: list[ColumnElement[bool]],
+) -> ColumnElement[bool] | None:
     """
     Combine a list of conditions with AND logic.
 
@@ -380,8 +393,8 @@ def _combine_conditions_with_and(conditions: list) -> Any:
 
 
 def _build_comparison_conditions(
-    column, column_name: str, comparisons: dict[str, Any]
-) -> Any:
+    column: Any, column_name: str, comparisons: dict[str, Any]
+) -> ColumnElement[bool] | None:
     """
     Build comparison conditions for a single column.
 
@@ -393,7 +406,7 @@ def _build_comparison_conditions(
     Returns:
         Combined SQLAlchemy condition object or None
     """
-    conditions = []
+    conditions: list[ColumnElement[bool]] = []
 
     # Check if this is a datetime column
     is_datetime_column = hasattr(column.type, "python_type") and issubclass(
@@ -451,7 +464,7 @@ def _build_comparison_conditions(
                 else:
                     if is_datetime_column:
                         # Validate and cast each datetime string value
-                        casted_values = []
+                        casted_values: list[str | datetime.datetime] = []
                         for val in op_value:
                             if isinstance(val, str):
                                 validated_datetime = _validate_datetime_string(val)
