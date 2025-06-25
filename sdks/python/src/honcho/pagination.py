@@ -1,5 +1,5 @@
-from collections.abc import Iterator
-from typing import Callable, Optional, TypeVar
+from collections.abc import Callable, Iterator
+from typing import Optional, TypeVar
 
 from honcho_core.pagination import SyncPage as SyncPageCore
 from pydantic import Field, validate_call
@@ -22,7 +22,7 @@ class SyncPage(SyncPageCore[U]):
         original_page: SyncPageCore[T] = Field(
             ..., description="The original SyncPage to wrap"
         ),
-        transform_func: Optional[Callable[[T], U]] = Field(
+        transform_func: Callable[[T], U] | None = Field(
             None,
             description="Optional function to transform objects from type T to type U",
         ),
@@ -48,7 +48,7 @@ class SyncPage(SyncPageCore[U]):
 
     def __getitem__(self, index: int) -> U:
         """Get an optionally transformed object by index."""
-        item = self._original_page[index]
+        item = self._original_page[index]  # type: ignore
         if self._transform_func is not None:
             return self._transform_func(item)
         else:
@@ -56,29 +56,29 @@ class SyncPage(SyncPageCore[U]):
 
     def __len__(self) -> int:
         """Get the length of the page."""
-        return len(self._original_page)
+        return len(self._original_page)  # type: ignore
 
     @property
     def data(self) -> list[U]:
         """Get all optionally transformed data as a list."""
         if self._transform_func is not None:
-            return [self._transform_func(item) for item in self._original_page.data]
+            return [self._transform_func(item) for item in self._original_page.data]  # type: ignore
         else:
             return self._original_page.data  # type: ignore
 
     @property
     def object(self) -> str:
         """Get the object type."""
-        return self._original_page.object
+        return self._original_page.object  # type: ignore
 
     @property
     def has_next_page(self) -> bool:
         """Check if there's a next page."""
-        return self._original_page.has_next_page
+        return self._original_page.has_next_page  # type: ignore
 
     def next_page(self) -> Optional["SyncPage[U]"]:
         """Get the next page with optional transformation applied."""
-        next_page = self._original_page.next_page()
+        next_page = self._original_page.next_page()  # type: ignore
         if next_page is None:
             return None
         return SyncPage(next_page, self._transform_func)

@@ -1,5 +1,4 @@
 import os
-from typing import TYPE_CHECKING, Optional, Union
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
@@ -8,10 +7,8 @@ from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
+from .peer import Peer
 from .session_context import SessionContext
-
-if TYPE_CHECKING:
-    from .peer import Peer
 
 try:
     env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
@@ -65,7 +62,7 @@ class Session(BaseModel):
             ..., description="Reference to the parent Honcho client instance"
         ),
         *,
-        config: Optional[dict[str, object]] = Field(
+        config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
@@ -95,15 +92,15 @@ class Session(BaseModel):
 
     def add_peers(
         self,
-        peers: Union[
-            str,
-            "Peer",
-            tuple[str, SessionPeerConfig],
-            tuple["Peer", SessionPeerConfig],
-            list[Union["Peer", str]],
-            list[tuple[Union["Peer", str], SessionPeerConfig]],
-            list[Union["Peer", str, tuple[Union["Peer", str], SessionPeerConfig]]],
-        ] = Field(..., description="Peers to add to the session"),
+        peers: str
+        | Peer
+        | tuple[str, SessionPeerConfig]
+        | tuple[Peer, SessionPeerConfig]
+        | list[Peer | str]
+        | list[tuple[Peer | str, SessionPeerConfig]]
+        | list[Peer | str | tuple[Peer | str, SessionPeerConfig]] = Field(
+            ..., description="Peers to add to the session"
+        ),
     ) -> None:
         """
         Add peers to this session.
@@ -131,7 +128,7 @@ class Session(BaseModel):
                 # Handle tuple[str/Peer, SessionPeerConfig]
                 peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
                 peer_config = peer[1]
-                peer_dict[peer_id] = peer_config
+                peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
             else:
                 # Handle direct str or Peer
                 peer_id = peer if isinstance(peer, str) else peer.id
@@ -145,15 +142,15 @@ class Session(BaseModel):
 
     def set_peers(
         self,
-        peers: Union[
-            str,
-            "Peer",
-            tuple[str, SessionPeerConfig],
-            tuple["Peer", SessionPeerConfig],
-            list[Union["Peer", str]],
-            list[tuple[Union["Peer", str], SessionPeerConfig]],
-            list[Union["Peer", str, tuple[Union["Peer", str], SessionPeerConfig]]],
-        ] = Field(..., description="Peers to set for the session"),
+        peers: str
+        | Peer
+        | tuple[str, SessionPeerConfig]
+        | tuple[Peer, SessionPeerConfig]
+        | list[Peer | str]
+        | list[tuple[Peer | str, SessionPeerConfig]]
+        | list[Peer | str | tuple[Peer | str, SessionPeerConfig]] = Field(
+            ..., description="Peers to set for the session"
+        ),
     ) -> None:
         """
         Set the complete peer list for this session.
@@ -180,7 +177,7 @@ class Session(BaseModel):
                 # Handle tuple[str/Peer, SessionPeerConfig]
                 peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
                 peer_config = peer[1]
-                peer_dict[peer_id] = peer_config
+                peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
             else:
                 # Handle direct str or Peer
                 peer_id = peer if isinstance(peer, str) else peer.id
@@ -194,7 +191,7 @@ class Session(BaseModel):
 
     def remove_peers(
         self,
-        peers: Union[str, "Peer", list[Union["Peer", str]]] = Field(
+        peers: str | Peer | list[Peer | str] = Field(
             ..., description="Peers to remove from the session"
         ),
     ) -> None:
@@ -222,7 +219,7 @@ class Session(BaseModel):
             body=peer_ids,
         )
 
-    def get_peers(self) -> list["Peer"]:
+    def get_peers(self) -> list[Peer]:
         """
         Get all peers in this session.
 
@@ -241,7 +238,7 @@ class Session(BaseModel):
             Peer(peer.id, self.workspace_id, self._client) for peer in peers_page.items
         ]
 
-    def get_peer_config(self, peer: Union[str, "Peer"]) -> SessionPeerConfig:
+    def get_peer_config(self, peer: str | Peer) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
@@ -255,9 +252,7 @@ class Session(BaseModel):
             observe_me=peer_get_config_response.observe_me,
         )
 
-    def set_peer_config(
-        self, peer: Union[str, "Peer"], config: SessionPeerConfig
-    ) -> None:
+    def set_peer_config(self, peer: str | Peer, config: SessionPeerConfig) -> None:
         """
         Set the configuration for a peer in this session.
         """
@@ -274,7 +269,7 @@ class Session(BaseModel):
     @validate_call
     def add_messages(
         self,
-        messages: Union[MessageCreateParam, list[MessageCreateParam]] = Field(
+        messages: MessageCreateParam | list[MessageCreateParam] = Field(
             ..., description="Messages to add to the session"
         ),
     ) -> None:
@@ -310,7 +305,7 @@ class Session(BaseModel):
     def get_messages(
         self,
         *,
-        filter: Optional[dict[str, object]] = Field(
+        filter: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
     ) -> SyncPage[Message]:
@@ -385,7 +380,7 @@ class Session(BaseModel):
         self,
         *,
         summary: bool = True,
-        tokens: Optional[int] = Field(
+        tokens: int | None = Field(
             None, gt=0, description="Maximum number of tokens to include in the context"
         ),
     ) -> SessionContext:
@@ -447,9 +442,9 @@ class Session(BaseModel):
 
     def working_rep(
         self,
-        peer: Union[str, "Peer"],
+        peer: str | Peer,
         *,
-        target: Optional[Union[str, "Peer"]] = None,
+        target: str | Peer | None = None,
     ) -> dict[str, object]:
         """
         Get the current working representation of the peer in this session.

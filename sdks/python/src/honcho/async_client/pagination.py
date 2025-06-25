@@ -1,5 +1,5 @@
-from collections.abc import AsyncIterator
-from typing import Callable, Optional, TypeVar
+from collections.abc import AsyncIterator, Callable
+from typing import Optional, TypeVar
 
 from honcho_core.pagination import AsyncPage as AsyncPageCore
 from pydantic import Field, validate_call
@@ -22,7 +22,7 @@ class AsyncPage(AsyncPageCore[U]):
         original_page: AsyncPageCore[T] = Field(
             ..., description="The original AsyncPage to wrap"
         ),
-        transform_func: Optional[Callable[[T], U]] = Field(
+        transform_func: Callable[[T], U] | None = Field(
             None,
             description="Optional function to transform objects from type T to type U",
         ),
@@ -48,7 +48,7 @@ class AsyncPage(AsyncPageCore[U]):
 
     async def __agetitem__(self, index: int) -> U:
         """Get an optionally transformed object by index."""
-        item = await self._original_page.__agetitem__(index)
+        item = await self._original_page.__agetitem__(index)  # type: ignore
         if self._transform_func is not None:
             return self._transform_func(item)
         else:
@@ -56,12 +56,12 @@ class AsyncPage(AsyncPageCore[U]):
 
     def __len__(self) -> int:
         """Get the length of the page."""
-        return len(self._original_page)
+        return len(self._original_page)  # type: ignore
 
     @property
     async def data(self) -> list[U]:
         """Get all optionally transformed data as a list."""
-        data = await self._original_page.data
+        data = await self._original_page.data  # type: ignore
         if self._transform_func is not None:
             return [self._transform_func(item) for item in data]
         else:
@@ -70,16 +70,16 @@ class AsyncPage(AsyncPageCore[U]):
     @property
     def object(self) -> str:
         """Get the object type."""
-        return self._original_page.object
+        return self._original_page.object  # type: ignore
 
     @property
     def has_next_page(self) -> bool:
         """Check if there's a next page."""
-        return self._original_page.has_next_page
+        return self._original_page.has_next_page  # type: ignore
 
     async def next_page(self) -> Optional["AsyncPage[U]"]:
         """Get the next page with optional transformation applied."""
-        next_page = await self._original_page.next_page()
+        next_page = await self._original_page.next_page()  # type: ignore
         if next_page is None:
             return None
         return AsyncPage(next_page, self._transform_func)

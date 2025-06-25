@@ -1,10 +1,7 @@
-from typing import TYPE_CHECKING, Union
-
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, Field, validate_call
 
-if TYPE_CHECKING:
-    from .peer import Peer
+from .peer import Peer
 
 
 class SessionContext(BaseModel):
@@ -58,7 +55,7 @@ class SessionContext(BaseModel):
     def to_openai(
         self,
         *,
-        assistant: Union[str, "Peer"],
+        assistant: str | Peer,
     ) -> list[dict[str, object]]:
         """
         Convert the context to OpenAI-compatible message format.
@@ -91,7 +88,7 @@ class SessionContext(BaseModel):
     def to_anthropic(
         self,
         *,
-        assistant: Union[str, "Peer"],
+        assistant: str | Peer,
     ) -> list[dict[str, object]]:
         """
         Convert the context to Anthropic-compatible message format.

@@ -1,5 +1,4 @@
 import os
-from typing import TYPE_CHECKING, Optional, Union
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import NOT_GIVEN
@@ -9,9 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from ..session_context import SessionContext
 from .pagination import AsyncPage
-
-if TYPE_CHECKING:
-    from .peer import AsyncPeer
+from .peer import AsyncPeer
 
 try:
     env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
@@ -86,7 +83,7 @@ class AsyncSession(BaseModel):
         workspace_id: str,
         client: AsyncHonchoCore,
         *,
-        config: Optional[dict[str, object]] = None,
+        config: dict[str, object] | None = None,
     ) -> "AsyncSession":
         """
         Create a new AsyncSession with optional configuration.
@@ -114,19 +111,15 @@ class AsyncSession(BaseModel):
 
     async def add_peers(
         self,
-        peers: Union[
-            str,
-            "AsyncPeer",
-            tuple[str, SessionPeerConfig],
-            tuple["AsyncPeer", SessionPeerConfig],
-            list[Union["AsyncPeer", str]],
-            list[tuple[Union["AsyncPeer", str], SessionPeerConfig]],
-            list[
-                Union[
-                    "AsyncPeer", str, tuple[Union["AsyncPeer", str], SessionPeerConfig]
-                ]
-            ],
-        ] = Field(..., description="Peers to add to the session"),
+        peers: str
+        | AsyncPeer
+        | tuple[str, SessionPeerConfig]
+        | tuple[AsyncPeer, SessionPeerConfig]
+        | list[AsyncPeer | str]
+        | list[tuple[AsyncPeer | str, SessionPeerConfig]]
+        | list[AsyncPeer | str | tuple[AsyncPeer | str, SessionPeerConfig]] = Field(
+            ..., description="Peers to add to the session"
+        ),
     ) -> None:
         """
         Add peers to this session.
@@ -154,7 +147,7 @@ class AsyncSession(BaseModel):
                 # Handle tuple[str/AsyncPeer, SessionPeerConfig]
                 peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
                 peer_config = peer[1]
-                peer_dict[peer_id] = peer_config
+                peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
             else:
                 # Handle direct str or AsyncPeer
                 peer_id = peer if isinstance(peer, str) else peer.id
@@ -168,19 +161,15 @@ class AsyncSession(BaseModel):
 
     async def set_peers(
         self,
-        peers: Union[
-            str,
-            "AsyncPeer",
-            tuple[str, SessionPeerConfig],
-            tuple["AsyncPeer", SessionPeerConfig],
-            list[Union["AsyncPeer", str]],
-            list[tuple[Union["AsyncPeer", str], SessionPeerConfig]],
-            list[
-                Union[
-                    "AsyncPeer", str, tuple[Union["AsyncPeer", str], SessionPeerConfig]
-                ]
-            ],
-        ] = Field(..., description="Peers to set for the session"),
+        peers: str
+        | AsyncPeer
+        | tuple[str, SessionPeerConfig]
+        | tuple[AsyncPeer, SessionPeerConfig]
+        | list[AsyncPeer | str]
+        | list[tuple[AsyncPeer | str, SessionPeerConfig]]
+        | list[AsyncPeer | str | tuple[AsyncPeer | str, SessionPeerConfig]] = Field(
+            ..., description="Peers to set for the session"
+        ),
     ) -> None:
         """
         Set the complete peer list for this session.
@@ -207,7 +196,7 @@ class AsyncSession(BaseModel):
                 # Handle tuple[str/AsyncPeer, SessionPeerConfig]
                 peer_id = peer[0] if isinstance(peer[0], str) else peer[0].id
                 peer_config = peer[1]
-                peer_dict[peer_id] = peer_config
+                peer_dict[peer_id] = peer_config.model_dump(exclude_none=True)
             else:
                 # Handle direct str or AsyncPeer
                 peer_id = peer if isinstance(peer, str) else peer.id
@@ -221,7 +210,7 @@ class AsyncSession(BaseModel):
 
     async def remove_peers(
         self,
-        peers: Union[str, "AsyncPeer", list[Union["AsyncPeer", str]]] = Field(
+        peers: str | AsyncPeer | list[AsyncPeer | str] = Field(
             ..., description="Peers to remove from the session"
         ),
     ) -> None:
@@ -249,7 +238,7 @@ class AsyncSession(BaseModel):
             body=peer_ids,
         )
 
-    async def get_peers(self) -> list["AsyncPeer"]:
+    async def get_peers(self) -> list[AsyncPeer]:
         """
         Get all peers in this session.
 
@@ -271,7 +260,7 @@ class AsyncSession(BaseModel):
             for peer in peers_page.items
         ]
 
-    async def get_peer_config(self, peer: Union[str, "AsyncPeer"]) -> SessionPeerConfig:
+    async def get_peer_config(self, peer: str | AsyncPeer) -> SessionPeerConfig:
         """
         Get the configuration for a peer in this session.
         """
@@ -288,7 +277,7 @@ class AsyncSession(BaseModel):
         )
 
     async def set_peer_config(
-        self, peer: Union[str, "AsyncPeer"], config: SessionPeerConfig
+        self, peer: str | AsyncPeer, config: SessionPeerConfig
     ) -> None:
         """
         Set the configuration for a peer in this session.
@@ -342,7 +331,7 @@ class AsyncSession(BaseModel):
     async def get_messages(
         self,
         *,
-        filter: Optional[dict[str, object]] = Field(
+        filter: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
     ) -> AsyncPage[Message]:
@@ -415,7 +404,7 @@ class AsyncSession(BaseModel):
         self,
         *,
         summary: bool = True,
-        tokens: Optional[int] = Field(
+        tokens: int | None = Field(
             None, gt=0, description="Maximum number of tokens to include in the context"
         ),
     ) -> SessionContext:
