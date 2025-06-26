@@ -108,7 +108,7 @@ class Peer(BaseModel):
             target=str(target.id) if isinstance(target, Peer) else target,
             session_id=session_id,
         )
-        if response.content == "" or response.content == "None":
+        if response.content in ("", None, "None"):
             return None
         return response.content
 
@@ -288,7 +288,7 @@ class Peer(BaseModel):
             Returns an empty page if no messages are found.
         """
         messages_page = self._client.workspaces.peers.search(
-            workspace_id=self.workspace_id, peer_id=self.id, query=query
+            self.id, workspace_id=self.workspace_id, query=query
         )
         return SyncPage(messages_page)
 

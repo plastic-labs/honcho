@@ -63,7 +63,7 @@ export class Page<T> implements AsyncIterable<T> {
    * Check if there's a next page.
    */
   get hasNextPage(): boolean {
-    return this._originalPage?.hasNextPage;
+    return this._originalPage?.hasNextPage ?? false;
   }
 
   /**

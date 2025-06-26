@@ -303,14 +303,7 @@ class Session(BaseModel):
         self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            messages=[
-                MessageCreateParam(
-                    peer_id=getattr(message, "peer_id", message.get("peer_id")),
-                    content=getattr(message, "content", message.get("content")),
-                    metadata=getattr(message, "metadata", message.get("metadata")),
-                )
-                for message in messages
-            ],
+            messages=[MessageCreateParam(**message) for message in messages],
         )
 
     @validate_call

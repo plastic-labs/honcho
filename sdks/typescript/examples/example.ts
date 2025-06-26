@@ -53,7 +53,7 @@ async function main() {
   ]);
   console.log('Messages added.');
 
-  let sessionMetadata = await mySession.getMetadata();
+  const sessionMetadata = await mySession.getMetadata();
   console.log('Session metadata:', sessionMetadata);
   await mySession.setMetadata({ ...sessionMetadata, test: 'test2' });
   console.log('Session metadata updated.');
@@ -78,7 +78,7 @@ async function main() {
   await mySession.addMessages(charlie.message('hello world!'));
 
   console.log('Fetching and updating charlie metadata...');
-  let charlieMetadata = await charlie.getMetadata();
+  const charlieMetadata = await charlie.getMetadata();
   await charlie.setMetadata({ ...charlieMetadata, location: 'the moon' });
   console.log('Charlie metadata updated.');
 
@@ -91,8 +91,8 @@ async function main() {
 
   console.log('Fetching session context...');
   const context = await mySession.getContext();
-  let openaiMessages = context.toOpenAI(alice.id);
-  let anthropicMessages = context.toAnthropic(alice.id);
+  const openaiMessages = context.toOpenAI(alice.id);
+  const anthropicMessages = context.toAnthropic(alice.id);
   console.log('OpenAI context:', openaiMessages);
   console.log('Anthropic context:', anthropicMessages);
 

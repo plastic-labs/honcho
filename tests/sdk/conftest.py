@@ -1,5 +1,4 @@
 import sys
-from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import httpx
@@ -19,7 +18,7 @@ from sdks.python.src.honcho.client import Honcho  # noqa: E402
 
 
 @pytest.fixture
-def honcho_sync_test_client(client: TestClient) -> Generator[Honcho, None, None]:
+def honcho_sync_test_client(client: TestClient) -> Honcho:
     """
     Returns a Honcho SDK client configured to talk to the test API.
     """
@@ -32,13 +31,13 @@ def honcho_sync_test_client(client: TestClient) -> Generator[Honcho, None, None]
     honcho_client = Honcho(
         workspace_id="sdk-test-workspace-sync", http_client=http_client
     )
-    yield honcho_client
+    return honcho_client
 
 
 @pytest_asyncio.fixture
 async def honcho_async_test_client(
     client: TestClient,
-) -> AsyncGenerator[AsyncHoncho, None]:
+) -> AsyncHoncho:
     """
     Returns an async Honcho SDK client configured to talk to the test API.
     """
@@ -59,7 +58,7 @@ async def honcho_async_test_client(
         async_http_client=async_http_client,
         http_client=http_client,
     )
-    yield honcho_client
+    return honcho_client
 
 
 @pytest.fixture(params=["sync", "async"])
