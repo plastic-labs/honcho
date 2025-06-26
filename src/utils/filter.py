@@ -3,8 +3,7 @@ from collections.abc import Callable
 from logging import getLogger
 from typing import Any, TypeVar
 
-from sqlalchemy import ColumnElement, Select, and_, cast, not_, or_
-from sqlalchemy.sql.elements import Cast
+from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, or_
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
@@ -231,7 +230,7 @@ def _build_field_condition(
             return column == value
 
 
-def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Cast[Any], Any]:
+def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Any, Any]:
     """
     Safely cast JSONB column accessor to appropriate type for comparison.
 
@@ -243,32 +242,55 @@ def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Cast[Any], 
         Tuple of (cast_column_accessor, cast_op_value) for typed comparison
         or (column_accessor, str_op_value) for string comparison
     """
-    if isinstance(op_value, bool):
-        # For boolean values, compare with the string representation
-        # PostgreSQL JSONB stores booleans as "true"/"false" strings when extracted with ->>
-        return column_accessor, str(op_value).lower()
-    elif isinstance(op_value, int | float):
-        # Cast to numeric for proper numeric comparison
-        return cast(column_accessor, Numeric), op_value
-    else:
-        # Try to parse as numeric (handles both strings and other types)
-        try:
-            # Try int first, then float, then string for lexicographic comparison
-            parsed_value = int(op_value)
-            return cast(column_accessor, Numeric), parsed_value
-        except (ValueError, TypeError):
+    try:
+        if isinstance(op_value, bool):
+            # For boolean values, compare with the string representation
+            # PostgreSQL JSONB stores booleans as "true"/"false" strings when extracted with ->>
+            return column_accessor, str(op_value).lower()
+        elif isinstance(op_value, int | float):
+            # For numeric values, use a safer cast that handles empty strings and invalid values
+            # We use CASE WHEN to handle empty strings and non-numeric values gracefully
+            safe_cast = case(
+                (column_accessor == "", literal(None)),  # Empty string -> NULL
+                (column_accessor.is_(None), literal(None)),  # NULL -> NULL
+                else_=cast(column_accessor, Numeric),
+            )
+            return safe_cast, op_value
+        else:
+            # Try to parse as numeric (handles both strings and other types)
             try:
-                parsed_value = float(op_value)
-                return cast(column_accessor, Numeric), parsed_value
+                # Try int first, then float, then string for lexicographic comparison
+                parsed_value = int(op_value)
+                # Use safe cast for string numbers too
+                safe_cast = case(
+                    (column_accessor == "", literal(None)),  # Empty string -> NULL
+                    (column_accessor.is_(None), literal(None)),  # NULL -> NULL
+                    else_=cast(column_accessor, Numeric),
+                )
+                return safe_cast, parsed_value
             except (ValueError, TypeError):
-                if isinstance(op_value, str):
-                    # If it's not numeric, treat as string comparison (e.g., dates, text)
-                    # This allows date strings like "2024-02-01" to be compared lexicographically
-                    return column_accessor, str(op_value)
-                else:
-                    raise FilterError(
-                        f"Invalid value for numeric operator: {op_value}. Expected a number, got {type(op_value).__name__}"
-                    ) from None
+                try:
+                    parsed_value = float(op_value)
+                    # Use safe cast for string numbers too
+                    safe_cast = case(
+                        (column_accessor == "", literal(None)),  # Empty string -> NULL
+                        (column_accessor.is_(None), literal(None)),  # NULL -> NULL
+                        else_=cast(column_accessor, Numeric),
+                    )
+                    return safe_cast, parsed_value
+                except (ValueError, TypeError):
+                    if isinstance(op_value, str):
+                        # If it's not numeric, treat as string comparison (e.g., dates, text)
+                        # This allows date strings like "2024-02-01" to be compared lexicographically
+                        return column_accessor, str(op_value)
+                    else:
+                        raise FilterError(
+                            f"Invalid value for numeric operator: {op_value}. Expected a number, got {type(op_value).__name__}"
+                        ) from None
+    except Exception as e:
+        raise FilterError(
+            f"Failed to process numeric cast for value '{op_value}': {str(e)}"
+        ) from e
 
 
 def _build_comparison_condition(
@@ -298,15 +320,20 @@ def _build_comparison_condition(
 
     # Mapping of operators to their SQLAlchemy methods
     if operator in NUMERIC_OPERATORS:
-        safe_accessor, safe_value = _safe_numeric_cast(field_accessor, op_value)
-        operator_map: dict[str, Callable[[Any, Any], ColumnElement[bool]]] = {
-            "gte": lambda a, v: a >= v,
-            "lte": lambda a, v: a <= v,
-            "gt": lambda a, v: a > v,
-            "lt": lambda a, v: a < v,
-            "ne": lambda a, v: a != v,
-        }
-        return operator_map[operator](safe_accessor, safe_value)
+        try:
+            safe_accessor, safe_value = _safe_numeric_cast(field_accessor, op_value)
+            operator_map: dict[str, Callable[[Any, Any], ColumnElement[bool]]] = {
+                "gte": lambda a, v: a >= v,
+                "lte": lambda a, v: a <= v,
+                "gt": lambda a, v: a > v,
+                "lt": lambda a, v: a < v,
+                "ne": lambda a, v: a != v,
+            }
+            return operator_map[operator](safe_accessor, safe_value)
+        except Exception as e:
+            raise FilterError(
+                f"Failed to build numeric comparison condition for operator '{operator}' with value '{op_value}': {str(e)}"
+            ) from e
     elif operator == "in":
         if hasattr(op_value, "__iter__") and not isinstance(op_value, str | bytes):
             # Handle wildcard in iterable - if present, matches everything, so no condition needed

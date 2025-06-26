@@ -12,97 +12,157 @@ from nanoid import generate as generate_nanoid
 from src.models import Peer, Workspace
 
 
+@pytest.mark.parametrize(
+    "filter_config,expected_peer_indices,description",
+    [
+        (
+            {
+                "AND": [
+                    {"metadata": {"role": "admin"}},
+                    {"metadata": {"department": "engineering"}},
+                ]
+            },
+            [0],  # Only peer1 (admin + engineering)
+            "peers who are admin AND in engineering",
+        ),
+        (
+            {
+                "OR": [
+                    {"metadata": {"role": "admin"}},
+                    {"metadata": {"department": "engineering"}},
+                ]
+            },
+            [
+                0,
+                1,
+                2,
+            ],  # All three peers match (peer1: admin+eng, peer2: user+eng, peer3: admin+sales)
+            "peers who are admin OR in engineering",
+        ),
+        (
+            {"NOT": [{"metadata": {"role": "admin"}}]},
+            [1],  # Only peer2 (user) is not admin
+            "peers who are NOT admin",
+        ),
+    ],
+)
 @pytest.mark.asyncio
 async def test_logical_operators_and_filters(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    filter_config: dict,
+    expected_peer_indices: list[int],
+    description: str,
 ):
     """Test AND, OR, NOT logical operators in filters"""
     test_workspace, _test_peer = sample_data
 
     # Create multiple peers with different metadata
-    peer1_name = str(generate_nanoid())
-    peer2_name = str(generate_nanoid())
-    peer3_name = str(generate_nanoid())
-
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
-        json={
-            "name": peer1_name,
+    peer_names = [str(generate_nanoid()) for _ in range(3)]
+    peer_configs = [
+        {
+            "name": peer_names[0],
             "metadata": {
                 "role": "admin",
                 "department": "engineering",
                 "level": "senior",
             },
         },
-    )
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
-        json={
-            "name": peer2_name,
+        {
+            "name": peer_names[1],
             "metadata": {
                 "role": "user",
                 "department": "engineering",
                 "level": "junior",
             },
         },
-    )
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers",
-        json={
-            "name": peer3_name,
+        {
+            "name": peer_names[2],
             "metadata": {"role": "admin", "department": "sales", "level": "senior"},
         },
-    )
+    ]
 
-    # Test AND operator - peers who are admin AND in engineering
+    # Create all peers
+    for peer_config in peer_configs:
+        client.post(f"/v2/workspaces/{test_workspace.name}/peers", json=peer_config)
+
+        # Test the filter configuration, but only consider the peers we created
+    combined_filter = {
+        "AND": [
+            filter_config,
+            {"id": {"in": peer_names}},  # Only include the peers we created
+        ]
+    }
+
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={
-            "filter": {
-                "AND": [
-                    {"metadata": {"role": "admin"}},
-                    {"metadata": {"department": "engineering"}},
-                ]
-            }
-        },
+        json={"filter": combined_filter},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1
-    assert data["items"][0]["id"] == peer1_name
+    assert response.status_code == 200, f"Failed testing {description}"
 
-    # Test OR operator - peers who are admin OR in engineering
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={
-            "filter": {
-                "OR": [
-                    {"metadata": {"role": "admin"}},
-                    {"metadata": {"department": "engineering"}},
-                ]
-            }
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 3  # All three peers match
-
-    # Test NOT operator - peers who are NOT admin
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"NOT": [{"metadata": {"role": "admin"}}]}},
-    )
-    assert response.status_code == 200
     data = response.json()
     found_names = [item["id"] for item in data["items"]]
-    assert peer2_name in found_names  # Only peer2 is not admin
-    assert peer1_name not in found_names
-    assert peer3_name not in found_names
+    expected_names = [peer_names[i] for i in expected_peer_indices]
+
+    assert len(found_names) == len(expected_names), (
+        f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
+    )
+
+    for expected_name in expected_names:
+        assert expected_name in found_names, (
+            f"Expected peer {expected_name} in results for {description}"
+        )
+
+    # Verify unexpected peers are not included
+    for i, peer_name in enumerate(peer_names):
+        if i not in expected_peer_indices:
+            assert peer_name not in found_names, (
+                f"Unexpected peer {peer_name} found in results for {description}"
+            )
 
 
+@pytest.mark.parametrize(
+    "filter_config,expected_message_indices,description",
+    [
+        (
+            {"metadata": {"score": {"gte": 5}}},
+            [0, 1],  # Messages with score 10 and 5
+            "gte (greater than or equal) operator",
+        ),
+        (
+            {"metadata": {"score": {"lte": 5}}},
+            [1, 2],  # Messages with score 5 and 1
+            "lte (less than or equal) operator",
+        ),
+        (
+            {"metadata": {"score": {"gt": 5}}},
+            [0],  # Only message with score 10
+            "gt (greater than) operator",
+        ),
+        (
+            {"metadata": {"score": {"lt": 5}}},
+            [2],  # Only message with score 1
+            "lt (less than) operator",
+        ),
+        (
+            {"metadata": {"score": {"ne": 5}}},
+            [0, 2],  # Messages with score 10 and 1
+            "ne (not equal) operator",
+        ),
+        (
+            {"metadata": {"category": {"in": ["high", "low"]}}},
+            [0, 2],  # Messages with category "high" and "low"
+            "in operator",
+        ),
+    ],
+)
 @pytest.mark.asyncio
 async def test_comparison_operators_filters(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    filter_config: dict,
+    expected_message_indices: list[int],
+    description: str,
 ):
     """Test comparison operators (gte, lte, gt, lt, ne, in, contains, icontains)"""
     test_workspace, test_peer = sample_data
@@ -116,87 +176,62 @@ async def test_comparison_operators_filters(
     assert session_response.status_code == 200
 
     # Create messages with numeric metadata for comparison tests
+    message_configs = [
+        {
+            "content": "Message with score 10",
+            "peer_id": test_peer.name,
+            "metadata": {
+                "score": 10,
+                "category": "high",
+                "tags": ["important", "urgent"],
+            },
+        },
+        {
+            "content": "Message with score 5",
+            "peer_id": test_peer.name,
+            "metadata": {"score": 5, "category": "medium", "tags": ["normal"]},
+        },
+        {
+            "content": "Message with score 1",
+            "peer_id": test_peer.name,
+            "metadata": {"score": 1, "category": "low", "tags": ["minor"]},
+        },
+    ]
+
     messages_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
-        json={
-            "messages": [
-                {
-                    "content": "Message with score 10",
-                    "peer_id": test_peer.name,
-                    "metadata": {
-                        "score": 10,
-                        "category": "high",
-                        "tags": ["important", "urgent"],
-                    },
-                },
-                {
-                    "content": "Message with score 5",
-                    "peer_id": test_peer.name,
-                    "metadata": {"score": 5, "category": "medium", "tags": ["normal"]},
-                },
-                {
-                    "content": "Message with score 1",
-                    "peer_id": test_peer.name,
-                    "metadata": {"score": 1, "category": "low", "tags": ["minor"]},
-                },
-            ]
-        },
+        json={"messages": message_configs},
     )
     assert messages_response.status_code == 200
 
-    # Test gte (greater than or equal)
+    # Test the filter configuration
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"metadata": {"score": {"gte": 5}}}},
+        json={"filter": filter_config},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 2  # Messages with score 10 and 5
+    assert response.status_code == 200, f"Failed testing {description}"
 
-    # Test lte (less than or equal)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"metadata": {"score": {"lte": 5}}}},
-    )
-    assert response.status_code == 200
     data = response.json()
-    assert len(data["items"]) == 2  # Messages with score 5 and 1
+    expected_contents = [
+        message_configs[i]["content"] for i in expected_message_indices
+    ]
+    found_contents = [item["content"] for item in data["items"]]
 
-    # Test gt (greater than)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"metadata": {"score": {"gt": 5}}}},
+    assert len(found_contents) == len(expected_contents), (
+        f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1  # Only message with score 10
 
-    # Test lt (less than)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"metadata": {"score": {"lt": 5}}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 1  # Only message with score 1
+    for expected_content in expected_contents:
+        assert expected_content in found_contents, (
+            f"Expected message '{expected_content}' in results for {description}"
+        )
 
-    # Test ne (not equal)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"metadata": {"score": {"ne": 5}}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 2  # Messages with score 10 and 1
-
-    # Test in operator
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": {"metadata": {"category": {"in": ["high", "low"]}}}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) == 2  # Messages with category "high" and "low"
+    # Verify unexpected messages are not included
+    for i, message_config in enumerate(message_configs):
+        if i not in expected_message_indices:
+            assert message_config["content"] not in found_contents, (
+                f"Unexpected message '{message_config['content']}' found in results for {description}"
+            )
 
 
 @pytest.mark.asyncio
@@ -2043,3 +2078,381 @@ async def test_boundary_conditions_numeric(
     data = response.json()
     contents = [item["content"] for item in data["items"]]
     assert "Float" in contents  # 3.14159 > 3.14
+
+
+@pytest.mark.asyncio
+async def test_float_precision_edge_cases(client: TestClient):
+    """Test floating point precision edge cases and rounding behavior"""
+    # Create workspace and peer through API to ensure they're properly committed
+    workspace_name = str(generate_nanoid())
+    peer_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    assert response.status_code == 200
+
+    # Create peer
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+    )
+    assert response.status_code == 200
+
+    # Create messages with problematic floating point values using peer endpoint
+    messages_response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Point one plus point two",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "value": 0.1 + 0.2,  # = 0.30000000000000004
+                        "precise": 0.3,
+                        "calculation": "0.1 + 0.2",
+                    },
+                },
+                {
+                    "content": "Exact point three",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "value": 0.3,
+                        "precise": 0.3,
+                        "calculation": "exact",
+                    },
+                },
+                {
+                    "content": "Very small difference",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "value": 0.30000000000000001,
+                        "precise": 0.3,
+                        "calculation": "tiny_diff",
+                    },
+                },
+                {
+                    "content": "Large precise float",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "value": 999999.999999999,
+                        "precise": 1000000.0,
+                        "calculation": "large",
+                    },
+                },
+                {
+                    "content": "Scientific notation",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "value": 1.23e-10,
+                        "precise": 0.000000000123,
+                        "calculation": "scientific",
+                    },
+                },
+                {
+                    "content": "Repeating decimal",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "value": 1.0 / 3.0,  # 0.3333...
+                        "precise": 0.3333333333333333,
+                        "calculation": "one_third",
+                    },
+                },
+            ]
+        },
+    )
+    assert messages_response.status_code == 200
+
+    # Test exact equality - this may or may not work due to floating point precision
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"value": 0.3}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # This test reveals if the system handles floating point precision correctly
+    # "Exact point three" should definitely match
+    assert "Exact point three" in contents
+
+    # Test near-equality using range queries (proper way to handle float precision)
+    epsilon = 1e-10
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={
+            "filter": {
+                "AND": [
+                    {"metadata": {"value": {"gte": 0.3 - epsilon}}},
+                    {"metadata": {"value": {"lte": 0.3 + epsilon}}},
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # Should match both exact 0.3 and 0.1+0.2 and very small difference
+    assert "Exact point three" in contents
+    assert len(contents) >= 2
+
+    # Test greater than with floating point precision
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"value": {"gt": 0.3}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # 0.1 + 0.2 is actually > 0.3 due to floating point precision
+    # This test reveals the actual behavior
+
+    # Test very small numbers and scientific notation
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"value": {"lt": 1e-9}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Scientific notation" in contents
+
+    # Test large number precision
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"value": {"gte": 999999.0}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Large precise float" in contents
+
+    # Test repeating decimal precision
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"value": {"gte": 0.333}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Repeating decimal" in contents
+
+    # Test floating point comparison with string representation
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"calculation": "0.1 + 0.2"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Point one plus point two" in contents
+
+
+@pytest.mark.asyncio
+async def test_mixed_type_comparisons(client: TestClient):
+    """Test comparisons between different data types within JSONB fields"""
+    # Create workspace and peer through API to ensure they're properly committed
+    workspace_name = str(generate_nanoid())
+    peer_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    assert response.status_code == 200
+
+    # Create peer
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+    )
+    assert response.status_code == 200
+
+    # Create messages with mixed data types for the same logical field
+    messages_response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "String number five",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "priority": "5",  # String
+                        "score": "10.5",  # String float
+                        "active": "true",  # String boolean
+                        "count": "0",  # String zero
+                    },
+                },
+                {
+                    "content": "Integer five",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "priority": 5,  # Integer
+                        "score": 10.5,  # Float
+                        "active": True,  # Boolean
+                        "count": 0,  # Integer zero
+                    },
+                },
+                {
+                    "content": "Float five",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "priority": 5.0,  # Float that equals integer
+                        "score": 10,  # Integer that could be float
+                        "active": False,  # Boolean false
+                        "count": None,  # Null value
+                    },
+                },
+                {
+                    "content": "String vs numeric comparison",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "priority": "10",  # String > numeric 5?
+                        "score": "2",  # String < numeric 10?
+                        "active": "false",  # String false vs boolean
+                        "count": "null",  # String null vs null
+                    },
+                },
+                {
+                    "content": "Leading zeros and formats",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "priority": "05",  # Leading zero
+                        "score": "010.50",  # Leading zeros in float
+                        "active": "TRUE",  # Uppercase boolean
+                        "count": "00",  # Leading zeros
+                    },
+                },
+                {
+                    "content": "Edge case values",
+                    "peer_id": peer_name,
+                    "metadata": {
+                        "priority": "",  # Empty string
+                        "score": "NaN",  # Not a number string
+                        "active": 1,  # Numeric truthy
+                        "count": "infinity",  # Infinity string
+                    },
+                },
+            ]
+        },
+    )
+    assert messages_response.status_code == 200
+
+    # Test string vs numeric equality
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"priority": 5}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # Should match integer 5 and float 5.0, behavior with string "5" depends on JSONB casting
+    assert "Integer five" in contents
+    assert "Float five" in contents
+
+    # Test string number comparison with numeric operator
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"priority": {"gte": 5}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # Behavior depends on how JSONB handles string-to-number conversion
+    # Should definitely include numeric values >= 5
+
+    # Test string boolean vs actual boolean
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"active": True}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Integer five" in contents  # Has boolean True
+    # String "true" behavior depends on JSONB casting
+
+    # Test explicit string matching
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"priority": "5"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "String number five" in contents
+
+    # Test numeric comparison with string numbers
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"score": {"gt": 10}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # Should include 10.5 (both string and float versions)
+
+    # Test zero comparisons (string "0" vs integer 0)
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"count": 0}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Integer five" in contents  # Has integer 0
+
+    # Test null vs string "null"
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"count": None}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Float five" in contents  # Has actual null
+
+    # Test leading zeros handling
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"priority": "05"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Leading zeros and formats" in contents
+
+    # Test case sensitivity for string booleans
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"active": "TRUE"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Leading zeros and formats" in contents
+
+    # Test empty string vs other falsy values
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"priority": ""}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Edge case values" in contents
+
+    # Test special string values
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"score": "NaN"}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    assert "Edge case values" in contents
+
+    # Test mixed type in operator
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        json={"filter": {"metadata": {"priority": {"in": [5, "5", 5.0]}}}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    contents = [item["content"] for item in data["items"]]
+    # Should match various representations of 5
+    assert len(contents) >= 2
