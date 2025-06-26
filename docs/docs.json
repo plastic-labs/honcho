@@ -25,7 +25,7 @@
               {
                 "group": "Introduction",
                 "pages": [
-                  "v2/documentation/introduction/what-is-honcho",
+                  "v2/documentation/introduction/overview",
                   "v2/documentation/introduction/quickstart"
                 ]
               },
@@ -86,9 +86,6 @@
                   "v2/contributing/guidelines",
                   "v2/contributing/self-hosting",
                   "v2/contributing/configuration",
-                  "v2/contributing/errors",
-                  "v2/contributing/deployment",
-                  "v2/contributing/development",
                   "v2/contributing/license"
                 ]
               }
@@ -362,4 +359,3 @@
     }
   }
 }
-
