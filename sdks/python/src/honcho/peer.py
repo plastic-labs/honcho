@@ -123,6 +123,8 @@ class Peer(BaseModel):
             A paginated list of Session objects this peer belongs to. Returns an empty
             list if the peer is not a member of any sessions
         """
+        from .session import Session
+
         sessions_page = self._client.workspaces.peers.sessions.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,

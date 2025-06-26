@@ -1,11 +1,12 @@
 import logging
 import os
 from collections.abc import Mapping
-from typing import Literal, Optional
+from typing import Any, Literal
 
+import httpx
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types.workspaces.sessions.message import Message
-from pydantic import BaseModel, Field, PrivateAttr, validate_call
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
 from .peer import Peer
@@ -35,23 +36,24 @@ class Honcho(BaseModel):
     )
     _client: HonchoCore = PrivateAttr()
 
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        environment: Optional[Literal["local", "production", "demo"]] = None,
-        base_url: Optional[str] = Field(
-            None, description="Base URL for the Honcho API"
-        ),
-        workspace_id: Optional[str] = Field(
+        api_key: str | None = None,
+        environment: Literal["local", "production", "demo"] | None = None,
+        base_url: str | None = Field(None, description="Base URL for the Honcho API"),
+        workspace_id: str | None = Field(
             None, min_length=1, description="Workspace ID for scoping operations"
         ),
-        timeout: Optional[float] = Field(None, gt=0, description="Timeout in seconds"),
-        max_retries: Optional[int] = Field(
+        timeout: float | None = Field(None, gt=0, description="Timeout in seconds"),
+        max_retries: int | None = Field(
             None, ge=0, description="Maximum number of retries"
         ),
-        default_headers: Optional[Mapping[str, str]] = None,
-        default_query: Optional[Mapping[str, object]] = None,
+        default_headers: Mapping[str, str] | None = None,
+        default_query: Mapping[str, object] | None = None,
+        http_client: httpx.Client | None = Field(
+            None, description="Custom HTTP client"
+        ),
     ) -> None:
         """
         Initialize the Honcho client.
@@ -78,6 +80,8 @@ class Honcho(BaseModel):
                 Optional custom default headers for the HTTP client.
             default_query:
                 Optional custom default query parameters for the HTTP client.
+            http_client:
+                Optional custom httpx client.
         """
         # Resolve workspace_id before calling super().__init__
         resolved_workspace_id = workspace_id or os.getenv(
@@ -87,7 +91,7 @@ class Honcho(BaseModel):
         super().__init__(workspace_id=resolved_workspace_id)
 
         # Build client kwargs, excluding None values that HonchoCore doesn't handle well
-        client_kwargs = {}
+        client_kwargs: dict[str, Any] = {}
 
         if api_key is not None:
             client_kwargs["api_key"] = api_key
@@ -103,6 +107,8 @@ class Honcho(BaseModel):
             client_kwargs["default_headers"] = default_headers
         if default_query is not None:
             client_kwargs["default_query"] = default_query
+        if http_client is not None:
+            client_kwargs["http_client"] = http_client
 
         self._client = HonchoCore(**client_kwargs)
 
@@ -116,7 +122,7 @@ class Honcho(BaseModel):
             ..., min_length=1, description="Unique identifier for the peer"
         ),
         *,
-        config: Optional[dict[str, object]] = Field(
+        config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
         ),
@@ -167,7 +173,7 @@ class Honcho(BaseModel):
             ..., min_length=1, description="Unique identifier for the session"
         ),
         *,
-        config: Optional[dict[str, object]] = Field(
+        config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
         ),
@@ -286,7 +292,7 @@ class Honcho(BaseModel):
         Returns:
             A string representation suitable for debugging
         """
-        return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client._base_url}')"
+        return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
 
     def __str__(self) -> str:
         """

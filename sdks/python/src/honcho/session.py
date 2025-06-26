@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
@@ -7,14 +10,17 @@ from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
-from .peer import Peer
 from .session_context import SessionContext
+
+if TYPE_CHECKING:
+    from .peer import Peer
+
 
 try:
     env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
-    DEFAULT_CONTEXT_TOKENS = int(env_val) if env_val else None
+    _default_context_tokens = int(env_val) if env_val else None
 except (ValueError, TypeError):
-    DEFAULT_CONTEXT_TOKENS = None
+    _default_context_tokens = None
 
 
 class SessionPeerConfig(BaseModel):
@@ -122,7 +128,7 @@ class Session(BaseModel):
         if not isinstance(peers, list):
             peers = [peers]
 
-        peer_dict = {}
+        peer_dict: dict[str, Any] = {}
         for peer in peers:
             if isinstance(peer, tuple):
                 # Handle tuple[str/Peer, SessionPeerConfig]
@@ -171,7 +177,7 @@ class Session(BaseModel):
         if not isinstance(peers, list):
             peers = [peers]
 
-        peer_dict = {}
+        peer_dict: dict[str, Any] = {}
         for peer in peers:
             if isinstance(peer, tuple):
                 # Handle tuple[str/Peer, SessionPeerConfig]
@@ -230,6 +236,8 @@ class Session(BaseModel):
         Returns:
             A list of Peer objects that are members of this session
         """
+        from .peer import Peer
+
         peers_page = self._client.workspaces.sessions.peers.list(
             session_id=self.id,
             workspace_id=self.workspace_id,
@@ -242,6 +250,8 @@ class Session(BaseModel):
         """
         Get the configuration for a peer in this session.
         """
+        from .peer import Peer
+
         peer_get_config_response = self._client.workspaces.sessions.peers.get_config(
             peer_id=str(peer.id) if isinstance(peer, Peer) else peer,
             workspace_id=self.workspace_id,
@@ -256,6 +266,8 @@ class Session(BaseModel):
         """
         Set the configuration for a peer in this session.
         """
+        from .peer import Peer
+
         self._client.workspaces.sessions.peers.set_config(
             peer_id=str(peer.id) if isinstance(peer, Peer) else peer,
             workspace_id=self.workspace_id,
@@ -395,7 +407,7 @@ class Session(BaseModel):
         Args:
             summary: Whether to include summary information
             tokens: Maximum number of tokens to include in the context.
-                    Defaults to 2000 or HONCHO_DEFAULT_CONTEXT_TOKENS env var
+                    Defaults to HONCHO_default_context_tokens env var
 
         Returns:
             A SessionContext object containing the optimized message history
@@ -406,7 +418,7 @@ class Session(BaseModel):
             tokenizers, you may need to adjust the token limit accordingly.
         """
         if not tokens:
-            tokens = DEFAULT_CONTEXT_TOKENS
+            tokens = _default_context_tokens
         context = self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
@@ -457,6 +469,8 @@ class Session(BaseModel):
         Returns:
             A dictionary containing information about the peer.
         """
+        from .peer import Peer
+
         return self._client.workspaces.peers.working_representation(
             str(peer.id) if isinstance(peer, Peer) else peer,
             workspace_id=self.workspace_id,

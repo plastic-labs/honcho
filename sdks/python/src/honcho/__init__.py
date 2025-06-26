@@ -40,7 +40,8 @@ from .async_client import (
 from .client import Honcho
 from .pagination import SyncPage
 from .peer import Peer
-from .session import Session, SessionContext
+from .session import Session
+from .session_context import SessionContext
 
 __version__ = "1.0.0"
 __author__ = "Plastic Labs"

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import NOT_GIVEN
@@ -8,13 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from ..session_context import SessionContext
 from .pagination import AsyncPage
-from .peer import AsyncPeer
+
+if TYPE_CHECKING:
+    from .peer import AsyncPeer
+
 
 try:
     env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
-    DEFAULT_CONTEXT_TOKENS = int(env_val) if env_val else None
+    _default_context_tokens = int(env_val) if env_val else None
 except (ValueError, TypeError):
-    DEFAULT_CONTEXT_TOKENS = None
+    _default_context_tokens = None
 
 
 class SessionPeerConfig(BaseModel):
@@ -84,7 +90,7 @@ class AsyncSession(BaseModel):
         client: AsyncHonchoCore,
         *,
         config: dict[str, object] | None = None,
-    ) -> "AsyncSession":
+    ) -> AsyncSession:
         """
         Create a new AsyncSession with optional configuration.
 
@@ -141,7 +147,7 @@ class AsyncSession(BaseModel):
         if not isinstance(peers, list):
             peers = [peers]
 
-        peer_dict = {}
+        peer_dict: dict[str, Any] = {}
         for peer in peers:
             if isinstance(peer, tuple):
                 # Handle tuple[str/AsyncPeer, SessionPeerConfig]
@@ -190,7 +196,7 @@ class AsyncSession(BaseModel):
         if not isinstance(peers, list):
             peers = [peers]
 
-        peer_dict = {}
+        peer_dict: dict[str, Any] = {}
         for peer in peers:
             if isinstance(peer, tuple):
                 # Handle tuple[str/AsyncPeer, SessionPeerConfig]
@@ -264,6 +270,8 @@ class AsyncSession(BaseModel):
         """
         Get the configuration for a peer in this session.
         """
+        from .peer import AsyncPeer
+
         peer_get_config_response = (
             await self._client.workspaces.sessions.peers.get_config(
                 peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
@@ -282,6 +290,8 @@ class AsyncSession(BaseModel):
         """
         Set the configuration for a peer in this session.
         """
+        from .peer import AsyncPeer
+
         await self._client.workspaces.sessions.peers.set_config(
             peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
             workspace_id=self.workspace_id,
@@ -419,7 +429,7 @@ class AsyncSession(BaseModel):
         Args:
             summary: Whether to include summary information
             tokens: Maximum number of tokens to include in the context.
-                    Defaults to HONCHO_DEFAULT_CONTEXT_TOKENS environment
+                    Defaults to HONCHO_default_context_tokens environment
                     variable if it exists.
 
         Returns:
@@ -431,7 +441,7 @@ class AsyncSession(BaseModel):
             tokenizers, you may need to adjust the token limit accordingly.
         """
         if not tokens:
-            tokens = DEFAULT_CONTEXT_TOKENS
+            tokens = _default_context_tokens
         context = await self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
@@ -467,9 +477,9 @@ class AsyncSession(BaseModel):
 
     async def working_rep(
         self,
-        peer: "str | AsyncPeer",
+        peer: str | AsyncPeer,
         *,
-        target: "str | AsyncPeer | None" = None,
+        target: str | AsyncPeer | None = None,
     ) -> dict[str, object]:
         """
         Get the current working representation of the peer in this session.
@@ -482,6 +492,8 @@ class AsyncSession(BaseModel):
         Returns:
             A dictionary containing information about the peer.
         """
+        from .peer import AsyncPeer
+
         return await self._client.workspaces.peers.working_representation(
             str(peer.id) if isinstance(peer, AsyncPeer) else peer,
             workspace_id=self.workspace_id,

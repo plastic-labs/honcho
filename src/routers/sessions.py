@@ -321,7 +321,7 @@ async def set_peer_config(
             db,
             workspace_name=workspace_id,
             session_name=session_id,
-            peer_id=peer_id,
+            peer_name=peer_id,
             config=config,
         )
         logger.info(
