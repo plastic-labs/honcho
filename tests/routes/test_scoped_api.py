@@ -1,9 +1,11 @@
 from nanoid import generate as generate_nanoid
 
+from src.models import Peer, Workspace
 from src.security import JWTParams, create_jwt
+from tests.conftest import AuthClient
 
 
-def test_create_workspace_with_auth(auth_client):
+def test_create_workspace_with_auth(auth_client: AuthClient):
     name = str(generate_nanoid())
 
     response = auth_client.post(
@@ -18,7 +20,7 @@ def test_create_workspace_with_auth(auth_client):
     assert response.status_code == 200
 
 
-def test_auth_response_time(auth_client):
+def test_auth_response_time(auth_client: AuthClient):
     name = str(generate_nanoid())
 
     import time
@@ -43,7 +45,7 @@ def test_auth_response_time(auth_client):
     assert response.status_code == 200
 
 
-def test_get_or_create_workspace_with_auth(auth_client):
+def test_get_or_create_workspace_with_auth(auth_client: AuthClient):
     name = str(generate_nanoid())
 
     response = auth_client.post(
@@ -57,7 +59,9 @@ def test_get_or_create_workspace_with_auth(auth_client):
     assert response.status_code == 200
 
 
-def test_get_workspace_with_auth(auth_client, sample_data):
+def test_get_workspace_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, _ = sample_data
 
     if auth_client.auth_type == "empty":
@@ -75,7 +79,9 @@ def test_get_workspace_with_auth(auth_client, sample_data):
         assert response.status_code == 401
 
 
-def test_update_workspace_with_auth(auth_client, sample_data):
+def test_update_workspace_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, _ = sample_data
 
     if auth_client.auth_type == "empty":
@@ -97,7 +103,9 @@ def test_update_workspace_with_auth(auth_client, sample_data):
         assert response.status_code == 401
 
 
-def test_update_workspace_with_wrong_auth(auth_client, sample_data):
+def test_update_workspace_with_wrong_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, _ = sample_data
 
     different_workspace = str(generate_nanoid())
@@ -122,7 +130,9 @@ def test_update_workspace_with_wrong_auth(auth_client, sample_data):
         assert response.status_code == 401
 
 
-def test_create_peer_with_auth(auth_client, sample_data):
+def test_create_peer_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, _ = sample_data
 
     if auth_client.auth_type == "empty":
@@ -144,7 +154,9 @@ def test_create_peer_with_auth(auth_client, sample_data):
         assert response.status_code == 401
 
 
-def test_get_peer_by_name_with_auth(auth_client, sample_data):
+def test_get_peer_by_name_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     if auth_client.auth_type == "empty":
@@ -156,7 +168,7 @@ def test_get_peer_by_name_with_auth(auth_client, sample_data):
     # Use POST /list endpoint to get peers
     response = auth_client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"name": test_peer.name}},
+        json={"filter": {"id": test_peer.name}},
     )
 
     # Admin JWT or JWT with matching workspace should be allowed
@@ -179,7 +191,9 @@ def test_get_peer_by_name_with_auth(auth_client, sample_data):
         assert response.status_code == 200
 
 
-def test_update_peer_with_auth(auth_client, sample_data):
+def test_update_peer_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     if auth_client.auth_type == "empty":
@@ -217,7 +231,9 @@ def test_update_peer_with_auth(auth_client, sample_data):
         assert response.status_code == 200
 
 
-def test_create_session_with_auth(auth_client, sample_data):
+def test_create_session_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     if auth_client.auth_type == "empty":
@@ -253,7 +269,9 @@ def test_create_session_with_auth(auth_client, sample_data):
         assert response.status_code == 200
 
 
-def test_get_session_by_name_with_auth(auth_client, sample_data):
+def test_get_session_by_name_with_auth(
+    auth_client: AuthClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
 
     # First create a session

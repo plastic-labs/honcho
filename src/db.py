@@ -1,5 +1,4 @@
 import contextvars
-from typing import Optional
 
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -11,7 +10,7 @@ from src.config import settings
 connect_args = {"prepare_threshold": None}
 
 # Context variable to store request context
-request_context: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+request_context: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_context", default=None
 )
 
@@ -21,7 +20,7 @@ if settings.DB.POOL_CLASS == "null":
     engine_kwargs["poolclass"] = NullPool
 else:
     # Only add pool-related kwargs for pooled connections
-    engine_kwargs.update(
+    engine_kwargs.update(  # pyright: ignore
         {
             "pool_pre_ping": settings.DB.POOL_PRE_PING,
             "pool_size": settings.DB.POOL_SIZE,

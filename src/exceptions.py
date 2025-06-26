@@ -2,21 +2,22 @@
 Custom exceptions for the Honcho application.
 """
 
-from typing import Optional
+from typing import final
 
 
 class HonchoException(Exception):
     """Base exception for all Honcho-specific errors."""
 
-    status_code = 500
-    detail = "An unexpected error occurred"
+    status_code: int = 500
+    detail: str = "An unexpected error occurred"
 
-    def __init__(self, detail: Optional[str] = None, status_code: Optional[int] = None):
+    def __init__(self, detail: str | None = None, status_code: int | None = None):
         self.detail = detail or self.detail
         self.status_code = status_code or self.status_code
         super().__init__(self.detail)
 
 
+@final
 class ResourceNotFoundException(HonchoException):
     """Exception raised when a requested resource is not found."""
 
@@ -24,6 +25,7 @@ class ResourceNotFoundException(HonchoException):
     detail = "Resource not found"
 
 
+@final
 class ValidationException(HonchoException):
     """Exception raised when validation fails."""
 
@@ -31,6 +33,7 @@ class ValidationException(HonchoException):
     detail = "Validation error"
 
 
+@final
 class ConflictException(HonchoException):
     """Exception raised when there's a resource conflict."""
 
@@ -38,6 +41,7 @@ class ConflictException(HonchoException):
     detail = "Resource conflict"
 
 
+@final
 class AuthenticationException(HonchoException):
     """Exception raised when authentication fails."""
 
@@ -45,6 +49,7 @@ class AuthenticationException(HonchoException):
     detail = "Authentication failed"
 
 
+@final
 class AuthorizationException(HonchoException):
     """Exception raised when authorization fails."""
 
@@ -52,8 +57,17 @@ class AuthorizationException(HonchoException):
     detail = "Not authorized to access this resource"
 
 
+@final
 class DisabledException(HonchoException):
     """Exception raised when a feature is disabled."""
 
     status_code = 405
     detail = "Feature is disabled"
+
+
+@final
+class FilterError(HonchoException):
+    """Exception raised when a filter is misconfigured or invalid."""
+
+    status_code = 422
+    detail = "Invalid filter configuration"

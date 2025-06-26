@@ -29,7 +29,7 @@ async def get_db():
 
 
 @asynccontextmanager
-async def tracked_db(operation_name=None):
+async def tracked_db(operation_name: str | None = None):
     """Context manager for tracked database sessions"""
     # Get request ID if available, or create operation-specific one
     context = request_context.get()

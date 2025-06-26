@@ -1,15 +1,13 @@
 import datetime
 import logging
-from typing import Annotated, Optional
+from typing import Annotated
 
 import jwt
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.dependencies import get_db
 
 from .exceptions import AuthenticationException
 
@@ -57,11 +55,11 @@ class JWTParams(BaseModel):
     """
 
     t: str = datetime.datetime.now().isoformat()
-    exp: Optional[str] = None
-    ad: Optional[bool] = None
-    w: Optional[str] = None
-    p: Optional[str] = None
-    s: Optional[str] = None
+    exp: str | None = None
+    ad: bool | None = None
+    w: str | None = None
+    p: str | None = None
+    s: str | None = None
 
 
 def create_admin_jwt() -> str:
@@ -76,7 +74,9 @@ def create_jwt(params: JWTParams) -> str:
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
     if not settings.AUTH.JWT_SECRET:
         raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
-    return jwt.encode(payload, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithm="HS256")
+    return jwt.encode(  # pyright: ignore
+        payload, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithm="HS256"
+    )
 
 
 async def verify_jwt(token: str) -> JWTParams:
@@ -86,7 +86,7 @@ async def verify_jwt(token: str) -> JWTParams:
     try:
         if not settings.AUTH.JWT_SECRET:
             raise ValueError("AUTH_JWT_SECRET is not set, cannot verify JWT.")
-        decoded = jwt.decode(
+        decoded = jwt.decode(  # pyright: ignore
             token, settings.AUTH.JWT_SECRET.encode("utf-8"), algorithms=["HS256"]
         )
         if "t" in decoded:
@@ -113,10 +113,10 @@ async def verify_jwt(token: str) -> JWTParams:
 
 
 def require_auth(
-    admin: Optional[bool] = None,
-    workspace_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-    session_name: Optional[str] = None,
+    admin: bool | None = None,
+    workspace_name: str | None = None,
+    peer_name: str | None = None,
+    session_name: str | None = None,
 ):
     """
     Generate a dependency that requires authentication for the given parameters.
@@ -125,7 +125,6 @@ def require_auth(
     async def auth_dependency(
         request: Request,
         credentials: HTTPAuthorizationCredentials = Depends(security),
-        db: AsyncSession = Depends(get_db),
     ):
         workspace_name_param = (
             request.path_params.get(workspace_name)
@@ -158,10 +157,10 @@ def require_auth(
 
 async def auth(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
-    admin: Optional[bool] = None,
-    workspace_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-    session_name: Optional[str] = None,
+    admin: bool | None = None,
+    workspace_name: str | None = None,
+    peer_name: str | None = None,
+    session_name: str | None = None,
 ) -> JWTParams:
     """Authenticate the given JWT and return the decoded parameters."""
     if not settings.AUTH.USE_AUTH:

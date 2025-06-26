@@ -1,9 +1,9 @@
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Path
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
@@ -24,7 +24,7 @@ async def get_or_create_workspace(
         ..., description="Workspace creation parameters"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Get a Workspace by ID.
@@ -53,10 +53,10 @@ async def get_or_create_workspace(
     dependencies=[Depends(require_auth(admin=True))],
 )
 async def get_all_workspaces(
-    options: Optional[schemas.WorkspaceGet] = Body(
+    options: schemas.WorkspaceGet | None = Body(
         None, description="Filtering and pagination options for the workspaces list"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get all Workspaces"""
     filter_param = None
@@ -65,9 +65,9 @@ async def get_all_workspaces(
         if filter_param == {}:
             filter_param = None
 
-    return await paginate(
+    return await apaginate(
         db,
-        await crud.get_all_workspaces(filter=filter_param),
+        await crud.get_all_workspaces(filters=filter_param),
     )
 
 
@@ -81,7 +81,7 @@ async def update_workspace(
     workspace: schemas.WorkspaceUpdate = Body(
         ..., description="Updated workspace parameters"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Update a Workspace"""
     # ResourceNotFoundException will be caught by global handler if workspace not found
@@ -99,9 +99,46 @@ async def update_workspace(
 async def search_workspace(
     workspace_id: str = Path(..., description="ID of the workspace to search"),
     query: str = Body(..., description="Search query"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Search a Workspace"""
     stmt = await crud.search(query, workspace_name=workspace_id)
 
-    return await paginate(db, stmt)
+    return await apaginate(db, stmt)
+
+
+@router.get(
+    "/{workspace_id}/deriver/status",
+    response_model=schemas.DeriverStatus,
+    dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
+)
+async def get_deriver_status(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str | None = Query(None, description="Optional peer ID to filter by"),
+    session_id: str | None = Query(
+        None, description="Optional session ID to filter by"
+    ),
+    include_sender: bool = Query(
+        False, description="Include work units triggered by this peer"
+    ),
+    db: AsyncSession = db,
+):
+    """Get the deriver processing status, optionally scoped to a peer and/or session"""
+    # Validate that at least one of peer_id or session_id is provided
+    if peer_id is None and session_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of 'peer_id' or 'session_id' must be provided",
+        )
+
+    try:
+        return await crud.get_deriver_status(
+            db,
+            workspace_name=workspace_id,
+            peer_name=peer_id,
+            session_name=session_id,
+            include_sender=include_sender,
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid request parameters: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e)) from e

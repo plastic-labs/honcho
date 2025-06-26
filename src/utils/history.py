@@ -1,12 +1,14 @@
 import datetime
 import logging
 from enum import Enum
-from typing import Optional, TypedDict
+from typing import TypedDict
 
+from mirascope import llm
+from mirascope.integrations.langfuse import with_langfuse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
-from src.utils.model_client import ModelClient, ModelProvider
+from src.utils.clients import clients
 
 from .. import crud, models
 
@@ -58,9 +60,89 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
-# Default model settings for summary generation
-# DEFAULT_PROVIDER = ModelProvider.GEMINI
-# DEFAULT_MODEL = "gemini-2.0-flash-lite"
+# Mirascope functions for summaries
+@with_langfuse()
+@llm.call(
+    provider=(
+        settings.LLM.SUMMARY_PROVIDER
+        if settings.LLM.SUMMARY_PROVIDER != "custom"
+        else "openai"
+    ),
+    model=settings.LLM.SUMMARY_MODEL,
+    call_params={"max_tokens": 1000},
+    client=clients[settings.LLM.SUMMARY_PROVIDER],
+)
+async def create_short_summary(
+    messages: list[models.Message],
+    previous_summary: str | None = None,
+):
+    return f"""
+You are a system that summarizes parts of a conversation to create a concise and accurate summary.
+Focus on capturing:
+1. Key facts and information shared
+2. User preferences, opinions, and questions
+3. Important context and requests
+4. Core topics discussed
+5. User's apparent emotional state
+
+It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
+
+Provide a concise, factual summary that captures the essence of the conversation.
+Your summary should be detailed enough to serve as context for future messages,
+but brief enough to be helpful.
+
+Return only the summary without any explanation or meta-commentary.
+
+<conversation>
+{format_messages(messages)}
+</conversation>
+
+<previous_summary>
+{previous_summary or ""}
+</previous_summary>
+"""
+
+
+@with_langfuse()
+@llm.call(
+    provider=(
+        settings.LLM.SUMMARY_PROVIDER
+        if settings.LLM.SUMMARY_PROVIDER != "custom"
+        else "openai"
+    ),
+    model=settings.LLM.SUMMARY_MODEL,
+    call_params={"max_tokens": 2000},
+    client=clients[settings.LLM.SUMMARY_PROVIDER],
+)
+async def create_long_summary(
+    messages: list[models.Message],
+    previous_summary: str | None = None,
+):
+    return f"""
+You are a system that creates comprehensive summaries of conversations.
+Focus on capturing:
+1. Key facts and information shared
+2. User preferences, opinions, and questions
+3. Important context and requests
+4. Core topics discussed in detail
+5. User's apparent emotional state and personality traits
+6. Important themes and patterns across the conversation
+
+It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
+
+Provide a thorough and detailed summary that captures the essence of the conversation.
+Your summary should serve as a comprehensive record of the important information in this conversation.
+
+Return only the summary without any explanation or meta-commentary.
+
+<conversation>
+{format_messages(messages)}
+</conversation>
+
+<previous_summary>  
+{previous_summary or ""}
+</previous_summary>
+"""
 
 
 async def get_summary(
@@ -68,7 +150,7 @@ async def get_summary(
     workspace_name: str,
     session_name: str,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> Optional[Summary]:
+) -> Summary | None:
     """
     Get summary for a given session or peer.
 
@@ -95,7 +177,7 @@ async def get_summary(
         # If session doesn't exist, there's no summary to retrieve
         return None
 
-    summaries = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
     if not summaries or label not in summaries:
         return None
     return summaries[label]
@@ -103,9 +185,9 @@ async def get_summary(
 
 async def create_summary(
     messages: list[models.Message],
-    previous_summary_text: Optional[str] = None,
+    previous_summary_text: str | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
-    max_tokens: Optional[int] = None,
+    max_tokens: int | None = None,
 ) -> Summary:
     """
     Generate a summary of the provided messages using an LLM.
@@ -119,80 +201,17 @@ async def create_summary(
     Returns:
         A summary of the conversation
     """
-    # Combine messages into a conversation format string
-    conversation = format_messages(messages)
-
-    # Adjust system prompt based on summary type
-    if summary_type == SummaryType.LONG:
-        system_prompt = """You are a system that creates comprehensive summaries of conversations.
-Focus on capturing:
-1. Key facts and information shared
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed in detail
-5. User's apparent emotional state and personality traits
-6. Important themes and patterns across the conversation
-
-It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
-
-Provide a thorough and detailed summary that captures the essence of the conversation.
-Your summary should serve as a comprehensive record of the important information in this conversation.
-
-Return only the summary without any explanation or meta-commentary."""
-    else:  # short summary
-        system_prompt = """You are a system that summarizes parts of a conversation to create a concise and accurate summary.
-Focus on capturing:
-1. Key facts and information shared
-2. User preferences, opinions, and questions
-3. Important context and requests
-4. Core topics discussed
-5. User's apparent emotional state
-
-It is very important that you clearly distinguish between the user's messages and the assistant's messages, and that only the user's literal words are attributed to them.
-
-Provide a concise, factual summary that captures the essence of the conversation.
-Your summary should be detailed enough to serve as context for future messages,
-but brief enough to be helpful.
-
-Return only the summary without any explanation or meta-commentary."""
-
-    # Include previous summary if available
-    if previous_summary_text:
-        user_prompt = f"""Here is a previous summary of the conversation:
-{previous_summary_text}
-Now please summarize these additional messages, incorporating the context from the previous summary.
-
-Your summary should summarize the entire conversation in a self-contained way, such that someone could read it and understand the entire conversation.
-{conversation}
-Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} summary that captures both the previous context and the new information."""
-    else:
-        user_prompt = f"""Please summarize the following conversation segment:
-{conversation}
-Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} summary that captures the key points and context."""
-
-    # Create a model client
-    client = ModelClient(
-        provider=ModelProvider(settings.LLM.SUMMARY_PROVIDER),
-        model=settings.LLM.SUMMARY_MODEL,
-    )
-
-    # Generate the summary
-    llm_messages = [{"role": "user", "content": user_prompt}]
-
-    max_tokens = max_tokens or (
-        settings.LLM.SUMMARY_MAX_TOKENS_SHORT
-        if summary_type == SummaryType.SHORT
-        else settings.LLM.SUMMARY_MAX_TOKENS_LONG
-    )
-
     try:
-        summary_text = await client.generate(
-            messages=llm_messages,
-            system=system_prompt,
-            max_tokens=max_tokens,
-            temperature=0.0,
-            use_caching=True,
+        if summary_type == SummaryType.SHORT:
+            response = await create_short_summary(messages, previous_summary_text)
+        else:
+            response = await create_long_summary(messages, previous_summary_text)
+
+        summary_text = str(response)
+        calculated_max_tokens = max_tokens or (
+            1000 if summary_type == SummaryType.SHORT else 2000
         )
+
         logger.info("Successfully generated summary for session")
         return Summary(
             content=summary_text,
@@ -200,20 +219,16 @@ Provide a {"comprehensive" if summary_type == SummaryType.LONG else "concise"} s
             summary_type=summary_type.value,
             created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
             message_id=messages[-1].id,
-            # cheating: just use the max tokens instead of counting
-            # tokens in response. in the future we can update client
-            # to return tokens if that's doable.
-            token_count=max_tokens,
+            token_count=calculated_max_tokens,
         )
     except Exception as e:
         logger.error(f"Error generating summary: {str(e)}")
         # Fallback to a basic summary in case of error
-        # Do not save this failed summary to the session metadata.
         return Summary(
             content=(
                 f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
                 if messages
-                else "No messages to summarize!"
+                else ""
             ),
             message_count=0,
             summary_type=summary_type.value,
@@ -322,7 +337,7 @@ async def get_latest_summary_and_messages_since(
     peer_name: str,
     cutoff: int | None = None,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> tuple[list[models.Message], Optional[Summary]]:
+) -> tuple[list[models.Message], Summary | None]:
     """
     Get all messages since the latest summary for a session or peer.
 
@@ -376,7 +391,7 @@ async def should_create_summary(
     peer_name: str,
     message_id: int,
     summary_type: SummaryType = SummaryType.SHORT,
-) -> tuple[bool, list[models.Message], Optional[Summary]]:
+) -> tuple[bool, list[models.Message], Summary | None]:
     """
     Determine if a new summary should be created for this object (peer or session).
 

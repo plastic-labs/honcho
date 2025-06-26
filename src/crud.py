@@ -1,13 +1,13 @@
-import os
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Optional
+from typing import Any, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
@@ -17,21 +17,30 @@ from . import models, schemas
 from .exceptions import (
     ResourceNotFoundException,
 )
-from .utils.model_client import ModelClient, ModelProvider
+from .utils.filter import apply_filter
 
 load_dotenv(override=True)
 
-openai_client = AsyncOpenAI(api_key=settings.LLM.OPENAI_API_KEY)
+
+@final
+class EmbeddingClient:
+    def __init__(self, api_key: str | None):
+        if api_key is None:
+            raise ValueError("API key is required")
+        self.client = AsyncOpenAI(api_key=api_key)
+
+    async def embed(self, query: str) -> list[float]:
+        response = await self.client.embeddings.create(
+            input=query, model="text-embedding-3-small"
+        )
+        return response.data[0].embedding
+
+
+embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
 
 logger = getLogger(__name__)
 
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
-
-SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
-
-# Create a ModelClient instance for embeddings
-# Using OpenAI provider for embeddings as it's the most common
-embedding_client = ModelClient(provider=ModelProvider.OPENAI)
 
 ########################################################
 # workspace methods
@@ -77,19 +86,18 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    filter: Optional[dict] = None,
-) -> Select:
+    filters: dict[str, Any] | None = None,
+) -> Select[tuple[models.Workspace]]:
     """
     Get all workspaces.
 
     Args:
         db: Database session
-        filter: Filter the workspaces by a dictionary of metadata
+        filters: Filter the workspaces by a dictionary of metadata
     """
     stmt = select(models.Workspace)
-    if filter is not None:
-        stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
-    stmt = stmt.order_by(models.Workspace.created_at)
+    stmt = apply_filter(stmt, models.Workspace, filters)
+    stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
 
 
@@ -231,12 +239,11 @@ async def get_peer(
 
 async def get_peers(
     workspace_name: str,
-    filter: Optional[dict] = None,
-) -> Select:
+    filters: dict[str, str] | None = None,
+) -> Select[tuple[models.Peer]]:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
-    if filter is not None:
-        stmt = stmt.where(models.Peer.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Peer, filters)
 
     stmt = stmt.order_by(models.Peer.created_at)
 
@@ -283,17 +290,15 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    is_active: Optional[bool] = None,
-    filter: Optional[dict] = None,
-) -> Select:
+    filters: dict[str, Any] | None = None,
+) -> Select[tuple[models.Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
 
     Args:
         workspace_name: Name of the workspace
         peer_name: Name of the peer
-        is_active: Filter by active status (True/False/None for all)
-        filter: Filter sessions by metadata
+        filters: Filter sessions by metadata
 
     Returns:
         SQLAlchemy Select statement
@@ -309,13 +314,9 @@ async def get_sessions_for_peer(
         .where(models.Session.workspace_name == workspace_name)
     )
 
-    if is_active is not None:
-        stmt = stmt.where(models.Session.is_active == is_active)
+    stmt = apply_filter(stmt, models.Session, filters)
 
-    if filter is not None:
-        stmt = stmt.where(models.Session.h_metadata.contains(filter))
-
-    stmt = stmt.order_by(models.Session.created_at)
+    stmt: Select[tuple[models.Session]] = stmt.order_by(models.Session.created_at)
 
     return stmt
 
@@ -327,19 +328,14 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    is_active: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
+    filters: dict[str, Any] | None = None,
+) -> Select[tuple[models.Session]]:
     """
     Get all sessions in a workspace.
     """
     stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
 
-    if is_active:
-        stmt = stmt.where(models.Session.is_active.is_(True))
-
-    if filter is not None:
-        stmt = stmt.where(models.Session.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Session, filters)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -380,9 +376,12 @@ async def get_or_create_session(
 
     # Check if session already exists
     if honcho_session is None:
-        if session.peer_names and len(session.peer_names) > SESSION_PEERS_LIMIT:
+        if (
+            session.peer_names
+            and len(session.peer_names) > settings.SESSION_PEERS_LIMIT
+        ):
             raise ValueError(
-                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
             )
 
         # Create honcho session
@@ -540,7 +539,7 @@ async def clone_session(
     db: AsyncSession,
     workspace_name: str,
     original_session_name: str,
-    cutoff_message_id: Optional[str] = None,
+    cutoff_message_id: str | None = None,
 ) -> models.Session:
     """
     Clone a session and its messages. If cutoff_message_id is provided,
@@ -692,7 +691,7 @@ async def remove_peers_from_session(
 async def get_peers_from_session(
     workspace_name: str,
     session_name: str,
-) -> Select:
+) -> Select[tuple[models.Peer]]:
     """
     Get all peers from a session.
 
@@ -719,7 +718,7 @@ async def get_peers_from_session(
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
-) -> Select:
+) -> Select[tuple[str, dict[str, Any], dict[str, Any]]]:
     """
     Get configuration from both SessionPeer and Peer tables for active peers in a session.
 
@@ -730,7 +729,7 @@ async def get_session_peer_configuration(
     Returns:
         Select statement returning peer_name, peer_configuration, and session_peer_configuration
     """
-    stmt = (
+    stmt: Select[tuple[str, dict[str, Any], dict[str, Any]]] = (
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.configuration.label("peer_configuration"),
@@ -769,9 +768,9 @@ async def set_peers_for_session(
         ResourceNotFoundException: If the session does not exist
     """
     # Validate peer limit before making any changes
-    if len(peer_names) > SESSION_PEERS_LIMIT:
+    if len(peer_names) > settings.SESSION_PEERS_LIMIT:
         raise ValueError(
-            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
         )
 
     # Verify session exists
@@ -860,9 +859,9 @@ async def _get_or_add_peers_to_session(
     existing_peer_names = result.scalars().all()
 
     new_peers = [name for name in peer_names if name not in existing_peer_names]
-    if len(new_peers) + len(existing_peer_names) > SESSION_PEERS_LIMIT:
+    if len(new_peers) + len(existing_peer_names) > settings.SESSION_PEERS_LIMIT:
         raise ValueError(
-            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {SESSION_PEERS_LIMIT} peers per session."
+            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {settings.SESSION_PEERS_LIMIT} peers per session."
         )
 
     # Use upsert to handle both new peers and rejoining peers
@@ -890,6 +889,7 @@ async def _get_or_add_peers_to_session(
     )
     await db.execute(stmt)
 
+    # Return all active session peers after the upsert
     select_stmt = select(models.SessionPeer).where(
         models.SessionPeer.session_name == session_name,
         models.SessionPeer.workspace_name == workspace_name,
@@ -908,11 +908,13 @@ async def get_peer_config(
     """
     Get the configuration for a peer in a session.
 
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
         peer_id: Name of the peer
+
 
     Returns:
         Configuration for the peer
@@ -979,16 +981,15 @@ async def set_peer_config(
     session_peer.configuration["observe_me"] = config.observe_me
 
     await db.commit()
-    return
 
 
 async def search(
     query: str,
     *,
     workspace_name: str,
-    session_name: Optional[str] = None,
-    peer_name: Optional[str] = None,
-) -> Select:
+    session_name: str | None = None,
+    peer_name: str | None = None,
+) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
     - Uses PostgreSQL full text search for natural language queries
@@ -1086,10 +1087,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
     else:
         # Fetch the latest global level user representation
@@ -1103,10 +1104,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
 
     return latest_representation
@@ -1247,11 +1248,11 @@ async def create_messages_for_peer(
 async def get_messages(
     workspace_name: str,
     session_name: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-    token_limit: Optional[int] = None,
-    message_count_limit: Optional[int] = None,
-) -> Select:
+    reverse: bool | None = False,
+    filters: dict[str, Any] | None = None,
+    token_limit: int | None = None,
+    message_count_limit: int | None = None,
+) -> Select[tuple[models.Message]]:
     """
     Get messages from a session. If token_limit is provided, the n most recent messages
     with token count adding up to the limit will be returned. If message_count_limit is provided,
@@ -1262,7 +1263,7 @@ async def get_messages(
         workspace_name: Name of the workspace
         session_name: Name of the session
         reverse: Whether to reverse the order of messages
-        filter: Filter to apply to the messages
+        filters: Filter to apply to the messages
         token_limit: Maximum number of tokens to include in the messages
         message_count_limit: Maximum number of messages to include
 
@@ -1275,13 +1276,10 @@ async def get_messages(
         models.Message.session_name == session_name,
     ]
 
-    # Add metadata filter if provided
-    if filter is not None:
-        base_conditions.append(models.Message.h_metadata.contains(filter))
-
     # Apply message count limit first (takes precedence over token limit)
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
+        stmt = apply_filter(stmt, models.Message, filters)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
@@ -1291,7 +1289,6 @@ async def get_messages(
             stmt = stmt.order_by(models.Message.id.desc())
         else:
             stmt = stmt.order_by(models.Message.id.asc())
-
     elif token_limit is not None:
         # Apply token limit logic
         # Create a subquery that calculates running sum of tokens for most recent messages
@@ -1312,16 +1309,17 @@ async def get_messages(
             .join(token_subquery, models.Message.id == token_subquery.c.id)
             .where(token_subquery.c.running_token_sum <= token_limit)
         )
+        stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
             stmt = stmt.order_by(models.Message.id.asc())
-
     else:
         # Default case - no limits applied
         stmt = select(models.Message).where(*base_conditions)
+        stmt = apply_filter(stmt, models.Message, filters)
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
@@ -1336,7 +1334,7 @@ async def get_messages_id_range(
     session_name: str | None,
     peer_name: str | None,
     start_id: int = 0,
-    end_id: Optional[int] = None,
+    end_id: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session or peer by primary key ID range.
@@ -1384,9 +1382,9 @@ async def get_messages_id_range(
 async def get_messages_for_peer(
     workspace_name: str,
     peer_name: str,
-    reverse: Optional[bool] = False,
-    filter: Optional[dict] = None,
-) -> Select:
+    reverse: bool | None = False,
+    filters: dict[str, Any] | None = None,
+) -> Select[tuple[models.Message]]:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1394,8 +1392,7 @@ async def get_messages_for_peer(
         .where(models.Message.session_name.is_(None))
     )
 
-    if filter is not None:
-        stmt = stmt.where(models.Message.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Message, filters)
 
     if reverse:
         stmt = stmt.order_by(models.Message.id.desc())
@@ -1410,7 +1407,7 @@ async def get_message(
     workspace_name: str,
     session_name: str,
     message_id: str,
-) -> Optional[models.Message]:
+) -> models.Message | None:
     stmt = (
         select(models.Message)
         .where(models.Message.workspace_name == workspace_name)
@@ -1518,8 +1515,8 @@ async def query_documents(
     peer_name: str,
     collection_name: str,
     query: str,
-    filter: Optional[dict] = None,
-    max_distance: Optional[float] = None,
+    filters: dict[str, Any] | None = None,
+    max_distance: float | None = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using ModelClient for embeddings
@@ -1535,8 +1532,7 @@ async def query_documents(
         stmt = stmt.where(
             models.Document.embedding.cosine_distance(embedding_query) < max_distance
         )
-    if filter is not None:
-        stmt = stmt.where(models.Document.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Document, filters)
     stmt = stmt.limit(top_k).order_by(
         models.Document.embedding.cosine_distance(embedding_query)
     )
@@ -1550,7 +1546,7 @@ async def create_document(
     workspace_name: str,
     peer_name: str,
     collection_name: str,
-    duplicate_threshold: Optional[float] = None,
+    duplicate_threshold: float | None = None,
 ) -> models.Document:
     """
     Embed text as a vector and create a document.
@@ -1653,6 +1649,211 @@ async def get_duplicate_documents(
 
     result = await db.execute(stmt)
     return list(result.scalars().all())  # Convert to list to match the return type
+
+
+########################################################
+# deriver queue methods
+########################################################
+
+
+async def get_deriver_status(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str | None = None,
+    session_name: str | None = None,
+    include_sender: bool = False,
+) -> schemas.DeriverStatus:
+    """
+    Get the deriver processing status, optionally filtered by peer and/or session.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peer_name: Optional name of the peer to filter by
+        session_name: Optional session name to filter by
+        include_sender: Whether to include work units where peer is the sender
+
+    Returns:
+        DeriverStatus: Schema containing processing status
+
+    Raises:
+        ValueError: If neither peer_name nor session_name is provided
+    """
+    if (peer_name is None or peer_name == "") and (
+        session_name is None or session_name == ""
+    ):
+        raise ValueError("At least one of peer_name or session_name must be provided")
+
+    # Normalize empty strings to None for consistent handling
+    normalized_peer_name = peer_name if peer_name else None
+    normalized_session_name = session_name if session_name else None
+
+    stmt = _build_queue_status_query(
+        workspace_name, normalized_peer_name, normalized_session_name, include_sender
+    )
+    result = await db.execute(stmt)
+    rows = result.fetchall()
+
+    counts = _process_queue_rows(rows)
+    return _build_status_response(peer_name, session_name, counts)
+
+
+def _build_queue_status_query(
+    workspace_name: str,
+    peer_name: str | None,
+    session_name: str | None,
+    include_sender: bool,
+) -> Select[Any]:
+    """Build SQL query for queue status with validation and aggregation."""
+    from sqlalchemy import case, func
+
+    sender_name_expr = models.QueueItem.payload["sender_name"].astext
+    target_name_expr = models.QueueItem.payload["target_name"].astext
+    task_type_expr = models.QueueItem.payload["task_type"].astext
+
+    # Define conditions for cleaner window functions
+    is_completed = models.QueueItem.processed
+    is_in_progress = (~models.QueueItem.processed) & (
+        models.ActiveQueueSession.id.isnot(None)
+    )
+    is_pending = (~models.QueueItem.processed) & (
+        models.ActiveQueueSession.id.is_(None)
+    )
+
+    # Use window functions to calculate totals and per-session counts in SQL
+    stmt = select(
+        models.QueueItem.session_id,
+        # Overall totals using window functions
+        func.count().over().label("total"),
+        func.count(case((is_completed, 1))).over().label("completed"),
+        func.count(case((is_in_progress, 1))).over().label("in_progress"),
+        func.count(case((is_pending, 1))).over().label("pending"),
+        # Per-session totals using partitioned window functions
+        func.count()
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_total"),
+        func.count(case((is_completed, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_completed"),
+        func.count(case((is_in_progress, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_in_progress"),
+        func.count(case((is_pending, 1)))
+        .over(partition_by=models.QueueItem.session_id)
+        .label("session_pending"),
+    ).select_from(models.QueueItem)
+
+    stmt = stmt.outerjoin(
+        models.ActiveQueueSession,
+        (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
+        & (sender_name_expr == models.ActiveQueueSession.sender_name)
+        & (target_name_expr == models.ActiveQueueSession.target_name)
+        & (task_type_expr == models.ActiveQueueSession.task_type),
+    )
+
+    if peer_name is not None:
+        stmt = stmt.outerjoin(
+            models.Peer,
+            (models.Peer.name == peer_name)
+            & (models.Peer.workspace_name == workspace_name),
+        )
+
+    if session_name is not None:
+        stmt = stmt.outerjoin(
+            models.Session,
+            (models.Session.name == session_name)
+            & (models.Session.workspace_name == workspace_name),
+        )
+        stmt = stmt.where(models.QueueItem.session_id == models.Session.id)
+
+    if peer_name is not None:
+        if include_sender:
+            from sqlalchemy import or_
+
+            stmt = stmt.where(
+                or_(
+                    target_name_expr == peer_name,
+                    sender_name_expr == peer_name,
+                )
+            )
+        else:
+            stmt = stmt.where(target_name_expr == peer_name)
+
+    return stmt
+
+
+def _process_queue_rows(rows: Sequence[Row[Any]]) -> schemas.QueueCounts:
+    """Process query results that already contain aggregated counts."""
+    if not rows:
+        return schemas.QueueCounts(
+            total=0,
+            completed=0,
+            in_progress=0,
+            pending=0,
+            sessions={},
+        )
+
+    # Since we're using window functions, all rows have the same overall totals
+    # We just need the first row for overall counts
+    first_row = rows[0]
+
+    # Build sessions dictionary from unique session_ids
+    sessions: dict[str, schemas.SessionCounts] = {}
+    seen_sessions: set[str] = set()
+
+    for row in rows:
+        if row.session_id and row.session_id not in seen_sessions:
+            sessions[row.session_id] = schemas.SessionCounts(
+                completed=row.session_completed,
+                in_progress=row.session_in_progress,
+                pending=row.session_pending,
+            )
+            seen_sessions.add(row.session_id)
+
+    return schemas.QueueCounts(
+        total=first_row.total,
+        completed=first_row.completed,
+        in_progress=first_row.in_progress,
+        pending=first_row.pending,
+        sessions=sessions,
+    )
+
+
+def _build_status_response(
+    peer_name: str | None, session_name: str | None, counts: schemas.QueueCounts
+) -> schemas.DeriverStatus:
+    """Build the final response object."""
+
+    if session_name:
+        return schemas.DeriverStatus(
+            session_id=session_name,
+            peer_id=peer_name,
+            total_work_units=counts.total,
+            completed_work_units=counts.completed,
+            in_progress_work_units=counts.in_progress,
+            pending_work_units=counts.pending,
+        )
+
+    sessions: dict[str, schemas.DeriverStatus] = {}
+    for session_id, data in counts.sessions.items():
+        total = data.completed + data.in_progress + data.pending
+        sessions[session_id] = schemas.DeriverStatus(
+            peer_id=peer_name,
+            session_id=session_id,
+            total_work_units=total,
+            completed_work_units=data.completed,
+            in_progress_work_units=data.in_progress,
+            pending_work_units=data.pending,
+        )
+
+    return schemas.DeriverStatus(
+        sessions=sessions if sessions else None,
+        peer_id=peer_name,
+        total_work_units=counts.total,
+        completed_work_units=counts.completed,
+        in_progress_work_units=counts.in_progress,
+        pending_work_units=counts.pending,
+    )
 
 
 def construct_collection_name(peer_name: str, target_name: str) -> str:

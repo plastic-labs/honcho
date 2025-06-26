@@ -8,8 +8,6 @@ Create Date: 2025-06-09 15:16:38.164067
 
 from collections.abc import Sequence
 from contextlib import suppress
-from os import getenv
-from typing import Union
 
 import sqlalchemy as sa
 import tiktoken
@@ -25,17 +23,18 @@ from migrations.utils import (
     index_exists,
     table_exists,
 )
+from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "d429de0e5338"
-down_revision: Union[str, None] = "66e63cf2cf77"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "66e63cf2cf77"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     """Upgrade database schema to adopt peer paradigm."""
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = settings.DB.SCHEMA
     inspector = sa.inspect(op.get_bind())
 
     # Step 1: Rename tables
@@ -78,7 +77,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade database schema to reverse peer paradigm adoption."""
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = settings.DB.SCHEMA
     inspector = sa.inspect(op.get_bind())
 
     # Step 1: Add back app_id, user_id to peers and sessions
@@ -589,6 +588,7 @@ def update_messages_table(schema: str, inspector) -> None:
     op.create_index(
         "ix_messages_workspace_name", "messages", ["workspace_name"], schema=schema
     )
+
     # Create full text search index on content column
     op.create_index(
         "idx_messages_content_gin",
@@ -1531,6 +1531,7 @@ def restore_messages_table(schema: str, inspector) -> None:
         op.drop_index(
             "ix_messages_workspace_name", table_name="messages", schema=schema
         )
+
     # Drop full text search index
     if index_exists("messages", "idx_messages_content_gin", inspector):
         op.drop_index("idx_messages_content_gin", table_name="messages", schema=schema)

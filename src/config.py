@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar, Optional
+from typing import Annotated, Any, ClassVar
 
 import tomllib
 from dotenv import load_dotenv
@@ -13,6 +13,8 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+
+from src.utils.types import Providers
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
@@ -96,7 +98,7 @@ class HonchoSettings(BaseSettings):
     """
 
     @classmethod
-    def settings_customise_sources(
+    def settings_customise_sources(  # pyright: ignore
         cls,
         settings_cls: type[BaseSettings],
         init_settings: PydanticBaseSettingsSource,
@@ -115,7 +117,7 @@ class HonchoSettings(BaseSettings):
 
 
 class DBSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DB_")
+    model_config = SettingsConfigDict(env_prefix="DB_")  # pyright: ignore
 
     CONNECTION_URI: str = (
         "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
@@ -137,12 +139,12 @@ class DBSettings(HonchoSettings):
 
 
 class AuthSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTH_")
+    model_config = SettingsConfigDict(env_prefix="AUTH_")  # pyright: ignore
 
     USE_AUTH: bool = False
-    JWT_SECRET: Optional[str] = None  # Must be set if USE_AUTH is true
+    JWT_SECRET: str | None = None  # Must be set if USE_AUTH is true
 
-    @model_validator(mode="after")
+    @model_validator(mode="after")  # type: ignore
     def _require_jwt_secret(self) -> "AuthSettings":
         if self.USE_AUTH and not self.JWT_SECRET:
             raise ValueError("JWT_SECRET must be set if USE_AUTH is true")
@@ -150,41 +152,49 @@ class AuthSettings(HonchoSettings):
 
 
 class SentrySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="SENTRY_")
+    model_config = SettingsConfigDict(env_prefix="SENTRY_")  # pyright: ignore
 
     ENABLED: bool = False
-    DSN: Optional[str] = None
+    DSN: str | None = None
+    RELEASE: str | None = None  # TODO maybe centralize this with release number
+    ENVIRONMENT: str = "development"
     TRACES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
     PROFILES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
 
 
 class LLMSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="LLM_")
+    model_config = SettingsConfigDict(env_prefix="LLM_")  # pyright: ignore
 
     # API Keys for LLM providers
-    ANTHROPIC_API_KEY: Optional[str] = None
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_COMPATIBLE_API_KEY: Optional[str] = None
-    GEMINI_API_KEY: Optional[str] = None
-    GROQ_API_KEY: Optional[str] = None  # Added missing GROQ API key
-    OPENAI_COMPATIBLE_BASE_URL: Optional[str] = None
+    ANTHROPIC_API_KEY: str | None = None
+    OPENAI_API_KEY: str | None = None
+    OPENAI_COMPATIBLE_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+    GROQ_API_KEY: str | None = None
+    OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 1000
     DEFAULT_TEMPERATURE: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)] = 0.0
 
     # Dialectic specific
-    DIALECTIC_PROVIDER: str = "anthropic"
-    DIALECTIC_MODEL: str = "claude-3-haiku-20240307"
+    DIALECTIC_PROVIDER: Providers = "anthropic"
+    DIALECTIC_MODEL: str = "claude-3-5-haiku-20241022"
     # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
 
     # Query Generation specific
-    QUERY_GENERATION_PROVIDER: str = "groq"
-    QUERY_GENERATION_MODEL: str = "llama3-8b-8192"
+    QUERY_GENERATION_PROVIDER: Providers = "google"
+    QUERY_GENERATION_MODEL: str = "gemini-2.0-flash-lite"
     # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
 
+    # Tom Inference specific
+    # TOM_INFERENCE_PROVIDER: Providers = "groq"
+    # TOM_INFERENCE_MODEL: str = "llama-3.3-70b-versatile"
+    TOM_INFERENCE_PROVIDER: Providers = "anthropic"
+    TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
+
     # Summarization specific
-    SUMMARY_PROVIDER: str = "gemini"
+    SUMMARY_PROVIDER: Providers = "google"
     SUMMARY_MODEL: str = (
         "gemini-1.5-flash-latest"  # Consider specific model version if needed
     )
@@ -195,7 +205,7 @@ class LLMSettings(HonchoSettings):
 
 
 class AgentSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENT_")
+    model_config = SettingsConfigDict(env_prefix="AGENT_")  # pyright: ignore
 
     SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
     SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
@@ -205,7 +215,7 @@ class AgentSettings(HonchoSettings):
 
 
 class DeriverSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DERIVER_")
+    model_config = SettingsConfigDict(env_prefix="DERIVER_")  # pyright: ignore
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = (
@@ -219,7 +229,7 @@ class DeriverSettings(HonchoSettings):
 
 
 class HistorySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="HISTORY_")
+    model_config = SettingsConfigDict(env_prefix="HISTORY_")  # pyright: ignore
 
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
@@ -227,12 +237,15 @@ class HistorySettings(HonchoSettings):
 
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
-    model_config = SettingsConfigDict(env_prefix="", env_nested_delimiter="__")
+    model_config = SettingsConfigDict(  # pyright: ignore
+        env_prefix="", env_nested_delimiter="__"
+    )
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
     FASTAPI_HOST: str = "0.0.0.0"
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
+    SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)

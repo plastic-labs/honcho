@@ -51,3 +51,11 @@ jobs:
           SENTRY_ENABLED: false
           LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LLM_DIALECTIC_PROVIDER: openai
+          LLM_DIALECTIC_MODEL: test
+          LLM_QUERY_GENERATION_PROVIDER: openai
+          LLM_QUERY_GENERATION_MODEL: test
+          LLM_TOM_INFERENCE_PROVIDER: openai
+          LLM_TOM_INFERENCE_MODEL: test
+          LLM_SUMMARY_PROVIDER: openai
+          LLM_SUMMARY_MODEL: test

@@ -1,7 +1,13 @@
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
+from src.models import Peer, Workspace
 
-def test_get_or_create_session(client, sample_data):
+
+def test_get_or_create_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     # Test get or create session
     test_workspace, test_peer = sample_data
 
@@ -40,7 +46,9 @@ def test_get_or_create_session(client, sample_data):
     assert data3["workspace_id"] == test_workspace.name
 
 
-def test_create_session_with_metadata(client, sample_data):
+def test_create_session_with_metadata(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
     response = client.post(
@@ -59,7 +67,9 @@ def test_create_session_with_metadata(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
 
 
-def test_create_session_with_configuration(client, sample_data):
+def test_create_session_with_configuration(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session creation with configuration parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -80,7 +90,9 @@ def test_create_session_with_configuration(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
 
 
-def test_create_session_with_all_optional_params(client, sample_data):
+def test_create_session_with_all_optional_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session creation with all optional parameters"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -104,7 +116,11 @@ def test_create_session_with_all_optional_params(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
 
 
-def test_create_session_with_too_many_peers(client, sample_data, caplog):
+def test_create_session_with_too_many_peers(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    caplog: pytest.LogCaptureFixture,
+):
     test_workspace, test_peer = sample_data
     # create 10 peers
     peer_names = [test_peer.name]
@@ -130,7 +146,7 @@ def test_create_session_with_too_many_peers(client, sample_data, caplog):
 
     session_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"name": "test_session"}},
+        json={"filter": {"id": "test_session"}},
     )
     assert session_response.status_code == 200
     assert len(session_response.json()["items"]) == 0
@@ -151,7 +167,7 @@ def test_create_session_with_too_many_peers(client, sample_data, caplog):
     assert data["workspace_id"] == test_workspace.name
 
 
-def test_get_sessions(client, sample_data):
+def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create a test session
     session_id = str(generate_nanoid())
@@ -170,43 +186,21 @@ def test_get_sessions(client, sample_data):
     assert data["workspace_id"] == test_workspace.name
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"test_key": "test_value"}},
+        json={"filter": {"metadata": {"test_key": "test_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) > 0
+    assert len(data["items"]) == 1
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
     assert data["items"][0]["workspace_id"] == test_workspace.name
 
 
-def test_get_sessions_with_is_active_filter(client, sample_data):
-    """Test session listing with is_active parameter"""
-    test_workspace, test_peer = sample_data
-
-    # Create and then delete a session to have inactive session
-    session_id = str(generate_nanoid())
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
-    )
-    client.delete(f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}")
-
-    # Test getting inactive sessions
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"is_active": False}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    # Should find at least our deleted session
-    inactive_sessions = [s for s in data["items"] if not s["is_active"]]
-    assert len(inactive_sessions) > 0
-
-
-def test_get_sessions_with_empty_filter(client, sample_data):
+def test_get_sessions_with_empty_filter(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session listing with empty filter object"""
-    test_workspace, test_peer = sample_data
+    test_workspace, _ = sample_data
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filter": {}}
@@ -217,7 +211,9 @@ def test_get_sessions_with_empty_filter(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_update_delete_metadata(client, sample_data):
+def test_update_delete_metadata(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     # Create a test session
     session_id = str(generate_nanoid())
@@ -240,7 +236,7 @@ def test_update_delete_metadata(client, sample_data):
     assert data["metadata"] == {}
 
 
-def test_update_session(client, sample_data):
+def test_update_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create a test session
     session_id = str(generate_nanoid())
@@ -262,7 +258,9 @@ def test_update_session(client, sample_data):
     assert data["metadata"] == {"new_key": "new_value"}
 
 
-def test_update_session_with_configuration(client, sample_data):
+def test_update_session_with_configuration(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session update with configuration parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -284,7 +282,9 @@ def test_update_session_with_configuration(client, sample_data):
     assert data["configuration"] == configuration
 
 
-def test_update_session_with_all_optional_params(client, sample_data):
+def test_update_session_with_all_optional_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session update with both metadata and configuration"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -308,7 +308,9 @@ def test_update_session_with_all_optional_params(client, sample_data):
     assert data["configuration"] == configuration
 
 
-def test_update_session_with_null_configuration(client, sample_data):
+def test_update_session_with_null_configuration(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session update with null configuration"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -333,7 +335,7 @@ def test_update_session_with_null_configuration(client, sample_data):
     assert "configuration" in data
 
 
-def test_delete_session(client, sample_data):
+def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create a test session
     session_id = str(generate_nanoid())
@@ -354,7 +356,7 @@ def test_delete_session(client, sample_data):
     # Check that session is marked as inactive
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"is_active": False},
+        json={"filter": {"is_active": False}},
     )
     data = response.json()
     # Find our session in the inactive sessions
@@ -363,7 +365,7 @@ def test_delete_session(client, sample_data):
     assert inactive_session["is_active"] is False
 
 
-def test_clone_session(client, sample_data):
+def test_clone_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create a test session
     session_id = str(generate_nanoid())
@@ -422,7 +424,9 @@ def test_clone_session(client, sample_data):
     assert data["items"][1]["metadata"] == {"key": "value2"}
 
 
-def test_clone_session_with_cutoff(client, sample_data):
+def test_clone_session_with_cutoff(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session cloning with message cutoff parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -457,7 +461,7 @@ def test_clone_session_with_cutoff(client, sample_data):
     assert "id" in data
 
 
-def test_add_peers_to_session(client, sample_data):
+def test_add_peers_to_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create another peer
     peer2_name = str(generate_nanoid())
@@ -486,7 +490,7 @@ def test_add_peers_to_session(client, sample_data):
     assert response.status_code == 200
 
 
-def test_get_session_peers(client, sample_data):
+def test_get_session_peers(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create another peer
     peer2_name = str(generate_nanoid())
@@ -520,7 +524,7 @@ def test_get_session_peers(client, sample_data):
     assert peer2_name in peer_names
 
 
-def test_set_session_peers(client, sample_data):
+def test_set_session_peers(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     # Create another peer
     peer2_name = str(generate_nanoid())
@@ -559,7 +563,11 @@ def test_set_session_peers(client, sample_data):
     assert data["items"][0]["id"] == peer2_name
 
 
-def test_set_session_peers_with_limit(client, sample_data, caplog):
+def test_set_session_peers_with_limit(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    caplog: pytest.LogCaptureFixture,
+):
     test_workspace, test_peer = sample_data
 
     # Create a test session with multiple peers
@@ -584,7 +592,7 @@ def test_set_session_peers_with_limit(client, sample_data, caplog):
         peer_names.append(peer_name)
 
     # set peers with 11 peers (as a dict of peer_name: {})
-    peers_dict = {peer_name: {} for peer_name in peer_names}
+    peers_dict: dict[str, dict[Any, Any]] = {peer_name: {} for peer_name in peer_names}
     response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
         json=peers_dict,
@@ -593,7 +601,9 @@ def test_set_session_peers_with_limit(client, sample_data, caplog):
     assert "Failed to set peers for session" in caplog.text
 
 
-def test_remove_peers_from_session(client, sample_data):
+def test_remove_peers_from_session(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     test_workspace, test_peer = sample_data
     # Create another peer
     peer2_name = str(generate_nanoid())
@@ -633,7 +643,7 @@ def test_remove_peers_from_session(client, sample_data):
     assert data["items"][0]["id"] == peer2_name
 
 
-def test_get_session_context(client, sample_data):
+def test_get_session_context(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the session context endpoint"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -670,7 +680,9 @@ def test_get_session_context(client, sample_data):
     assert data["summary"] == ""  # Default is empty when summary=False
 
 
-def test_get_session_context_with_summary(client, sample_data):
+def test_get_session_context_with_summary(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session context with summary parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -690,7 +702,9 @@ def test_get_session_context_with_summary(client, sample_data):
     assert "summary" in data
 
 
-def test_get_session_context_with_tokens(client, sample_data):
+def test_get_session_context_with_tokens(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session context with token limit parameter"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -711,7 +725,9 @@ def test_get_session_context_with_tokens(client, sample_data):
     assert isinstance(data["messages"], list)
 
 
-def test_get_session_context_with_all_params(client, sample_data):
+def test_get_session_context_with_all_params(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session context with both summary and tokens parameters"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -732,7 +748,7 @@ def test_get_session_context_with_all_params(client, sample_data):
     assert "summary" in data
 
 
-def test_search_session(client, sample_data):
+def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the session search functionality"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -770,7 +786,9 @@ def test_search_session(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_search_session_empty_query(client, sample_data):
+def test_search_session_empty_query(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test session search with empty query"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -793,7 +811,9 @@ def test_search_session_empty_query(client, sample_data):
     assert isinstance(data["items"], list)
 
 
-def test_search_session_nonexistent(client, sample_data):
+def test_search_session_nonexistent(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
     """Test searching a session that doesn't exist"""
     test_workspace, _ = sample_data
     nonexistent_session_id = str(generate_nanoid())

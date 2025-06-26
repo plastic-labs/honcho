@@ -1,9 +1,9 @@
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
 from src.dependencies import db
@@ -33,7 +33,7 @@ async def get_or_create_session(
         ..., description="Session creation parameters"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Get a specific session in a workspace.
@@ -77,30 +77,21 @@ async def get_or_create_session(
 )
 async def get_sessions(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    options: Optional[schemas.SessionGet] = Body(
+    options: schemas.SessionGet | None = Body(
         None, description="Filtering and pagination options for the sessions list"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get All Sessions in a Workspace"""
     filter_param = None
-    is_active_param = False  # Default from schema
 
-    if options:
-        if hasattr(options, "filter") and options.filter:
-            filter_param = options.filter
-            if filter_param == {}:  # Explicitly check for empty dict
-                filter_param = None
-        if hasattr(options, "is_active"):  # Check if is_active is present
-            is_active_param = options.is_active
+    if options and hasattr(options, "filter") and options.filter:
+        filter_param = options.filter
+        if filter_param == {}:  # Explicitly check for empty dict
+            filter_param = None
 
-    return await paginate(
-        db,
-        await crud.get_sessions(
-            workspace_name=workspace_id,
-            is_active=is_active_param,
-            filter=filter_param,
-        ),
+    return await apaginate(
+        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
     )
 
 
@@ -117,7 +108,7 @@ async def update_session(
     session: schemas.SessionUpdate = Body(
         ..., description="Updated session parameters"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Update the metadata of a Session"""
     try:
@@ -140,7 +131,7 @@ async def update_session(
 async def delete_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to delete"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Delete a session by marking it as inactive"""
     try:
@@ -164,8 +155,8 @@ async def delete_session(
 async def clone_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session to clone"),
-    db=db,
-    message_id: Optional[str] = Query(
+    db: AsyncSession = db,
+    message_id: str | None = Query(
         None, description="Message ID to cut off the clone at"
     ),
 ):
@@ -198,23 +189,22 @@ async def add_peers_to_session(
     peers: dict[str, schemas.SessionPeerConfig] = Body(
         ..., description="List of peer IDs to add to the session"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Add peers to a session"""
     try:
-        workspace_name, session_name = workspace_id, session_id
         session = await crud.get_or_create_session(
             db,
             session=schemas.SessionCreate(
-                name=session_name,
+                name=session_id,
                 peers=peers,
             ),
-            workspace_name=workspace_name,
+            workspace_name=workspace_id,
         )
-        logger.info(f"Added peers to session {session_name} successfully")
+        logger.info(f"Added peers to session {session_id} successfully")
         return session
     except ValueError as e:
-        logger.warning(f"Failed to add peers to session {session_name}: {str(e)}")
+        logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
 
 
@@ -231,27 +221,26 @@ async def set_session_peers(
     peers: dict[str, schemas.SessionPeerConfig] = Body(
         ..., description="List of peer IDs to set for the session"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Set the peers in a session"""
     try:
-        workspace_name, session_name = workspace_id, session_id
         await crud.set_peers_for_session(
             db,
-            workspace_name=workspace_name,
-            session_name=session_name,
+            workspace_name=workspace_id,
+            session_name=session_id,
             peer_names=peers,
         )
         # Get the session to return
         session = await crud.get_or_create_session(
             db,
-            session=schemas.SessionCreate(name=session_name),
-            workspace_name=workspace_name,
+            session=schemas.SessionCreate(name=session_id),
+            workspace_name=workspace_id,
         )
-        logger.info(f"Set peers for session {session_name} successfully")
+        logger.info(f"Set peers for session {session_id} successfully")
         return session
     except ValueError as e:
-        logger.warning(f"Failed to set peers for session {session_name}: {str(e)}")
+        logger.warning(f"Failed to set peers for session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Failed to set peers for session") from e
 
 
@@ -268,27 +257,26 @@ async def remove_peers_from_session(
     peers: list[str] = Body(
         ..., description="List of peer IDs to remove from the session"
     ),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Remove peers from a session"""
     try:
-        session_name = session_id
         await crud.remove_peers_from_session(
             db,
             workspace_name=workspace_id,
-            session_name=session_name,
+            session_name=session_id,
             peer_names=set(peers),
         )
         # Get the session to return
         session = await crud.get_or_create_session(
             db,
-            session=schemas.SessionCreate(name=session_name),
+            session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
-        logger.info(f"Removed peers from session {session_name} successfully")
+        logger.info(f"Removed peers from session {session_id} successfully")
         return session
     except ValueError as e:
-        logger.warning(f"Failed to remove peers from session {session_name}: {str(e)}")
+        logger.warning(f"Failed to remove peers from session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
 
 
@@ -303,7 +291,7 @@ async def get_peer_config(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     peer_id: str = Path(..., description="ID of the peer"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get the configuration for a peer in a session"""
     return await crud.get_peer_config(
@@ -325,7 +313,7 @@ async def set_peer_config(
     session_id: str = Path(..., description="ID of the session"),
     peer_id: str = Path(..., description="ID of the peer"),
     config: schemas.SessionPeerConfig = Body(..., description="Peer configuration"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Set the configuration for a peer in a session"""
     try:
@@ -357,17 +345,16 @@ async def set_peer_config(
 async def get_session_peers(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Get peers from a session"""
     try:
-        session_name = session_id
         peers_query = await crud.get_peers_from_session(
-            workspace_name=workspace_id, session_name=session_name
+            workspace_name=workspace_id, session_name=session_id
         )
-        return await paginate(db, peers_query)
+        return await apaginate(db, peers_query)
     except ValueError as e:
-        logger.warning(f"Failed to get peers from session {session_name}: {str(e)}")
+        logger.warning(f"Failed to get peers from session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
 
 
@@ -381,7 +368,7 @@ async def get_session_peers(
 async def get_session_context(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    tokens: Optional[int] = Query(
+    tokens: int | None = Query(
         None,
         description="Number of tokens to use for the context. Includes summary if set to true",
     ),
@@ -389,7 +376,7 @@ async def get_session_context(
         False,
         description="Whether to summarize the session history prior to the cutoff message",
     ),  # default to false
-    db=db,
+    db: AsyncSession = db,
 ):
     """
     Produce a context object from the session. The caller provides a token limit which the entire context must fit into.
@@ -449,7 +436,7 @@ async def get_session_context(
 
     return schemas.SessionContext(
         name=session_id,
-        messages=messages,
+        messages=messages,  # pyright: ignore
         summary=summary_content,
     )
 
@@ -465,11 +452,11 @@ async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     query: str = Body(..., description="Search query"),
-    db=db,
+    db: AsyncSession = db,
 ):
     """Search a Session"""
     stmt = await crud.search(
         query, workspace_name=workspace_id, session_name=session_id
     )
 
-    return await paginate(db, stmt)
+    return await apaginate(db, stmt)

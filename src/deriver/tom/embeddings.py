@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from ... import crud, schemas
 from ...dependencies import tracked_db
@@ -8,14 +9,13 @@ logger = logging.getLogger(__name__)
 
 class CollectionEmbeddingStore:
     def __init__(self, workspace_name: str, peer_name: str, collection_name: str):
-        self.workspace_name = workspace_name
-        self.peer_name = peer_name
-        self.collection_name = collection_name
+        self.workspace_name: str = workspace_name
+        self.peer_name: str = peer_name
+        self.collection_name: str = collection_name
 
     async def save_facts(
         self,
         facts: list[str],
-        replace_duplicates: bool = True,
         similarity_threshold: float = 0.85,
         message_id: int | None = None,
     ) -> None:
@@ -30,7 +30,7 @@ class CollectionEmbeddingStore:
             for fact in facts:
                 # Create document with duplicate checking
                 try:
-                    metadata = {}
+                    metadata: dict[str, Any] = {}
                     if message_id is not None:
                         metadata["message_id"] = message_id
                     await crud.create_document(
@@ -86,7 +86,7 @@ class CollectionEmbeddingStore:
         Returns:
             List of facts that are not duplicates of existing facts
         """
-        unique_facts = []
+        unique_facts: list[str] = []
 
         async with tracked_db("embedding_store.remove_duplicates") as db:
             for fact in facts:

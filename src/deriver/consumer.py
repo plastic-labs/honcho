@@ -1,9 +1,9 @@
 import logging
 import os
-from typing import Literal
+from typing import Any, Literal
 
 import sentry_sdk
-from langfuse.decorators import observe
+from langfuse.decorators import observe  # pyright: ignore
 from pydantic import BaseModel, ValidationError
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,10 +40,10 @@ class PayloadSchema(BaseModel):
 
     class Config:
         # Forbid extra fields to prevent injection of unexpected data
-        extra = "forbid"
+        extra = "forbid"  # pyright: ignore
 
 
-async def process_item(db: AsyncSession, payload: dict):
+async def process_item(db: AsyncSession, payload: dict[str, Any]):
     # Validate payload structure and types before processing
     try:
         validated_payload = PayloadSchema(**payload)
@@ -57,22 +57,21 @@ async def process_item(db: AsyncSession, payload: dict):
         validated_payload.session_name,
     )
 
-    processing_args = [
-        validated_payload.content,
-        validated_payload.workspace_name,
-        validated_payload.sender_name,
-        validated_payload.target_name,
-        validated_payload.session_name,
-        validated_payload.message_id,
-        db,
-    ]
     if validated_payload.task_type == "representation":
         logger.debug(
             "Processing message %s in %s",
             validated_payload.message_id,
             validated_payload.session_name,
         )
-        await process_message(*processing_args)
+        await process_message(
+            validated_payload.content,
+            validated_payload.workspace_name,
+            validated_payload.sender_name,
+            validated_payload.target_name,
+            validated_payload.session_name,
+            validated_payload.message_id,
+            db,
+        )
         logger.debug(
             "Finished processing message %s in %s %s",
             validated_payload.message_id,
@@ -140,7 +139,8 @@ async def process_message(
     # Extract facts from chat history
     logger.debug("Extracting facts from chat history")
     extract_start = os.times()[4]
-    facts = await extract_facts_long_term(chat_history_str)
+    fact_extraction = await extract_facts_long_term(chat_history_str)
+    facts: list[str] = fact_extraction.facts or []
     extract_time = os.times()[4] - extract_start
     console.print(f"Extracted Facts: {facts}", style="bright_blue")
     logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
