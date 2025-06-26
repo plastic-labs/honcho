@@ -230,7 +230,9 @@ def _build_field_condition(
             return column == value
 
 
-def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Any, Any]:
+def _safe_numeric_cast(
+    column_accessor: ColumnElement[Any], op_value: Any
+) -> tuple[ColumnElement[Any], Any]:
     """
     Safely cast JSONB column accessor to appropriate type for comparison.
 
@@ -247,36 +249,26 @@ def _safe_numeric_cast(column_accessor: Any, op_value: Any) -> tuple[Any, Any]:
             # For boolean values, compare with the string representation
             # PostgreSQL JSONB stores booleans as "true"/"false" strings when extracted with ->>
             return column_accessor, str(op_value).lower()
-        elif isinstance(op_value, int | float):
-            # For numeric values, use a safer cast that handles empty strings and invalid values
-            # We use CASE WHEN to handle empty strings and non-numeric values gracefully
-            safe_cast = case(
-                (column_accessor == "", literal(None)),  # Empty string -> NULL
-                (column_accessor.is_(None), literal(None)),  # NULL -> NULL
-                else_=cast(column_accessor, Numeric),
-            )
+
+        # For numeric values, use a safer cast that handles empty strings and invalid values
+        # We use CASE WHEN to handle empty strings and non-numeric values gracefully
+        safe_cast = case(
+            (column_accessor == "", literal(None)),  # Empty string -> NULL
+            (column_accessor.is_(None), literal(None)),  # NULL -> NULL
+            else_=cast(column_accessor, Numeric()),
+        )
+
+        if isinstance(op_value, int | float):
             return safe_cast, op_value
         else:
             # Try to parse as numeric (handles both strings and other types)
             try:
-                # Try int first, then float, then string for lexicographic comparison
+                # Try int first, then float
                 parsed_value = int(op_value)
-                # Use safe cast for string numbers too
-                safe_cast = case(
-                    (column_accessor == "", literal(None)),  # Empty string -> NULL
-                    (column_accessor.is_(None), literal(None)),  # NULL -> NULL
-                    else_=cast(column_accessor, Numeric),
-                )
                 return safe_cast, parsed_value
             except (ValueError, TypeError):
                 try:
                     parsed_value = float(op_value)
-                    # Use safe cast for string numbers too
-                    safe_cast = case(
-                        (column_accessor == "", literal(None)),  # Empty string -> NULL
-                        (column_accessor.is_(None), literal(None)),  # NULL -> NULL
-                        else_=cast(column_accessor, Numeric),
-                    )
                     return safe_cast, parsed_value
                 except (ValueError, TypeError):
                     if isinstance(op_value, str):

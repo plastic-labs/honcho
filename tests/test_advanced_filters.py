@@ -4,6 +4,7 @@ comparison operators, and wildcards across multiple models.
 """
 
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -50,7 +51,7 @@ from src.models import Peer, Workspace
 async def test_logical_operators_and_filters(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    filter_config: dict,
+    filter_config: dict[str, Any],
     expected_peer_indices: list[int],
     description: str,
 ):
@@ -160,7 +161,7 @@ async def test_logical_operators_and_filters(
 async def test_comparison_operators_filters(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    filter_config: dict,
+    filter_config: dict[str, Any],
     expected_message_indices: list[int],
     description: str,
 ):
