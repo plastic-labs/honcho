@@ -1269,10 +1269,8 @@ async def create_messages(
         for message_obj in message_objects:
             embeddings = embedding_dict.get(message_obj.public_id, [])
             for _, embedding in enumerate(embeddings):
-                # For chunked messages, we need to determine which part of the content this embedding represents
-                # For now, we'll store the full content in each chunk - this could be optimized later
                 embedding_obj = models.MessageEmbedding(
-                    content=message_obj.content,  # Store full content for now
+                    content=message_obj.content,
                     embedding=embedding,
                     message_id=message_obj.public_id,
                     workspace_name=workspace_name,
@@ -1350,10 +1348,8 @@ async def create_messages_for_peer(
         for message_obj in message_objects:
             embeddings = embedding_dict.get(message_obj.public_id, [])
             for _, embedding in enumerate(embeddings):
-                # For chunked messages, we need to determine which part of the content this embedding represents
-                # For now, we'll store the full content in each chunk - this could be optimized later
                 embedding_obj = models.MessageEmbedding(
-                    content=message_obj.content,  # Store full content for now
+                    content=message_obj.content,
                     embedding=embedding,
                     message_id=message_obj.public_id,
                     workspace_name=workspace_name,

@@ -340,10 +340,8 @@ async def test_message_chunking_creates_multiple_embeddings(
     db_session.add(test_session)
     await db_session.commit()
 
-    # Create a long message that will definitely exceed 10 tokens
     test_message_content = "This is a very long message that should be chunked into multiple pieces because it exceeds the token limit that we set for testing purposes. This message contains many words and should definitely be split into multiple chunks."
 
-    # Update the mock to return multiple embeddings (simulating chunking)
     def mock_batch_embed_chunked(
         id_resource_dict: dict[str, tuple[str, list[int]]],
     ) -> dict[str, list[list[float]]]:
