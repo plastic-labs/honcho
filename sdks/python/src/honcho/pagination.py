@@ -51,8 +51,7 @@ class SyncPage(SyncPageCore[U]):
         item = self._original_page[index]  # pyright: ignore
         if self._transform_func is not None:
             return self._transform_func(item)  # pyright: ignore
-        else:
-            return item  # pyright: ignore
+        return item  # pyright: ignore
 
     def __len__(self) -> int:
         """Get the length of the page."""
@@ -63,8 +62,7 @@ class SyncPage(SyncPageCore[U]):
         """Get all optionally transformed data as a list."""
         if self._transform_func is not None:
             return [self._transform_func(item) for item in self._original_page.data]  # pyright: ignore
-        else:
-            return self._original_page.data  # pyright: ignore
+        return self._original_page.data  # pyright: ignore
 
     @property
     def object(self) -> str:

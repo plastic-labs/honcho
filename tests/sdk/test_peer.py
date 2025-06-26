@@ -7,7 +7,7 @@ from sdks.python.src.honcho.peer import Peer
 
 
 @pytest.mark.asyncio
-async def test_peer_metadata(client_fixture):
+async def test_peer_metadata(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests creation and metadata operations for peers.
     """
@@ -38,7 +38,9 @@ async def test_peer_metadata(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_peer_add_and_get_messages(client_fixture):
+async def test_peer_add_and_get_messages(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
     """
     Tests adding and getting messages from a peer's global representation.
     """
@@ -81,7 +83,7 @@ async def test_peer_add_and_get_messages(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_peer_chat(client_fixture):
+async def test_peer_chat(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests the chat functionality of a peer, including target and session scoping.
     """
@@ -127,7 +129,7 @@ async def test_peer_chat(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_peer_get_sessions(client_fixture):
+async def test_peer_get_sessions(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests retrieving the sessions a peer is a member of.
     """
@@ -166,7 +168,7 @@ async def test_peer_get_sessions(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_peer_search(client_fixture):
+async def test_peer_search(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests searching for messages in a peer's global representation.
     """

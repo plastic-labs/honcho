@@ -44,7 +44,7 @@ describe('Honcho SDK Integration Tests', () => {
     };
 
     jest.clearAllMocks();
-    
+
     honcho = new Honcho({
       workspaceId: 'integration-test-workspace',
       apiKey: 'test-api-key',
@@ -89,7 +89,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(mockWorkspacesApi.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'integration-test-workspace',
         'chat-session',
-        { 
+        {
           'user': { observe_me: true, observe_others: false },
           'assistant': { observe_me: true, observe_others: false }
         }
@@ -98,7 +98,7 @@ describe('Honcho SDK Integration Tests', () => {
       // Step 4: Add messages to session
       const userMessage = user.message('Hello');
       const assistantMessage = assistant.message('Hi there!');
-      
+
       await session.addMessages([userMessage, assistantMessage]);
       expect(mockWorkspacesApi.workspaces.sessions.messages.create).toHaveBeenCalledWith(
         'integration-test-workspace',
@@ -239,7 +239,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(mockWorkspacesApi.workspaces.peers.search).toHaveBeenCalledWith(
         'integration-test-workspace',
         'test-peer',
-        { body: 'peer query' }
+        { query: 'peer query' }
       );
 
       // Step 3: Search session
@@ -381,10 +381,10 @@ describe('Honcho SDK Integration Tests', () => {
       // This test verifies TypeScript types are maintained correctly
       const peer: Peer = honcho.peer('typed-peer');
       const session: Session = honcho.session('typed-session');
-      
+
       expect(typeof peer.id).toBe('string');
       expect(typeof session.id).toBe('string');
-      
+
       const message = peer.message('typed message', { metadata: { type: 'test' } });
       expect(typeof message.peerId).toBe('string');
       expect(typeof message.content).toBe('string');
@@ -405,10 +405,10 @@ describe('Honcho SDK Integration Tests', () => {
 
       const openAI = context.toOpenAI(peer);
       const anthropic = context.toAnthropic('assistant');
-      
+
       expect(Array.isArray(openAI)).toBe(true);
       expect(Array.isArray(anthropic)).toBe(true);
-      
+
       if (openAI.length > 0) {
         expect(typeof openAI[0].role).toBe('string');
         expect(typeof openAI[0].content).toBe('string');

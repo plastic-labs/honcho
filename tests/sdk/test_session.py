@@ -14,7 +14,7 @@ from sdks.python.src.honcho.session import Session, SessionPeerConfig
 
 
 @pytest.mark.asyncio
-async def test_session_metadata(client_fixture):
+async def test_session_metadata(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests creation and metadata operations for sessions.
     """
@@ -45,7 +45,9 @@ async def test_session_metadata(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_session_peer_management(client_fixture):
+async def test_session_peer_management(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
     """
     Tests adding, setting, getting, and removing peers from a session.
     """
@@ -108,7 +110,7 @@ async def test_session_peer_management(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_session_peer_config(client_fixture):
+async def test_session_peer_config(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests getting and setting peer configurations in a session.
     """
@@ -155,7 +157,7 @@ async def test_session_peer_config(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_session_messages(client_fixture):
+async def test_session_messages(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests adding and getting messages from a session.
     """
@@ -180,7 +182,7 @@ async def test_session_messages(client_fixture):
         messages = messages_page.items
         assert len(messages) == 2
 
-        messages_page = await session.get_messages(filter={"peer_id": user.id})
+        messages_page = await session.get_messages(filters={"peer_id": user.id})
         messages = messages_page.items
         assert len(messages) == 1
         assert messages[0].content == "Hello assistant"
@@ -203,14 +205,14 @@ async def test_session_messages(client_fixture):
         messages = list(messages_page)
         assert len(messages) == 2
 
-        messages_page = session.get_messages(filter={"peer_id": user.id})
+        messages_page = session.get_messages(filters={"peer_id": user.id})
         messages = list(messages_page)
         assert len(messages) == 1
         assert messages[0].content == "Hello assistant"
 
 
 @pytest.mark.asyncio
-async def test_session_get_context(client_fixture):
+async def test_session_get_context(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests getting the context of a session.
     """
@@ -239,7 +241,7 @@ async def test_session_get_context(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_session_search(client_fixture):
+async def test_session_search(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests searching for messages in a session.
     """
@@ -273,7 +275,7 @@ async def test_session_search(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_session_working_rep(client_fixture):
+async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests getting the working representation of a peer in a session.
     """

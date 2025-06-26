@@ -195,7 +195,7 @@ class AsyncPeer(BaseModel):
     async def get_messages(
         self,
         *,
-        filter: dict[str, object] | None = Field(
+        filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
     ) -> AsyncPage[Message]:
@@ -206,7 +206,7 @@ class AsyncPeer(BaseModel):
         Results can be filtered based on various criteria.
 
         Args:
-            filter: Dictionary of filter criteria. Supported filters include:
+            filters: Dictionary of filter criteria. Supported filters include:
                     - peer_id: Filter messages by the peer who created them
                     - metadata: Filter messages by metadata key-value pairs
                     - timestamp_start: Filter messages after a specific timestamp
@@ -219,7 +219,7 @@ class AsyncPeer(BaseModel):
         messages_page = await self._client.workspaces.peers.messages.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,
-            filter=filter,
+            filter=filters,
         )
         return AsyncPage(messages_page)
 

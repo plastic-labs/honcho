@@ -162,8 +162,7 @@ class AsyncHoncho(BaseModel):
             return await AsyncPeer.create(
                 id, self.workspace_id, self._client, config=config
             )
-        else:
-            return AsyncPeer(id, self.workspace_id, self._client)
+        return AsyncPeer(id, self.workspace_id, self._client)
 
     async def get_peers(self) -> AsyncPage[AsyncPeer]:
         """
@@ -220,8 +219,7 @@ class AsyncHoncho(BaseModel):
             return await AsyncSession.create(
                 id, self.workspace_id, self._client, config=config
             )
-        else:
-            return AsyncSession(id, self.workspace_id, self._client)
+        return AsyncSession(id, self.workspace_id, self._client)
 
     async def get_sessions(self) -> AsyncPage[AsyncSession]:
         """

@@ -24,7 +24,7 @@ def honcho_sync_test_client(client: TestClient) -> Generator[Honcho, None, None]
     Returns a Honcho SDK client configured to talk to the test API.
     """
     http_client = httpx.Client(
-        transport=client._transport,
+        transport=client._transport,  # pyright: ignore
         base_url=str(client.base_url),
         headers=client.headers,
     )
@@ -49,7 +49,7 @@ async def honcho_async_test_client(
     )
 
     http_client = httpx.Client(
-        transport=client._transport,
+        transport=client._transport,  # pyright: ignore
         base_url=str(client.base_url),
         headers=client.headers,
     )
@@ -63,8 +63,11 @@ async def honcho_async_test_client(
 
 
 @pytest.fixture(params=["sync", "async"])
-def client_fixture(request, honcho_sync_test_client, honcho_async_test_client):
+def client_fixture(
+    request: pytest.FixtureRequest,
+    honcho_sync_test_client: Honcho,
+    honcho_async_test_client: AsyncHoncho,
+) -> tuple[Honcho | AsyncHoncho, str]:
     if request.param == "sync":
         return honcho_sync_test_client, "sync"
-    else:
-        return honcho_async_test_client, "async"
+    return honcho_async_test_client, "async"

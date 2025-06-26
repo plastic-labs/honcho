@@ -98,3 +98,4 @@ reportImplicitOverride = false
 # reportUnknownArgumentType = false
 # reportUnknownParameterType = false
 # reportUnknownMemberType = false
+reportImportCycles = false

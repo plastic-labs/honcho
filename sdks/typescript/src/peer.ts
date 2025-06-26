@@ -18,7 +18,7 @@ export class Peer {
   constructor(id: string, honcho: Honcho, config?: Record<string, unknown>) {
     this.id = id;
     this._honcho = honcho;
-    
+
     if (config) {
       this._honcho['_client'].workspaces.peers.getOrCreate(
         this._honcho.workspaceId,
@@ -145,7 +145,7 @@ export class Peer {
     const messagesPage = await this._honcho['_client'].workspaces.peers.search(
       this._honcho.workspaceId,
       this.id,
-      { body: query }
+      { query: query }
     );
     return new Page(messagesPage);
   }

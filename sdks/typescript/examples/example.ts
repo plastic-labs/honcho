@@ -35,7 +35,7 @@ async function main() {
 
   console.log('Creating session...');
   const mySession = honcho.session('session_1');
-  
+
   console.log('Adding peers to session...');
   await mySession.addPeers([alice, [assistant, new SessionPeerConfig({ observe_me: false })]]);
   console.log('Peers added to session.');
@@ -55,8 +55,7 @@ async function main() {
 
   let sessionMetadata = await mySession.getMetadata();
   console.log('Session metadata:', sessionMetadata);
-  sessionMetadata['test'] = 'test2';
-  await mySession.setMetadata(sessionMetadata);
+  await mySession.setMetadata({ ...sessionMetadata, test: 'test2' });
   console.log('Session metadata updated.');
 
   console.log('Querying alice global representation...');
@@ -80,8 +79,7 @@ async function main() {
 
   console.log('Fetching and updating charlie metadata...');
   let charlieMetadata = await charlie.getMetadata();
-  charlieMetadata['location'] = 'the moon';
-  await charlie.setMetadata(charlieMetadata);
+  await charlie.setMetadata({ ...charlieMetadata, location: 'the moon' });
   console.log('Charlie metadata updated.');
 
   console.log('Querying charlie for location...');

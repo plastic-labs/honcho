@@ -36,16 +36,15 @@ class AsyncPage(AsyncPageCore[U]):
                             If None, objects are passed through unchanged.
         """
         super().__init__(items=original_page.items)  # pyright: ignore
-        self._original_page = original_page
-        self._transform_func = transform_func
+        self._original_page = original_page  # pyright: ignore
+        self._transform_func = transform_func  # pyright: ignore
 
     @property
-    def items(self) -> list[U]:
+    def items(self) -> list[U]:  # pyright: ignore
         """Get all optionally transformed items as a list."""
         if self._transform_func is not None:
             return [self._transform_func(item) for item in self._original_page.items]
-        else:
-            return self._original_page.items  # type: ignore
+        return self._original_page.items  # pyright: ignore
 
     async def __aiter__(self) -> AsyncIterator[U]:
         """Async iterate over optionally transformed objects."""
@@ -60,8 +59,7 @@ class AsyncPage(AsyncPageCore[U]):
         item = await self._original_page.__agetitem__(index)  # type: ignore # pyright: ignore
         if self._transform_func is not None:
             return self._transform_func(item)  # pyright: ignore
-        else:
-            return item  # type: ignore # pyright: ignore
+        return item  # type: ignore # pyright: ignore
 
     def __len__(self) -> int:
         """Get the length of the page."""
@@ -73,8 +71,7 @@ class AsyncPage(AsyncPageCore[U]):
         data = await self._original_page.data  # type: ignore # pyright: ignore
         if self._transform_func is not None:
             return [self._transform_func(item) for item in data]  # pyright: ignore
-        else:
-            return data  # type: ignore # pyright: ignore
+        return data  # type: ignore # pyright: ignore
 
     @property
     def object(self) -> str:

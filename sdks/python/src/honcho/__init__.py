@@ -48,13 +48,13 @@ __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
 __all__ = [
+    "AsyncHoncho",
+    "AsyncPeer",
+    "AsyncSession",
+    "AsyncPage",
     "Honcho",
     "Peer",
     "Session",
     "SessionContext",
     "SyncPage",
-    "AsyncHoncho",
-    "AsyncPeer",
-    "AsyncSession",
-    "AsyncPage",
 ]

@@ -12,7 +12,9 @@ from sdks.python.src.honcho.session import Session
 
 
 @pytest.mark.asyncio
-async def test_client_init(client_fixture, client: TestClient):
+async def test_client_init(
+    client_fixture: tuple[Honcho | AsyncHoncho, str], client: TestClient
+):
     """
     Tests that the Honcho SDK clients can be initialized and that they create a workspace.
     """
@@ -53,7 +55,7 @@ async def test_client_init(client_fixture, client: TestClient):
 
 
 @pytest.mark.asyncio
-async def test_workspace_metadata(client_fixture):
+async def test_workspace_metadata(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests getting and setting metadata on a workspace.
     """
@@ -76,7 +78,7 @@ async def test_workspace_metadata(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_get_workspaces(client_fixture):
+async def test_get_workspaces(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests listing available workspaces.
     """
@@ -94,7 +96,9 @@ async def test_get_workspaces(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_client_list_peers_and_sessions(client_fixture):
+async def test_client_list_peers_and_sessions(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
     """
     Tests listing peers and sessions at the client level.
     """
@@ -149,7 +153,7 @@ async def test_client_list_peers_and_sessions(client_fixture):
 
 
 @pytest.mark.asyncio
-async def test_workspace_search(client_fixture):
+async def test_workspace_search(client_fixture: tuple[Honcho | AsyncHoncho, str]):
     """
     Tests searching for messages within a workspace.
     """

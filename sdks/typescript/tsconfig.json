@@ -22,9 +22,4 @@
     "dist"
   ],
   "baseUrl": ".",
-  "paths": {
-    "@honcho-ai/core": [
-      "../../honcho-node-core/dist"
-    ]
-  }
 }

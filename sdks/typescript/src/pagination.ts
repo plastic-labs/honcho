@@ -29,6 +29,9 @@ export class Page<T> implements AsyncIterable<T> {
    * Get an item by index.
    */
   async get(index: number): Promise<T> {
+    if (!this._originalPage?.get || typeof this._originalPage.get !== 'function') {
+      throw new Error('Original page does not support indexed access');
+    }
     const item = await this._originalPage.get(index);
     return this._transformFunc ? this._transformFunc(item) : item;
   }
@@ -37,14 +40,14 @@ export class Page<T> implements AsyncIterable<T> {
    * Get the size of the page.
    */
   get size(): number {
-    return this._originalPage?.size;
+    return this._originalPage?.size ?? 0;
   }
 
   /**
    * Get the total number of items.
    */
   get total(): number {
-    return this._originalPage?.total;
+    return this._originalPage?.total ?? 0;
   }
 
   /**

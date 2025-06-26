@@ -33,7 +33,7 @@ export default class MockHonchoCore {
       getContext: jest.fn(),
       search: jest.fn(),
     },
-    getOrCreate: jest.fn(),
+    getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
     update: jest.fn(),
     list: jest.fn(),
     search: jest.fn(),
