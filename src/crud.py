@@ -1174,8 +1174,7 @@ async def search(
             )
             .where(models.MessageEmbedding.workspace_name == workspace_name)
             .order_by(
-                models.MessageEmbedding.embedding.cosine_distance(embedding_query),
-                models.Message.created_at.desc(),
+                models.MessageEmbedding.embedding.cosine_distance(embedding_query)
             )
         )
 
@@ -1231,13 +1230,13 @@ async def search(
                 )
             )
 
-    # Add additional filters based on parameters
-    if session_name is not None:
-        stmt = base_query.where(models.Message.session_name == session_name)
-    elif peer_name is not None:
-        stmt = base_query.where(models.Message.peer_name == peer_name)
-    else:
-        stmt = base_query
+        # Add additional filters based on parameters
+        if session_name is not None:
+            stmt = base_query.where(models.Message.session_name == session_name)
+        elif peer_name is not None:
+            stmt = base_query.where(models.Message.peer_name == peer_name)
+        else:
+            stmt = base_query
 
     return stmt
 
