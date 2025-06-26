@@ -1,4 +1,3 @@
-import os
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, final
@@ -18,6 +17,7 @@ from . import models, schemas
 from .exceptions import (
     ResourceNotFoundException,
 )
+from .utils.filter import apply_filter
 
 load_dotenv(override=True)
 
@@ -41,8 +41,6 @@ embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
 logger = getLogger(__name__)
 
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
-
-SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
 
 ########################################################
 # workspace methods
@@ -88,18 +86,17 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Workspace]]:
     """
     Get all workspaces.
 
     Args:
         db: Database session
-        filter: Filter the workspaces by a dictionary of metadata
+        filters: Filter the workspaces by a dictionary of metadata
     """
     stmt = select(models.Workspace)
-    if filter is not None:
-        stmt = stmt.where(models.Workspace.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Workspace, filters)
     stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
 
@@ -242,12 +239,11 @@ async def get_peer(
 
 async def get_peers(
     workspace_name: str,
-    filter: dict[str, str] | None = None,
+    filters: dict[str, str] | None = None,
 ) -> Select[tuple[models.Peer]]:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
-    if filter is not None:
-        stmt = stmt.where(models.Peer.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Peer, filters)
 
     stmt = stmt.order_by(models.Peer.created_at)
 
@@ -294,8 +290,7 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    is_active: bool | None = None,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
@@ -303,8 +298,7 @@ async def get_sessions_for_peer(
     Args:
         workspace_name: Name of the workspace
         peer_name: Name of the peer
-        is_active: Filter by active status (True/False/None for all)
-        filter: Filter sessions by metadata
+        filters: Filter sessions by metadata
 
     Returns:
         SQLAlchemy Select statement
@@ -320,11 +314,7 @@ async def get_sessions_for_peer(
         .where(models.Session.workspace_name == workspace_name)
     )
 
-    if is_active is not None:
-        stmt = stmt.where(models.Session.is_active == is_active)
-
-    if filter is not None:
-        stmt = stmt.where(models.Session.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Session, filters)
 
     stmt: Select[tuple[models.Session]] = stmt.order_by(models.Session.created_at)
 
@@ -338,19 +328,14 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    is_active: bool | None = None,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
     Get all sessions in a workspace.
     """
     stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
 
-    if is_active:
-        stmt = stmt.where(models.Session.is_active.is_(True))
-
-    if filter is not None:
-        stmt = stmt.where(models.Session.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Session, filters)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -391,9 +376,12 @@ async def get_or_create_session(
 
     # Check if session already exists
     if honcho_session is None:
-        if session.peer_names and len(session.peer_names) > SESSION_PEERS_LIMIT:
+        if (
+            session.peer_names
+            and len(session.peer_names) > settings.SESSION_PEERS_LIMIT
+        ):
             raise ValueError(
-                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
             )
 
         # Create honcho session
@@ -780,9 +768,9 @@ async def set_peers_for_session(
         ResourceNotFoundException: If the session does not exist
     """
     # Validate peer limit before making any changes
-    if len(peer_names) > SESSION_PEERS_LIMIT:
+    if len(peer_names) > settings.SESSION_PEERS_LIMIT:
         raise ValueError(
-            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
         )
 
     # Verify session exists
@@ -871,9 +859,9 @@ async def _get_or_add_peers_to_session(
     existing_peer_names = result.scalars().all()
 
     new_peers = [name for name in peer_names if name not in existing_peer_names]
-    if len(new_peers) + len(existing_peer_names) > SESSION_PEERS_LIMIT:
+    if len(new_peers) + len(existing_peer_names) > settings.SESSION_PEERS_LIMIT:
         raise ValueError(
-            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {SESSION_PEERS_LIMIT} peers per session."
+            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {settings.SESSION_PEERS_LIMIT} peers per session."
         )
 
     # Use upsert to handle both new peers and rejoining peers
@@ -1099,10 +1087,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
     else:
         # Fetch the latest global level user representation
@@ -1116,10 +1104,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
 
     return latest_representation
@@ -1261,7 +1249,7 @@ async def get_messages(
     workspace_name: str,
     session_name: str,
     reverse: bool | None = False,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
     token_limit: int | None = None,
     message_count_limit: int | None = None,
 ) -> Select[tuple[models.Message]]:
@@ -1275,7 +1263,7 @@ async def get_messages(
         workspace_name: Name of the workspace
         session_name: Name of the session
         reverse: Whether to reverse the order of messages
-        filter: Filter to apply to the messages
+        filters: Filter to apply to the messages
         token_limit: Maximum number of tokens to include in the messages
         message_count_limit: Maximum number of messages to include
 
@@ -1288,13 +1276,10 @@ async def get_messages(
         models.Message.session_name == session_name,
     ]
 
-    # Add metadata filter if provided
-    if filter is not None:
-        base_conditions.append(models.Message.h_metadata.contains(filter))
-
     # Apply message count limit first (takes precedence over token limit)
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
+        stmt = apply_filter(stmt, models.Message, filters)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
@@ -1304,7 +1289,6 @@ async def get_messages(
             stmt = stmt.order_by(models.Message.id.desc())
         else:
             stmt = stmt.order_by(models.Message.id.asc())
-
     elif token_limit is not None:
         # Apply token limit logic
         # Create a subquery that calculates running sum of tokens for most recent messages
@@ -1325,16 +1309,17 @@ async def get_messages(
             .join(token_subquery, models.Message.id == token_subquery.c.id)
             .where(token_subquery.c.running_token_sum <= token_limit)
         )
+        stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
             stmt = stmt.order_by(models.Message.id.asc())
-
     else:
         # Default case - no limits applied
         stmt = select(models.Message).where(*base_conditions)
+        stmt = apply_filter(stmt, models.Message, filters)
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
@@ -1398,7 +1383,7 @@ async def get_messages_for_peer(
     workspace_name: str,
     peer_name: str,
     reverse: bool | None = False,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Message]]:
     stmt = (
         select(models.Message)
@@ -1407,8 +1392,7 @@ async def get_messages_for_peer(
         .where(models.Message.session_name.is_(None))
     )
 
-    if filter is not None:
-        stmt = stmt.where(models.Message.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Message, filters)
 
     if reverse:
         stmt = stmt.order_by(models.Message.id.desc())
@@ -1531,7 +1515,7 @@ async def query_documents(
     peer_name: str,
     collection_name: str,
     query: str,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
@@ -1548,8 +1532,7 @@ async def query_documents(
         stmt = stmt.where(
             models.Document.embedding.cosine_distance(embedding_query) < max_distance
         )
-    if filter is not None:
-        stmt = stmt.where(models.Document.h_metadata.contains(filter))
+    stmt = apply_filter(stmt, models.Document, filters)
     stmt = stmt.limit(top_k).order_by(
         models.Document.embedding.cosine_distance(embedding_query)
     )

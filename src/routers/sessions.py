@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
@@ -84,23 +84,14 @@ async def get_sessions(
 ):
     """Get All Sessions in a Workspace"""
     filter_param = None
-    is_active_param = False  # Default from schema
 
-    if options:
-        if hasattr(options, "filter") and options.filter:
-            filter_param = options.filter
-            if filter_param == {}:  # Explicitly check for empty dict
-                filter_param = None
-        if hasattr(options, "is_active"):  # Check if is_active is present
-            is_active_param = options.is_active
+    if options and hasattr(options, "filter") and options.filter:
+        filter_param = options.filter
+        if filter_param == {}:  # Explicitly check for empty dict
+            filter_param = None
 
-    return await paginate(
-        db,
-        await crud.get_sessions(
-            workspace_name=workspace_id,
-            is_active=is_active_param,
-            filter=filter_param,
-        ),
+    return await apaginate(
+        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
     )
 
 
@@ -361,7 +352,7 @@ async def get_session_peers(
         peers_query = await crud.get_peers_from_session(
             workspace_name=workspace_id, session_name=session_id
         )
-        return await paginate(db, peers_query)
+        return await apaginate(db, peers_query)
     except ValueError as e:
         logger.warning(f"Failed to get peers from session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e
@@ -468,4 +459,4 @@ async def search_session(
         query, workspace_name=workspace_id, session_name=session_id
     )
 
-    return await paginate(db, stmt)
+    return await apaginate(db, stmt)

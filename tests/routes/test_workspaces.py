@@ -91,12 +91,12 @@ async def test_get_all_workspaces(client: TestClient):
 
     response = client.post(
         "/v2/workspaces/list",
-        json={"filter": {"test_key": "test_value"}},
+        json={"filter": {"metadata": {"test_key": "test_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) > 0
+    assert len(data["items"]) == 1
     assert data["items"][0]["metadata"] == {"test_key": "test_value"}
 
 
