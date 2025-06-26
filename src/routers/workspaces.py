@@ -67,7 +67,7 @@ async def get_all_workspaces(
 
     return await apaginate(
         db,
-        await crud.get_all_workspaces(filter=filter_param),
+        await crud.get_all_workspaces(filters=filter_param),
     )
 
 

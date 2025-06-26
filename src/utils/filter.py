@@ -48,7 +48,7 @@ ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES = {
 
 
 def apply_filter(
-    stmt: Select[tuple[T]], model_class: type[T], filter: dict[str, Any] | None = None
+    stmt: Select[tuple[T]], model_class: type[T], filters: dict[str, Any] | None = None
 ) -> Select[tuple[T]]:
     """
     Apply advanced filter to a SQL statement based on filter dictionary.
@@ -79,7 +79,7 @@ def apply_filter(
     Args:
         stmt: SQLAlchemy Select statement to modify
         model_class: SQLAlchemy model class for column access
-        filter: Optional filter dictionary
+        filters: Optional filter dictionary
 
     Returns:
         Modified Select statement with filter applied if provided
@@ -87,10 +87,10 @@ def apply_filter(
     Raises:
         FilterError: When the filter contains invalid configuration or values
     """
-    if filter is None:
+    if filters is None:
         return stmt
 
-    conditions = _build_filter_conditions(filter, model_class)
+    conditions = _build_filter_conditions(filters, model_class)
     if conditions is not None:
         stmt = stmt.where(conditions)
 

@@ -91,7 +91,7 @@ async def get_sessions(
             filter_param = None
 
     return await apaginate(
-        db, await crud.get_sessions(workspace_name=workspace_id, filter=filter_param)
+        db, await crud.get_sessions(workspace_name=workspace_id, filters=filter_param)
     )
 
 

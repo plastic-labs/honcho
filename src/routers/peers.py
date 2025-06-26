@@ -53,7 +53,7 @@ async def get_peers(
 
     return await apaginate(
         db,
-        await crud.get_peers(workspace_name=workspace_id, filter=filter_param),
+        await crud.get_peers(workspace_name=workspace_id, filters=filter_param),
     )
 
 
@@ -139,7 +139,7 @@ async def get_sessions_for_peer(
         await crud.get_sessions_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
-            filter=filter_param,
+            filters=filter_param,
         ),
     )
 
@@ -269,16 +269,16 @@ async def get_messages_for_peer(
 ):
     """Get all messages for a peer"""
     try:
-        filter = None
+        filters = None
         if options and hasattr(options, "filter"):
-            filter = options.filter
-            if filter == {}:
-                filter = None
+            filters = options.filter
+            if filters == {}:
+                filters = None
 
         messages_query = await crud.get_messages_for_peer(
             workspace_name=workspace_id,
             peer_name=peer_id,
-            filter=filter,
+            filters=filters,
             reverse=reverse,
         )
 

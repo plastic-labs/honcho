@@ -321,16 +321,16 @@ async def get_messages(
 ):
     """Get all messages for a session"""
     try:
-        filter = None
+        filters = None
         if options and hasattr(options, "filter"):
-            filter = options.filter
-            if filter == {}:
-                filter = None
+            filters = options.filter
+            if filters == {}:
+                filters = None
 
         messages_query = await crud.get_messages(
             workspace_name=workspace_id,
             session_name=session_id,
-            filter=filter,
+            filters=filters,
             reverse=reverse,
         )
 

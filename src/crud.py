@@ -86,17 +86,17 @@ async def get_or_create_workspace(
 
 
 async def get_all_workspaces(
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Workspace]]:
     """
     Get all workspaces.
 
     Args:
         db: Database session
-        filter: Filter the workspaces by a dictionary of metadata
+        filters: Filter the workspaces by a dictionary of metadata
     """
     stmt = select(models.Workspace)
-    stmt = apply_filter(stmt, models.Workspace, filter)
+    stmt = apply_filter(stmt, models.Workspace, filters)
     stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
 
@@ -239,11 +239,11 @@ async def get_peer(
 
 async def get_peers(
     workspace_name: str,
-    filter: dict[str, str] | None = None,
+    filters: dict[str, str] | None = None,
 ) -> Select[tuple[models.Peer]]:
     stmt = select(models.Peer).where(models.Peer.workspace_name == workspace_name)
 
-    stmt = apply_filter(stmt, models.Peer, filter)
+    stmt = apply_filter(stmt, models.Peer, filters)
 
     stmt = stmt.order_by(models.Peer.created_at)
 
@@ -290,7 +290,7 @@ async def update_peer(
 async def get_sessions_for_peer(
     workspace_name: str,
     peer_name: str,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
     Get all sessions for a peer through the session_peers relationship.
@@ -298,7 +298,7 @@ async def get_sessions_for_peer(
     Args:
         workspace_name: Name of the workspace
         peer_name: Name of the peer
-        filter: Filter sessions by metadata
+        filters: Filter sessions by metadata
 
     Returns:
         SQLAlchemy Select statement
@@ -314,7 +314,7 @@ async def get_sessions_for_peer(
         .where(models.Session.workspace_name == workspace_name)
     )
 
-    stmt = apply_filter(stmt, models.Session, filter)
+    stmt = apply_filter(stmt, models.Session, filters)
 
     stmt: Select[tuple[models.Session]] = stmt.order_by(models.Session.created_at)
 
@@ -328,14 +328,14 @@ async def get_sessions_for_peer(
 
 async def get_sessions(
     workspace_name: str,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Session]]:
     """
     Get all sessions in a workspace.
     """
     stmt = select(models.Session).where(models.Session.workspace_name == workspace_name)
 
-    stmt = apply_filter(stmt, models.Session, filter)
+    stmt = apply_filter(stmt, models.Session, filters)
 
     stmt = stmt.order_by(models.Session.created_at)
 
@@ -1249,7 +1249,7 @@ async def get_messages(
     workspace_name: str,
     session_name: str,
     reverse: bool | None = False,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
     token_limit: int | None = None,
     message_count_limit: int | None = None,
 ) -> Select[tuple[models.Message]]:
@@ -1263,7 +1263,7 @@ async def get_messages(
         workspace_name: Name of the workspace
         session_name: Name of the session
         reverse: Whether to reverse the order of messages
-        filter: Filter to apply to the messages
+        filters: Filter to apply to the messages
         token_limit: Maximum number of tokens to include in the messages
         message_count_limit: Maximum number of messages to include
 
@@ -1279,7 +1279,7 @@ async def get_messages(
     # Apply message count limit first (takes precedence over token limit)
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
-        stmt = apply_filter(stmt, models.Message, filter)
+        stmt = apply_filter(stmt, models.Message, filters)
         # For message count limit, we want the most recent N messages
         # So we order by id desc to get most recent, then apply limit
         stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
@@ -1309,7 +1309,7 @@ async def get_messages(
             .join(token_subquery, models.Message.id == token_subquery.c.id)
             .where(token_subquery.c.running_token_sum <= token_limit)
         )
-        stmt = apply_filter(stmt, models.Message, filter)
+        stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
         if reverse:
@@ -1319,7 +1319,7 @@ async def get_messages(
     else:
         # Default case - no limits applied
         stmt = select(models.Message).where(*base_conditions)
-        stmt = apply_filter(stmt, models.Message, filter)
+        stmt = apply_filter(stmt, models.Message, filters)
         if reverse:
             stmt = stmt.order_by(models.Message.id.desc())
         else:
@@ -1383,7 +1383,7 @@ async def get_messages_for_peer(
     workspace_name: str,
     peer_name: str,
     reverse: bool | None = False,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
 ) -> Select[tuple[models.Message]]:
     stmt = (
         select(models.Message)
@@ -1392,7 +1392,7 @@ async def get_messages_for_peer(
         .where(models.Message.session_name.is_(None))
     )
 
-    stmt = apply_filter(stmt, models.Message, filter)
+    stmt = apply_filter(stmt, models.Message, filters)
 
     if reverse:
         stmt = stmt.order_by(models.Message.id.desc())
@@ -1515,7 +1515,7 @@ async def query_documents(
     peer_name: str,
     collection_name: str,
     query: str,
-    filter: dict[str, Any] | None = None,
+    filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
 ) -> Sequence[models.Document]:
@@ -1532,7 +1532,7 @@ async def query_documents(
         stmt = stmt.where(
             models.Document.embedding.cosine_distance(embedding_query) < max_distance
         )
-    stmt = apply_filter(stmt, models.Document, filter)
+    stmt = apply_filter(stmt, models.Document, filters)
     stmt = stmt.limit(top_k).order_by(
         models.Document.embedding.cosine_distance(embedding_query)
     )
