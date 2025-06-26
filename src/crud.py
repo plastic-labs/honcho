@@ -1250,6 +1250,10 @@ async def create_messages(
             token_count=len(message._encoded_message),  # pyright: ignore[reportPrivateUsage]
         )
         message_objects.append(message_obj)
+
+    db.add_all(message_objects)
+    await db.flush()
+
     if settings.LLM.EMBED_MESSAGES:
         encoded_message_lookup = {
             msg.public_id: orig_msg._encoded_message  # pyright: ignore[reportPrivateUsage]
@@ -1283,8 +1287,6 @@ async def create_messages(
         if embedding_objects:
             db.add_all(embedding_objects)
 
-    # Add all messages and commit
-    db.add_all(message_objects)
     await db.commit()
 
     return message_objects
@@ -1329,6 +1331,9 @@ async def create_messages_for_peer(
         )
         message_objects.append(message_obj)
 
+    db.add_all(message_objects)
+    await db.flush()
+
     if settings.LLM.EMBED_MESSAGES:
         encoded_message_lookup = {
             msg.public_id: orig_msg._encoded_message  # pyright: ignore[reportPrivateUsage]
@@ -1361,8 +1366,6 @@ async def create_messages_for_peer(
         if embedding_objects:
             db.add_all(embedding_objects)
 
-    # Add all messages and commit
-    db.add_all(message_objects)
     await db.commit()
 
     return message_objects

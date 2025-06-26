@@ -26,7 +26,7 @@ schema = settings.DB.SCHEMA
 def upgrade() -> None:
     op.create_table(
         "message_embeddings",
-        sa.Column("id", sa.Text(), primary_key=True),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("embedding", Vector(1536), nullable=False),
         sa.Column("message_id", sa.Text(), nullable=False),
