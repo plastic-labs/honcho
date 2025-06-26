@@ -9,7 +9,7 @@ Script to generate embeddings for existing messages that don't already have embe
 #    If the total number of tokens across all messages in a batch exceeds this limit, the batch will need to be split into multiple batches.
 
 Usage:
-    python scripts/generate_message_embeddings.py workspace_name [--session-name SESSION] [--peer-name PEER]
+    python scripts/generate_message_embeddings.py [--workspace-name WORKSPACE] [--session-name SESSION] [--peer-name PEER]
 """
 
 import argparse
@@ -33,16 +33,16 @@ from src.embeddings import EmbeddingClient  # noqa: E402
 
 async def get_messages_without_embeddings(
     db: AsyncSession,
-    workspace_name: str,
+    workspace_name: str | None = None,
     session_name: str | None = None,
     peer_name: str | None = None,
 ) -> list[models.Message]:
     """
-    Get all messages in a workspace that don't have embeddings yet.
+    Get all messages that don't have embeddings yet.
 
     Args:
         db: Database session
-        workspace_name: Name of the workspace
+        workspace_name: Optional workspace name filter
         session_name: Optional session name filter
         peer_name: Optional peer name filter
 
@@ -56,12 +56,14 @@ async def get_messages_without_embeddings(
             models.MessageEmbedding,
             models.Message.public_id == models.MessageEmbedding.message_id,
         )
-        .where(models.Message.workspace_name == workspace_name)
         .where(models.MessageEmbedding.message_id.is_(None))  # No embedding exists
         .order_by(models.Message.id)
     )
 
     # Apply filters if provided
+    if workspace_name:
+        stmt = stmt.where(models.Message.workspace_name == workspace_name)
+
     if session_name:
         stmt = stmt.where(models.Message.session_name == session_name)
 
@@ -136,7 +138,9 @@ async def main():
     parser = argparse.ArgumentParser(
         description="Generate embeddings for messages that don't already have them"
     )
-    parser.add_argument("workspace_name", help="Name of the workspace to process")
+    parser.add_argument(
+        "--workspace-name", help="Only process messages from this workspace"
+    )
     parser.add_argument(
         "--session-name", help="Only process messages from this session"
     )
@@ -147,7 +151,11 @@ async def main():
     # Initialize embedding client
     embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
 
-    print(f"Generating embeddings for workspace: {args.workspace_name}")
+    print("Generating embeddings for messages...")
+    if args.workspace_name:
+        print(f"  Filtering by workspace: {args.workspace_name}")
+    else:
+        print("  Processing all workspaces")
     if args.session_name:
         print(f"  Filtering by session: {args.session_name}")
     if args.peer_name:
