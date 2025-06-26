@@ -16,7 +16,7 @@ servers:
   - url: https://api.honcho.dev
     description: Production SaaS Platform
 paths:
-  /v1/workspaces:
+  /v2/workspaces:
     post:
       tags:
         - workspaces
@@ -26,7 +26,7 @@ paths:
 
         If workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).
         Otherwise, it uses the workspace_id from the JWT token.
-      operationId: get_or_create_workspace_v1_workspaces_post
+      operationId: get_or_create_workspace_v2_workspaces_post
       requestBody:
         content:
           application/json:
@@ -74,13 +74,13 @@ paths:
                 id="id",
             )
             print(workspace.id)
-  /v1/workspaces/list:
+  /v2/workspaces/list:
     post:
       tags:
         - workspaces
       summary: Get All Workspaces
       description: Get all Workspaces
-      operationId: get_all_workspaces_v1_workspaces_list_post
+      operationId: get_all_workspaces_v2_workspaces_list_post
       security:
         - HTTPBearer: []
         - {}
@@ -152,13 +152,13 @@ paths:
             page = client.workspaces.list()
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}:
+  /v2/workspaces/{workspace_id}:
     put:
       tags:
         - workspaces
       summary: Update Workspace
       description: Update a Workspace
-      operationId: update_workspace_v1_workspaces__workspace_id__put
+      operationId: update_workspace_v2_workspaces__workspace_id__put
       security:
         - HTTPBearer: []
         - {}
@@ -215,13 +215,13 @@ paths:
                 workspace_id="workspace_id",
             )
             print(workspace.id)
-  /v1/workspaces/{workspace_id}/search:
+  /v2/workspaces/{workspace_id}/search:
     post:
       tags:
         - workspaces
       summary: Search Workspace
       description: Search a Workspace
-      operationId: search_workspace_v1_workspaces__workspace_id__search_post
+      operationId: search_workspace_v2_workspaces__workspace_id__search_post
       security:
         - HTTPBearer: []
         - {}
@@ -303,13 +303,98 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/peers/list:
+  /v2/workspaces/{workspace_id}/deriver/status:
+    get:
+      tags:
+        - workspaces
+      summary: Get Deriver Status
+      description: Get the deriver processing status, optionally scoped to a peer and/or session
+      operationId: get_deriver_status_v2_workspaces__workspace_id__deriver_status_get
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: ID of the workspace
+            title: Workspace Id
+          description: ID of the workspace
+        - name: peer_id
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            description: Optional peer ID to filter by
+            title: Peer Id
+          description: Optional peer ID to filter by
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            description: Optional session ID to filter by
+            title: Session Id
+          description: Optional session ID to filter by
+        - name: include_sender
+          in: query
+          required: false
+          schema:
+            type: boolean
+            description: Include work units triggered by this peer
+            default: false
+            title: Include Sender
+          description: Include work units triggered by this peer
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeriverStatus'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+            });
+
+            const deriverStatus = await client.workspaces.deriverStatus('workspace_id');
+
+            console.log(deriverStatus.peer_id);
+        - lang: Python
+          source: |-
+            import os
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+            )
+            deriver_status = client.workspaces.deriver_status(
+                workspace_id="workspace_id",
+            )
+            print(deriver_status.peer_id)
+  /v2/workspaces/{workspace_id}/peers/list:
     post:
       tags:
         - peers
       summary: Get Peers
       description: Get All Peers for a Workspace
-      operationId: get_peers_v1_workspaces__workspace_id__peers_list_post
+      operationId: get_peers_v2_workspaces__workspace_id__peers_list_post
       security:
         - HTTPBearer: []
         - {}
@@ -391,7 +476,7 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/peers:
+  /v2/workspaces/{workspace_id}/peers:
     post:
       tags:
         - peers
@@ -401,7 +486,7 @@ paths:
 
         If peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).
         Otherwise, it uses the peer_id from the JWT token.
-      operationId: get_or_create_peer_v1_workspaces__workspace_id__peers_post
+      operationId: get_or_create_peer_v2_workspaces__workspace_id__peers_post
       security:
         - HTTPBearer: []
         - {}
@@ -459,13 +544,13 @@ paths:
                 id="id",
             )
             print(peer.id)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}:
     put:
       tags:
         - peers
       summary: Update Peer
       description: Update a Peer's name and/or metadata
-      operationId: update_peer_v1_workspaces__workspace_id__peers__peer_id__put
+      operationId: update_peer_v2_workspaces__workspace_id__peers__peer_id__put
       security:
         - HTTPBearer: []
         - {}
@@ -531,13 +616,13 @@ paths:
                 workspace_id="workspace_id",
             )
             print(peer.id)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}/sessions:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/sessions:
     post:
       tags:
         - peers
       summary: Get Sessions For Peer
       description: Get All Sessions for a Peer
-      operationId: get_sessions_for_peer_v1_workspaces__workspace_id__peers__peer_id__sessions_post
+      operationId: get_sessions_for_peer_v2_workspaces__workspace_id__peers__peer_id__sessions_post
       security:
         - HTTPBearer: []
         - {}
@@ -628,12 +713,12 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}/chat:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/chat:
     post:
       tags:
         - peers
       summary: Chat
-      operationId: chat_v1_workspaces__workspace_id__peers__peer_id__chat_post
+      operationId: chat_v2_workspaces__workspace_id__peers__peer_id__chat_post
       security:
         - HTTPBearer: []
         - {}
@@ -705,13 +790,13 @@ paths:
                 queries="string",
             )
             print(response.content)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}/messages:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/messages:
     post:
       tags:
         - peers
       summary: Create Messages For Peer
       description: Create messages for a peer
-      operationId: create_messages_for_peer_v1_workspaces__workspace_id__peers__peer_id__messages_post
+      operationId: create_messages_for_peer_v2_workspaces__workspace_id__peers__peer_id__messages_post
       security:
         - HTTPBearer: []
         - {}
@@ -748,7 +833,7 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Message'
-                title: Response Create Messages For Peer V1 Workspaces  Workspace Id  Peers  Peer Id  Messages Post
+                title: Response Create Messages For Peer V2 Workspaces  Workspace Id  Peers  Peer Id  Messages Post
         '422':
           description: Validation Error
           content:
@@ -786,13 +871,13 @@ paths:
                 }],
             )
             print(messages)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}/messages/list:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/messages/list:
     post:
       tags:
         - peers
       summary: Get Messages For Peer
       description: Get all messages for a peer
-      operationId: get_messages_for_peer_v1_workspaces__workspace_id__peers__peer_id__messages_list_post
+      operationId: get_messages_for_peer_v2_workspaces__workspace_id__peers__peer_id__messages_list_post
       security:
         - HTTPBearer: []
         - {}
@@ -894,16 +979,24 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}/representation:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/representation:
     post:
       tags:
         - peers
       summary: Get Working Representation
-      description: |-
+      description: >-
         Get a peer's working representation for a session.
 
-        If peer_id is provided in body, the representation is of that peer, from our perspective.
-      operationId: get_working_representation_v1_workspaces__workspace_id__peers__peer_id__representation_post
+
+        If a session_id is provided in the body, we get the working representation of the peer in that
+        session.
+
+
+        In the current implementation, we don't offer representations of `target` so that parameter is
+        ignored.
+
+        Future releases will allow for this.
+      operationId: get_working_representation_v2_workspaces__workspace_id__peers__peer_id__representation_post
       security:
         - HTTPBearer: []
         - {}
@@ -940,7 +1033,7 @@ paths:
                 type: object
                 additionalProperties: true
                 title: >-
-                  Response Get Working Representation V1 Workspaces  Workspace Id  Peers  Peer Id 
+                  Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id 
                   Representation Post
         '422':
           description: Validation Error
@@ -976,13 +1069,13 @@ paths:
                 session_id="session_id",
             )
             print(response)
-  /v1/workspaces/{workspace_id}/peers/{peer_id}/search:
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/search:
     post:
       tags:
         - peers
       summary: Search Peer
       description: Search a Peer
-      operationId: search_peer_v1_workspaces__workspace_id__peers__peer_id__search_post
+      operationId: search_peer_v2_workspaces__workspace_id__peers__peer_id__search_post
       security:
         - HTTPBearer: []
         - {}
@@ -1029,9 +1122,8 @@ paths:
         content:
           application/json:
             schema:
-              type: string
-              description: Search query
-              title: Query
+              $ref: '#/components/schemas/MessageSearchOptions'
+              description: 'Message search parameters '
       responses:
         '200':
           description: Successful Response
@@ -1058,8 +1150,8 @@ paths:
 
             // Automatically fetches more pages as needed.
 
-            for await (const message of client.workspaces.peers.search('workspace_id', 'peer_id', { body:
-            'body' })) {
+            for await (const message of client.workspaces.peers.search('workspace_id', 'peer_id', { query:
+            'query' })) {
               console.log(message.id);
             }
         - lang: Python
@@ -1073,11 +1165,11 @@ paths:
             page = client.workspaces.peers.search(
                 peer_id="peer_id",
                 workspace_id="workspace_id",
-                body="body",
+                query="query",
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/sessions:
+  /v2/workspaces/{workspace_id}/sessions:
     post:
       tags:
         - sessions
@@ -1087,7 +1179,7 @@ paths:
 
         If session_id is provided as a query parameter, it verifies the session is in the workspace.
         Otherwise, it uses the session_id from the JWT token for verification.
-      operationId: get_or_create_session_v1_workspaces__workspace_id__sessions_post
+      operationId: get_or_create_session_v2_workspaces__workspace_id__sessions_post
       security:
         - HTTPBearer: []
         - {}
@@ -1145,13 +1237,13 @@ paths:
                 id="id",
             )
             print(session.id)
-  /v1/workspaces/{workspace_id}/sessions/list:
+  /v2/workspaces/{workspace_id}/sessions/list:
     post:
       tags:
         - sessions
       summary: Get Sessions
       description: Get All Sessions in a Workspace
-      operationId: get_sessions_v1_workspaces__workspace_id__sessions_list_post
+      operationId: get_sessions_v2_workspaces__workspace_id__sessions_list_post
       security:
         - HTTPBearer: []
         - {}
@@ -1233,13 +1325,13 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}:
     put:
       tags:
         - sessions
       summary: Update Session
       description: Update the metadata of a Session
-      operationId: update_session_v1_workspaces__workspace_id__sessions__session_id__put
+      operationId: update_session_v2_workspaces__workspace_id__sessions__session_id__put
       security:
         - HTTPBearer: []
         - {}
@@ -1310,7 +1402,7 @@ paths:
         - sessions
       summary: Delete Session
       description: Delete a session by marking it as inactive
-      operationId: delete_session_v1_workspaces__workspace_id__sessions__session_id__delete
+      operationId: delete_session_v2_workspaces__workspace_id__sessions__session_id__delete
       security:
         - HTTPBearer: []
         - {}
@@ -1368,13 +1460,13 @@ paths:
                 workspace_id="workspace_id",
             )
             print(session)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/clone:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/clone:
     get:
       tags:
         - sessions
       summary: Clone Session
       description: Clone a session, optionally up to a specific message
-      operationId: clone_session_v1_workspaces__workspace_id__sessions__session_id__clone_get
+      operationId: clone_session_v2_workspaces__workspace_id__sessions__session_id__clone_get
       security:
         - HTTPBearer: []
         - {}
@@ -1443,13 +1535,13 @@ paths:
                 workspace_id="workspace_id",
             )
             print(session.id)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/peers:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/peers:
     post:
       tags:
         - sessions
       summary: Add Peers To Session
       description: Add peers to a session
-      operationId: add_peers_to_session_v1_workspaces__workspace_id__sessions__session_id__peers_post
+      operationId: add_peers_to_session_v2_workspaces__workspace_id__sessions__session_id__peers_post
       security:
         - HTTPBearer: []
         - {}
@@ -1530,7 +1622,7 @@ paths:
         - sessions
       summary: Set Session Peers
       description: Set the peers in a session
-      operationId: set_session_peers_v1_workspaces__workspace_id__sessions__session_id__peers_put
+      operationId: set_session_peers_v2_workspaces__workspace_id__sessions__session_id__peers_put
       security:
         - HTTPBearer: []
         - {}
@@ -1611,7 +1703,7 @@ paths:
         - sessions
       summary: Remove Peers From Session
       description: Remove peers from a session
-      operationId: remove_peers_from_session_v1_workspaces__workspace_id__sessions__session_id__peers_delete
+      operationId: remove_peers_from_session_v2_workspaces__workspace_id__sessions__session_id__peers_delete
       security:
         - HTTPBearer: []
         - {}
@@ -1690,7 +1782,7 @@ paths:
         - sessions
       summary: Get Session Peers
       description: Get peers from a session
-      operationId: get_session_peers_v1_workspaces__workspace_id__sessions__session_id__peers_get
+      operationId: get_session_peers_v2_workspaces__workspace_id__sessions__session_id__peers_get
       security:
         - HTTPBearer: []
         - {}
@@ -1772,13 +1864,13 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/peers/{peer_id}/config:
     get:
       tags:
         - sessions
       summary: Get Peer Config
       description: Get the configuration for a peer in a session
-      operationId: get_peer_config_v1_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get
+      operationId: get_peer_config_v2_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_get
       security:
         - HTTPBearer: []
         - {}
@@ -1855,7 +1947,7 @@ paths:
         - sessions
       summary: Set Peer Config
       description: Set the configuration for a peer in a session
-      operationId: set_peer_config_v1_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_post
+      operationId: set_peer_config_v2_workspaces__workspace_id__sessions__session_id__peers__peer_id__config_post
       security:
         - HTTPBearer: []
         - {}
@@ -1933,7 +2025,7 @@ paths:
                 session_id="session_id",
             )
             print(response)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/context:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/context:
     get:
       tags:
         - sessions
@@ -1948,7 +2040,7 @@ paths:
         If the caller does not want a summary, we allocate all the tokens to recent messages.
 
         The default token limit if not provided is 2048. (TODO: make this configurable)
-      operationId: get_session_context_v1_workspaces__workspace_id__sessions__session_id__context_get
+      operationId: get_session_context_v2_workspaces__workspace_id__sessions__session_id__context_get
       security:
         - HTTPBearer: []
         - {}
@@ -2026,13 +2118,13 @@ paths:
                 workspace_id="workspace_id",
             )
             print(response.id)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/search:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/search:
     post:
       tags:
         - sessions
       summary: Search Session
       description: Search a Session
-      operationId: search_session_v1_workspaces__workspace_id__sessions__session_id__search_post
+      operationId: search_session_v2_workspaces__workspace_id__sessions__session_id__search_post
       security:
         - HTTPBearer: []
         - {}
@@ -2079,9 +2171,8 @@ paths:
         content:
           application/json:
             schema:
-              type: string
-              description: Search query
-              title: Query
+              $ref: '#/components/schemas/MessageSearchOptions'
+              description: 'Message search parameters '
       responses:
         '200':
           description: Successful Response
@@ -2106,7 +2197,7 @@ paths:
 
             // Automatically fetches more pages as needed.
             for await (const message of client.workspaces.sessions.search('workspace_id', 'session_id', {
-              body: 'body',
+              query: 'query',
             })) {
               console.log(message.id);
             }
@@ -2121,16 +2212,16 @@ paths:
             page = client.workspaces.sessions.search(
                 session_id="session_id",
                 workspace_id="workspace_id",
-                body="body",
+                query="query",
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/messages/:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/:
     post:
       tags:
         - messages
       summary: Create Messages For Session
-      operationId: create_messages_for_session_v1_workspaces__workspace_id__sessions__session_id__messages__post
+      operationId: create_messages_for_session_v2_workspaces__workspace_id__sessions__session_id__messages__post
       security:
         - HTTPBearer: []
         - {}
@@ -2168,7 +2259,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/Message'
                 title: >-
-                  Response Create Messages For Session V1 Workspaces  Workspace Id  Sessions  Session Id 
+                  Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id 
                   Messages  Post
         '422':
           description: Validation Error
@@ -2207,13 +2298,13 @@ paths:
                 }],
             )
             print(messages)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/messages/list:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/list:
     post:
       tags:
         - messages
       summary: Get Messages
       description: Get all messages for a session
-      operationId: get_messages_v1_workspaces__workspace_id__sessions__session_id__messages_list_post
+      operationId: get_messages_v2_workspaces__workspace_id__sessions__session_id__messages_list_post
       security:
         - HTTPBearer: []
         - {}
@@ -2319,13 +2410,13 @@ paths:
             )
             page = page.items[0]
             print(page.id)
-  /v1/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}:
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/{message_id}:
     get:
       tags:
         - messages
       summary: Get Message
       description: Get a Message by ID
-      operationId: get_message_v1_workspaces__workspace_id__sessions__session_id__messages__message_id__get
+      operationId: get_message_v2_workspaces__workspace_id__sessions__session_id__messages__message_id__get
       security:
         - HTTPBearer: []
         - {}
@@ -2402,7 +2493,7 @@ paths:
         - messages
       summary: Update Message
       description: Update the metadata of a Message
-      operationId: update_message_v1_workspaces__workspace_id__sessions__session_id__messages__message_id__put
+      operationId: update_message_v2_workspaces__workspace_id__sessions__session_id__messages__message_id__put
       security:
         - HTTPBearer: []
         - {}
@@ -2481,13 +2572,13 @@ paths:
                 session_id="session_id",
             )
             print(message.id)
-  /v1/keys:
+  /v2/keys:
     post:
       tags:
         - keys
       summary: Create Key
       description: Create a new Key
-      operationId: create_key_v1_keys_post
+      operationId: create_key_v2_keys_post
       security:
         - HTTPBearer: []
         - {}
@@ -2567,6 +2658,51 @@ paths:
             print(key)
 components:
   schemas:
+    DeriverStatus:
+      properties:
+        peer_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Peer Id
+          description: ID of the peer (optional when filtering by session only)
+        session_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Session Id
+          description: Session ID if filtered by session
+        total_work_units:
+          type: integer
+          title: Total Work Units
+          description: Total work units
+        completed_work_units:
+          type: integer
+          title: Completed Work Units
+          description: Completed work units
+        in_progress_work_units:
+          type: integer
+          title: In Progress Work Units
+          description: Work units currently being processed
+        pending_work_units:
+          type: integer
+          title: Pending Work Units
+          description: Work units waiting to be processed
+        sessions:
+          anyOf:
+            - additionalProperties:
+                $ref: '#/components/schemas/SessionDeriverStatus'
+              type: object
+            - type: 'null'
+          title: Sessions
+          description: Per-session status when not filtered by session
+      type: object
+      required:
+        - total_work_units
+        - completed_work_units
+        - in_progress_work_units
+        - pending_work_units
+      title: DeriverStatus
     DialecticOptions:
       properties:
         session_id:
@@ -2699,6 +2835,22 @@ components:
           title: Filter
       type: object
       title: MessageGet
+    MessageSearchOptions:
+      properties:
+        query:
+          type: string
+          title: Query
+          description: Search query
+        semantic:
+          anyOf:
+            - type: boolean
+            - type: 'null'
+          title: Semantic
+          description: Whether to explicitly use semantic search to filter the results
+      type: object
+      required:
+        - query
+      title: MessageSearchOptions
     MessageUpdate:
       properties:
         metadata:
@@ -2735,7 +2887,6 @@ components:
       type: object
       required:
         - items
-        - total
         - page
         - size
       title: Page[Message]
@@ -2765,7 +2916,6 @@ components:
       type: object
       required:
         - items
-        - total
         - page
         - size
       title: Page[Peer]
@@ -2795,7 +2945,6 @@ components:
       type: object
       required:
         - items
-        - total
         - page
         - size
       title: Page[Session]
@@ -2825,7 +2974,6 @@ components:
       type: object
       required:
         - items
-        - total
         - page
         - size
       title: Page[Workspace]
@@ -3001,6 +3149,43 @@ components:
       required:
         - id
       title: SessionCreate
+    SessionDeriverStatus:
+      properties:
+        peer_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Peer Id
+          description: ID of the peer (optional when filtering by session only)
+        session_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Session Id
+          description: Session ID if filtered by session
+        total_work_units:
+          type: integer
+          title: Total Work Units
+          description: Total work units
+        completed_work_units:
+          type: integer
+          title: Completed Work Units
+          description: Completed work units
+        in_progress_work_units:
+          type: integer
+          title: In Progress Work Units
+          description: Work units currently being processed
+        pending_work_units:
+          type: integer
+          title: Pending Work Units
+          description: Work units waiting to be processed
+      type: object
+      required:
+        - total_work_units
+        - completed_work_units
+        - in_progress_work_units
+        - pending_work_units
+      title: SessionDeriverStatus
     SessionGet:
       properties:
         filter:
@@ -3009,10 +3194,6 @@ components:
               type: object
             - type: 'null'
           title: Filter
-        is_active:
-          type: boolean
-          title: Is Active
-          default: false
       type: object
       title: SessionGet
     SessionPeerConfig:
@@ -3025,12 +3206,13 @@ components:
             session
           default: false
         observe_me:
-          type: boolean
+          anyOf:
+            - type: boolean
+            - type: 'null'
           title: Observe Me
           description: >-
             Whether other peers in this session should try to form a session-level theory-of-mind
             representation of this peer
-          default: true
       type: object
       title: SessionPeerConfig
     SessionUpdate:
