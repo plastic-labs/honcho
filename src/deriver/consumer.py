@@ -155,7 +155,7 @@ async def process_message(
         else "global_representation"
     )
     collection = await crud.get_or_create_collection(
-        db, workspace_name, peer_name, collection_name
+        db, workspace_name, collection_name, peer_name
     )
     embedding_store = CollectionEmbeddingStore(
         workspace_name=workspace_name,

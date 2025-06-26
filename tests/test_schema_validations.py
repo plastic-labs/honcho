@@ -85,14 +85,13 @@ class TestMessageValidations:
 
     def test_message_content_too_long(self):
         long_content = (
-            "The quick brown fox jumps over the lazy dog. This sentence contains various words that will generate tokens. "
-            * 500
+            "a" * 50001  # Increase repetitions to ensure we exceed 8192 tokens
         )
 
         with pytest.raises(ValidationError) as exc_info:
             MessageCreate(content=long_content, peer_id="12345", metadata={})
         error_dict = exc_info.value.errors()[0]
-        assert error_dict["type"] == "value_error"
+        assert error_dict["type"] == "string_too_long"
 
 
 class TestDocumentValidations:

@@ -409,7 +409,10 @@ def mock_crud_collection_operations():
     from src import models
 
     async def mock_get_or_create_collection(
-        _: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
+        _: AsyncSession,
+        workspace_name: str,
+        collection_name: str,
+        peer_name: str | None = None,
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(

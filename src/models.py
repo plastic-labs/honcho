@@ -184,7 +184,6 @@ class Message(Base):
         "internal_metadata", JSONB, default=dict
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    embedding: MappedColumn[Any] = mapped_column(Vector(1536), nullable=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -221,19 +220,56 @@ class Message(Base):
             text("to_tsvector('english', content)"),
             postgresql_using="gin",
         ),
-        # HNSW index on embedding column for vector similarity search
+    )
+
+    @override
+    def __repr__(self) -> str:
+        return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
+
+
+@final
+class MessageEmbedding(Base):
+    __tablename__: str = "message_embeddings"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    content: Mapped[str] = mapped_column(TEXT)
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("messages.public_id"), index=True
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
+    )
+    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    peer_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now()
+    )
+
+    # Relationship to Message
+    message = relationship("Message", backref="embeddings")
+
+    __table_args__ = (
+        # Compound foreign key constraints
+        ForeignKeyConstraint(
+            ["session_name", "workspace_name"],
+            ["sessions.name", "sessions.workspace_name"],
+        ),
+        ForeignKeyConstraint(
+            ["peer_name", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
+        # HNSW index on embedding column for efficient similarity search
         Index(
-            "idx_messages_embedding_hnsw",
+            "idx_message_embeddings_embedding_hnsw",
             "embedding",
             postgresql_using="hnsw",
             postgresql_with={"m": 16, "ef_construction": 64},
             postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
-
-    @override
-    def __repr__(self) -> str:
-        return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
 
 
 @final

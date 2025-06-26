@@ -23,6 +23,7 @@ from .exceptions import (
 )
 
 load_dotenv(override=True)
+EMBEDDING_COLLECTION_NAME = "embeddings"
 
 
 @final
@@ -88,7 +89,9 @@ class EmbeddingClient:
             # Skip if single text exceeds per-input limit. This is a safety measure but realistically shouldn't really happen
             if text_tokens > MAX_TOKENS_PER_INPUT:
                 logger.warning(
-                    f"Skipping embedding for {text_id} - {text_tokens} tokens exceeds limit"
+                    "Skipping embedding for %s - %s tokens exceeds limit",
+                    text_id,
+                    text_tokens,
                 )
                 skipped_text_ids.append(text_id)
                 continue
@@ -1111,6 +1114,7 @@ async def search(
 ) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
+    - Uses semantic search if embed_messages is set, else fall back to full text
     - Uses PostgreSQL full text search for natural language queries
     - Falls back to exact string matching for queries with special characters
     - Optionally uses semantic search with embeddings
@@ -1162,15 +1166,30 @@ async def search(
                 f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS}."
             ) from e
 
-        # Use cosine distance for semantic search
+        # Use cosine distance for semantic search on MessageEmbedding table
+        # Join with Message table to get the actual message data
         base_query = (
             select(models.Message)
-            .where(*base_conditions)
+            .join(
+                models.MessageEmbedding,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            )
+            .where(models.MessageEmbedding.workspace_name == workspace_name)
             .order_by(
-                models.Message.embedding.cosine_distance(embedding_query),
+                models.MessageEmbedding.embedding.cosine_distance(embedding_query),
                 models.Message.created_at.desc(),
             )
         )
+
+        if session_name is not None:
+            stmt = base_query.where(
+                models.MessageEmbedding.session_name == session_name
+            )
+        elif peer_name is not None:
+            stmt = base_query.where(models.MessageEmbedding.peer_name == peer_name)
+        else:
+            stmt = base_query
+
     else:
         # Check if query contains special characters that FTS might not handle well
         has_special_chars = bool(
@@ -1351,18 +1370,34 @@ async def create_messages(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message._token_count,
+            token_count=message._token_count,  # type: ignore
         )
         message_objects.append(message_obj)
-
     if settings.LLM.EMBED_MESSAGES:
         id_resource_dict = {
             message.public_id: (message.content, message.token_count)
             for message in message_objects
         }
         embedding_dict = await embedding_client.batch_embed(id_resource_dict)
+
+        # Create MessageEmbedding entries for each embedded message
+        embedding_objects: list[models.MessageEmbedding] = []
         for message_obj in message_objects:
-            message_obj.embedding = embedding_dict[message_obj.public_id]
+            embedding = embedding_dict.get(message_obj.public_id, [])
+            if embedding:
+                embedding_obj = models.MessageEmbedding(
+                    content=message_obj.content,
+                    embedding=embedding,
+                    message_id=message_obj.public_id,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    peer_name=message_obj.peer_name,
+                )
+                embedding_objects.append(embedding_obj)
+
+        # Add all embedding objects to the session
+        if embedding_objects:
+            db.add_all(embedding_objects)
 
     # Add all messages and commit
     db.add_all(message_objects)
@@ -1406,7 +1441,7 @@ async def create_messages_for_peer(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message._token_count,
+            token_count=message._token_count,  # type: ignore
         )
         message_objects.append(message_obj)
 
@@ -1416,8 +1451,24 @@ async def create_messages_for_peer(
             for message in message_objects
         }
         embedding_dict = await embedding_client.batch_embed(id_resource_dict)
+
+        # Create MessageEmbedding entries for each embedded message
+        embedding_objects: list[models.MessageEmbedding] = []
         for message_obj in message_objects:
-            message_obj.embedding = embedding_dict[message_obj.public_id]
+            embedding = embedding_dict.get(message_obj.public_id, [])
+            if embedding:
+                embedding_obj = models.MessageEmbedding(
+                    content=message_obj.content,
+                    embedding=embedding,
+                    message_id=message_obj.public_id,
+                    workspace_name=workspace_name,
+                    peer_name=peer_name,
+                )
+                embedding_objects.append(embedding_obj)
+
+        # Add all embedding objects to the session
+        if embedding_objects:
+            db.add_all(embedding_objects)
 
     # Add all messages and commit
     db.add_all(message_objects)
@@ -1635,7 +1686,10 @@ async def update_message(
 
 
 async def get_collection(
-    db: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
+    db: AsyncSession,
+    workspace_name: str,
+    collection_name: str,
+    peer_name: str | None = None,
 ) -> models.Collection:
     """
     Get a collection by name for a specific peer and workspace.
@@ -1655,9 +1709,10 @@ async def get_collection(
     stmt = (
         select(models.Collection)
         .where(models.Collection.workspace_name == workspace_name)
-        .where(models.Collection.peer_name == peer_name)
         .where(models.Collection.name == collection_name)
     )
+    if peer_name:
+        stmt = stmt.where(models.Collection.peer_name == peer_name)
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
@@ -1670,12 +1725,12 @@ async def get_collection(
 async def get_or_create_collection(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
     collection_name: str,
+    peer_name: str | None = None,
 ) -> models.Collection:
     try:
         honcho_collection = await get_collection(
-            db, workspace_name, peer_name, collection_name
+            db, workspace_name, collection_name, peer_name
         )
         return honcho_collection
     except ResourceNotFoundException:
@@ -1762,8 +1817,8 @@ async def create_document(
     await get_collection(
         db,
         workspace_name=workspace_name,
-        peer_name=peer_name,
         collection_name=collection_name,
+        peer_name=peer_name,
     )
 
     # Using ModelClient for embeddings

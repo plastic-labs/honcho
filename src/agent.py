@@ -178,7 +178,7 @@ async def chat(
         async with tracked_db("chat.get_collection") as db_embed:
             name = "global_representation" if session_name is None else ""
             collection = await crud.get_or_create_collection(
-                db_embed, workspace_name, peer_name, collection_name=name
+                db_embed, workspace_name, collection_name=name, peer_name=peer_name
             )
             collection_name = collection.name  # Extract the ID while session is active
         facts = await get_long_term_facts(

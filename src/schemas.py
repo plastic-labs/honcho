@@ -12,8 +12,6 @@ from pydantic import (
     model_validator,
 )
 
-from src.config import settings
-
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
@@ -114,7 +112,7 @@ class MessageBase(BaseModel):
 
 
 class MessageCreate(MessageBase):
-    content: Annotated[str, Field(min_length=0)]
+    content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
 
@@ -122,14 +120,8 @@ class MessageCreate(MessageBase):
 
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
-        MAX_TOKENS = settings.LLM.MAX_EMBEDDING_TOKENS
         encoding = tiktoken.get_encoding("cl100k_base")
         token_count = len(encoding.encode(self.content))
-
-        if token_count > MAX_TOKENS:
-            raise ValueError(
-                f"Content exceeds maximum token limit of {MAX_TOKENS} tokens (got {token_count} tokens)"
-            )
 
         self._token_count = token_count
         return self
