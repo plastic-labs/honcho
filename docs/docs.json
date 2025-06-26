@@ -1,0 +1,359 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Honcho",
+  "colors": {
+    "primary": "#FF5A7E",
+    "light": "#FF5A7E",
+    "dark": "#FF5A7E"
+  },
+  "favicon": "/favicon.svg",
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude"]
+  },
+  "navigation": {
+    "versions": [
+      {
+        "version": "v2.0.0",
+        "api": {
+          "openapi": ["openapi.documented.yml"]
+        },
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Introduction",
+                "pages": [
+                  "v2/documentation/introduction/overview",
+                  "v2/documentation/introduction/quickstart"
+                ]
+              },
+              {
+                "group": "Core Concepts",
+                "pages": [
+                  "v2/documentation/core-concepts/glossary",
+                  "v2/documentation/core-concepts/architecture",
+                  "v2/documentation/core-concepts/features"
+                ]
+              },
+              {
+                "group": "Tutorial",
+                "pages": [
+                  "v2/documentation/tutorial/overview",
+                  "v2/documentation/tutorial/guided-tutorial",
+                  "v2/documentation/tutorial/sdk"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Spellbooks",
+            "groups": [
+              {
+                "group": "Getting Started",
+                "pages": [
+                  "v2/guides/overview",
+                  "v2/guides/ai-assisted-setup",
+                  "v2/guides/mcp"
+                ]
+              },
+              {
+                "group": "Application Interfaces",
+                "pages": ["v2/guides/discord", "v2/guides/telegram"]
+              },
+              {
+                "group": "Design Patterns",
+                "pages": [
+                  "v2/guides/dialectic-endpoint",
+                  "v2/guides/get-context",
+                  "v2/guides/search",
+                  "v2/guides/working-rep",
+                  "v2/guides/streaming-response",
+                  "v2/guides/using-filters"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Contributing",
+            "groups": [
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/configuration",
+                  "v2/contributing/license"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": ["v2/api-reference/introduction"]
+              },
+              {
+                "group": "workspaces",
+                "pages": [
+                  "v2/api-reference/endpoint/workspaces/get-or-create-workspace",
+                  "v2/api-reference/endpoint/workspaces/get-all-workspaces",
+                  "v2/api-reference/endpoint/workspaces/update-workspace",
+                  "v2/api-reference/endpoint/workspaces/search-workspace"
+                ]
+              },
+              {
+                "group": "peers",
+                "pages": [
+                  "v2/api-reference/endpoint/peers/get-peers",
+                  "v2/api-reference/endpoint/peers/get-or-create-peer",
+                  "v2/api-reference/endpoint/peers/update-peer",
+                  "v2/api-reference/endpoint/peers/get-sessions-for-peer",
+                  "v2/api-reference/endpoint/peers/chat",
+                  "v2/api-reference/endpoint/peers/create-messages-for-peer",
+                  "v2/api-reference/endpoint/peers/get-messages-for-peer",
+                  "v2/api-reference/endpoint/peers/get-working-representation",
+                  "v2/api-reference/endpoint/peers/search-peer"
+                ]
+              },
+              {
+                "group": "sessions",
+                "pages": [
+                  "v2/api-reference/endpoint/sessions/get-or-create-session",
+                  "v2/api-reference/endpoint/sessions/get-sessions",
+                  "v2/api-reference/endpoint/sessions/update-session",
+                  "v2/api-reference/endpoint/sessions/delete-session",
+                  "v2/api-reference/endpoint/sessions/clone-session",
+                  "v2/api-reference/endpoint/sessions/get-session-peers",
+                  "v2/api-reference/endpoint/sessions/set-session-peers",
+                  "v2/api-reference/endpoint/sessions/add-peers-to-session",
+                  "v2/api-reference/endpoint/sessions/remove-peers-from-session",
+                  "v2/api-reference/endpoint/sessions/get-peer-config",
+                  "v2/api-reference/endpoint/sessions/set-peer-config",
+                  "v2/api-reference/endpoint/sessions/get-session-context",
+                  "v2/api-reference/endpoint/sessions/search-session"
+                ]
+              },
+              {
+                "group": "messages",
+                "pages": [
+                  "v2/api-reference/endpoint/messages/create-messages-for-session",
+                  "v2/api-reference/endpoint/messages/get-messages",
+                  "v2/api-reference/endpoint/messages/get-message",
+                  "v2/api-reference/endpoint/messages/update-message"
+                ]
+              },
+              {
+                "group": "keys",
+                "pages": ["v2/api-reference/endpoint/keys/create-key"]
+              }
+            ]
+          },
+          {
+            "tab": "Changelog",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "changelog/introduction",
+                  "changelog/compatibility-guide"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "version": "v1.1.0",
+        "api": {
+          "openapi": ["openapi.json"]
+        },
+        "tabs": [
+          {
+            "tab": "Documentation",
+            "groups": [
+              {
+                "group": "Get Started",
+                "pages": [
+                  "v1/getting-started/introduction",
+                  "v1/getting-started/quickstart",
+                  "v1/getting-started/architecture"
+                ]
+              },
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v1/contributing/guidelines",
+                  "v1/contributing/self-hosting",
+                  "v1/contributing/deploying",
+                  "v1/contributing/license"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Spellbooks and Tutorials",
+            "groups": [
+              {
+                "group": "Getting Started",
+                "pages": ["v1/guides/overview", "v1/guides/streaming-response"]
+              },
+              {
+                "group": "Application Interfaces",
+                "pages": ["v1/guides/discord", "v1/guides/honcho-mcp"]
+              },
+              {
+                "group": "Personal Memory",
+                "pages": ["v1/guides/dialectic-endpoint"]
+              }
+            ]
+          },
+          {
+            "tab": "API Reference",
+            "groups": [
+              {
+                "group": "API Documentation",
+                "pages": ["v1/api-reference/introduction"]
+              },
+              {
+                "group": "apps",
+                "pages": [
+                  "v1/api-reference/endpoint/apps/get-app",
+                  "v1/api-reference/endpoint/apps/get-all-apps",
+                  "v1/api-reference/endpoint/apps/update-app",
+                  "v1/api-reference/endpoint/apps/get-app-by-name",
+                  "v1/api-reference/endpoint/apps/create-app",
+                  "v1/api-reference/endpoint/apps/get-or-create-app"
+                ]
+              },
+              {
+                "group": "sessions",
+                "pages": [
+                  "v1/api-reference/endpoint/sessions/get-sessions",
+                  "v1/api-reference/endpoint/sessions/create-session",
+                  "v1/api-reference/endpoint/sessions/get-session",
+                  "v1/api-reference/endpoint/sessions/update-session",
+                  "v1/api-reference/endpoint/sessions/delete-session",
+                  "v1/api-reference/endpoint/sessions/chat",
+                  "v1/api-reference/endpoint/sessions/clone-session"
+                ]
+              },
+              {
+                "group": "users",
+                "pages": [
+                  "v1/api-reference/endpoint/users/get-users",
+                  "v1/api-reference/endpoint/users/create-user",
+                  "v1/api-reference/endpoint/users/get-user-by-name",
+                  "v1/api-reference/endpoint/users/get-user",
+                  "v1/api-reference/endpoint/users/get-or-create-user",
+                  "v1/api-reference/endpoint/users/update-user"
+                ]
+              },
+              {
+                "group": "messages",
+                "pages": [
+                  "v1/api-reference/endpoint/messages/get-messages",
+                  "v1/api-reference/endpoint/messages/create-message-for-session",
+                  "v1/api-reference/endpoint/messages/create-batch-messages-for-session",
+                  "v1/api-reference/endpoint/messages/get-message",
+                  "v1/api-reference/endpoint/messages/update-message"
+                ]
+              },
+              {
+                "group": "keys",
+                "pages": ["v1/api-reference/endpoint/keys/create-key"]
+              },
+              {
+                "group": "metamessages",
+                "pages": [
+                  "v1/api-reference/endpoint/metamessages/create-metamessage",
+                  "v1/api-reference/endpoint/metamessages/get-metamessages",
+                  "v1/api-reference/endpoint/metamessages/get-metamessage",
+                  "v1/api-reference/endpoint/metamessages/update-metamessage"
+                ]
+              },
+              {
+                "group": "collections",
+                "pages": [
+                  "v1/api-reference/endpoint/collections/get-collections",
+                  "v1/api-reference/endpoint/collections/create-collection",
+                  "v1/api-reference/endpoint/collections/get-collection-by-name",
+                  "v1/api-reference/endpoint/collections/get-collection",
+                  "v1/api-reference/endpoint/collections/update-collection",
+                  "v1/api-reference/endpoint/collections/delete-collection"
+                ]
+              },
+              {
+                "group": "documents",
+                "pages": [
+                  "v1/api-reference/endpoint/documents/get-documents",
+                  "v1/api-reference/endpoint/documents/create-document",
+                  "v1/api-reference/endpoint/documents/get-document",
+                  "v1/api-reference/endpoint/documents/update-document",
+                  "v1/api-reference/endpoint/documents/delete-document",
+                  "v1/api-reference/endpoint/documents/query-documents"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Changelog",
+            "groups": [
+              {
+                "group": "Overview",
+                "pages": [
+                  "changelog/introduction",
+                  "changelog/compatibility-guide"
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "Managed Platform",
+          "href": "https://app.honcho.dev",
+          "icon": "book-open-cover"
+        },
+        {
+          "anchor": "Community",
+          "href": "https://discord.gg/honcho",
+          "icon": "discord"
+        },
+        {
+          "anchor": "Blog",
+          "href": "https://blog.plasticlabs.ai",
+          "icon": "newspaper"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/honcho-dark.svg",
+    "dark": "/logo/honcho-light.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/plastic-labs/honcho"
+    }
+  },
+  "footer": {
+    "socials": {
+      "twitter": "https://twitter.com/plastic_labs",
+      "github": "https://github.com/plastic-labs",
+      "linkedin": "https://www.linkedin.com/company/plasticlabs"
+    }
+  },
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
+    }
+  }
+}

@@ -4,15 +4,18 @@
   "description": "## Setting Up `honcho-docs` Locally",
   "main": ".pnp.js",
   "scripts": {
-    "dev": "mintlify dev",
+    "dev": "mint dev",
     "openapi": "npx @mintlify/scraping openapi-file openapi.json -o api-reference/endpoint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@mintlify/scraping": "^3.0.92",
+    "@mintlify/scraping": "^3.0.189",
     "honcho-ai": "^0.0.11",
-    "mintlify": "^4.0.531"
+    "mintlify": "^4.1.96"
+  },
+  "devDependencies": {
+    "mint": "^4.1.96"
   }
 }

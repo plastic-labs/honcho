@@ -1,0 +1,433 @@
+---
+title: "Configuration Guide"
+description: "Complete guide to configuring Honcho for development and production"
+icon: "gear"
+---
+
+Honcho uses a flexible configuration system that supports both TOML files and environment variables. Configuration values are loaded in the following priority order (highest to lowest):
+
+1. Environment variables (always take precedence)
+2. `.env` file (for local development)
+3. `config.toml` file (base configuration)
+4. Default values
+
+## Recommended Configuration Approaches
+
+### Option 1: Environment Variables Only (Production)
+- Use environment variables for all configuration
+- No config files needed
+- Ideal for containerized deployments (Docker, Kubernetes)
+- Secrets managed by your deployment platform
+
+### Option 2: config.toml (Development/Simple Deployments)
+- Use config.toml for base configuration
+- Override sensitive values with environment variables
+- Good for development and simple deployments
+
+### Option 3: Hybrid Approach
+- Use config.toml for non-sensitive base settings
+- Use .env file for sensitive values (API keys, secrets)
+- Good for development teams
+
+### Option 4: .env Only (Local Development)
+- Use .env file for all configuration
+- Simple for local development
+- Never commit .env files to version control
+
+## Configuration Methods
+
+### Using config.toml
+
+Copy the example configuration file to get started:
+
+```bash
+cp config.toml.example config.toml
+```
+
+Then modify the values as needed. The TOML file is organized into sections:
+
+- `[app]` - Application-level settings (log level, host, port)
+- `[db]` - Database connection and pool settings
+- `[auth]` - Authentication configuration
+- `[llm]` - LLM provider and model settings
+- `[agent]` - Agent behavior settings
+- `[deriver]` - Background worker settings
+- `[history]` - Message history settings
+- `[sentry]` - Error tracking settings
+
+### Using Environment Variables
+
+All configuration values can be overridden using environment variables. The environment variable names follow this pattern:
+
+- `{SECTION}_{KEY}` for nested settings
+- Just `{KEY}` for app-level settings
+
+Examples:
+
+- `DB_CONNECTION_URI` → `[db].CONNECTION_URI`
+- `DB_POOL_SIZE`      → `[db].POOL_SIZE`
+- `AUTH_JWT_SECRET`   → `[auth].JWT_SECRET`
+- `LLM_DIALECTIC_MODEL` → `[llm].DIALECTIC_MODEL`
+- `LOG_LEVEL` (no section) → `[app].LOG_LEVEL`
+
+### Configuration Priority
+
+When a configuration value is set in multiple places, Honcho uses this priority:
+
+1. **Environment variables** - Always take precedence
+2. **.env file** - Loaded for local development
+3. **config.toml** - Base configuration
+4. **Default values** - Built-in defaults
+
+This allows you to:
+
+- Use `config.toml` for base configuration
+- Override specific values with environment variables in production
+- Use `.env` files for local development without modifying config.toml
+
+### Example
+
+If you have this in `config.toml`:
+
+```toml
+[db]
+CONNECTION_URI = "postgresql://localhost/honcho_dev"
+POOL_SIZE = 10
+```
+
+You can override just the connection URI in production:
+
+```bash
+export DB_CONNECTION_URI="postgresql://prod-server/honcho_prod"
+```
+
+The application will use the production connection URI while keeping the pool size from config.toml.
+
+## Core Configuration
+
+### Application Settings
+
+**Basic Application Configuration:**
+```bash
+# Logging and server settings
+LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
+FASTAPI_HOST=0.0.0.0
+FASTAPI_PORT=8000
+```
+
+**Environment-specific settings:**
+```bash
+# Development
+LOG_LEVEL=DEBUG
+FASTAPI_HOST=127.0.0.1
+
+# Production
+LOG_LEVEL=WARNING
+FASTAPI_HOST=0.0.0.0
+```
+
+### Database Configuration
+
+**Required Database Settings:**
+```bash
+# PostgreSQL connection string (required)
+DB_CONNECTION_URI=postgresql+psycopg://username:password@host:port/database
+
+# Example for local development
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho
+
+# Example for production
+DB_CONNECTION_URI=postgresql+psycopg://honcho_user:secure_password@db.example.com:5432/honcho_prod
+```
+
+**Database Pool Settings:**
+```bash
+# Connection pool configuration
+DB_SCHEMA=public
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+DB_POOL_TIMEOUT=30
+DB_POOL_RECYCLE=300
+DB_POOL_PRE_PING=true
+DB_SQL_DEBUG=false
+DB_TRACING=false
+```
+
+**Docker Compose for PostgreSQL:**
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  database:
+    image: pgvector/pgvector:pg15
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: honcho
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  postgres_data:
+```
+
+### Authentication Configuration
+
+**JWT Authentication:**
+```bash
+# Enable/disable authentication
+AUTH_USE_AUTH=false  # Set to true for production
+
+# JWT settings (required if AUTH_USE_AUTH is true)
+AUTH_JWT_SECRET=your-super-secret-jwt-key
+```
+
+**Generate JWT Secret:**
+```bash
+# Generate a secure JWT secret
+python scripts/generate_jwt_secret.py
+```
+
+## LLM Provider Configuration
+
+### Anthropic (Claude)
+
+**Required Settings:**
+```bash
+# API key for Anthropic
+ANTHROPIC_API_KEY=your-anthropic-api-key
+
+# Model for dialectic reasoning
+LLM_DIALECTIC_PROVIDER=anthropic
+LLM_DIALECTIC_MODEL=claude-3-7-sonnet-20250219
+```
+
+### OpenAI
+
+**Required Settings:**
+```bash
+# API key for OpenAI
+OPENAI_API_KEY=your-openai-api-key
+
+# Alternative OpenAI-compatible API
+OPENAI_COMPATIBLE_API_KEY=your-api-key
+OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
+```
+
+### Google (Gemini)
+
+**Required Settings:**
+```bash
+# API key for Google Gemini
+GEMINI_API_KEY=your-gemini-api-key
+
+# Model for summarization
+LLM_SUMMARY_PROVIDER=gemini
+LLM_SUMMARY_MODEL=gemini-2.0-flash-lite
+LLM_SUMMARY_MAX_TOKENS_SHORT=1000
+LLM_SUMMARY_MAX_TOKENS_LONG=2000
+```
+
+### Groq
+
+**Required Settings:**
+```bash
+# API key for Groq
+GROQ_API_KEY=your-groq-api-key
+
+# Model for query generation
+LLM_QUERY_GENERATION_PROVIDER=groq
+LLM_QUERY_GENERATION_MODEL=llama-3.1-8b-instant
+```
+
+### LLM General Settings
+
+**Default Configuration:**
+```bash
+# Default token and temperature settings
+LLM_DEFAULT_MAX_TOKENS=1000
+LLM_DEFAULT_TEMPERATURE=0.0
+```
+
+## Agent Configuration
+
+**Semantic Search Settings:**
+```bash
+# Search configuration
+AGENT_SEMANTIC_SEARCH_TOP_K=10
+AGENT_SEMANTIC_SEARCH_MAX_DISTANCE=0.85
+```
+
+**Theory of Mind Settings:**
+```bash
+# TOM inference method
+AGENT_TOM_INFERENCE_METHOD=single_prompt
+```
+
+## Deriver Configuration
+
+**Background Processing:**
+```bash
+# Worker configuration
+DERIVER_WORKERS=1
+DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
+DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+```
+
+**Processing Methods:**
+```bash
+# TOM and user representation methods
+DERIVER_TOM_METHOD=single_prompt
+DERIVER_USER_REPRESENTATION_METHOD=long_term
+```
+
+## History Configuration
+
+**Message Summarization:**
+```bash
+# Summary thresholds
+HISTORY_MESSAGES_PER_SHORT_SUMMARY=20
+HISTORY_MESSAGES_PER_LONG_SUMMARY=60
+```
+
+## Monitoring Configuration
+
+### Sentry Error Tracking
+
+**Sentry Settings:**
+```bash
+# Enable/disable Sentry
+SENTRY_ENABLED=false
+
+# Sentry configuration
+SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
+SENTRY_TRACES_SAMPLE_RATE=0.1
+SENTRY_PROFILES_SAMPLE_RATE=0.1
+```
+
+## Environment-Specific Examples
+
+### Development Configuration
+
+**config.toml for development:**
+```toml
+[app]
+LOG_LEVEL = "DEBUG"
+FASTAPI_HOST = "127.0.0.1"
+FASTAPI_PORT = 8000
+
+[db]
+CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/honcho_dev"
+POOL_SIZE = 5
+
+[auth]
+USE_AUTH = false
+
+[llm]
+DIALECTIC_PROVIDER = "anthropic"
+DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
+
+[deriver]
+WORKERS = 1
+
+[sentry]
+ENABLED = false
+```
+
+**Environment variables for development:**
+```bash
+# .env.development
+LOG_LEVEL=DEBUG
+DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@localhost:5432/honcho_dev
+AUTH_USE_AUTH=false
+ANTHROPIC_API_KEY=your-dev-anthropic-key
+```
+
+### Production Configuration
+
+**config.toml for production:**
+```toml
+[app]
+LOG_LEVEL = "WARNING"
+FASTAPI_HOST = "0.0.0.0"
+FASTAPI_PORT = 8000
+
+[db]
+CONNECTION_URI = "postgresql+psycopg://honcho_user:secure_password@prod-db:5432/honcho_prod"
+POOL_SIZE = 20
+MAX_OVERFLOW = 40
+
+[auth]
+USE_AUTH = true
+
+[llm]
+DIALECTIC_PROVIDER = "anthropic"
+DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
+SUMMARY_PROVIDER = "gemini"
+SUMMARY_MODEL = "gemini-2.0-flash-lite"
+
+[deriver]
+WORKERS = 4
+
+[sentry]
+ENABLED = true
+TRACES_SAMPLE_RATE = 0.1
+```
+
+**Environment variables for production:**
+```bash
+# .env.production
+LOG_LEVEL=WARNING
+DB_CONNECTION_URI=postgresql+psycopg://honcho_user:secure_password@prod-db:5432/honcho_prod
+AUTH_USE_AUTH=true
+AUTH_JWT_SECRET=your-super-secret-jwt-key
+ANTHROPIC_API_KEY=your-prod-anthropic-key
+GEMINI_API_KEY=your-prod-gemini-key
+SENTRY_DSN=https://your-sentry-dsn@sentry.io/project-id
+```
+
+## Migration Management
+
+**Running Database Migrations:**
+```bash
+# Check current migration status
+uv run alembic current
+
+# Upgrade to latest
+uv run alembic upgrade head
+
+# Downgrade to specific revision
+uv run alembic downgrade revision_id
+
+# Create new migration
+uv run alembic revision --autogenerate -m "Description of changes"
+```
+
+## Troubleshooting
+
+**Common Configuration Issues:**
+
+1. **Database Connection Errors**
+   - Ensure `DB_CONNECTION_URI` uses `postgresql+psycopg://` prefix
+   - Verify database is running and accessible
+   - Check pgvector extension is installed
+
+2. **Authentication Issues**
+   - Set `AUTH_USE_AUTH=true` for production
+   - Generate and set `AUTH_JWT_SECRET` if authentication is enabled
+   - Use `python scripts/generate_jwt_secret.py` to create a secure secret
+
+3. **LLM Provider Issues**
+   - Verify API keys are set correctly
+   - Check model names match provider specifications
+   - Ensure provider is enabled in configuration
+
+4. **Deriver Issues**
+   - Increase `DERIVER_WORKERS` for better performance
+   - Check `DERIVER_STALE_SESSION_TIMEOUT_MINUTES` for session cleanup
+   - Monitor background processing logs
+
+This configuration guide covers all the settings available in Honcho. Always use environment-specific configuration files and never commit sensitive values like API keys or JWT secrets to version control.
