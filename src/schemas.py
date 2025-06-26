@@ -1,8 +1,16 @@
 # pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+import tiktoken
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -107,6 +115,20 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+
+    _encoded_message: list[int] = PrivateAttr(default=[])
+
+    @property
+    def encoded_message(self) -> list[int]:
+        return self._encoded_message
+
+    @model_validator(mode="after")
+    def validate_and_set_token_count(self) -> Self:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        encoded_message = encoding.encode(self.content)
+
+        self._encoded_message = encoded_message
+        return self
 
 
 class MessageGet(MessageBase):
@@ -213,6 +235,14 @@ class DocumentCreate(DocumentBase):
 class DocumentUpdate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: dict[str, Any] | None = None
+
+
+class MessageSearchOptions(BaseModel):
+    query: str = Field(..., description="Search query")
+    semantic: bool | None = Field(
+        default=None,
+        description="Whether to explicitly use semantic search to filter the results",
+    )
 
 
 class DialecticOptions(BaseModel):
