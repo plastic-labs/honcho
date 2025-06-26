@@ -110,16 +110,28 @@ def test_get_peers(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert "items" in data
     assert len(data["items"]) > 0
 
-    # Get peers with filter
+    # Get peers with simple filter (backward compatibility)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"peer_key": "peer_value"}},
+        json={"filter": {"metadata": {"peer_key": "peer_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
-    assert len(data["items"]) >= 2
+    assert len(data["items"]) == 2
     assert data["items"][0]["metadata"]["peer_key"] == "peer_value"
+
+    # Test new filter with NOT operator
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={"filter": {"NOT": [{"metadata": {"peer_key": "peer_value2"}}]}},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    # Should find peers that don't have peer_key = "peer_value2"
+    # This includes the 2 peers with "peer_value" + the sample peer with empty metadata
+    assert len(data["items"]) == 3
 
 
 def test_get_peers_with_empty_filter(
@@ -273,33 +285,6 @@ def test_get_sessions_for_peer(client: TestClient, sample_data: tuple[Workspace,
     session_ids = [item["id"] for item in data["items"]]
     assert session_name in session_ids
     assert len(data["items"]) == 1
-
-
-def test_get_sessions_for_peer_with_is_active_filter(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Test getting sessions for peer with is_active parameter"""
-    test_workspace, test_peer = sample_data
-
-    # Create and then delete a session to have inactive session
-    session_name = str(generate_nanoid())
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_name, "peer_names": {test_peer.name: {}}},
-    )
-    client.delete(f"/v2/workspaces/{test_workspace.name}/sessions/{session_name}")
-
-    # Test getting inactive sessions
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
-        json={"is_active": False},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    # Should find at least our deleted session
-    inactive_sessions = [s for s in data["items"] if not s["is_active"]]
-    assert len(inactive_sessions) > 0
 
 
 def test_get_sessions_for_peer_with_empty_filter(

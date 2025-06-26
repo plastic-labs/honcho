@@ -3,7 +3,7 @@ from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
 from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import insert
 
@@ -321,20 +321,20 @@ async def get_messages(
 ):
     """Get all messages for a session"""
     try:
-        filter = None
+        filters = None
         if options and hasattr(options, "filter"):
-            filter = options.filter
-            if filter == {}:
-                filter = None
+            filters = options.filter
+            if filters == {}:
+                filters = None
 
         messages_query = await crud.get_messages(
             workspace_name=workspace_id,
             session_name=session_id,
-            filter=filter,
+            filters=filters,
             reverse=reverse,
         )
 
-        return await paginate(db, messages_query)
+        return await apaginate(db, messages_query)
     except ValueError as e:
         logger.warning(f"Failed to get messages for session {session_id}: {str(e)}")
         raise ResourceNotFoundException("Session not found") from e

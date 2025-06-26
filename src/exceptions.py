@@ -63,3 +63,11 @@ class DisabledException(HonchoException):
 
     status_code = 405
     detail = "Feature is disabled"
+
+
+@final
+class FilterError(HonchoException):
+    """Exception raised when a filter is misconfigured or invalid."""
+
+    status_code = 422
+    detail = "Invalid filter configuration"
