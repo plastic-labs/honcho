@@ -156,6 +156,8 @@ class SentrySettings(HonchoSettings):
 
     ENABLED: bool = False
     DSN: str | None = None
+    RELEASE: str | None = None  # TODO maybe centralize this with release number
+    ENVIRONMENT: str = "development"
     TRACES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
     PROFILES_SAMPLE_RATE: Annotated[float, Field(default=0.1, ge=0.0, le=1.0)] = 0.1
 
@@ -243,6 +245,7 @@ class AppSettings(HonchoSettings):
     LOG_LEVEL: str = "INFO"
     FASTAPI_HOST: str = "0.0.0.0"
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
+    SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
