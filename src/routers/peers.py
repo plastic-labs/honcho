@@ -177,7 +177,12 @@ async def chat(
 
     if not options.stream:
         return await agent.chat(
-            workspace_id, peer_id, options.session_id, options.queries, options.stream
+            workspace_id,
+            peer_id,
+            options.session_id,
+            options.queries,
+            options.stream,
+            options.target,
         )
 
     async def parse_stream():
@@ -188,6 +193,7 @@ async def chat(
                 options.session_id,
                 options.queries,
                 stream=True,
+                target=options.target,
             )
             if isinstance(stream, Stream):
                 async for chunk, _ in stream:

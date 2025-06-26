@@ -107,6 +107,7 @@ async def chat(
     session_name: str | None,
     queries: str | list[str],
     stream: bool = False,
+    target: str | None = None,
 ) -> llm.Stream | llm.CallResponse:
     """
     Chat with the Dialectic API using on-demand user representation generation.
@@ -176,7 +177,11 @@ async def chat(
     # Run short-term inference and long-term facts in parallel
     async def fetch_long_term():
         async with tracked_db("chat.get_collection") as db_embed:
-            name = "global_representation" if session_name is None else ""
+            name = (
+                "global_representation"
+                if target is None
+                else crud.construct_collection_name(peer_name, target)
+            )
             collection = await crud.get_or_create_collection(
                 db_embed, workspace_name, collection_name=name, peer_name=peer_name
             )
