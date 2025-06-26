@@ -6,9 +6,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.crud import create_messages, search
+from src.crud import create_messages, create_messages_for_peer, search
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
+
+"""
+Tests for message embedding functionality.
+
+These tests verify that message embeddings are created, stored, and can be searched.
+"""
 
 
 @pytest.mark.asyncio
@@ -193,7 +199,6 @@ async def test_message_embedding_with_peer_only_messages(
     test_workspace, test_peer = sample_data
 
     # Import the peer-specific message creation function
-    from src.crud import create_messages_for_peer
 
     # Create a message for peer only (no session)
     test_message_content = "This is a peer-only message with embedding"

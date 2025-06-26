@@ -84,7 +84,8 @@ class EmbeddingClient:
         skipped_text_ids: list[str] = []
 
         for text_id, (text, text_tokens) in id_resource_dict.items():
-            # Skip if single text exceeds per-input limit. This is a safety measure but realistically shouldn't really happen
+            # Skip if single text exceeds per-input limit
+            # TODO (Rajat): Handle chunking of message content that exceeds this limit
             if text_tokens > settings.LLM.MAX_EMBEDDING_TOKENS:
                 logger.warning(
                     "Skipping embedding for %s - %s tokens exceeds limit",
