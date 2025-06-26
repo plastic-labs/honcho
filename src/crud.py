@@ -1,4 +1,3 @@
-import os
 from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, final
@@ -42,8 +41,6 @@ embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
 logger = getLogger(__name__)
 
 USER_REPRESENTATION_METADATA_KEY = "user_representation"
-
-SESSION_PEERS_LIMIT = int(os.getenv("SESSION_PEERS_LIMIT", 10))
 
 ########################################################
 # workspace methods
@@ -379,9 +376,12 @@ async def get_or_create_session(
 
     # Check if session already exists
     if honcho_session is None:
-        if session.peer_names and len(session.peer_names) > SESSION_PEERS_LIMIT:
+        if (
+            session.peer_names
+            and len(session.peer_names) > settings.SESSION_PEERS_LIMIT
+        ):
             raise ValueError(
-                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
             )
 
         # Create honcho session
@@ -768,9 +768,9 @@ async def set_peers_for_session(
         ResourceNotFoundException: If the session does not exist
     """
     # Validate peer limit before making any changes
-    if len(peer_names) > SESSION_PEERS_LIMIT:
+    if len(peer_names) > settings.SESSION_PEERS_LIMIT:
         raise ValueError(
-            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {SESSION_PEERS_LIMIT} peers per session."
+            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
         )
 
     # Verify session exists
@@ -859,9 +859,9 @@ async def _get_or_add_peers_to_session(
     existing_peer_names = result.scalars().all()
 
     new_peers = [name for name in peer_names if name not in existing_peer_names]
-    if len(new_peers) + len(existing_peer_names) > SESSION_PEERS_LIMIT:
+    if len(new_peers) + len(existing_peer_names) > settings.SESSION_PEERS_LIMIT:
         raise ValueError(
-            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {SESSION_PEERS_LIMIT} peers per session."
+            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {settings.SESSION_PEERS_LIMIT} peers per session."
         )
 
     # Use upsert to handle both new peers and rejoining peers
@@ -1087,10 +1087,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
     else:
         # Fetch the latest global level user representation
@@ -1104,10 +1104,10 @@ async def get_working_representation(
         latest_representation_obj = result.scalar_one_or_none()
         latest_representation = (
             latest_representation_obj.internal_metadata.get(
-                USER_REPRESENTATION_METADATA_KEY, "No user representation available."
+                USER_REPRESENTATION_METADATA_KEY, ""
             )
             if latest_representation_obj
-            else "No user representation available."
+            else ""
         )
 
     return latest_representation

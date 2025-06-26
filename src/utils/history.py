@@ -228,7 +228,7 @@ async def create_summary(
             content=(
                 f"Conversation with {len(messages)} messages about {messages[-1].content[:30]}..."
                 if messages
-                else "No messages to summarize!"
+                else ""
             ),
             message_count=0,
             summary_type=summary_type.value,

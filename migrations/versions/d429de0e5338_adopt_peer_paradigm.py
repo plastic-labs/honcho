@@ -8,7 +8,6 @@ Create Date: 2025-06-09 15:16:38.164067
 
 from collections.abc import Sequence
 from contextlib import suppress
-from os import getenv
 
 import sqlalchemy as sa
 import tiktoken
@@ -24,6 +23,7 @@ from migrations.utils import (
     index_exists,
     table_exists,
 )
+from src.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "d429de0e5338"
@@ -34,7 +34,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Upgrade database schema to adopt peer paradigm."""
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = settings.DB.SCHEMA
     inspector = sa.inspect(op.get_bind())
 
     # Step 1: Rename tables
@@ -77,7 +77,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade database schema to reverse peer paradigm adoption."""
-    schema = getenv("DATABASE_SCHEMA", "public")
+    schema = settings.DB.SCHEMA
     inspector = sa.inspect(op.get_bind())
 
     # Step 1: Add back app_id, user_id to peers and sessions
