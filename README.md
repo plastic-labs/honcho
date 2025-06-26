@@ -1,6 +1,6 @@
 # 🫡 Honcho
 
-![Static Badge](https://img.shields.io/badge/Version-2.0.1-blue)
+![Static Badge](https://img.shields.io/badge/Version-2.0.0-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
@@ -43,7 +43,7 @@ data about an application's state.
 
 There are also client-sdks that are created using
 [Stainless](https://www.stainlessapi.com/). Currently, there is a [Python](https://github.com/plastic-labs/honcho-python) and
-[TypeScript/JavaScript](https://github.com/plastic-labs/honcho-node) SDK available.
+[TypeScript/JavaScript](https://github.com/plastic-labs/honcho-nodej) SDK available.
 
 Examples on how to use the SDK are located within each SDK repository. There is
 also SDK example usage available in the [API Reference](https://docs.honcho.dev/api-reference/introduction)
