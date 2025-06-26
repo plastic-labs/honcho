@@ -1,0 +1,62 @@
+---
+title: "Honcho MCP"
+icon: 'star-of-life'
+description: "Use Honcho in Claude Desktop"
+sidebarTitle: 'MCP Integration'
+---
+
+You can let Claude use Honcho to manage its own memory in the native desktop app by using the Honcho MCP integration! Follow these steps:
+
+1. Clone the `honcho-mcp` repo:
+
+```
+git clone git@github.com:plastic-labs/honcho-mcp.git
+```
+
+2. Navigate into the `honcho-mcp` folder.
+
+```
+cd honcho-mcp
+```
+
+3. Sync the virtual environment. This package uses [uv](https://docs.astral.sh/uv/), [install](https://docs.astral.sh/uv/#installation) if you haven't.
+
+```
+uv sync 
+```
+
+4. In Claude Desktop, go to the *top left Mac Toolbar* Settings > Developer and click "Edit Config"
+
+5. Add the following (and update paths!):
+
+```
+{
+  "mcpServers": {
+    "Honcho": {
+      "command": "/path/to/uv",
+      "args": [
+        "run",
+        "--with",
+        "mcp[cli]",
+        "mcp",
+        "run",
+        "/path/to/honcho-mcp/main.py"
+      ]
+    }
+  }
+}
+```
+
+<Warning>You probably will need to put the full path to the uv executable in the command field. You can get this by running `which uv` on MacOS/Linux or `where uv` on Windows.</Warning>
+
+6. Restart the Claude Desktop app. Upon relaunch it should start Honcho and the tools should be available! 
+
+Just note that, by default, the MCP server is set up to use the Honcho Demo server, which only persists data for 7 days. If you're using the hosted version of Honcho, copy the `.env.template` to a proper `.env` file and update the URL and API key variables accordingly.
+
+## Project Instructions
+
+Finally, Claude needs instructions on how to use Honcho. The Desktop app doesn't allow you to add system prompts directly, but you can create a project and paste these [instructions](https://github.com/plastic-labs/honcho-mcp/blob/main/instructions.txt) into the "Project Instructions" field.
+
+<Note>Be sure to update the \<app_name\> and \<user_name\> variables in the instructions.txt file.</Note>
+
+Claude should then query for insights before responding and write your messages to storage! If you come up with more creative ways to get Claude to manage its own memory with Honcho, feel free to [let us know](https://discord.gg/plasticlabs) or make a PR on this [repo](https://github.com/plastic-labs/honcho-mcp/tree/main)!

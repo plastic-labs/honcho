@@ -290,9 +290,25 @@ def mock_langfuse():
 @pytest.fixture(autouse=True)
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
-    with patch("src.crud.embedding_client.embed") as mock_create:
-        mock_create.return_value = [0.1] * 1536
-        yield mock_create
+    with (
+        patch("src.crud.embedding_client.embed") as mock_embed,
+        patch("src.crud.embedding_client.batch_embed") as mock_batch_embed,
+    ):
+        # Mock the embed method to return a fake embedding vector
+        mock_embed.return_value = [0.1] * 1536
+
+        # Mock the batch_embed method to return a dict of fake embedding vectors
+        # Updated to support chunking - each text_id maps to a list of embedding vectors
+        async def mock_batch_embed_func(
+            id_resource_dict: dict[str, tuple[str, list[int]]],
+        ) -> dict[str, list[list[float]]]:
+            return {
+                text_id: [[0.1] * 1536] for text_id in id_resource_dict
+            }  # Single chunk per text
+
+        mock_batch_embed.side_effect = mock_batch_embed_func
+
+        yield {"embed": mock_embed, "batch_embed": mock_batch_embed}
 
 
 @pytest.fixture(autouse=True)
@@ -396,7 +412,10 @@ def mock_crud_collection_operations():
     from src import models
 
     async def mock_get_or_create_collection(
-        _: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
+        _: AsyncSession,
+        workspace_name: str,
+        collection_name: str,
+        peer_name: str | None = None,
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(

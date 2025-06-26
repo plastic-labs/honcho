@@ -2,7 +2,6 @@ import datetime
 from logging import getLogger
 from typing import Any, final
 
-import tiktoken
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from pgvector.sqlalchemy import Vector
@@ -19,7 +18,6 @@ from sqlalchemy import (
     Integer,
     Table,
     UniqueConstraint,
-    event,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
@@ -33,23 +31,6 @@ from .db import Base
 load_dotenv(override=True)
 
 logger = getLogger(__name__)
-
-# Initialize tiktoken encoder for token counting for message content
-tokenizer = tiktoken.get_encoding("cl100k_base")
-
-
-def count_tokens(text: str) -> int:
-    """Count tokens in a text string using tiktoken."""
-    if not text:
-        return 0
-    try:
-        return len(tokenizer.encode(text))
-    except Exception as e:
-        # Fallback: rough estimation (4 chars per token)
-        logger.warning(
-            f"Error counting tokens for text: {text[:50]}{'...' if len(text) > 50 else ''}, using fallback (4 chars per token). Error: {str(e)}"
-        )
-        return len(text) // 4
 
 
 # Association table for many-to-many relationship between sessions and peers
@@ -246,10 +227,49 @@ class Message(Base):
         return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
 
 
-@event.listens_for(Message, "before_insert")
-def calculate_token_count_on_insert(_mapper: Any, _connection: Any, target: Message):
-    """Calculate token count before inserting a new message."""
-    target.token_count = count_tokens(target.content)
+@final
+class MessageEmbedding(Base):
+    __tablename__: str = "message_embeddings"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), primary_key=True, autoincrement=True
+    )
+    content: Mapped[str] = mapped_column(TEXT)
+    embedding: MappedColumn[Any] = mapped_column(Vector(1536))
+    message_id: Mapped[str] = mapped_column(
+        ForeignKey("messages.public_id"), index=True
+    )
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
+    )
+    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    peer_name: Mapped[str | None] = mapped_column(TEXT, index=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now()
+    )
+
+    # Relationship to Message
+    message = relationship("Message", backref="embeddings")
+
+    __table_args__ = (
+        # Compound foreign key constraints
+        ForeignKeyConstraint(
+            ["session_name", "workspace_name"],
+            ["sessions.name", "sessions.workspace_name"],
+        ),
+        ForeignKeyConstraint(
+            ["peer_name", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
+        # HNSW index on embedding column for efficient similarity search
+        Index(
+            "idx_message_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+    )
 
 
 @final

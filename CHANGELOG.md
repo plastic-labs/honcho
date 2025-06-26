@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Internal metadata to store Honcho's state no longer exposed in API
 - Batch message operations and enhanced message querying with token and message count limits
 - Search and summary functionalities scoped by workspace, peer, and session
+- Ability to search message histories using semantic search with cosine
+  similarity
 - Session context retrieval with summaries and token allocation
 - HNSW Index for Documents Table
 - Centralized Configuration via Environment Variables or `config.toml` file
@@ -36,6 +38,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Queue processing now works on 'work units' instead of sessions
 - Message token counting updated with tiktoken integration and fallback heuristic
 - Queue and message processing updated to handle sender/target and task types for multi-peer scenarios
+- Resource filtering expanded to include logical operators
 
 ### Fixed
 

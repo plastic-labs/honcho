@@ -773,7 +773,7 @@ def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json="search query",
+        json={"query": "search query"},
     )
     assert response.status_code == 200
     data = response.json()
@@ -801,7 +801,8 @@ def test_search_session_empty_query(
 
     # Search with empty query
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search", json=""
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
+        json={"query": ""},
     )
     assert response.status_code == 200
     data = response.json()
@@ -820,8 +821,91 @@ def test_search_session_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/search",
-        json="test query",
+        json={"query": "test query"},
     )
     # This should probably return 404 or handle gracefully
     # The exact behavior depends on the crud.search implementation
     assert response.status_code in [200, 404, 422]
+
+
+def test_search_session_with_semantic_search_false(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test session search with semantic=false"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Add messages to search through
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Search this content", "peer_id": test_peer.name},
+                {"content": "Another message to find", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Search with semantic=false
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
+        json={"query": "search", "semantic": False},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Response should have pagination structure
+    assert "items" in data
+    assert "total" in data
+    assert "page" in data
+    assert "size" in data
+    assert isinstance(data["items"], list)
+
+
+def test_search_session_with_semantic_search_true_disabled(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test session search with semantic=true when EMBED_MESSAGES is disabled"""
+    # Override the EMBED_MESSAGES setting to False for this test
+    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", False)
+
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+    )
+
+    # Add messages to search through
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
+        json={
+            "messages": [
+                {"content": "Search this content", "peer_id": test_peer.name},
+                {"content": "Another message to find", "peer_id": test_peer.name},
+            ]
+        },
+    )
+
+    # Search with semantic=true (should fail if EMBED_MESSAGES is disabled)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
+        json={"query": "search", "semantic": True},
+    )
+
+    assert response.status_code == 405
+
+    data = response.json()
+    assert "Semantic search requires EMBED_MESSAGES flag to be enabled" in data.get(
+        "detail", ""
+    )

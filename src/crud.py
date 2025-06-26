@@ -1,10 +1,9 @@
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Any, final
+from typing import Any
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
-from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Row
@@ -12,28 +11,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from src.config import settings
+from src.embeddings import EmbeddingClient
 
 from . import models, schemas
 from .exceptions import (
+    DisabledException,
     ResourceNotFoundException,
+    ValidationException,
 )
 from .utils.filter import apply_filter
 
 load_dotenv(override=True)
-
-
-@final
-class EmbeddingClient:
-    def __init__(self, api_key: str | None):
-        if api_key is None:
-            raise ValueError("API key is required")
-        self.client = AsyncOpenAI(api_key=api_key)
-
-    async def embed(self, query: str) -> list[float]:
-        response = await self.client.embeddings.create(
-            input=query, model="text-embedding-3-small"
-        )
-        return response.data[0].embedding
 
 
 embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
@@ -1005,11 +993,14 @@ async def search(
     workspace_name: str,
     session_name: str | None = None,
     peer_name: str | None = None,
+    semantic: bool | None = None,
 ) -> Select[tuple[models.Message]]:
     """
     Search across message content using a hybrid approach:
+    - Uses semantic search if embed_messages is set, else fall back to full text
     - Uses PostgreSQL full text search for natural language queries
     - Falls back to exact string matching for queries with special characters
+    - Optionally uses semantic search with embeddings
 
     If a session or peer is provided, the search will be scoped to that
     session or peer. Otherwise, it will search across all messages in the workspace.
@@ -1019,6 +1010,10 @@ async def search(
         workspace_name: Name of the workspace
         session_name: Optional name of the session
         peer_name: Optional name of the peer
+        semantic: Optional boolean to configure semantic search:
+            - None: try semantic search if embed_messages is set, else fall back to full text
+            - True: try semantic search if embed_messages is set, else throw error
+            - False: use full text search
 
     Returns:
         List of messages that match the search query, ordered by relevance
@@ -1027,58 +1022,105 @@ async def search(
 
     from sqlalchemy import func, or_
 
-    # Check if query contains special characters that FTS might not handle well
-    has_special_chars = bool(
-        re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
-    )
-
     # Base query conditions
     base_conditions = [models.Message.workspace_name == workspace_name]
 
-    if has_special_chars:
-        # For queries with special characters, use exact string matching (ILIKE)
-        # This ensures we can find exact matches like "~special-uuid~"
-        search_condition = models.Message.content.ilike(f"%{query}%")
+    should_use_semantic_search = False  # Default to full text search
 
+    if semantic is None:
+        # Try semantic search if embed_messages is set, else fall back to full text
+        should_use_semantic_search = settings.LLM.EMBED_MESSAGES
+    elif semantic is True:
+        # Try semantic search if embed_messages is set, else throw error
+        if settings.LLM.EMBED_MESSAGES:
+            should_use_semantic_search = True
+        else:
+            raise DisabledException(
+                "Semantic search requires EMBED_MESSAGES flag to be enabled"
+            )
+
+    if should_use_semantic_search:
+        # Generate embedding for the search query
+        try:
+            embedding_query = await embedding_client.embed(query)
+        except ValueError as e:
+            raise ValidationException(
+                f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS}."
+            ) from e
+
+        # Use cosine distance for semantic search on MessageEmbedding table
+        # Join with Message table to get the actual message data
         base_query = (
             select(models.Message)
-            .where(*base_conditions, search_condition)
-            .order_by(models.Message.created_at.desc())
-        )
-    else:
-        # For natural language queries, use full text search with ranking
-        fts_condition = func.to_tsvector("english", models.Message.content).op("@@")(
-            func.plainto_tsquery("english", query)
-        )
-
-        # Combine FTS with ILIKE as fallback for better coverage
-        combined_condition = or_(
-            fts_condition, models.Message.content.ilike(f"%{query}%")
-        )
-
-        base_query = (
-            select(models.Message)
-            .where(*base_conditions, combined_condition)
+            .join(
+                models.MessageEmbedding,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            )
+            .where(models.MessageEmbedding.workspace_name == workspace_name)
             .order_by(
-                # Order by FTS relevance first, then by creation time
-                func.coalesce(
-                    func.ts_rank(
-                        func.to_tsvector("english", models.Message.content),
-                        func.plainto_tsquery("english", query),
-                    ),
-                    0,
-                ).desc(),
-                models.Message.created_at.desc(),
+                models.MessageEmbedding.embedding.cosine_distance(embedding_query)
             )
         )
 
-    # Add additional filters based on parameters
-    if session_name is not None:
-        stmt = base_query.where(models.Message.session_name == session_name)
-    elif peer_name is not None:
-        stmt = base_query.where(models.Message.peer_name == peer_name)
+        if session_name is not None:
+            stmt = base_query.where(
+                models.MessageEmbedding.session_name == session_name
+            )
+        elif peer_name is not None:
+            stmt = base_query.where(models.MessageEmbedding.peer_name == peer_name)
+        else:
+            stmt = base_query
+
     else:
-        stmt = base_query
+        # Check if query contains special characters that FTS might not handle well
+        has_special_chars = bool(
+            re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
+        )
+
+        if has_special_chars:
+            # For queries with special characters, use exact string matching (ILIKE)
+            # This ensures we can find exact matches like "~special-uuid~"
+            search_condition = models.Message.content.ilike(f"%{query}%")
+
+            base_query = (
+                select(models.Message)
+                .where(*base_conditions, search_condition)
+                .order_by(models.Message.created_at.desc())
+            )
+        else:
+            # For natural language queries, use full text search with ranking
+            fts_condition = func.to_tsvector("english", models.Message.content).op(
+                "@@"
+            )(func.plainto_tsquery("english", query))
+
+            # Combine FTS with ILIKE as fallback for better coverage
+            combined_condition = or_(
+                fts_condition, models.Message.content.ilike(f"%{query}%")
+            )
+
+            base_query = (
+                select(models.Message)
+                .where(*base_conditions, combined_condition)
+                .order_by(
+                    # Order by FTS relevance first, then by creation time
+                    func.coalesce(
+                        func.ts_rank(
+                            func.to_tsvector("english", models.Message.content),
+                            func.plainto_tsquery("english", query),
+                        ),
+                        0,
+                    ).desc(),
+                    models.Message.created_at.desc(),
+                )
+            )
+
+        # Add additional filters based on parameters
+        if session_name is not None:
+            stmt = base_query.where(models.Message.session_name == session_name)
+        elif peer_name is not None:
+            stmt = base_query.where(models.Message.peer_name == peer_name)
+        else:
+            stmt = base_query
 
     return stmt
 
@@ -1200,19 +1242,55 @@ async def create_messages(
     )
 
     # Create list of message objects (this will trigger the before_insert event)
-    message_objects = [
-        models.Message(
+    message_objects: list[models.Message] = []
+    for message in messages:
+        message_obj = models.Message(
             session_name=session_name,
             peer_name=message.peer_name,
             content=message.content,
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
+            public_id=generate_nanoid(),
+            token_count=len(message.encoded_message),
         )
-        for message in messages
-    ]
+        message_objects.append(message_obj)
 
-    # Add all messages and commit
     db.add_all(message_objects)
+    await db.flush()
+
+    if settings.LLM.EMBED_MESSAGES:
+        encoded_message_lookup = {
+            msg.public_id: orig_msg.encoded_message
+            for msg, orig_msg in zip(message_objects, messages, strict=True)
+        }
+        id_resource_dict = {
+            message.public_id: (
+                message.content,
+                encoded_message_lookup[message.public_id],
+            )
+            for message in message_objects
+        }
+        embedding_dict = await embedding_client.batch_embed(id_resource_dict)
+
+        # Create MessageEmbedding entries for each embedded message
+        embedding_objects: list[models.MessageEmbedding] = []
+        for message_obj in message_objects:
+            embeddings = embedding_dict.get(message_obj.public_id, [])
+            for embedding in embeddings:
+                embedding_obj = models.MessageEmbedding(
+                    content=message_obj.content,
+                    embedding=embedding,
+                    message_id=message_obj.public_id,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    peer_name=message_obj.peer_name,
+                )
+                embedding_objects.append(embedding_obj)
+
+        # Add all embedding objects to the session
+        if embedding_objects:
+            db.add_all(embedding_objects)
+
     await db.commit()
 
     return message_objects
@@ -1243,19 +1321,55 @@ async def create_messages_for_peer(
         db, workspace_name=workspace_name, peers=[schemas.PeerCreate(name=peer_name)]
     )
     # Create list of message objects (this will trigger the before_insert event)
-    message_objects = [
-        models.Message(
+    message_objects: list[models.Message] = []
+
+    for message in messages:
+        message_obj = models.Message(
             session_name=None,
             peer_name=peer_name,
             content=message.content,
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
+            public_id=generate_nanoid(),
+            token_count=len(message.encoded_message),
         )
-        for message in messages
-    ]
+        message_objects.append(message_obj)
 
-    # Add all messages and commit
     db.add_all(message_objects)
+    await db.flush()
+
+    if settings.LLM.EMBED_MESSAGES:
+        encoded_message_lookup = {
+            msg.public_id: orig_msg.encoded_message
+            for msg, orig_msg in zip(message_objects, messages, strict=True)
+        }
+        id_resource_dict = {
+            message.public_id: (
+                message.content,
+                encoded_message_lookup[message.public_id],
+            )
+            for message in message_objects
+        }
+        embedding_dict = await embedding_client.batch_embed(id_resource_dict)
+
+        # Create MessageEmbedding entries for each embedded message
+        embedding_objects: list[models.MessageEmbedding] = []
+        for message_obj in message_objects:
+            embeddings = embedding_dict.get(message_obj.public_id, [])
+            for embedding in embeddings:
+                embedding_obj = models.MessageEmbedding(
+                    content=message_obj.content,
+                    embedding=embedding,
+                    message_id=message_obj.public_id,
+                    workspace_name=workspace_name,
+                    peer_name=peer_name,
+                )
+                embedding_objects.append(embedding_obj)
+
+        # Add all embedding objects to the session
+        if embedding_objects:
+            db.add_all(embedding_objects)
+
     await db.commit()
 
     return message_objects
@@ -1466,7 +1580,10 @@ async def update_message(
 
 
 async def get_collection(
-    db: AsyncSession, workspace_name: str, peer_name: str, collection_name: str
+    db: AsyncSession,
+    workspace_name: str,
+    collection_name: str,
+    peer_name: str | None = None,
 ) -> models.Collection:
     """
     Get a collection by name for a specific peer and workspace.
@@ -1486,9 +1603,10 @@ async def get_collection(
     stmt = (
         select(models.Collection)
         .where(models.Collection.workspace_name == workspace_name)
-        .where(models.Collection.peer_name == peer_name)
         .where(models.Collection.name == collection_name)
     )
+    if peer_name:
+        stmt = stmt.where(models.Collection.peer_name == peer_name)
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
@@ -1501,12 +1619,12 @@ async def get_collection(
 async def get_or_create_collection(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
     collection_name: str,
+    peer_name: str | None = None,
 ) -> models.Collection:
     try:
         honcho_collection = await get_collection(
-            db, workspace_name, peer_name, collection_name
+            db, workspace_name, collection_name, peer_name
         )
         return honcho_collection
     except ResourceNotFoundException:
@@ -1536,7 +1654,13 @@ async def query_documents(
     top_k: int = 5,
 ) -> Sequence[models.Document]:
     # Using ModelClient for embeddings
-    embedding_query = await embedding_client.embed(query)
+    try:
+        embedding_query = await embedding_client.embed(query)
+    except ValueError as e:
+        raise ValidationException(
+            f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS}."
+        ) from e
+
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
@@ -1586,8 +1710,8 @@ async def create_document(
     await get_collection(
         db,
         workspace_name=workspace_name,
-        peer_name=peer_name,
         collection_name=collection_name,
+        peer_name=peer_name,
     )
 
     # Using ModelClient for embeddings
@@ -1850,10 +1974,10 @@ def _build_status_response(
             pending_work_units=counts.pending,
         )
 
-    sessions: dict[str, schemas.DeriverStatus] = {}
+    sessions: dict[str, schemas.SessionDeriverStatus] = {}
     for session_id, data in counts.sessions.items():
         total = data.completed + data.in_progress + data.pending
-        sessions[session_id] = schemas.DeriverStatus(
+        sessions[session_id] = schemas.SessionDeriverStatus(
             peer_id=peer_name,
             session_id=session_id,
             total_work_units=total,

@@ -154,7 +154,7 @@ def get_session(user_id, location_id, create=False):
     
     # Query for *active* sessions with both user_id and location_id
     sessions_iter = honcho.apps.users.sessions.list(
-        app_id=app.id, user_id=user_id, reverse=True, is_active=True
+        app_id=app.id, user_id=user_id, reverse=True, filter={"is_active": True}
     )
     sessions = list(session for session in sessions_iter)
 
@@ -175,7 +175,7 @@ def get_session(user_id, location_id, create=False):
     return None, False
 ```
 
-You can see the `list` method on the sessions object similarly returns an iterable. This is a common pattern in Honcho--use list comprehension to create your new python list. Then loop through those session objects to find the appropriate `location_id` in the metadata, and if none are found then create a new session. You'll also notice we list messages in `reverse=True` order--this means you will get the most recent ones first. We also support native filtering by active sessions.
+You can see the `list` method on the sessions object similarly returns an iterable. This is a common pattern in Honcho--use list comprehension to create your new python list. Then loop through those session objects to find the appropriate `location_id` in the metadata, and if none are found then create a new session. You'll also notice we list messages in `reverse=True` order--this means you will get the most recent ones first. We also support native filtering by active sessions and any other fields or user-defined metadata on the session object.
 
 The next helper function we create is called `llm`. This simplifies constructing the chat message object we're going to send to the inference provider.
 

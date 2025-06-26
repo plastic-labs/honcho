@@ -172,7 +172,12 @@ async def chat(
 
     if not options.stream:
         return await agent.chat(
-            workspace_id, peer_id, options.session_id, options.queries, options.stream
+            workspace_id,
+            peer_id,
+            options.session_id,
+            options.queries,
+            options.stream,
+            options.target,
         )
 
     async def parse_stream():
@@ -183,6 +188,7 @@ async def chat(
                 options.session_id,
                 options.queries,
                 stream=True,
+                target=options.target,
             )
             if isinstance(stream, Stream):
                 async for chunk, _ in stream:
@@ -326,10 +332,17 @@ async def get_working_representation(
 async def search_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    query: str = Body(..., description="Search query"),
+    search: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters "
+    ),
     db: AsyncSession = db,
 ):
     """Search a Peer"""
-    stmt = await crud.search(query, workspace_name=workspace_id, peer_name=peer_id)
+    stmt = await crud.search(
+        search.query,
+        workspace_name=workspace_id,
+        peer_name=peer_id,
+        semantic=search.semantic,
+    )
 
     return await apaginate(db, stmt)

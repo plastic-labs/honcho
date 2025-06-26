@@ -451,12 +451,19 @@ async def get_session_context(
 async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    query: str = Body(..., description="Search query"),
+    search: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters "
+    ),
     db: AsyncSession = db,
 ):
     """Search a Session"""
+    query, semantic = search.query, search.semantic
+
     stmt = await crud.search(
-        query, workspace_name=workspace_id, session_name=session_id
+        query,
+        workspace_name=workspace_id,
+        session_name=session_id,
+        semantic=semantic,
     )
 
     return await apaginate(db, stmt)
