@@ -31,7 +31,7 @@ export class Session {
   constructor(id: string, honcho: Honcho, config?: Record<string, unknown>) {
     this.id = id;
     this._honcho = honcho;
-    
+
     if (config) {
       this._honcho['_client'].workspaces.sessions.getOrCreate(
         this._honcho.workspaceId,
@@ -149,11 +149,13 @@ export class Session {
     await (this._honcho['_client'] as any).workspaces.sessions.messages.create(
       this._honcho.workspaceId,
       this.id,
-      { messages: msgs.map((msg) => ({
-        peer_id: msg.peerId,
-        content: msg.content,
-        metadata: msg.metadata,
-      }))}
+      {
+        messages: msgs.map((msg) => ({
+          peer_id: msg.peerId,
+          content: msg.content,
+          metadata: msg.metadata,
+        }))
+      }
     );
   }
 
@@ -214,7 +216,7 @@ export class Session {
     const messagesPage = await (this._honcho['_client'] as any).workspaces.sessions.search(
       this._honcho.workspaceId,
       this.id,
-      query
+      { query: query }
     );
     return new Page(messagesPage);
   }
@@ -230,7 +232,7 @@ export class Session {
   async workingRep(peer: string | Peer, target?: string | Peer): Promise<Record<string, unknown>> {
     const peerId = typeof peer === 'string' ? peer : peer.id;
     const targetId = target ? (typeof target === 'string' ? target : target.id) : undefined;
-    
+
     return await (this._honcho['_client'] as any).workspaces.peers.workingRepresentation(
       this._honcho.workspaceId,
       peerId,

@@ -113,7 +113,7 @@ export class Honcho {
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
       throw new Error('Search query must be a non-empty string');
     }
-    const messagesPage = await this._client.workspaces.search(this.workspaceId, query as any);
+    const messagesPage = await this._client.workspaces.search(this.workspaceId, { body: query });
     return new Page(messagesPage);
   }
 } 
