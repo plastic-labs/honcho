@@ -25,12 +25,31 @@ async def test_client_init(client_fixture, client: TestClient):
         assert isinstance(honcho_client, Honcho)
         assert honcho_client.workspace_id == "sdk-test-workspace-sync"
 
-    res = client.post("/v2/workspaces/list", json={})
-    assert res.status_code == 200
+    # Check all pages to find the workspace
+    found_workspace = False
+    page = 1
 
-    workspaces = res.json()["items"]
-    workspace_ids = [w["id"] for w in workspaces]
-    assert honcho_client.workspace_id in workspace_ids
+    while not found_workspace:
+        res = client.post("/v2/workspaces/list", json={}, params={"page": page})
+        assert res.status_code == 200
+
+        data = res.json()
+        workspaces = data["items"]
+        workspace_ids = [w["id"] for w in workspaces]
+
+        if honcho_client.workspace_id in workspace_ids:
+            found_workspace = True
+            break
+
+        # Check if there are more pages
+        if page >= data.get("pages", 1) or len(workspaces) == 0:
+            break
+
+        page += 1
+
+    assert found_workspace, (
+        f"Workspace {honcho_client.workspace_id} not found in any page of results"
+    )
 
 
 @pytest.mark.asyncio

@@ -30,19 +30,6 @@ def honcho_test_client(client: TestClient) -> Generator[Honcho, None, None]:
     yield honcho_client
 
 
-def test_sdk_init_and_workspace_creation(
-    honcho_test_client: Honcho, client: TestClient
-):
-    """
-    Tests that the Honcho SDK can be initialized and that it creates a workspace.
-    """
-    assert honcho_test_client.workspace_id == "sdk-test-workspace"
-
-    res = client.post("/v2/workspaces/list", json={})
-    assert res.status_code == 200
-    assert res.json()["items"][0]["id"] == "sdk-test-workspace"
-
-
 def test_peer_operations(honcho_test_client: Honcho):
     """
     Tests creation and metadata operations for peers.

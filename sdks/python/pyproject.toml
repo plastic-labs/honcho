@@ -1,6 +1,6 @@
 [project]
 name = "honcho-ai"
-version = "1.0.2"
+version = "1.1.0"
 description = "Official DX Optimized Python SDK for Honcho"
 dynamic = ["readme"]
 license = "Apache-2.0"
@@ -8,7 +8,7 @@ authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
-    "honcho-core>=1.0.1",
+    "honcho-core>=1.1.0",
     "httpx>=0.28.0, <1",
     "pydantic>=2.0.0, <3",
 ]

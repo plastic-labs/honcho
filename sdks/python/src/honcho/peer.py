@@ -288,7 +288,7 @@ class Peer(BaseModel):
             Returns an empty page if no messages are found.
         """
         messages_page = self._client.workspaces.peers.search(
-            self.id, workspace_id=self.workspace_id, body=query
+            workspace_id=self.workspace_id, peer_id=self.id, query=query
         )
         return SyncPage(messages_page)
 

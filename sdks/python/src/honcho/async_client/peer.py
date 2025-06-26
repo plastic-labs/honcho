@@ -308,7 +308,7 @@ class AsyncPeer(BaseModel):
             Returns an empty page if no messages are found.
         """
         messages_page = await self._client.workspaces.peers.search(
-            self.id, workspace_id=self.workspace_id, body=query
+            self.id, workspace_id=self.workspace_id, query=query
         )
         return AsyncPage(messages_page)
 
