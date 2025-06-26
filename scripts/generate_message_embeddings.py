@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to generate embeddings for existing messages that don't already have embeddings.
 
@@ -134,17 +133,29 @@ async def create_embeddings_for_messages(
     return embeddings_created
 
 
-async def main():
+async def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Generate embeddings for messages that don't already have them"
+        description="Generate embeddings for messages that don't already have them",
+    )
+
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=50,
+        help="Number of messages to process in each batch (default: 50)",
     )
     parser.add_argument(
-        "--workspace-name", help="Only process messages from this workspace"
+        "--workspace-name",
+        help="Only process messages from this workspace",
     )
     parser.add_argument(
-        "--session-name", help="Only process messages from this session"
+        "--session-name",
+        help="Only process messages from this session",
     )
-    parser.add_argument("--peer-name", help="Only process messages from this peer")
+    parser.add_argument(
+        "--peer-name",
+        help="Only process messages from this peer",
+    )
 
     args = parser.parse_args()
 
@@ -177,7 +188,7 @@ async def main():
             print(f"Found {len(messages)} messages without embeddings.")
 
             # Process in batches
-            batch_size = 50
+            batch_size = args.batch_size
             total_embeddings = 0
 
             for i in range(0, len(messages), batch_size):

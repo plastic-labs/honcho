@@ -118,6 +118,10 @@ class MessageCreate(MessageBase):
 
     _encoded_message: list[int] = PrivateAttr(default=[])
 
+    @property
+    def encoded_message(self) -> list[int]:
+        return self._encoded_message
+
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
         encoding = tiktoken.get_encoding("cl100k_base")

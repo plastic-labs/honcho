@@ -1,3 +1,9 @@
+"""
+Tests for message embedding functionality.
+
+These tests verify that message embeddings are created, stored, and can be searched.
+"""
+
 from typing import Any
 
 import pytest
@@ -9,12 +15,6 @@ from src import models
 from src.crud import create_messages, create_messages_for_peer, search
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
-
-"""
-Tests for message embedding functionality.
-
-These tests verify that message embeddings are created, stored, and can be searched.
-"""
 
 
 @pytest.mark.asyncio

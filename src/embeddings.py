@@ -20,6 +20,10 @@ class BatchItem(NamedTuple):
 
 
 class EmbeddingClient:
+    """
+    Embedding client for OpenAI with chunking and batching support.
+    """
+
     def __init__(self, api_key: str | None = None):
         if api_key is None:
             api_key = settings.LLM.OPENAI_API_KEY
@@ -68,7 +72,7 @@ class EmbeddingClient:
 
         # 3. Process all batches concurrently
         batch_results = await asyncio.gather(
-            *[self._process_batch(batch) for batch in batches]
+            *[self._process_batch(batch) for batch in batches],
         )
 
         # 4. Accumulate results preserving chunk order
@@ -159,8 +163,8 @@ class EmbeddingClient:
 
             return dict(result)
 
-        except Exception as e:
-            logger.error(f"Error processing batch: {e}")
+        except Exception:
+            logger.exception("Error processing batch")
             raise
 
     def _accumulate_embeddings(

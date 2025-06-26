@@ -1247,7 +1247,7 @@ async def create_messages(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=len(message._encoded_message),  # pyright: ignore[reportPrivateUsage]
+            token_count=len(message.encoded_message),
         )
         message_objects.append(message_obj)
 
@@ -1256,7 +1256,7 @@ async def create_messages(
 
     if settings.LLM.EMBED_MESSAGES:
         encoded_message_lookup = {
-            msg.public_id: orig_msg._encoded_message  # pyright: ignore[reportPrivateUsage]
+            msg.public_id: orig_msg.encoded_message
             for msg, orig_msg in zip(message_objects, messages, strict=True)
         }
         id_resource_dict = {
@@ -1272,7 +1272,7 @@ async def create_messages(
         embedding_objects: list[models.MessageEmbedding] = []
         for message_obj in message_objects:
             embeddings = embedding_dict.get(message_obj.public_id, [])
-            for _, embedding in enumerate(embeddings):
+            for embedding in embeddings:
                 embedding_obj = models.MessageEmbedding(
                     content=message_obj.content,
                     embedding=embedding,
@@ -1327,7 +1327,7 @@ async def create_messages_for_peer(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=len(message._encoded_message),  # pyright: ignore[reportPrivateUsage]
+            token_count=len(message.encoded_message),
         )
         message_objects.append(message_obj)
 
@@ -1336,7 +1336,7 @@ async def create_messages_for_peer(
 
     if settings.LLM.EMBED_MESSAGES:
         encoded_message_lookup = {
-            msg.public_id: orig_msg._encoded_message  # pyright: ignore[reportPrivateUsage]
+            msg.public_id: orig_msg.encoded_message
             for msg, orig_msg in zip(message_objects, messages, strict=True)
         }
         id_resource_dict = {
@@ -1352,7 +1352,7 @@ async def create_messages_for_peer(
         embedding_objects: list[models.MessageEmbedding] = []
         for message_obj in message_objects:
             embeddings = embedding_dict.get(message_obj.public_id, [])
-            for _, embedding in enumerate(embeddings):
+            for embedding in embeddings:
                 embedding_obj = models.MessageEmbedding(
                     content=message_obj.content,
                     embedding=embedding,
