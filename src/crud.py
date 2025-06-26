@@ -1141,7 +1141,7 @@ async def search(
     # Base query conditions
     base_conditions = [models.Message.workspace_name == workspace_name]
 
-    should_use_semantic_search = False
+    should_use_semantic_search = False  # Default to full text search
 
     if semantic is None:
         # Try semantic search if embed_messages is set, else fall back to full text
@@ -1154,7 +1154,6 @@ async def search(
             raise DisabledException(
                 "Semantic search requires EMBED_MESSAGES flag to be enabled"
             )
-    # If semantic is False, should_use_semantic remains False (use full text search)
 
     if should_use_semantic_search:
         # Generate embedding for the search query

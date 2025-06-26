@@ -68,18 +68,19 @@ def test_message_validations_api(
     )
     assert session_response.status_code == 200
 
-    long_content = "a" * 50001
+    # Test content too long
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
-                {"content": long_content, "peer_id": test_peer.name, "metadata": {}}
+                {"content": "a" * 50001, "peer_id": test_peer.name, "metadata": {}}
             ]
         },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
-    assert "String should have at most 50000 characters" in error["msg"]
+    assert "content" in str(error["loc"])
+    assert error["msg"] == "String should have at most 50000 characters"
     assert error["type"] == "string_too_long"
 
 

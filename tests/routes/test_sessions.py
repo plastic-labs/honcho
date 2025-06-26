@@ -857,7 +857,7 @@ def test_search_session_nonexistent(
 def test_search_session_with_semantic_search_false(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session search with use_semantic_search=false"""
+    """Test session search with semantic=false"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
@@ -878,7 +878,7 @@ def test_search_session_with_semantic_search_false(
         },
     )
 
-    # Search with use_semantic_search=false
+    # Search with semantic=false
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
         json={"query": "search", "semantic": False},
