@@ -1,0 +1,13 @@
+.vscode
+.DS_Store
+
+__pycache__
+.mypy_cache
+.ruff_cache
+*.egg-info
+
+dist
+
+.venv
+
+.env

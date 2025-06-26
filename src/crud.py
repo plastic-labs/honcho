@@ -372,8 +372,13 @@ async def get_or_create_session(
                 f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
             )
 
-        # Create honcho session
+        # Get or create workspace to ensure it exists
+        await get_or_create_workspace(
+            db,
+            schemas.WorkspaceCreate(name=workspace_name),
+        )
 
+        # Create honcho session
         honcho_session = models.Session(
             workspace_name=workspace_name,
             name=session.name,
@@ -931,42 +936,53 @@ async def set_peer_config(
     db: AsyncSession,
     workspace_name: str,
     session_name: str,
-    peer_id: str,
+    peer_name: str,
     config: schemas.SessionPeerConfig,
 ) -> None:
     """
-    Set the configuration for a peer in a session.
+    Set the configuration for a specific peer in a session.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
-        peer_id: Name of the peer
-        config: Configuration for the peer
-
-    Returns:
-        True if the peer config was set successfully
-
-    Raises:
-        ResourceNotFoundException: If the session or peer does not exist
+        peer_name: Name of the peer
+        config: The peer configuration to set
     """
-    # Get row from session_peer table
-    stmt = select(models.SessionPeer).where(
-        models.SessionPeer.workspace_name == workspace_name,
-        models.SessionPeer.session_name == session_name,
-        models.SessionPeer.peer_name == peer_id,
+    # First, get the session and peer to ensure they exist
+    await get_session(db, session_name, workspace_name)
+    await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+
+    # Check if a SessionPeer entry already exists
+    stmt = (
+        select(models.SessionPeer)
+        .where(models.SessionPeer.session_name == session_name)
+        .where(models.SessionPeer.peer_name == peer_name)
+        .where(models.SessionPeer.workspace_name == workspace_name)
     )
     result = await db.execute(stmt)
     session_peer = result.scalar_one_or_none()
 
-    if session_peer is None:
-        raise ResourceNotFoundException(
-            f"Session peer {peer_id} not found in session {session_name} in workspace {workspace_name}"
-        )
+    update_data = config.model_dump(exclude_none=True)
 
-    # Update peer config
-    session_peer.configuration["observe_others"] = config.observe_others
-    session_peer.configuration["observe_me"] = config.observe_me
+    if session_peer:
+        # Update existing configuration
+        if session_peer.configuration:
+            # Create a new dictionary and update it to ensure SQLAlchemy tracks the change
+            new_config = session_peer.configuration.copy()
+            new_config.update(update_data)
+            session_peer.configuration = new_config
+        else:
+            session_peer.configuration = update_data
+    else:
+        # Create a new SessionPeer entry
+        session_peer = models.SessionPeer(
+            session_name=session_name,
+            peer_name=peer_name,
+            workspace_name=workspace_name,
+            configuration=update_data,
+        )
+        db.add(session_peer)
 
     await db.commit()
 

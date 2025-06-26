@@ -29,6 +29,7 @@ dependencies = [
 ]
 [tool.uv]
 dev-dependencies = [
+    "honcho-core>=1.1.0",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
@@ -70,7 +71,7 @@ asyncio_default_fixture_loop_scope = "session"
 # than mypy and with a good extension for VSCode/Cursor.
 # https://marketplace.visualstudio.com/items?itemName=detachhead.basedpyright
 # https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
-include = ["src", "tests"]
+include = ["src", "tests", "sdks/python/src"]
 exclude = ["tests/**/disabled*.py"]
 # By default BasedPyright is very strict, so you almost certainly want to disable
 # some of the rules.
@@ -97,3 +98,4 @@ reportImplicitOverride = false
 # reportUnknownArgumentType = false
 # reportUnknownParameterType = false
 # reportUnknownMemberType = false
+reportImportCycles = false

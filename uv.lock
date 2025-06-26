@@ -505,6 +505,7 @@ dependencies = [
 dev = [
     { name = "basedpyright" },
     { name = "coverage" },
+    { name = "honcho-core" },
     { name = "interrogate" },
     { name = "py-spy" },
     { name = "pytest" },
@@ -539,12 +540,30 @@ requires-dist = [
 dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "coverage", specifier = ">=7.6.0" },
+    { name = "honcho-core", specifier = ">=1.1.0" },
     { name = "interrogate", specifier = ">=1.7.0" },
     { name = "py-spy", specifier = ">=0.3.14" },
     { name = "pytest", specifier = ">=8.2.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.7" },
     { name = "ruff", specifier = ">=0.11.2" },
     { name = "sqlalchemy-utils", specifier = ">=0.41.2" },
+]
+
+[[package]]
+name = "honcho-core"
+version = "1.1.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9d/2f/27739b0d8950da05743cba5085be66f1184195c07ba9b852988d45ba252d/honcho_core-1.1.0.tar.gz", hash = "sha256:d31dc932573b771056952d234cf0c615a4ca591a11eb29c543e9a2277fcc0926", size = 121388, upload-time = "2025-06-26T19:31:00.814Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/14/14/c2bc7dce35a76a7d89166c55f35f2be21fdb3a94ee3f6502aa83f399bb1a/honcho_core-1.1.0-py3-none-any.whl", hash = "sha256:5716aa572cf33416d1c2c475dbd714879e9d351f2e2b1c6c37751b2c91adc6ce", size = 112730, upload-time = "2025-06-26T19:30:59.455Z" },
 ]
 
 [[package]]
@@ -1024,7 +1043,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.92.0"
+version = "1.92.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1036,9 +1055,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/3f/75ad8dfe1ee4e6daacebc5a8145878c00b22c4b89e3446228d3ffccbf726/openai-1.92.0.tar.gz", hash = "sha256:acaf4ee5fca8611a09035e37ceb69a352b4a84e25b103f0fc1ccc696bf9a16f0", size = 485264, upload-time = "2025-06-26T16:57:18.996Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/44/9dba6f521591c49d3ba70b6800b32cb3f8feec89648b27fcce766046c57c/openai-1.92.2.tar.gz", hash = "sha256:b571a79fc7e165e7d00e6963a8a95eb5f42b60ac89fd316f1dc0a2dac5c6fae1", size = 485428, upload-time = "2025-06-26T19:38:01.228Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/66/8f85019b7943e4976d931fdb0e2b973090b4dac999c3e90844d2336f1184/openai-1.92.0-py3-none-any.whl", hash = "sha256:99210715bad1a4de5a387993aca7e4e8e5a742f1e185eefe2f805001cc2c21f3", size = 753397, upload-time = "2025-06-26T16:57:17.038Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/e4/e558d3049feedab15fabf3cb704837b21c8194c133b9fb9fe56b8b82ca30/openai-1.92.2-py3-none-any.whl", hash = "sha256:abb64bee7f2571709edf9a856f598ffe871730129a7d807a8a4d8d2958f5c842", size = 753297, upload-time = "2025-06-26T19:37:59.35Z" },
 ]
 
 [[package]]

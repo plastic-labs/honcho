@@ -1,0 +1,56 @@
+[project]
+name = "honcho-ai"
+version = "1.1.0"
+description = "Official DX Optimized Python SDK for Honcho"
+dynamic = ["readme"]
+license = "Apache-2.0"
+authors = [
+{ name = "Plastic Labs", email = "hello@plasticlabs.ai" },
+]
+dependencies = [
+    "honcho-core>=1.1.0",
+    "httpx>=0.28.0, <1",
+    "pydantic>=2.0.0, <3",
+]
+requires-python = ">= 3.8"
+classifiers = [
+  "Typing :: Typed",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "Operating System :: POSIX",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: Microsoft :: Windows",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/plastic-labs/honcho-sdks"
+Repository = "https://github.com/plastic-labs/honcho-sdks"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.13",
+]
+
+[tool.setuptools.dynamic]
+readme = {file = ["README.md"], content-type = "text/markdown"}
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["honcho", "honcho.async_client"]

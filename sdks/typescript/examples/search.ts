@@ -1,0 +1,82 @@
+import { Honcho } from '../src';
+
+/**
+ * Example demonstrating search functionality across different scopes.
+ * 
+ * This creates sessions with special keywords and demonstrates
+ * searching at session, workspace, and peer levels.
+ */
+async function main() {
+  console.log('Creating Honcho client...');
+  // Create a Honcho client with the default workspace
+  const honcho = new Honcho({
+    environment: 'local'
+  });
+
+  console.log('Creating peers...');
+  const peers = [
+    honcho.peer('alice'),
+    honcho.peer('bob'),
+    honcho.peer('charlie'),
+  ];
+
+  // Create a new session
+  const sessionId = `search_test_${crypto.randomUUID()}`;
+  const session = honcho.session(sessionId);
+  console.log(`Created session: ${sessionId}`);
+
+  // Create a message with our special keyword
+  const keyword = `~special-${crypto.randomUUID()}~`;
+  console.log(`Using keyword: ${keyword}`);
+  await session.addMessages(peers[0].message(`I am a ${keyword} message`));
+
+  console.log('Generating random messages...');
+  // Generate some random messages from alice, bob, and charlie and add them to the session
+  const messages = [];
+  for (let i = 0; i < 10; i++) {
+    const randomPeer = peers[Math.floor(Math.random() * peers.length)];
+    messages.push(
+      randomPeer.message(`Hello from ${randomPeer.id}! This is message ${i}.`)
+    );
+  }
+
+  await session.addMessages(messages);
+  console.log('Added random messages to session.');
+
+  console.log('Searching the session...');
+  // Search the session for the special keyword
+  const sessionSearchResults = await session.search(keyword);
+  console.log(`Session search returned ${sessionSearchResults.total} results:`);
+  for await (const message of sessionSearchResults) {
+    console.log(`  - ${message.content} (from ${message.peer_id})`);
+  }
+
+  const alice = peers[0];
+
+  // Add a different message to alice's global representation
+  const differentKeyword = `~different-${crypto.randomUUID()}~`;
+  console.log(`Using different keyword: ${differentKeyword}`);
+  await alice.addMessages(alice.message(`I am a ${differentKeyword} message`));
+
+  console.log('Searching the workspace...');
+  // Search the workspace for the special keyword
+  const workspaceSearchResults = await honcho.search(keyword);
+  console.log(`Workspace search returned ${workspaceSearchResults.total} results:`);
+  for await (const message of workspaceSearchResults) {
+    console.log(`  - ${message.content} (from ${message.peer_id})`);
+  }
+
+  console.log('Searching alice\'s global representation...');
+  // Search alice's global representation for the different message
+  const aliceSearchResults = await alice.search(differentKeyword);
+  console.log(`Alice search returned ${aliceSearchResults.total} results:`);
+  for await (const message of aliceSearchResults) {
+    console.log(`  - ${message.content} (from ${message.peer_id})`);
+  }
+
+  console.log('Example completed successfully!');
+}
+
+main().catch((err) => {
+  console.error('Error running search example:', err);
+}); 
