@@ -1958,10 +1958,10 @@ def _build_status_response(
             pending_work_units=counts.pending,
         )
 
-    sessions: dict[str, schemas.DeriverStatus] = {}
+    sessions: dict[str, schemas.SessionDeriverStatus] = {}
     for session_id, data in counts.sessions.items():
         total = data.completed + data.in_progress + data.pending
-        sessions[session_id] = schemas.DeriverStatus(
+        sessions[session_id] = schemas.SessionDeriverStatus(
             peer_id=peer_name,
             session_id=session_id,
             total_work_units=total,

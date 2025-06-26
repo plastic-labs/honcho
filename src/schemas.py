@@ -329,6 +329,22 @@ class MessageBulkData(BaseModel):
     workspace_name: str
 
 
+class SessionDeriverStatus(BaseModel):
+    peer_id: str | None = Field(
+        default=None,
+        description="ID of the peer (optional when filtering by session only)",
+    )
+    session_id: str | None = Field(
+        default=None, description="Session ID if filtered by session"
+    )
+    total_work_units: int = Field(description="Total work units")
+    completed_work_units: int = Field(description="Completed work units")
+    in_progress_work_units: int = Field(
+        description="Work units currently being processed"
+    )
+    pending_work_units: int = Field(description="Work units waiting to be processed")
+
+
 class DeriverStatus(BaseModel):
     peer_id: str | None = Field(
         default=None,
@@ -343,6 +359,6 @@ class DeriverStatus(BaseModel):
         description="Work units currently being processed"
     )
     pending_work_units: int = Field(description="Work units waiting to be processed")
-    sessions: dict[str, "DeriverStatus"] | None = Field(
+    sessions: dict[str, SessionDeriverStatus] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )
