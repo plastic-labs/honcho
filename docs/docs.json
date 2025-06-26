@@ -38,17 +38,17 @@
                 ]
               },
               {
-                "group": "Platform",
+                "group": "Tutorial",
                 "pages": [
-                  "v2/documentation/platform/overview",
-                  "v2/documentation/platform/guided-tutorial",
-                  "v2/documentation/platform/sdk"
+                  "v2/documentation/tutorial/overview",
+                  "v2/documentation/tutorial/guided-tutorial",
+                  "v2/documentation/tutorial/sdk"
                 ]
               }
             ]
           },
           {
-            "tab": "Spellbooks and Tutorials",
+            "tab": "Spellbooks",
             "groups": [
               {
                 "group": "Getting Started",
@@ -319,7 +319,7 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Platform",
+          "anchor": "Managed Platform",
           "href": "https://app.honcho.dev",
           "icon": "book-open-cover"
         },

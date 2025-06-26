@@ -64,10 +64,11 @@ All configuration values can be overridden using environment variables. The envi
 
 Examples:
 
-- `DB_CONNECTION_URI` - Database connection string
-- `AUTH_JWT_SECRET` - JWT secret key
-- `LLM_DIALECTIC_MODEL` - Dialectic LLM model
-- `LOG_LEVEL` - Application log level
+- `DB_CONNECTION_URI` → `[db].CONNECTION_URI`
+- `DB_POOL_SIZE`      → `[db].POOL_SIZE`
+- `AUTH_JWT_SECRET`   → `[auth].JWT_SECRET`
+- `LLM_DIALECTIC_MODEL` → `[llm].DIALECTIC_MODEL`
+- `LOG_LEVEL` (no section) → `[app].LOG_LEVEL`
 
 ### Configuration Priority
 

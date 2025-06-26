@@ -7,7 +7,7 @@
 ![GitHub Repo stars](https://img.shields.io/github/stars/plastic-labs/honcho)
 [![X (formerly Twitter) URL](https://img.shields.io/twitter/url?url=https%3A%2F%2Ftwitter.com%2Fplastic_labs)](https://twitter.com/plastic_labs)
 [![PyPI version](https://img.shields.io/pypi/v/honcho-ai.svg)](https://pypi.org/project/honcho-ai/)
-[![NPM version](https://img.shields.io/npm/v/honcho-ai.svg)](https://npmjs.org/package/@honcho-ai/sdk)
+[![NPM version](https://img.shields.io/npm/v/@honcho-ai/sdk.svg)](https://npmjs.org/package/@honcho-ai/sdk)
 
 Honcho is an infrastructure layer for building AI agents with social cognition and theory-of-mind capabilities. It enables developers to create AI agents and LLM-powered applications that are personalized to their end users by leveraging the inherent theory-of-mind capabilities of LLMs to build coherent models of user psychology over time.
 
@@ -41,13 +41,26 @@ The Honcho project is split between several repositories with this one hosting
 the core service logic. This is implemented as a FastAPI server/API to store
 data about an application's state.
 
-There are also client-sdks that are created using
-[Stainless](https://www.stainlessapi.com/). Currently, there is a [Python](https://github.com/plastic-labs/honcho-python) and
-[TypeScript/JavaScript](https://github.com/plastic-labs/honcho-nodej) SDK available.
+There are also client sdks in implemented in the `sdks/` directory with support
+for Python and TypeScript. These SDKs wrap core SDKs that are generated using
+[Stainless](https://www.stainlessapi.com/).
 
-Examples on how to use the SDK are located within each SDK repository. There is
-also SDK example usage available in the [API Reference](https://docs.honcho.dev/api-reference/introduction)
-along with various guides.
+- [Python](https://pypi.org/project/honcho-ai/)
+- [TypeScript](https://www.npmjs.com/package/@honcho-ai/sdk)
+
+We recommend using the official client SDKs instead of the core ones for better
+developer experience, however for any custom use cases you can still access the
+core SDKs in their own repos:
+
+[Honcho Core Python](https://github.com/plastic-labs/honcho-python-core)
+[Honcho Core TypeScript](https://github.com/plastic-labs/honcho-node-core)
+
+Examples on how to use the SDK are located within each SDK folder and in the
+[SDK Reference](https://docs.honcho.dev/v2/documentation/tutorial/SDK)
+
+There are also documented examples of how to use the core SDKs in the
+[API Reference](https://docs.honcho.dev/api-reference/introduction) section of
+the documentation.
 
 ## Usage
 
