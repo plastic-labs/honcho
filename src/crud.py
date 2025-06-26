@@ -79,15 +79,13 @@ class EmbeddingClient:
         # - Max 300,000 tokens per request (total across all inputs)
         # - Max 8,192 tokens per individual input
         # Note: Schema limits ensure we'll never exceed the 2,048 inputs per request limit
-        MAX_TOKENS_PER_REQUEST = settings.LLM.MAX_EMBEDDING_TOKENS_PER_REQUEST
-        MAX_TOKENS_PER_INPUT = settings.LLM.MAX_EMBEDDING_TOKENS
 
         # Track text IDs that are skipped due to token limits
         skipped_text_ids: list[str] = []
 
         for text_id, (text, text_tokens) in id_resource_dict.items():
             # Skip if single text exceeds per-input limit. This is a safety measure but realistically shouldn't really happen
-            if text_tokens > MAX_TOKENS_PER_INPUT:
+            if text_tokens > settings.LLM.MAX_EMBEDDING_TOKENS:
                 logger.warning(
                     "Skipping embedding for %s - %s tokens exceeds limit",
                     text_id,
@@ -98,7 +96,8 @@ class EmbeddingClient:
 
             # Check if adding this text would exceed token limits
             would_exceed_tokens = (
-                current_batch_tokens + text_tokens > MAX_TOKENS_PER_REQUEST
+                current_batch_tokens + text_tokens
+                > settings.LLM.MAX_EMBEDDING_TOKENS_PER_REQUEST
             )
 
             if would_exceed_tokens:
@@ -1370,7 +1369,7 @@ async def create_messages(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message._token_count,  # type: ignore
+            token_count=message._token_count,  # pyright: ignore[reportPrivateUsage]
         )
         message_objects.append(message_obj)
     if settings.LLM.EMBED_MESSAGES:
@@ -1441,7 +1440,7 @@ async def create_messages_for_peer(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message._token_count,  # type: ignore
+            token_count=message._token_count,  # pyright: ignore[reportPrivateUsage]
         )
         message_objects.append(message_obj)
 

@@ -86,17 +86,16 @@ def upgrade() -> None:
 
     # Create HNSW index for vector similarity search
     op.execute(f"""
-        CREATE INDEX idx_message_embeddings_embedding_hnsw 
-        ON {schema}.message_embeddings 
-        USING hnsw (embedding vector_cosine_ops) 
+        CREATE INDEX idx_message_embeddings_embedding_hnsw
+        ON {schema}.message_embeddings
+        USING hnsw (embedding vector_cosine_ops)
         WITH (m = 16, ef_construction = 64)
     """)
 
 
 def downgrade() -> None:
-    """Defensively drop the message_embeddings table and all related objects."""
-
-    if not table_exists("message_embeddings"):
+    inspector = sa.inspect(op.get_bind())
+    if not table_exists("message_embeddings", inspector):
         return
 
     # Drop indexes defensively
@@ -110,8 +109,8 @@ def downgrade() -> None:
     ]
 
     for index_name in indexes_to_drop:
-        if index_exists("message_embeddings", index_name):
-            op.drop_index(index_name, table_name="message_embeddings")
+        if index_exists("message_embeddings", index_name, inspector):
+            op.drop_index(index_name, table_name="message_embeddings", schema=schema)
 
     # Drop table (this will also drop foreign keys and check constraints)
-    op.drop_table("message_embeddings")
+    op.drop_table("message_embeddings", schema=schema)
