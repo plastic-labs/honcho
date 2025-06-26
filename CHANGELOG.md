@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.1]
+
+### Added
+
+- Ergonomic SDKs for Python and TypeScript (uses Stainless underneath)
+- Deriver Queue Status endpoint
+- Complex arbitrary filters on workspace/session/peer/message
+- Message embedding table for full semantic search
+
+### Changed
+
+- Overhauled documentation
+- BasedPyright typing for entire project
+- Resource filtering expanded to include logical operators
+
+### Fixed
+
+- Various bugs
+- Use new config arrangement everywhere
+- Remove hardcoded responses
+
 ## [2.0.0]
 
 ### Added
@@ -14,8 +35,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Internal metadata to store Honcho's state no longer exposed in API
 - Batch message operations and enhanced message querying with token and message count limits
 - Search and summary functionalities scoped by workspace, peer, and session
-- Ability to search message histories using semantic search with cosine
-  similarity
 - Session context retrieval with summaries and token allocation
 - HNSW Index for Documents Table
 - Centralized Configuration via Environment Variables or `config.toml` file
@@ -38,7 +57,6 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Queue processing now works on 'work units' instead of sessions
 - Message token counting updated with tiktoken integration and fallback heuristic
 - Queue and message processing updated to handle sender/target and task types for multi-peer scenarios
-- Resource filtering expanded to include logical operators
 
 ### Fixed
 
