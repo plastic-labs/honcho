@@ -448,7 +448,7 @@ class Session(BaseModel):
             Returns an empty page if no messages are found.
         """
         messages_page = self._client.workspaces.sessions.search(
-            self.id, workspace_id=self.workspace_id, body=query
+            self.id, workspace_id=self.workspace_id, query=query
         )
         return SyncPage(messages_page)
 
