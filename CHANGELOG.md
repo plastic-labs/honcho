@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.1]
+
+### Added
+
+- Ergonomic SDKs for Python and TypeScript (uses Stainless underneath)
+- Deriver Queue Status endpoint
+- Complex arbitrary filters on workspace/session/peer/message
+- Message embedding table for full semantic search
+
+### Changed
+
+- Overhaulted documentation
+- BasedPyright typing for entire project
+
+### Fixed
+
+- Various bugs
+- Use new config arrangement everywhere
+- Remove hardcoded responses
+
 ## [2.0.0]
 
 ### Added
