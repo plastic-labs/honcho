@@ -32,7 +32,7 @@ def upgrade() -> None:
         sa.Column("message_id", sa.Text(), nullable=False),
         sa.Column("workspace_name", sa.Text(), nullable=False),
         sa.Column("session_name", sa.Text(), nullable=True),
-        sa.Column("peer_name", sa.Text(), nullable=True),
+        sa.Column("peer_name", sa.Text(), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

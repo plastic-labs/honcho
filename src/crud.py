@@ -1,12 +1,10 @@
 import os
 from collections.abc import Sequence
 from logging import getLogger
-from typing import Any, final
+from typing import Any
 
-import tiktoken
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
-from openai import AsyncOpenAI
 from sqlalchemy import Select, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Row
@@ -14,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from src.config import settings
+from src.embeddings import EmbeddingClient
 
 from . import models, schemas
 from .exceptions import (
@@ -23,126 +22,6 @@ from .exceptions import (
 )
 
 load_dotenv(override=True)
-EMBEDDING_COLLECTION_NAME = "embeddings"
-
-
-@final
-class EmbeddingClient:
-    def __init__(self, api_key: str | None):
-        if api_key is None:
-            raise ValueError("API key is required")
-        self.client = AsyncOpenAI(api_key=api_key)
-
-    async def embed(self, query: str) -> list[float]:
-        # Validate token count before sending to API
-        encoding = tiktoken.get_encoding("cl100k_base")
-        token_count = len(encoding.encode(query))
-
-        if token_count > settings.LLM.MAX_EMBEDDING_TOKENS:
-            raise ValueError(
-                f"Query exceeds maximum token limit of {settings.LLM.MAX_EMBEDDING_TOKENS} tokens (got {token_count} tokens)"
-            )
-
-        try:
-            response = await self.client.embeddings.create(
-                input=query, model="text-embedding-3-small"
-            )
-            return response.data[0].embedding
-        except Exception as e:
-            logger.error(
-                f"Failed to generate embedding for query: {query} - {e.__class__.__name__}: {e}"
-            )
-            raise e
-
-    async def batch_embed(
-        self,
-        id_resource_dict: dict[str, tuple[str, int]],
-    ) -> dict[str, list[float]]:
-        """
-        Generate embeddings for multiple texts with batching and token limits.
-        Note that OpenAI preserves the order of the embeddings in the response, but this
-        may not be the case for other providers
-
-        Args:
-            id_resource_dict: Dictionary mapping text IDs to (message content, token count) tuples
-
-        Returns:
-            Dictionary mapping text IDs to embedding vectors e.g. message IDs to embedding vectors
-        """
-
-        batches: list[tuple[list[str], list[str]]] = []
-        current_batch_ids: list[str] = []
-        current_batch_texts: list[str] = []
-        current_batch_tokens = 0
-
-        # OpenAI's official limits for embeddings API:
-        # - Max 300,000 tokens per request (total across all inputs)
-        # - Max 8,192 tokens per individual input
-        # Note: Schema limits ensure we'll never exceed the 2,048 inputs per request limit
-
-        # Track text IDs that are skipped due to token limits
-        skipped_text_ids: list[str] = []
-
-        for text_id, (text, text_tokens) in id_resource_dict.items():
-            # Skip if single text exceeds per-input limit
-            # TODO (Rajat): Handle chunking of message content that exceeds this limit
-            if text_tokens > settings.LLM.MAX_EMBEDDING_TOKENS:
-                logger.warning(
-                    "Skipping embedding for %s - %s tokens exceeds limit",
-                    text_id,
-                    text_tokens,
-                )
-                skipped_text_ids.append(text_id)
-                continue
-
-            # Check if adding this text would exceed token limits
-            would_exceed_tokens = (
-                current_batch_tokens + text_tokens
-                > settings.LLM.MAX_EMBEDDING_TOKENS_PER_REQUEST
-            )
-
-            if would_exceed_tokens:
-                # Save current batch and start new one
-                if current_batch_ids:
-                    batches.append(
-                        (current_batch_ids.copy(), current_batch_texts.copy())
-                    )
-                current_batch_ids = [text_id]
-                current_batch_texts = [text]
-                current_batch_tokens = text_tokens
-            else:
-                # Add to current batch
-                current_batch_ids.append(text_id)
-                current_batch_texts.append(text)
-                current_batch_tokens += text_tokens
-
-        # Append remaining batch
-        if current_batch_ids:
-            batches.append((current_batch_ids, current_batch_texts))
-
-        # Process all batches
-        all_embeddings: dict[str, list[float]] = {}
-        for batch_ids, batch_texts in batches:
-            try:
-                response = await self.client.embeddings.create(
-                    model="text-embedding-3-small", input=batch_texts
-                )
-            except Exception as e:
-                logger.error(
-                    f"Failed to generate embeddings for batch: {e.__class__.__name__}: {e}"
-                )
-                raise e
-
-            # Map embeddings back to IDs
-            for i, embedding_data in enumerate(response.data):
-                original_id = batch_ids[i]
-                all_embeddings[original_id] = embedding_data.embedding
-
-        # Initialize empty embeddings for skipped texts
-        for skipped_id in skipped_text_ids:
-            all_embeddings[skipped_id] = []
-
-        return all_embeddings
 
 
 embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
@@ -1368,12 +1247,19 @@ async def create_messages(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message._token_count,  # pyright: ignore[reportPrivateUsage]
+            token_count=len(message._encoded_message),  # pyright: ignore[reportPrivateUsage]
         )
         message_objects.append(message_obj)
     if settings.LLM.EMBED_MESSAGES:
+        encoded_message_lookup = {
+            msg.public_id: orig_msg._encoded_message  # pyright: ignore[reportPrivateUsage]
+            for msg, orig_msg in zip(message_objects, messages, strict=True)
+        }
         id_resource_dict = {
-            message.public_id: (message.content, message.token_count)
+            message.public_id: (
+                message.content,
+                encoded_message_lookup[message.public_id],
+            )
             for message in message_objects
         }
         embedding_dict = await embedding_client.batch_embed(id_resource_dict)
@@ -1381,10 +1267,12 @@ async def create_messages(
         # Create MessageEmbedding entries for each embedded message
         embedding_objects: list[models.MessageEmbedding] = []
         for message_obj in message_objects:
-            embedding = embedding_dict.get(message_obj.public_id, [])
-            if embedding:
+            embeddings = embedding_dict.get(message_obj.public_id, [])
+            for _, embedding in enumerate(embeddings):
+                # For chunked messages, we need to determine which part of the content this embedding represents
+                # For now, we'll store the full content in each chunk - this could be optimized later
                 embedding_obj = models.MessageEmbedding(
-                    content=message_obj.content,
+                    content=message_obj.content,  # Store full content for now
                     embedding=embedding,
                     message_id=message_obj.public_id,
                     workspace_name=workspace_name,
@@ -1439,13 +1327,20 @@ async def create_messages_for_peer(
             h_metadata=message.metadata or {},
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
-            token_count=message._token_count,  # pyright: ignore[reportPrivateUsage]
+            token_count=len(message._encoded_message),  # pyright: ignore[reportPrivateUsage]
         )
         message_objects.append(message_obj)
 
     if settings.LLM.EMBED_MESSAGES:
+        encoded_message_lookup = {
+            msg.public_id: orig_msg._encoded_message  # pyright: ignore[reportPrivateUsage]
+            for msg, orig_msg in zip(message_objects, messages, strict=True)
+        }
         id_resource_dict = {
-            message.public_id: (message.content, message.token_count)
+            message.public_id: (
+                message.content,
+                encoded_message_lookup[message.public_id],
+            )
             for message in message_objects
         }
         embedding_dict = await embedding_client.batch_embed(id_resource_dict)
@@ -1453,10 +1348,12 @@ async def create_messages_for_peer(
         # Create MessageEmbedding entries for each embedded message
         embedding_objects: list[models.MessageEmbedding] = []
         for message_obj in message_objects:
-            embedding = embedding_dict.get(message_obj.public_id, [])
-            if embedding:
+            embeddings = embedding_dict.get(message_obj.public_id, [])
+            for _, embedding in enumerate(embeddings):
+                # For chunked messages, we need to determine which part of the content this embedding represents
+                # For now, we'll store the full content in each chunk - this could be optimized later
                 embedding_obj = models.MessageEmbedding(
-                    content=message_obj.content,
+                    content=message_obj.content,  # Store full content for now
                     embedding=embedding,
                     message_id=message_obj.public_id,
                     workspace_name=workspace_name,

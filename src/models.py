@@ -243,7 +243,7 @@ class MessageEmbedding(Base):
         ForeignKey("workspaces.name"), index=True
     )
     session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
-    peer_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    peer_name: Mapped[str | None] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )

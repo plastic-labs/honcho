@@ -298,10 +298,13 @@ def mock_openai_embeddings():
         mock_embed.return_value = [0.1] * 1536
 
         # Mock the batch_embed method to return a dict of fake embedding vectors
+        # Updated to support chunking - each text_id maps to a list of embedding vectors
         async def mock_batch_embed_func(
-            id_resource_dict: dict[str, tuple[str, int]],
-        ) -> dict[str, list[float]]:
-            return {text_id: [0.1] * 1536 for text_id in id_resource_dict}
+            id_resource_dict: dict[str, tuple[str, list[int]]],
+        ) -> dict[str, list[list[float]]]:
+            return {
+                text_id: [[0.1] * 1536] for text_id in id_resource_dict
+            }  # Single chunk per text
 
         mock_batch_embed.side_effect = mock_batch_embed_func
 

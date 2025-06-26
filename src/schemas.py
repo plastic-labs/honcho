@@ -116,14 +116,14 @@ class MessageCreate(MessageBase):
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
 
-    _token_count: int = PrivateAttr(default=0)
+    _encoded_message: list[int] = PrivateAttr(default=[])
 
     @model_validator(mode="after")
     def validate_and_set_token_count(self) -> Self:
         encoding = tiktoken.get_encoding("cl100k_base")
-        token_count = len(encoding.encode(self.content))
+        encoded_message = encoding.encode(self.content)
 
-        self._token_count = token_count
+        self._encoded_message = encoded_message
         return self
 
 

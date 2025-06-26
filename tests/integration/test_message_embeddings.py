@@ -198,8 +198,6 @@ async def test_message_embedding_with_peer_only_messages(
 
     test_workspace, test_peer = sample_data
 
-    # Import the peer-specific message creation function
-
     # Create a message for peer only (no session)
     test_message_content = "This is a peer-only message with embedding"
     messages = [
@@ -317,3 +315,82 @@ async def test_semantic_search_when_embeddings_enabled(
     assert len(found_messages) > 0
     found_message_ids = [msg.public_id for msg in found_messages]
     assert created_message.public_id in found_message_ids
+
+
+@pytest.mark.asyncio
+async def test_message_chunking_creates_multiple_embeddings(
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+    monkeypatch: pytest.MonkeyPatch,
+    mock_openai_embeddings: dict[str, Any],
+):
+    """Test that messages exceeding token limits are chunked and create multiple embeddings"""
+    # Monkeypatch the setting to enable message embeddings
+    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", True)
+
+    # Mock a low token limit to force chunking
+    monkeypatch.setattr("src.config.settings.LLM.MAX_EMBEDDING_TOKENS", 10)
+
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Create a long message that will definitely exceed 10 tokens
+    test_message_content = "This is a very long message that should be chunked into multiple pieces because it exceeds the token limit that we set for testing purposes. This message contains many words and should definitely be split into multiple chunks."
+
+    # Update the mock to return multiple embeddings (simulating chunking)
+    def mock_batch_embed_chunked(
+        id_resource_dict: dict[str, tuple[str, list[int]]],
+    ) -> dict[str, list[list[float]]]:
+        return {
+            text_id: [[0.1] * 1536, [0.2] * 1536, [0.3] * 1536]  # 3 chunks per message
+            for text_id in id_resource_dict
+        }
+
+    mock_openai_embeddings["batch_embed"].side_effect = mock_batch_embed_chunked
+
+    messages = [
+        MessageCreate(
+            content=test_message_content,
+            peer_id=test_peer.name,
+            metadata={"test": "chunking"},
+        )
+    ]
+
+    created_messages = await create_messages(
+        db=db_session,
+        messages=messages,
+        workspace_name=test_workspace.name,
+        session_name=test_session.name,
+    )
+
+    assert len(created_messages) == 1
+    created_message = created_messages[0]
+
+    # Query the MessageEmbedding table to verify multiple embeddings were created
+    stmt = select(models.MessageEmbedding).where(
+        models.MessageEmbedding.message_id == created_message.public_id
+    )
+    result = await db_session.execute(stmt)
+    embedding_records = list(result.scalars().all())
+
+    # Verify multiple embeddings were created (one per chunk)
+    assert len(embedding_records) == 3  # Should have 3 embeddings for 3 chunks
+
+    for _, embedding_record in enumerate(embedding_records):
+        assert embedding_record.message_id == created_message.public_id
+        assert (
+            embedding_record.content == test_message_content
+        )  # Full content stored in each
+        assert embedding_record.workspace_name == test_workspace.name
+        assert embedding_record.session_name == test_session.name
+        assert embedding_record.peer_name == test_peer.name
+        assert embedding_record.embedding is not None
+        assert len(embedding_record.embedding) == 1536
+        # Each chunk should have a different embedding vector (0.1, 0.2, 0.3)
+        assert embedding_record.embedding[0] in [0.1, 0.2, 0.3]
