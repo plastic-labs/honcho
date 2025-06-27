@@ -40,7 +40,7 @@
               {
                 "group": "Tutorial",
                 "pages": [
-                  "v2/documentation/tutorial/overview",
+                  "v2/documentation/tutorial/platform",
                   "v2/documentation/tutorial/guided-tutorial",
                   "v2/documentation/tutorial/sdk"
                 ]
