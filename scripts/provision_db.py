@@ -1,4 +1,5 @@
 # honcho/scripts/provision_db.py
+import asyncio
 import os
 import sys
 
@@ -11,5 +12,5 @@ from src.db import init_db  # noqa: E402
 
 if __name__ == "__main__":
     print("Initializing database using Alembic migrations...")
-    init_db()
+    asyncio.run(init_db())
     print("Database initialized successfully")

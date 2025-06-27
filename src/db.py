@@ -1,6 +1,6 @@
 import contextvars
 
-from sqlalchemy import MetaData, create_engine, text
+from sqlalchemy import MetaData, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
@@ -51,29 +51,18 @@ meta.schema = table_schema
 Base = declarative_base(metadata=meta)
 
 
-def init_db():
+async def init_db():
     """Initialize the database using Alembic migrations"""
     from alembic import command
     from alembic.config import Config
 
-    # Create a sync engine for schema operations
-    sync_engine = create_engine(
-        settings.DB.CONNECTION_URI,
-        pool_pre_ping=settings.DB.POOL_PRE_PING,
-        echo=settings.DB.SQL_DEBUG,
-        **engine_kwargs,
-    )
-
-    with sync_engine.connect() as connection:
+    async with engine.connect() as connection:
         # Create schema if it doesn't exist
-        connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
+        await connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{table_schema}"'))
         # Install pgvector extension if it doesn't exist
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        connection.commit()
+        await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        await connection.commit()
 
     # Run Alembic migrations
     alembic_cfg = Config("alembic.ini")
     command.upgrade(alembic_cfg, "head")
-
-    # Clean up
-    sync_engine.dispose()
