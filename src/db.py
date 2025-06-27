@@ -61,6 +61,7 @@ def init_db():
         settings.DB.CONNECTION_URI,
         pool_pre_ping=settings.DB.POOL_PRE_PING,
         echo=settings.DB.SQL_DEBUG,
+        **engine_kwargs,
     )
 
     with sync_engine.connect() as connection:
