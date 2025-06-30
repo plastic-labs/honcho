@@ -23,10 +23,14 @@ class Honcho(BaseModel):
     from environment variables or explicit parameters. This is the primary entry
     point for interacting with the Honcho conversational memory platform.
 
+    For advanced usage, the underlying honcho_core client can be accessed via the
+    `raw` property to use lower-level functionality not exposed in the ergonomic interface.
+
     Attributes:
         api_key: API key for authentication
         base_url: Base URL for the Honcho API
         workspace_id: Workspace ID for scoping operations
+        raw: Access to the underlying honcho_core client for advanced usage
     """
 
     workspace_id: str = Field(
@@ -35,6 +39,30 @@ class Honcho(BaseModel):
         description="Workspace ID for scoping operations",
     )
     _client: HonchoCore = PrivateAttr()
+
+    @property
+    def core(self) -> HonchoCore:
+        """
+        Access the underlying honcho_core client. The honcho_core client is the raw Stainless-generated client,
+        allowing users to access functionality that is not exposed through the ergonomic SDK interface.
+
+        Returns:
+            The underlying HonchoCore client instance
+
+        Example:
+            ```python
+            from honcho import Honcho
+
+            client = Honcho()
+
+            # Use ergonomic interface
+            peer = client.peer("user123")
+
+            # Access core client
+            workspace = client.core.workspaces.get_or_create(id="custom-workspace")
+            ```
+        """
+        return self._client
 
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     def __init__(

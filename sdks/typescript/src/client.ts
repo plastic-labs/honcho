@@ -6,10 +6,40 @@ import { Session } from './session';
 /**
  * Main client for the Honcho TypeScript SDK.
  * Provides access to peers, sessions, and workspace operations.
+ * 
+ * For advanced usage, the underlying @honcho-ai/core client can be accessed via the
+ * `core` property to use lower-level functionality not exposed in the ergonomic interface.
  */
 export class Honcho {
   private _client: InstanceType<typeof HonchoCore>;
   readonly workspaceId: string;
+
+  /**
+   * Access the underlying @honcho-ai/core client for advanced usage.
+   * 
+   * This provides direct access to the raw Stainless-generated client,
+   * allowing advanced users to access lower-level functionality that
+   * may not be exposed through the ergonomic SDK interface.
+   * 
+   * @returns The underlying HonchoCore client instance
+   * 
+   * @example
+   * ```typescript
+   * import { Honcho } from '@honcho-ai/sdk';
+   * 
+   * const client = new Honcho();
+   * 
+   * // Use ergonomic interface
+   * const peer = client.peer("user123");
+   * 
+   * // Access core client for advanced usage
+   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace" });
+   * const rawPeers = await client.core.workspaces.peers.list("custom-workspace");
+   * ```
+   */
+  get core(): InstanceType<typeof HonchoCore> {
+    return this._client;
+  }
 
   /**
    * Initialize the Honcho client.
