@@ -36,7 +36,9 @@ async def get_or_create_workspace(
     if workspace.name:
         if not jwt_params.ad and jwt_params.w != workspace.name:
             raise AuthenticationException("Unauthorized access to resource")
-    else:
+    # this is currently unreachable due to the schema validation
+    # TODO do we want to allow id-in-JWT again?
+    else:  # pragma: no cover
         # Use workspace_id from JWT
         if not jwt_params.w:
             raise AuthenticationException(
