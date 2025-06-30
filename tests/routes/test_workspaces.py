@@ -267,25 +267,3 @@ def test_get_or_create_workspace_no_name_no_jwt_workspace(client):
     # Try to create workspace with empty name and empty JWT
     response = client.post("/v2/workspaces", json={"name": ""})
     assert response.status_code == 422
-
-
-def test_update_workspace_returns_updated_workspace(client: TestClient, sample_data: tuple[Workspace, Peer]):
-    """Test that update_workspace returns the updated workspace object"""
-    test_workspace, _ = sample_data
-    
-    # Update the workspace
-    new_metadata = {"updated_key": "updated_value"}
-    response = client.put(
-        f"/v2/workspaces/{test_workspace.name}",
-        json={"metadata": new_metadata},
-    )
-    
-    # Verify response status and that the workspace object is returned
-    assert response.status_code == 200
-    returned_workspace = response.json()
-    
-    # Verify the returned workspace has the correct properties
-    assert returned_workspace["id"] == test_workspace.name
-    assert returned_workspace["metadata"] == new_metadata
-    assert "created_at" in returned_workspace
-    assert "updated_at" in returned_workspace

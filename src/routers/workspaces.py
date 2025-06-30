@@ -87,10 +87,9 @@ async def update_workspace(
 ):
     """Update a Workspace"""
     # ResourceNotFoundException will be caught by global handler if workspace not found
-    honcho_workspace = await crud.update_workspace(
+    return await crud.update_workspace(
         db, workspace_name=workspace_id, workspace=workspace
     )
-    return honcho_workspace
 
 
 @router.post(
