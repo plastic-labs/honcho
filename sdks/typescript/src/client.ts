@@ -8,18 +8,15 @@ import { Session } from './session';
  * Provides access to peers, sessions, and workspace operations.
  * 
  * For advanced usage, the underlying @honcho-ai/core client can be accessed via the
- * `core` property to use lower-level functionality not exposed in the ergonomic interface.
+ * `core` property to use functionality not exposed through this SDK.
  */
 export class Honcho {
   private _client: InstanceType<typeof HonchoCore>;
   readonly workspaceId: string;
 
   /**
-   * Access the underlying @honcho-ai/core client for advanced usage.
-   * 
-   * This provides direct access to the raw Stainless-generated client,
-   * allowing advanced users to access lower-level functionality that
-   * may not be exposed through the ergonomic SDK interface.
+   * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
+   * allowing users to access functionality that is not exposed through this SDK.
    * 
    * @returns The underlying HonchoCore client instance
    * 
@@ -29,12 +26,7 @@ export class Honcho {
    * 
    * const client = new Honcho();
    * 
-   * // Use ergonomic interface
-   * const peer = client.peer("user123");
-   * 
-   * // Access core client for advanced usage
-   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace" });
-   * const rawPeers = await client.core.workspaces.peers.list("custom-workspace");
+   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace-id" });
    * ```
    */
   get core(): InstanceType<typeof HonchoCore> {
