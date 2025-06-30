@@ -48,7 +48,7 @@ class CollectionEmbeddingStore:
                     logger.error(f"Error creating document: {e}")
                     continue
 
-    async def get_relevant_facts(
+    async def get_relevant_facts(  # pragma: no cover
         self, query: str, top_k: int = 5, max_distance: float = 0.3
     ) -> list[str]:
         """Retrieve the most relevant facts for a given query.

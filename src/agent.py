@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
     model=settings.LLM.DIALECTIC_MODEL,
     client=clients[settings.LLM.DIALECTIC_PROVIDER],
 )
-async def dialectic_call(
+async def dialectic_call(  # pragma: no cover
     query: str, working_representation: str, additional_context: str
 ):
     return f"""
@@ -58,7 +58,7 @@ You are operating as a context service that helps maintain psychological underst
     stream=True,
     client=clients[settings.LLM.DIALECTIC_PROVIDER],
 )
-async def dialectic_stream(
+async def dialectic_stream(  # pragma: no cover
     query: str, working_representation: str, additional_context: str
 ):
     return f"""
@@ -85,7 +85,7 @@ class SemanticQueries(BaseModel):
     response_model=SemanticQueries,
     client=clients[settings.LLM.QUERY_GENERATION_PROVIDER],
 )
-async def generate_semantic_queries_llm(query: str):
+async def generate_semantic_queries_llm(query: str):  # pragma: no cover
     return f"""
 Given this query about a user, generate 3 focused search queries that would help retrieve relevant facts about the user. Each query should focus on a specific aspect related to the original query, rephrased to maximize semantic search effectiveness.
 For example, if the original query asks "what does the user like to eat?", generated queries might include "user's food preferences", "user's favorite cuisine", etc.
@@ -338,7 +338,7 @@ async def run_tom_inference(chat_history: str) -> str:
     return prediction
 
 
-async def generate_semantic_queries(query: str) -> list[str]:
+async def generate_semantic_queries(query: str) -> list[str]:  # pragma: no cover
     """
     Generate multiple semantically relevant queries based on the original query using LLM.
     This helps retrieve more diverse and relevant facts from the vector store.

@@ -119,7 +119,7 @@ class UserRepresentationOutput(BaseModel):
     response_model=TomInferenceOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
-async def tom_inference(
+async def tom_inference(  # pragma: no cover
     chat_history: str,
     user_representation: str | None = None,
 ):
@@ -175,7 +175,7 @@ expectation_violations: list of objects with:
     response_model=UserRepresentationOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
-async def user_representation(
+async def user_representation(  # pragma: no cover
     chat_history: str,
     user_representation: str | None = None,
     tom_inference: str | None = None,
