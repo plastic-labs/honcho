@@ -73,6 +73,7 @@ source = [
 omit = [
     "tests/*",
     "scripts/*",
+    ".venv/*",
 ]
 
 [tool.basedpyright]
