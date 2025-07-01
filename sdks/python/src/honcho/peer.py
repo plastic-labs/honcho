@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 from .pagination import SyncPage
 
 if TYPE_CHECKING:
-    from .session import Session
+    from .session import Session  # pragma: no cover
 
 
 class Peer(BaseModel):
