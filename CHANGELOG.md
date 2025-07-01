@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Fixed
 
-- Fix bug that causes runtime error when Sentry flags are enabled
+- Bug that causes runtime error when Sentry flags are enabled
 
 ## [2.0.2]
 
