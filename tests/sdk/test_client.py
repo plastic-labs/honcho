@@ -184,3 +184,779 @@ async def test_workspace_search(client_fixture: tuple[Honcho | AsyncHoncho, str]
         results = list(search_results)
         assert len(results) >= 1
         assert search_query in results[0].content
+
+
+def test_client_init_with_api_key(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with an explicit api_key parameter.
+    This test covers line 97: client_kwargs["api_key"] = api_key
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with explicit api_key to trigger line 97
+    honcho_client = Honcho(
+        api_key="test-api-key",
+        workspace_id="test-workspace-api-key",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-api-key"
+
+
+def test_client_init_with_api_key_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with api_key=None.
+    This test ensures line 97 is NOT executed when api_key is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with api_key=None to ensure line 97 is not executed
+    honcho_client = Honcho(
+        api_key=None,
+        workspace_id="test-workspace-api-key-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-api-key-none"
+
+
+def test_client_init_with_api_key_empty_string(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with an empty string api_key.
+    This test covers line 97: client_kwargs["api_key"] = api_key with empty string
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with empty string api_key to trigger line 97 with edge case
+    honcho_client = Honcho(
+        api_key="", workspace_id="test-workspace-api-key-empty", http_client=http_client
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-api-key-empty"
+
+
+def test_client_init_with_environment_local(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with environment="local".
+    This test covers line 99: client_kwargs["environment"] = environment
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with environment="local" to trigger line 99
+    honcho_client = Honcho(
+        environment="local",
+        workspace_id="test-workspace-env-local",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-env-local"
+
+
+def test_client_init_with_environment_production(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with environment="production".
+    This test covers line 99: client_kwargs["environment"] = environment
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with environment="production" to trigger line 99
+    honcho_client = Honcho(
+        environment="production",
+        workspace_id="test-workspace-env-prod",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-env-prod"
+
+
+def test_client_init_with_environment_demo(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with environment="demo".
+    This test covers line 99: client_kwargs["environment"] = environment
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with environment="demo" to trigger line 99
+    honcho_client = Honcho(
+        environment="demo",
+        workspace_id="test-workspace-env-demo",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-env-demo"
+
+
+def test_client_init_with_environment_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with environment=None.
+    This test ensures line 99 is NOT executed when environment is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with environment=None to ensure line 99 is not executed
+    honcho_client = Honcho(
+        environment=None,
+        workspace_id="test-workspace-env-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-env-none"
+
+
+def test_client_init_with_base_url(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a custom base_url.
+    This test covers line 101: client_kwargs["base_url"] = base_url
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with custom base_url to trigger line 101
+    honcho_client = Honcho(
+        base_url="https://custom.example.com",
+        workspace_id="test-workspace-base-url",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-base-url"
+
+
+def test_client_init_with_base_url_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with base_url=None.
+    This test ensures line 101 is NOT executed when base_url is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with base_url=None to ensure line 101 is not executed
+    honcho_client = Honcho(
+        base_url=None,
+        workspace_id="test-workspace-base-url-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-base-url-none"
+
+
+def test_client_init_with_timeout(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a custom timeout.
+    This test covers line 103: client_kwargs["timeout"] = timeout
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with custom timeout to trigger line 103
+    honcho_client = Honcho(
+        timeout=30.0, workspace_id="test-workspace-timeout", http_client=http_client
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-timeout"
+
+
+def test_client_init_with_timeout_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with timeout=None.
+    This test ensures line 103 is NOT executed when timeout is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with timeout=None to ensure line 103 is not executed
+    honcho_client = Honcho(
+        timeout=None,
+        workspace_id="test-workspace-timeout-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-timeout-none"
+
+
+def test_client_init_with_timeout_small(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a small timeout.
+    This test covers line 103: client_kwargs["timeout"] = timeout with edge case
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with small timeout (0.1 seconds) to trigger line 103 with edge case
+    honcho_client = Honcho(
+        timeout=0.1,
+        workspace_id="test-workspace-timeout-small",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-timeout-small"
+
+
+def test_client_init_with_timeout_float(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a float timeout.
+    This test covers line 103: client_kwargs["timeout"] = timeout with float value
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with float timeout to trigger line 103
+    honcho_client = Honcho(
+        timeout=45.5,
+        workspace_id="test-workspace-timeout-float",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-timeout-float"
+
+
+def test_client_init_with_max_retries(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a custom max_retries.
+    This test covers line 105: client_kwargs["max_retries"] = max_retries
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with custom max_retries to trigger line 105
+    honcho_client = Honcho(
+        max_retries=5,
+        workspace_id="test-workspace-max-retries",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-max-retries"
+
+
+def test_client_init_with_max_retries_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with max_retries=None.
+    This test ensures line 105 is NOT executed when max_retries is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with max_retries=None to ensure line 105 is not executed
+    honcho_client = Honcho(
+        max_retries=None,
+        workspace_id="test-workspace-max-retries-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-max-retries-none"
+
+
+def test_client_init_with_max_retries_zero(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with max_retries=0.
+    This test covers line 105: client_kwargs["max_retries"] = max_retries with edge case
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with max_retries=0 to trigger line 105 with edge case
+    honcho_client = Honcho(
+        max_retries=0,
+        workspace_id="test-workspace-max-retries-zero",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-max-retries-zero"
+
+
+def test_client_init_with_max_retries_large(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a large max_retries value.
+    This test covers line 105: client_kwargs["max_retries"] = max_retries with high value
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with large max_retries to trigger line 105
+    honcho_client = Honcho(
+        max_retries=100,
+        workspace_id="test-workspace-max-retries-large",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-max-retries-large"
+
+
+def test_client_init_with_default_headers(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with custom default_headers.
+    This test covers line 107: client_kwargs["default_headers"] = default_headers
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with custom default_headers to trigger line 107
+    default_headers = {
+        "X-Custom-Header": "test-value",
+        "Authorization": "Bearer test-token",
+    }
+    honcho_client = Honcho(
+        default_headers=default_headers,
+        workspace_id="test-workspace-default-headers",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-headers"
+
+
+def test_client_init_with_default_headers_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with default_headers=None.
+    This test ensures line 107 is NOT executed when default_headers is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with default_headers=None to ensure line 107 is not executed
+    honcho_client = Honcho(
+        default_headers=None,
+        workspace_id="test-workspace-default-headers-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-headers-none"
+
+
+def test_client_init_with_default_headers_empty(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with empty default_headers.
+    This test covers line 107: client_kwargs["default_headers"] = default_headers with empty dict
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with empty default_headers to trigger line 107 with edge case
+    honcho_client = Honcho(
+        default_headers={},
+        workspace_id="test-workspace-default-headers-empty",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-headers-empty"
+
+
+def test_client_init_with_default_headers_single(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a single default header.
+    This test covers line 107: client_kwargs["default_headers"] = default_headers with single header
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with single default header to trigger line 107
+    honcho_client = Honcho(
+        default_headers={"Content-Type": "application/json"},
+        workspace_id="test-workspace-default-headers-single",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-headers-single"
+
+
+def test_client_init_with_default_query(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with custom default_query.
+    This test covers line 109: client_kwargs["default_query"] = default_query
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with custom default_query to trigger line 109
+    default_query = {"version": "v1", "format": "json"}
+    honcho_client = Honcho(
+        default_query=default_query,
+        workspace_id="test-workspace-default-query",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-query"
+
+
+def test_client_init_with_default_query_none(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with default_query=None.
+    This test ensures line 109 is NOT executed when default_query is None.
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with default_query=None to ensure line 109 is not executed
+    honcho_client = Honcho(
+        default_query=None,
+        workspace_id="test-workspace-default-query-none",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-query-none"
+
+
+def test_client_init_with_default_query_empty(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with empty default_query.
+    This test covers line 109: client_kwargs["default_query"] = default_query with empty dict
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with empty default_query to trigger line 109 with edge case
+    honcho_client = Honcho(
+        default_query={},
+        workspace_id="test-workspace-default-query-empty",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-query-empty"
+
+
+def test_client_init_with_default_query_single(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with a single default query parameter.
+    This test covers line 109: client_kwargs["default_query"] = default_query with single parameter
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with single default query parameter to trigger line 109
+    honcho_client = Honcho(
+        default_query={"api_version": "2024-01"},
+        workspace_id="test-workspace-default-query-single",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-query-single"
+
+
+def test_client_init_with_default_query_multiple_types(client: TestClient):
+    """
+    Tests that the Honcho client can be initialized with default_query containing different value types.
+    This test covers line 109: client_kwargs["default_query"] = default_query with various types
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Test with default_query containing different types to trigger line 109
+    default_query = {
+        "string_param": "test_value",
+        "number_param": 42,
+        "bool_param": True,
+        "list_param": ["a", "b", "c"],
+    }
+    honcho_client = Honcho(
+        default_query=default_query,
+        workspace_id="test-workspace-default-query-types",
+        http_client=http_client,
+    )
+
+    assert isinstance(honcho_client, Honcho)
+    assert honcho_client.workspace_id == "test-workspace-default-query-types"
+
+
+def test_client_repr(client: TestClient):
+    """
+    Tests that the Honcho client __repr__ method returns the expected string format.
+    This test covers line 295: return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance
+    honcho_client = Honcho(workspace_id="test-workspace-repr", http_client=http_client)
+
+    # Call repr() to trigger line 295
+    repr_result = repr(honcho_client)
+
+    # Verify the format and content of the repr string
+    # Get the actual base_url from the client to match against
+    actual_base_url = str(honcho_client._client.base_url)
+    expected_repr = (
+        f"Honcho(workspace_id='test-workspace-repr', base_url='{actual_base_url}')"
+    )
+    assert repr_result == expected_repr
+
+    # Additional assertions to ensure workspace_id and base_url are correctly included
+    assert "test-workspace-repr" in repr_result
+    assert actual_base_url in repr_result
+    assert repr_result.startswith("Honcho(")
+    assert repr_result.endswith("')")
+    assert "workspace_id=" in repr_result
+    assert "base_url=" in repr_result
+
+
+def test_client_repr_with_long_workspace_id(client: TestClient):
+    """
+    Tests that the Honcho client __repr__ method works correctly with a long workspace_id.
+    This test covers line 295: return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance with a long workspace_id
+    long_workspace_id = (
+        "test-workspace-with-very-long-name-containing-many-chars-and-hyphens-123456789"
+    )
+    honcho_client = Honcho(workspace_id=long_workspace_id, http_client=http_client)
+
+    # Call repr() to trigger line 295
+    repr_result = repr(honcho_client)
+
+    # Verify the format and content of the repr string
+    actual_base_url = str(honcho_client._client.base_url)
+    expected_repr = (
+        f"Honcho(workspace_id='{long_workspace_id}', base_url='{actual_base_url}')"
+    )
+    assert repr_result == expected_repr
+
+    # Additional assertions to ensure long workspace_id is handled correctly
+    assert long_workspace_id in repr_result
+    assert actual_base_url in repr_result
+    assert repr_result.startswith("Honcho(")
+    assert repr_result.endswith("')")
+
+
+def test_client_repr_with_numeric_workspace_id(client: TestClient):
+    """
+    Tests that the Honcho client __repr__ method works correctly with a numeric workspace_id.
+    This test covers line 295: return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance with numeric workspace_id
+    numeric_workspace_id = "123456789"
+    honcho_client = Honcho(workspace_id=numeric_workspace_id, http_client=http_client)
+
+    # Call repr() to trigger line 295
+    repr_result = repr(honcho_client)
+
+    # Verify the format and content of the repr string
+    actual_base_url = str(honcho_client._client.base_url)
+    expected_repr = (
+        f"Honcho(workspace_id='{numeric_workspace_id}', base_url='{actual_base_url}')"
+    )
+    assert repr_result == expected_repr
+
+    # Additional assertions
+    assert numeric_workspace_id in repr_result
+    assert actual_base_url in repr_result
+    assert repr_result.startswith("Honcho(")
+    assert repr_result.endswith("')")
+
+
+def test_client_repr_multiple_calls(client: TestClient):
+    """
+    Tests that the Honcho client __repr__ method returns consistent results across multiple calls.
+    This test covers line 295: return f"Honcho(workspace_id='{self.workspace_id}', base_url='{self._client.base_url}')"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance
+    honcho_client = Honcho(
+        workspace_id="test-workspace-multiple-calls", http_client=http_client
+    )
+
+    # Call repr() multiple times to trigger line 295 repeatedly
+    repr_result_1 = repr(honcho_client)
+    repr_result_2 = repr(honcho_client)
+    repr_result_3 = repr(honcho_client)
+
+    # Verify all calls return the same result
+    assert repr_result_1 == repr_result_2
+    assert repr_result_2 == repr_result_3
+
+    # Verify the format is correct
+    actual_base_url = str(honcho_client._client.base_url)
+    expected_repr = f"Honcho(workspace_id='test-workspace-multiple-calls', base_url='{actual_base_url}')"
+    assert repr_result_1 == expected_repr
+
+    # Additional assertions
+    assert "test-workspace-multiple-calls" in repr_result_1
+    assert actual_base_url in repr_result_1
+    assert repr_result_1.startswith("Honcho(")
+    assert repr_result_1.endswith("')")
