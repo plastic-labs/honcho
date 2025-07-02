@@ -960,3 +960,193 @@ def test_client_repr_multiple_calls(client: TestClient):
     assert actual_base_url in repr_result_1
     assert repr_result_1.startswith("Honcho(")
     assert repr_result_1.endswith("')")
+
+
+def test_client_str(client: TestClient):
+    """
+    Tests that the Honcho client __str__ method returns the expected string format.
+    This test covers line 304: return f"Honcho Client (workspace: {self.workspace_id})"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance
+    honcho_client = Honcho(workspace_id="test-workspace-str", http_client=http_client)
+
+    # Call str() to trigger line 304
+    str_result = str(honcho_client)
+
+    # Verify the format and content of the str string
+    expected_str = "Honcho Client (workspace: test-workspace-str)"
+    assert str_result == expected_str
+
+    # Additional assertions to ensure workspace_id is correctly included
+    assert "test-workspace-str" in str_result
+    assert str_result.startswith("Honcho Client (workspace: ")
+    assert str_result.endswith(")")
+
+
+def test_client_str_with_long_workspace_id(client: TestClient):
+    """
+    Tests that the Honcho client __str__ method works correctly with a long workspace_id.
+    This test covers line 304: return f"Honcho Client (workspace: {self.workspace_id})"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance with a long workspace_id
+    long_workspace_id = (
+        "test-workspace-with-very-long-name-containing-many-chars-and-hyphens-123456789"
+    )
+    honcho_client = Honcho(workspace_id=long_workspace_id, http_client=http_client)
+
+    # Call str() to trigger line 304
+    str_result = str(honcho_client)
+
+    # Verify the format and content of the str string
+    expected_str = f"Honcho Client (workspace: {long_workspace_id})"
+    assert str_result == expected_str
+
+    # Additional assertions to ensure long workspace_id is handled correctly
+    assert long_workspace_id in str_result
+    assert str_result.startswith("Honcho Client (workspace: ")
+    assert str_result.endswith(")")
+
+
+def test_client_str_with_numeric_workspace_id(client: TestClient):
+    """
+    Tests that the Honcho client __str__ method works correctly with a numeric workspace_id.
+    This test covers line 304: return f"Honcho Client (workspace: {self.workspace_id})"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance with numeric workspace_id
+    numeric_workspace_id = "123456789"
+    honcho_client = Honcho(workspace_id=numeric_workspace_id, http_client=http_client)
+
+    # Call str() to trigger line 304
+    str_result = str(honcho_client)
+
+    # Verify the format and content of the str string
+    expected_str = f"Honcho Client (workspace: {numeric_workspace_id})"
+    assert str_result == expected_str
+
+    # Additional assertions
+    assert numeric_workspace_id in str_result
+    assert str_result.startswith("Honcho Client (workspace: ")
+    assert str_result.endswith(")")
+
+
+def test_client_str_multiple_calls(client: TestClient):
+    """
+    Tests that the Honcho client __str__ method returns consistent results across multiple calls.
+    This test covers line 304: return f"Honcho Client (workspace: {self.workspace_id})"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance
+    honcho_client = Honcho(
+        workspace_id="test-workspace-str-multiple", http_client=http_client
+    )
+
+    # Call str() multiple times to trigger line 304 repeatedly
+    str_result_1 = str(honcho_client)
+    str_result_2 = str(honcho_client)
+    str_result_3 = str(honcho_client)
+
+    # Verify all calls return the same result
+    assert str_result_1 == str_result_2
+    assert str_result_2 == str_result_3
+
+    # Verify the format is correct
+    expected_str = "Honcho Client (workspace: test-workspace-str-multiple)"
+    assert str_result_1 == expected_str
+
+    # Additional assertions
+    assert "test-workspace-str-multiple" in str_result_1
+    assert str_result_1.startswith("Honcho Client (workspace: ")
+    assert str_result_1.endswith(")")
+
+
+def test_client_str_with_underscores_and_hyphens(client: TestClient):
+    """
+    Tests that the Honcho client __str__ method works correctly with underscores and hyphens in workspace_id.
+    This test covers line 304: return f"Honcho Client (workspace: {self.workspace_id})"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance with underscores and hyphens in workspace_id (valid pattern)
+    valid_workspace_id = "test-workspace_with_underscores-and-hyphens"
+    honcho_client = Honcho(workspace_id=valid_workspace_id, http_client=http_client)
+
+    # Call str() to trigger line 304
+    str_result = str(honcho_client)
+
+    # Verify the format and content of the str string
+    expected_str = f"Honcho Client (workspace: {valid_workspace_id})"
+    assert str_result == expected_str
+
+    # Additional assertions
+    assert valid_workspace_id in str_result
+    assert str_result.startswith("Honcho Client (workspace: ")
+    assert str_result.endswith(")")
+
+
+def test_client_str_with_mixed_case_workspace_id(client: TestClient):
+    """
+    Tests that the Honcho client __str__ method works correctly with mixed case workspace_id.
+    This test covers line 304: return f"Honcho Client (workspace: {self.workspace_id})"
+    """
+    import httpx
+
+    http_client = httpx.Client(
+        transport=client._transport,  # pyright: ignore
+        base_url=str(client.base_url),
+        headers=client.headers,
+    )
+
+    # Create a Honcho client instance with mixed case workspace_id
+    mixed_case_workspace_id = "Test-Workspace-MixedCase123"
+    honcho_client = Honcho(
+        workspace_id=mixed_case_workspace_id, http_client=http_client
+    )
+
+    # Call str() to trigger line 304
+    str_result = str(honcho_client)
+
+    # Verify the format and content of the str string
+    expected_str = f"Honcho Client (workspace: {mixed_case_workspace_id})"
+    assert str_result == expected_str
+
+    # Additional assertions
+    assert mixed_case_workspace_id in str_result
+    assert str_result.startswith("Honcho Client (workspace: ")
+    assert str_result.endswith(")")
