@@ -65,6 +65,16 @@ extend-immutable-calls = ["fastapi.Depends"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 
+[tool.coverage.run]
+source = [
+    "src",
+    "sdks",
+]
+omit = [
+    "tests/*",
+    "scripts/*",
+    ".venv/*",
+]
 
 [tool.basedpyright]
 # BasedPyright currently seems like the best type checker option, much faster

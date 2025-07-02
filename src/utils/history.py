@@ -72,7 +72,7 @@ class SummaryType(Enum):
     call_params={"max_tokens": 1000},
     client=clients[settings.LLM.SUMMARY_PROVIDER],
 )
-async def create_short_summary(
+async def create_short_summary(  # pragma: no cover
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):
@@ -114,7 +114,7 @@ Return only the summary without any explanation or meta-commentary.
     call_params={"max_tokens": 2000},
     client=clients[settings.LLM.SUMMARY_PROVIDER],
 )
-async def create_long_summary(
+async def create_long_summary(  # pragma: no cover
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):

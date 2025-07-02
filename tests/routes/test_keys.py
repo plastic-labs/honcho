@@ -1,3 +1,6 @@
+import pytest
+from fastapi.testclient import TestClient
+
 from src.models import Peer, Workspace
 from tests.conftest import AuthClient
 
@@ -73,3 +76,16 @@ def test_create_key_with_expires_at(
         "/v2/keys", params={"workspace_id": test_workspace.name}
     )
     assert response.status_code == 401
+
+
+def test_create_key_auth_disabled(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """Test creating a key when authentication is disabled"""
+    # Disable authentication
+    from src.config import settings
+
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", False)
+
+    # Try to create a key - should raise DisabledException (405)
+    response = client.post("/v2/keys", params={"workspace_id": "test-workspace"})
+    assert response.status_code == 405
+    assert response.json()["detail"] == "Feature is disabled"
