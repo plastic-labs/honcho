@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.4]
+
+### Fixed
+
+- Migration/provision scripts did not have correct database connection arguments, causing timeouts
+
 ## [2.0.3]
 
 ### Fixed
