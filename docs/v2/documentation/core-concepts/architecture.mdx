@@ -13,7 +13,7 @@ Honcho has 3 main components that work together to manage agent identity and con
 - **The Deriver** : The background processing layer that builds representations of users and agents
 - **The Dialectic API** : The natural language API for chatting with representations
 
-Below we'll deep dive into these different areas discussing the data
+Below we'll deep dive into these different areas, discussing the data
 primitives, the flow of data through the system, artifacts honcho produces, and
 how to use them.
 
@@ -22,18 +22,27 @@ how to use them.
 
 Honcho has a hiearchal data model centered around the entities below. 
 
+```mermaid
+ graph TD
+      W[Workspaces] -->|have| P[Peers]
+      W -->|have| S[Sessions]
+
+      P -->|have| PM[Messages]
+
+      S -->|have| SM[Messages]
+
+      P <-.->|many-to-many| S
+
+      style W fill:#FF5A7E,stroke:#333,stroke-width:2px,color:#fff
+      style P fill:#e1f5fe,stroke:#0277bd,color:#000
+      style S fill:#f3e5f5,stroke:#7b1fa2,color:#000
+      style PM fill:#e8f5e9,stroke:#2e7d32,color:#000
+      style SM fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
-Workspaces
-├── Peers ←──────────────────┐
-│   ├── Sessions             │
-│   ├── Collections          │
-│   │   └── Documents        │
-│   └── Messages (peer-level)│
-│                            │
-└── Sessions ←───────────────┤ (many-to-many)
-    ├── Peers ───────────────┘
-    └── Messages (session-level)
-```
+
+There are `Workspaces` at the top that contain `Peers` and `Sessions`. A `Peer`
+can be part of many `Sessions` and a `Session` can have many `Peers`. Both
+`Sessions` and `Peers` can have `Messages` 
 
 ### <Icon icon="building" /> Workspaces
 
@@ -98,8 +107,8 @@ Sessions represent individual conversation threads or interaction contexts betwe
 ### <Icon icon="envelope" /> Messages
 
 Messages are the fundamental units of interaction within sessions. They may
-also be used at the peer level to represent stored information of any kind that is not related to a specific interaction, but provides
-important context for a peer.
+also be used at the peer level to ingest information of any kind that is not related to a specific interaction, but provides
+important context for a peer (emails, docs, files, etc).
 
 **Key Features:** 
 - **Rich Content**: Support for text, metadata, and structured data
@@ -135,7 +144,7 @@ Deriver tasks are processed in parallel, but tasks affecting the same peer repre
 
 There are two types of tasks that the deriver currently does:
 
-- **Representation Tasks**: Generate peer representations
+- **Representation Tasks**: Generate/update peer representations
 - **Summary Tasks**: Generate conversation summaries
 
 ### Peer Representations
@@ -148,16 +157,30 @@ Honcho handles both **local** and **global** representations of Peers, where
 **local** representations are specific to a single Peer's view of another Peer,
 while Global Representations are based on any message ever produced by a Peer. 
 
-This is a key aspect of imbuing your agents with social cognition. There should
-be a representation of your agent, but it should also form a representation of
-every entity it interacts with. 
+<img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
 
-More tangibly in an example scenario, if we have a session with 3 particpants Alice, Bob, and Nico, then each of those Peers will have a **local** representation of Bob
+Everything is framed in regards to perspective. Alice owns it's own global
+representation, but it has a local representation of Bob based on what Alice
+observes and similarly Bob has a global representation of itself and local
+representation of Alice. So in the example above, when Alice sends a message to
+Bob it triggers an update to both Alice's global representation and Bob's local
+representation. 
 
+If Alice were to have another conversation with a differeent Peer, Nico, and
+sent them a message, then it would trigger an update to Alice's Global
+Representation and Nico's local representation of Alice. Bob's local
+representation of Alice would not change since Bob would never receive that
+message.
+
+<Note> By default local representations are disabled, but can be enabled in a
+Peer or Session level configuration </Note>
+
+Depending on the use case a developer may choose to only use global
+representation, only use local, or a combination.
 
 ### Summary
 
-Summary tasks create conversation summaries and key insights. Periodically, a
+Summary tasks create conversation summaries. Periodically, a
 "short" summary will be created for each session as messages are added -- every
 20 messages by default. "Long" summaries are created every 60 messages by
 default and maintain a total overview of the session by including the previous
@@ -166,27 +189,33 @@ summary in a recursive fashion. These summaries are accessed in the
 easily fetch everything necessary to generate the next LLM completion for an
 agent.
 
-## Dialectic Chat
+The system defaults are also the checkpoints used on the managed version of
+Honcho hosted at [https://api.honcho.dev](https://api.honcho.dev)
 
-Honcho's killer feature is the `chat` endpoint. By storing messages in Honcho, you may query in natural language to get intelligent answer's about a user or agent's personality, theory of mind, history, and more. Dialectic Chat should be thought of as an assisting agent which your agent can reach out to for useful context and answers about actors, human or AI, operating your application.
+
+## Dialectic API
+
+The Dialectic API is one of the most integral components of Honcho and acts as
+the main way to leverage Peer Representations. By using the `/chat` endpoint
+developers can directly talk to Honcho about any Peer in a workspace to get
+insights into the psychology of a Peer and help them steer their behavior.
+
+This allows us to use this one endpoint for a wide variety of use cases. Model
+steering, personalization, hydrating a prompt, etc. Additionally, since the
+endpoint works through natural language a developer can allow an agent to
+backchannel directly with Honcho, via MCP or a direct API call.
+
+Developers should frame the Dialectic as talking an expert on the Peer rather than the Peer itself, meaning:
+
+```python
+alice.chat("What is alice's mood like") # ✅ Correct
+
+alice.chat("What is your mood like") # ❌ Wrong
+```
 
 <Note>
 Think of Dialectic Chat as an assisting agent that your main agent can consult for contextual information about any actor in your application.
 </Note>
-
-## Scalability Considerations
-
-- **Stateless API**: Scale API servers independently
-- **Queue Workers**: Scale background processing workers
-- **Database**: PostgreSQL with read replicas
-
-## Security Architecture
-
-- **JWTs**: Secure API access
-- **Scoped Access**: Workspace/peer/session level permissions
-- **Admin Controls**: Super-user capabilities
-- **Workspace Isolation**: Complete data separation
-- **Encryption**: Data encryption at rest and in transit
 
 ## Next Steps
 
@@ -197,7 +226,7 @@ Think of Dialectic Chat as an assisting agent that your main agent can consult f
   <Card title="Glossary" icon="book" href="/v2/documentation/core-concepts/glossary">
     Reference for all technical terms and concepts
   </Card>
-  <Card title="API Reference" icon="api" href="/v2/api-reference/introduction">
+  <Card title="API Reference" icon="play" href="/v2/api-reference/introduction">
     Detailed API documentation and examples
   </Card>
   <Card title="Quick Start" icon="rocket" href="/v2/documentation/introduction/quickstart">

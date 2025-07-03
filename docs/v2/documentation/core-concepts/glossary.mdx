@@ -1,93 +1,70 @@
----
-title: 'Glossary'
-description: 'Key terms and concepts within the Honcho framework'
-icon: 'book'
+--- 
+title: 'Terminology'
+description: 'Glossary of AI and Honcho Specific Terms' 
+icon: 'book' 
 ---
 
 ## AI Development Basics
 
 Essential terms for developers new to building AI applications.
 
-**LLM (Large Language Model)**  
-The AI model that generates text responses, like GPT-4, Claude, or Llama. Think of it as the "brain" that powers your chatbot or AI assistant.
+**LLM (Large Language Model)**  The AI model that generates text responses,
+like GPT-4, Claude, or Llama. Think of it as the "brain" that powers your
+chatbot or AI assistant.
 
-**Prompt**  
-The text you send to an AI model to get a response. This includes user messages, system instructions, and any context you provide.
+**Prompt**  The text you send to an AI model to get a response. This includes
+user messages, system instructions, and any context you provide.
 
-**Token**  
-How AI models count and limit text. Roughly 1 token = 0.75 words. Models have token limits (like 4,000 or 128,000 tokens) that determine how much text they can process at once.
+**Token**  How AI models count and limit text. Roughly 1 token = 0.75 words.
+Models have token limits (like 4,000 or 128,000 tokens) that determine how much
+text they can process at once.
 
-**Context Window**  
-The maximum amount of text an AI model can "remember" in one conversation. Once you exceed this limit, the model starts "forgetting" earlier parts of the conversation.
+**Context Window**  The maximum amount of text an AI model can "remember" in
+one conversation. Once you exceed this limit, the model starts "forgetting"
+earlier parts of the conversation.
 
-**Memory**  
-How your AI application remembers information between conversations. Without memory, each conversation starts fresh with no knowledge of previous interactions.
+**Embedding**  Converting text into numerical vectors that computers can
+understand and compare. Enables "smart search" that finds similar content based
+on meaning, not just keywords.
 
-**Context**  
-Background information your AI knows about the current situation, user, or conversation. Good context leads to more relevant and personalized responses.
+**Semantic Search**  Search based on meaning rather than exact keyword
+matching, often using embeddings.
 
-**Personalization**  
-Tailoring AI responses to each specific user based on their preferences, history, and behavior patterns.
+**Agent**  An AI system that can take actions and make decisions, not just
+generate text responses. Agents can use tools, call APIs, and interact with
+external systems.
 
-**Embedding**  
-Converting text into numerical vectors that computers can understand and compare. Enables "smart search" that finds similar content based on meaning, not just keywords.
+## Honcho Terms
 
-**Session**  
-One complete conversation or interaction between a user and your AI. Sessions help organize and maintain context within individual conversations.
+**Global Representation**  Derived context of a specific peer, synthesizing
+insights from interactions across all sessions, including arbitrary data
+ingested by this specific peer. With arbitrary data, a global representation
+can be made independent of sessions.
 
-**Agent**  
-An AI system that can take actions and make decisions, not just generate text responses. Agents can use tools, call APIs, and interact with external systems.
-
-## Context & Memory
-
-How Honcho builds and maintains intelligent context about users and conversations.
-
-**Global Representation**  
-Derived context of a specific peer, synthesizing insights from interactions across all sessions, including arbitrary data ingested by this specific peer. With arbitrary data, a global representation can be made independent of sessions.
-
-**Local Representation**  
-One peer's persistent context of another based on observed interactions/messages.
-
-## Authentication & Security
-
-Security and access control features.
-
-**Workspace-Scoped Authentication**  
-JWT-based authentication system updated to support the workspace/peer/session hierarchy with appropriate access controls.
-
-**Scoped API Keys**  
-Authentication tokens that can limit access to specific workspaces, peers, or resources for enhanced security and multi-tenant isolation.
-
----
-
-## Technical Terms
-
-Advanced technical concepts for power users.
-
-<Warning>
-These concepts require deeper technical understanding and are primarily for advanced implementations.
-</Warning>
-
-**Vector Search**  
-Finding similar content using cosine similarity between vector embeddings for semantic context retrieval.
-
-**Semantic Search**  
-Search based on meaning rather than exact keyword matching, used for intelligent context assembly.
-
-**Token Allocation**  
-Intelligent management of token usage across context retrieval, summarization, and response generation.
-
-**Multi-Tenancy**  
-The ability to serve multiple isolated workspaces from a single Honcho instance with complete data separation. 
-
----
+**Local Representation**  One peer's persistent context of another based on
+observed interactions/messages.
 
 ## Cognitive Science Terms
 
-Cognitive science terms that are used throughout the inspiration and implementation of Honcho
+Cognitive science terms that are used throughout the inspiration and
+implementation of Honcho
 
-**Theory of Mind**  
-The ability of a computer to understand, remember, and interact with its own mind, enabling it to form representations of the world and make decisions based on its own knowledge and behavior.
+**Theory of Mind**  The ability of a computer to understand, remember, and
+interact with its own mind, enabling it to form representations of the world
+and make decisions based on its own knowledge and behavior.
 
-**Social Cognition**
-The mental processes by which we perceive, interpret, and respond to information about others and social situations. It includes the encoding, storage, retrieval, and application of social knowledge.
+**Social Cognition** The mental processes by which we perceive, interpret, and
+respond to information about others and social situations. It includes the
+encoding, storage, retrieval, and application of social knowledge.
+
+**Cognitive Architecture** In CogSci, frameworks describing fixed structures & mechanisms underlying
+human cognition. It aims to explain how various components of the mind--perception, memory,
+reasoning, learning, etc--combine to produce intelligent behavior across diverse environments. In
+I, it’s a computational implementation of these theories--a designed framework to replicate human
+cognitive functions.
+
+**Predictive Coding** A theory in CogSci proposing the brain is an active prediction machine,
+continually generating & updating internal world models to anticipate sensory input, rather than
+passively receiving it--closely linked to Bayesian brain hypotheses, which hold that the brain
+interprets the world probabilistically, weighing prior knowledge against new evidence to minimize
+uncertainty.

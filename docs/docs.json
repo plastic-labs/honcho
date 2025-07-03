@@ -32,8 +32,8 @@
               {
                 "group": "Core Concepts",
                 "pages": [
-                  "v2/documentation/core-concepts/glossary",
                   "v2/documentation/core-concepts/architecture",
+                  "v2/documentation/core-concepts/glossary",
                   "v2/documentation/core-concepts/features"
                 ]
               },

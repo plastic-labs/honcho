@@ -29,7 +29,7 @@ rich psychological understanding.
 
 ```python
 # Start simple - just add messages
-session.add_messages([{peer: alice, content: "I learn best with examples"}])
+session.add_messages([alice.message("I learn best with examples")])
 
 # Get powerful - query user psychology  
 insight = peer.chat("How should I explain this concept?")
