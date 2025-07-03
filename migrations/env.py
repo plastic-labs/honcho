@@ -98,6 +98,7 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         echo=False,
         poolclass=pool.NullPool,
+        connect_args={"prepare_threshold": None},
     )
 
     with connectable.connect() as connection:

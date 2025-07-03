@@ -68,7 +68,7 @@ async def setup_admin_jwt():
 SENTRY_ENABLED = settings.SENTRY.ENABLED
 if SENTRY_ENABLED:
 
-    def before_send(event: Event, hint: Hint) -> Event | None:
+    def before_send(event: "Event", hint: "Hint") -> "Event | None":
         if "exc_info" in hint:
             _, exc_value, _ = hint["exc_info"]
             # Filter out HonchoExceptions from being sent to Sentry
@@ -115,7 +115,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.0.1",
+    version="2.0.4",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",

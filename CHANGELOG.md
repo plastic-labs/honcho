@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.4]
+
+### Fixed
+
+- Migration/provision scripts did not have correct database connection arguments, causing timeouts
+
+## [2.0.3]
+
+### Fixed
+
+- Bug that causes runtime error when Sentry flags are enabled
+
+## [2.0.2]
+
+### Fixed
+
+- Database initialization was misconfigured and led to provision_db script failing: switch to consistent working configuration with transaction pooler
+
 ## [2.0.1]
 
 ### Added

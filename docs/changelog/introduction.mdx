@@ -27,7 +27,25 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
-        <Update label="v2.0.1 (Current)">
+        <Update label="v2.0.4 (Current)">
+        ### Fixed
+
+        - Migration/provision scripts did not have correct database connection arguments, causing timeouts
+        </Update>
+        
+        <Update label="v2.0.3">
+        ### Fixed
+
+        - Bug that causes runtime error when Sentry flags are enabled
+        </Update>
+
+        <Update label="v2.0.2">
+        ### Fixed
+
+        - Database initialization was misconfigured and led to provision_db script failing: switch to consistent working configuration with transaction pooler
+        </Update>
+
+        <Update label="v2.0.1">
         ### Added
 
         - Ergonomic SDKs for Python and TypeScript (uses Stainless underneath)
@@ -134,7 +152,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v1.0.2 (Current)">
+        <Update label="v1.1.0 (Current)">
             ### Fixed
 
             - Properly handle AsyncClient
@@ -143,7 +161,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v1.0.2 (Current)">
+        <Update label="v1.1.0 (Current)">
             ### Fixed
 
             - Create default workspace on Honcho client instantiation

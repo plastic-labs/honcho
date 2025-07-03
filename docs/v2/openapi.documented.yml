@@ -7,7 +7,7 @@ info:
     name: Plastic Labs
     url: https://honcho.dev/
     email: hello@plasticlabs.ai
-  version: 2.0.1
+  version: 2.0.4
 servers:
   - url: http://localhost:8000
     description: Local Development Server
