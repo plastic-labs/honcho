@@ -14,7 +14,7 @@ Honcho has 3 main components that work together to manage agent identity and con
 - **The Dialectic API**: The natural language API for chatting with representations
 
 Below we'll deep dive into these different areas, discussing the data
-primitives, the flow of data through the system, artifacts honcho produces, and
+primitives, the flow of data through the system, artifacts Honcho produces, and
 how to use them.
 
 
@@ -64,7 +64,7 @@ Workspaces are the top-level containers that provide complete isolation between 
 
 ### <Icon icon="user" /> Peers
 
-Honcho has a Peer-Centric Architecture: Peers are the most important entity with Honcho with everything revolving around Peers and their representations.
+Honcho has a Peer-Centric Architecture: Peers are the most important entity within Honcho, with everything revolving around Peers and their representations.
 
 Peers represent individual users, agents, or entities in a workspace. They are
 the primary subjects for memory and context management. Treating humans and
@@ -127,10 +127,10 @@ important context for a peer (emails, docs, files, etc.).
 ## Deriver
 
 At the core of developing representations of Peers, we have the Deriver. The
-Deriver refers to a set of processes in honcho that enqueue new messages sent
+Deriver refers to a set of processes in Honcho that enqueue new messages sent
 by peers and reasons over them to extract facts, insights, and context.
 
-Depending on the configuration of a `Peer` or `Session` the deriver will behave
+Depending on the configuration of a `Peer` or `Session`, the deriver will behave
 differently and update different representations.
 
 Facts derived here are used in the Dialectic chat endpoint to generate
@@ -159,15 +159,15 @@ while Global Representations are based on any message ever produced by a Peer.
 
 <img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
 
-Everything is framed with regards to perspective. Alice owns its own global
-representation, but it has a local representation of Bob based on what Alice
-observes and similarly Bob has a global representation of itself and local
+Everything is framed with regards to perspective. Alice owns her own global
+representation, but she also maintains a local representation of Bob based on what she
+observes and similarly Bob has a global representation of himself and local
 representation of Alice. So in the example above, when Alice sends a message to
-Bob it triggers an update to both Alice's global representation and Bob's local
-representation. 
+Bob it triggers an update to both Alice's global representation of herself and Bob's local
+representation of Alice. 
 
 If Alice were to have another conversation with a different Peer, Nico, and
-sent them a message, then it would trigger an update to Alice's Global
+sent them a message, this action would trigger an update to Alice's Global
 Representation and Nico's local representation of Alice. Bob's local
 representation of Alice would not change since Bob would never receive that
 message.
@@ -196,16 +196,16 @@ Honcho hosted at [https://api.honcho.dev](https://api.honcho.dev)
 ## Dialectic API
 
 The Dialectic API is one of the most integral components of Honcho and acts as
-the main way to leverage Peer Representations. By using the `/chat` endpoint
+the main way to leverage Peer Representations. By using the `/chat` endpoint,
 developers can directly talk to Honcho about any Peer in a workspace to get
 insights into the psychology of a Peer and help them steer their behavior.
 
 This allows us to use this one endpoint for a wide variety of use cases. Model
 steering, personalization, hydrating a prompt, etc. Additionally, since the
-endpoint works through natural language a developer can allow an agent to
+endpoint works through natural language, a developer can allow an agent to
 backchannel directly with Honcho, via MCP or a direct API call.
 
-Developers should frame the Dialectic as talking an expert on the Peer rather than the Peer itself, meaning:
+Developers should frame the Dialectic as talking to an expert on the Peer rather than addressing the Peer itself, meaning:
 
 ```python
 alice.chat("What is alice's mood like") # ✅ Correct
