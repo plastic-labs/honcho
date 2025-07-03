@@ -20,7 +20,7 @@ how to use them.
 
 ## Data Model
 
-Honcho has a hiearchal data model centered around the entities below. 
+Honcho has a hierarchical data model centered around the entities below. 
 
 ```mermaid
  graph TD
@@ -68,7 +68,7 @@ Peers are the most important entity within Honcho. Honcho itself could be consid
 
 Peers represent individual users, agents, or entities in a workspace. They are
 the primary subjects for memory and context management. Treating humans and
-agents the same let's us support arbitrary combinations of Peers for
+agents the same lets us support arbitrary combinations of Peers for
 multi-agent or group chat scenarios.
 
 **Key Features:**
@@ -150,7 +150,7 @@ There are two types of tasks that the deriver currently does:
 ### Peer Representations
 
 Peer representations are more of an abstract concept as they are made up of
-various different pieces of data stored throughout Honcho. There are however
+various pieces of data stored throughout Honcho. There are however
 multiple types of representations that Honcho can produce. 
 
 Honcho handles both **local** and **global** representations of Peers, where
@@ -166,7 +166,7 @@ representation of Alice. So in the example above, when Alice sends a message to
 Bob it triggers an update to both Alice's global representation and Bob's local
 representation. 
 
-If Alice were to have another conversation with a differeent Peer, Nico, and
+If Alice were to have another conversation with a different Peer, Nico, and
 sent them a message, then it would trigger an update to Alice's Global
 Representation and Nico's local representation of Alice. Bob's local
 representation of Alice would not change since Bob would never receive that
