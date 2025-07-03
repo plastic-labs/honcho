@@ -52,8 +52,8 @@ We recommend using the official client SDKs instead of the core ones for better
 developer experience, however for any custom use cases you can still access the
 core SDKs in their own repos:
 
-[Honcho Core Python](https://github.com/plastic-labs/honcho-python-core)
-[Honcho Core TypeScript](https://github.com/plastic-labs/honcho-node-core)
+- [Honcho Core Python](https://github.com/plastic-labs/honcho-python-core)
+- [Honcho Core TypeScript](https://github.com/plastic-labs/honcho-node-core)
 
 Examples on how to use the SDK are located within each SDK folder and in the
 [SDK Reference](https://docs.honcho.dev/v2/documentation/tutorial/SDK)

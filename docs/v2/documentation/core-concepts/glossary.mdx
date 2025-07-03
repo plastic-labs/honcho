@@ -1,222 +1,70 @@
----
-title: 'Glossary'
-description: 'Key terms and concepts within the Honcho framework'
-icon: 'book'
+--- 
+title: 'Terminology'
+description: 'Glossary of AI and Honcho Specific Terms' 
+icon: 'book' 
 ---
 
 ## AI Development Basics
 
 Essential terms for developers new to building AI applications.
 
-**LLM (Large Language Model)**  
-The AI model that generates text responses, like GPT-4, Claude, or Llama. Think of it as the "brain" that powers your chatbot or AI assistant.
+**LLM (Large Language Model)**  The AI model that generates text responses,
+like GPT-4, Claude, or Llama. Think of it as the "brain" that powers your
+chatbot or AI assistant.
 
-**Prompt**  
-The text you send to an AI model to get a response. This includes user messages, system instructions, and any context you provide.
+**Prompt**  The text you send to an AI model to get a response. This includes
+user messages, system instructions, and any context you provide.
 
-**Token**  
-How AI models count and limit text. Roughly 1 token = 0.75 words. Models have token limits (like 4,000 or 128,000 tokens) that determine how much text they can process at once.
+**Token**  How AI models count and limit text. Roughly 1 token = 0.75 words.
+Models have token limits (like 4,000 or 128,000 tokens) that determine how much
+text they can process at once.
 
-**Context Window**  
-The maximum amount of text an AI model can "remember" in one conversation. Once you exceed this limit, the model starts "forgetting" earlier parts of the conversation.
+**Context Window**  The maximum amount of text an AI model can "remember" in
+one conversation. Once you exceed this limit, the model starts "forgetting"
+earlier parts of the conversation.
 
-**Memory**  
-How your AI application remembers information between conversations. Without memory, each conversation starts fresh with no knowledge of previous interactions.
+**Embedding**  Converting text into numerical vectors that computers can
+understand and compare. Enables "smart search" that finds similar content based
+on meaning, not just keywords.
 
-**Context**  
-Background information your AI knows about the current situation, user, or conversation. Good context leads to more relevant and personalized responses.
+**Semantic Search**  Search based on meaning rather than exact keyword
+matching, often using embeddings.
 
-**Personalization**  
-Tailoring AI responses to each specific user based on their preferences, history, and behavior patterns.
+**Agent**  An AI system that can take actions and make decisions, not just
+generate text responses. Agents can use tools, call APIs, and interact with
+external systems.
 
-**Embedding**  
-Converting text into numerical vectors that computers can understand and compare. Enables "smart search" that finds similar content based on meaning, not just keywords.
+## Honcho Terms
 
-**Metadata**  
-Extra information attached to your data, like tags, timestamps, or custom properties. Helps organize and filter your content.
+**Global Representation**  Derived context of a specific peer, synthesizing
+insights from interactions across all sessions, including arbitrary data
+ingested by this specific peer. With arbitrary data, a global representation
+can be made independent of sessions.
 
-**API (Application Programming Interface)**  
-How your application communicates with external services. APIs define what requests you can make and what responses you'll get back.
-
-**Endpoint**  
-A specific URL your application calls to perform an action, like creating a user, sending a message, or retrieving data.
-
-**Session**  
-One complete conversation or interaction between a user and your AI. Sessions help organize and maintain context within individual conversations.
-
-**Agent**  
-An AI system that can take actions and make decisions, not just generate text responses. Agents can use tools, call APIs, and interact with external systems.
-
----
-
-## Honcho Core Concepts
-
-The fundamental building blocks of the Honcho platform.
-
-
-<Info>
-These four concepts form the foundation of Honcho's architecture and enable all other features.
-</Info>
-
-**Workspace**  
-A top-level container providing complete isolation between different applications or environments. Workspaces enable multi-tenancy and contain all peers, sessions, and data with workspace-scoped authentication.
-
-**Peer**  
-A persistent identity within a workspace that represents a conversational participant (human users, AI agents, or other possible entities). Peers maintain persistent context and memory across all their interactions and can be configured with specific behavioral settings.
-
-**Session**  
-An independent conversation or interaction context that can include multiple peers. Sessions exist independently, allowing persistent context as well as dynamic peer participation and removal.
-
-**Message**  
-A single communication unit within a session, attributed to a specific peer. Messages support rich content, metadata, and automatic background processing for derived insights.
-
----
-
-## Multi-Peer Architecture
-
-Advanced features for complex conversational scenarios.
-
-**Multi-Peer Sessions**  
-Sessions that support multiple participants simultaneously, including humans, AI agents, and other entities. Each peer can have individual configuration settings within the session.
-
-**Peer Configuration**  
-Settings that control how a peer behaves within a session:
-- **observe_me**: Whether this peer's actions are observed and learned from
-- **observe_others**: Whether this peer learns from other participants
-
----
-
-## Context & Memory
-
-How Honcho builds and maintains intelligent context about users and conversations.
-
-<Tip>
-Understanding these concepts is key to leveraging Honcho's Theory of Mind capabilities.
-</Tip>
-
-**The Deriver**  
-Honcho's core engine that uses Theory of Mind principles to extract facts, maintain context, and create representations of any given peer.
-
-**Peer Context**  
-Persistent knowledge and preferences associated with a specific peer that spans across all their sessions. This includes personality profiles, preferences, and accumulated facts.
-
-**Session Context**  
-Conversation-specific memory and context that is scoped to individual sessions, including summaries and session-specific insights.
-
-**Arbitrary Data**  
-Information fed to the deriver to jump-start a representation or provide extra context to a specific peer, independent of natural conversation.
-
-**Global Representation**  
-Derived context of a specific peer, synthesizing insights from interactions across all sessions, including arbitrary data ingested by this specific peer. With arbitrary data, a global representation can be made independent of sessions.
-
-**Local Representation**  
-One peer's persistent context of another based on observed interactions/messages.
-
-**Observer Peer**  
-A peer that forms representations of other peers based on their interactions.
-
-**Target Peer**  
-The peer being observed to inform a representation.
-
----
-
-## Storage & Processing
-
-How Honcho stores and processes conversational data.
-
-**Dialectic API**  
-Natural language interface for making queries about what insights have been derived concerning global and local peer representations.
-
-**Collections**  
-Internal storage containers that use vector embeddings (numerical representations of text) to enable semantic search and similarity matching. Collections store insights, facts, and context about peers generated by the Deriver, allowing the Dialectic API to find relevant information based on meaning rather than exact keywords.
-
-**Documents**  
-Internal pieces of content stored in collections, automatically embedded and searchable via vector similarity. Used internally for context storage and retrieval.
-
-**Internal Metadata**  
-Honcho's internal state information that is not exposed through the API, used for system processing and state management.
-
----
-
-## Background Processing
-
-How Honcho processes data in the background to build intelligence.
-
-**Work Units**  
-Discrete processing tasks that replace session-based processing. Work units handle multi-peer scenarios and different task types for more granular processing control.
-
-**Deriver Queue**  
-Background processing system that derives insights from interactions, generates peer representations, and maintains context. Processes work units asynchronously.
-
-**Queue Status**  
-Processing status indicators: **Pending**, **In Progress**, or **Complete**.
-
----
-
-## Advanced Features
-
-Powerful capabilities for sophisticated AI applications.
-
-**Batch Operations**  
-Enhanced message operations including:
-- Batch message creation
-- Message querying with token and message count limits
-- Efficient bulk data processing
-
-**Scoped Search & Summary**  
-Search and summary functionalities that can be scoped by:
-- Workspace level
-- Peer level
-- Session level
-
-**Context Retrieval**  
-Session context retrieval with automatic summarization and intelligent token allocation management.
-
-**Peer Paradigm**  
-A conversation model where AI entities act as peers rather than traditional assistants, enabling collaborative interactions and shared context development.
-
----
-
-## Authentication & Security
-
-Security and access control features.
-
-**Workspace-Scoped Authentication**  
-JWT-based authentication system updated to support the workspace/peer/session hierarchy with appropriate access controls.
-
-**Scoped API Keys**  
-Authentication tokens that can limit access to specific workspaces, peers, or resources for enhanced security and multi-tenant isolation.
-
----
-
-## Technical Terms
-
-Advanced technical concepts for power users.
-
-<Warning>
-These concepts require deeper technical understanding and are primarily for advanced implementations.
-</Warning>
-
-**Vector Search**  
-Finding similar content using cosine similarity between vector embeddings for semantic context retrieval.
-
-**Semantic Search**  
-Search based on meaning rather than exact keyword matching, used for intelligent context assembly.
-
-**Token Allocation**  
-Intelligent management of token usage across context retrieval, summarization, and response generation.
-
-**Multi-Tenancy**  
-The ability to serve multiple isolated workspaces from a single Honcho instance with complete data separation. 
-
----
+**Local Representation**  One peer's persistent context of another based on
+observed interactions/messages.
 
 ## Cognitive Science Terms
 
-Cognitive science terms that are used throughout the inspiration and implementation of Honcho
+Cognitive science terms that are used throughout the inspiration and
+implementation of Honcho
 
-**Theory of Mind**  
-The ability of a computer to understand, remember, and interact with its own mind, enabling it to form representations of the world and make decisions based on its own knowledge and behavior.
+**Theory of Mind**  The ability of a computer to understand, remember, and
+interact with its own mind, enabling it to form representations of the world
+and make decisions based on its own knowledge and behavior.
 
-**Social Cognition**
-The mental processes by which we perceive, interpret, and respond to information about others and social situations. It includes the encoding, storage, retrieval, and application of social knowledge.
+**Social Cognition** The mental processes by which we perceive, interpret, and
+respond to information about others and social situations. It includes the
+encoding, storage, retrieval, and application of social knowledge.
+
+**Cognitive Architecture** In CogSci, frameworks describing fixed structures & mechanisms underlying
+human cognition. Such frameworks aim to explain how various components of the mind--perception, memory,
+reasoning, learning, etc--combine to produce intelligent behavior across diverse environments. In
+AI, it’s a computational implementation of these theories--a designed framework to replicate human
+cognitive functions.
+
+**Predictive Coding** A theory in CogSci proposing the brain is an active prediction machine,
+continually generating & updating internal world models to anticipate sensory input, rather than
+passively receiving it--closely linked to Bayesian brain hypotheses, which hold that the brain
+interprets the world probabilistically, weighing prior knowledge against new evidence to minimize
+uncertainty.
