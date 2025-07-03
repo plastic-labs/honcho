@@ -9,9 +9,9 @@ sidebarTitle: "Architecture"
 
 Honcho has 3 main components that work together to manage agent identity and context. 
 
-- **The Storage API** : The Memory layer for storing interaction history for your agents
-- **The Deriver** : The background processing layer that builds representations of users and agents
-- **The Dialectic API** : The natural language API for chatting with representations
+- **The Storage API**: The Memory layer for storing interaction history for your agents
+- **The Deriver**: The background processing layer that builds representations of users and agents
+- **The Dialectic API**: The natural language API for chatting with representations
 
 Below we'll deep dive into these different areas, discussing the data
 primitives, the flow of data through the system, artifacts honcho produces, and
@@ -46,7 +46,7 @@ can be part of many `Sessions` and a `Session` can have many `Peers`. Both
 
 ### <Icon icon="building" /> Workspaces
 
-Workspaces are the top-level containers that provide complete isolation between different applications or environments. Essentially just a namespace to isolate different workloads or environments
+Workspaces are the top-level containers that provide complete isolation between different applications or environments; they essentially as a namespace to isolate different workloads or environments
 
 **Key Features:**
 - **Isolation**: Complete data separation between workspaces
@@ -108,7 +108,7 @@ Sessions represent individual conversation threads or interaction contexts betwe
 
 Messages are the fundamental units of interaction within sessions. They may
 also be used at the peer level to ingest information of any kind that is not related to a specific interaction, but provides
-important context for a peer (emails, docs, files, etc).
+important context for a peer (emails, docs, files, etc.).
 
 **Key Features:** 
 - **Rich Content**: Support for text, metadata, and structured data
@@ -126,9 +126,9 @@ important context for a peer (emails, docs, files, etc).
 
 ## Deriver
 
-At the core of developing representations of Peers we have the deriver. The
-deriver refers to a set of processes in honcho that enqueues new messages sent
-by peers and reasons against them to extract facts, insights, and context.
+At the core of developing representations of Peers, we have the Deriver. The
+Deriver refers to a set of processes in honcho that enqueue new messages sent
+by peers and reasons over them to extract facts, insights, and context.
 
 Depending on the configuration of a `Peer` or `Session` the deriver will behave
 differently and update different representations.
@@ -149,7 +149,7 @@ There are two types of tasks that the deriver currently does:
 
 ### Peer Representations
 
-Peer representations are more of an abstract concept as they are made up of
+Peer representations are more of an abstract concept, as they are made up of
 various pieces of data stored throughout Honcho. There are however
 multiple types of representations that Honcho can produce. 
 
@@ -159,7 +159,7 @@ while Global Representations are based on any message ever produced by a Peer.
 
 <img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
 
-Everything is framed in regards to perspective. Alice owns it's own global
+Everything is framed with regards to perspective. Alice owns its own global
 representation, but it has a local representation of Bob based on what Alice
 observes and similarly Bob has a global representation of itself and local
 representation of Alice. So in the example above, when Alice sends a message to
@@ -172,10 +172,10 @@ Representation and Nico's local representation of Alice. Bob's local
 representation of Alice would not change since Bob would never receive that
 message.
 
-<Note> By default local representations are disabled, but can be enabled in a
-Peer or Session level configuration </Note>
+<Note>By default, local representations are disabled, but can be enabled in a
+Peer or Session level configuration</Note>
 
-Depending on the use case a developer may choose to only use global
+Depending on the use case, a developer may choose to only use global
 representation, only use local, or a combination.
 
 ### Summary
