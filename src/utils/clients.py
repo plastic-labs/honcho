@@ -1,12 +1,12 @@
 from anthropic import AsyncAnthropic
 from google import genai
-from groq import Groq
+from groq import AsyncGroq
 from openai import AsyncOpenAI
 
 from src.config import settings
 from src.utils.types import Providers
 
-clients: dict[Providers, AsyncAnthropic | AsyncOpenAI | genai.Client | Groq] = {}
+clients: dict[Providers, AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
     anthropic = AsyncAnthropic(api_key=settings.LLM.ANTHROPIC_API_KEY)
@@ -29,5 +29,5 @@ if settings.LLM.GEMINI_API_KEY:
     clients["google"] = google
 
 if settings.LLM.GROQ_API_KEY:
-    groq = Groq(api_key=settings.LLM.GROQ_API_KEY)
+    groq = AsyncGroq(api_key=settings.LLM.GROQ_API_KEY)
     clients["groq"] = groq
