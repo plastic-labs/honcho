@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
-    from .session import AsyncSession
+    from .session import AsyncSession  # pragma: no cover
 
 
 class AsyncPeer(BaseModel):

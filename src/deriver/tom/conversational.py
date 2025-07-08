@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
     response_model=TomInferenceOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
-async def tom_inference_conversational(
+async def tom_inference_conversational(  # pragma: no cover
     chat_history: str,
     user_representation: str | None = None,
 ):
@@ -59,7 +59,7 @@ async def tom_inference_conversational(
     response_model=UserRepresentationOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
-async def user_representation_conversational(
+async def user_representation_conversational(  # pragma: no cover
     chat_history: str,
     user_representation: str | None = None,
     tom_inference: str | None = None,

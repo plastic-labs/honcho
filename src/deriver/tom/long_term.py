@@ -56,7 +56,7 @@ class FactExtraction(BaseModel):
     response_model=UserRepresentationOutput,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
-async def get_user_representation_long_term(
+async def get_user_representation_long_term(  # pragma: no cover
     chat_history: str,
     user_representation: str = "None",
     tom_inference: str = "None",
@@ -125,7 +125,7 @@ PERSISTENT FACTS ABOUT USER:
     response_model=FactExtraction,
     client=clients[settings.LLM.TOM_INFERENCE_PROVIDER],
 )
-async def extract_facts_long_term(chat_history: str):
+async def extract_facts_long_term(chat_history: str):  # pragma: no cover
     return f"""
 You are an AI assistant specialized in extracting and formatting relevant information about users from conversations. Your task is to analyze a given conversation and create a list of concise, factual statements about the user. These statements will be stored in a vector embedding database to enhance future interactions.
 
