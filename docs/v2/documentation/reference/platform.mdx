@@ -1,103 +1,104 @@
 ---
-title: "Platform Overview"
+title: "Managed Honcho Platform"
 icon: "rocket"
-description: "Honcho is the personal identity platform for AI - enabling truly personalized, contextually aware agents and applications."
+description: "Build socially intelligent agents without worrying about infrastructure"
+sidebarTitle: "Platform Overview"
 ---
 
 <Card title="Sign up to start using Honcho!" icon="rocket" href="https://app.honcho.dev">
     Start using the platform to manage Honcho instances for your workspace or app.
 </Card>
 
-## Welcome to Honcho!
+The quickest way to get started using Honcho in production is to use the
+[Honcho Cloud Platform](https://app.honcho.dev), Sign up, get an API key, and
+get started using Honcho.
 
-To make developing with honcho as easy as possible [The Honcho Platform](https://app.honcho.dev)-- a managed service and the easiest way to add personal memory and social cognition to your AI applications. Built by the team at Plastic Labs, Honcho enables **ambient personalization** - your AI learns about users automatically as they interact, with no surveys or additional user overhead.
+## 1. Go to [app.honcho.dev](https://app.honcho.dev)
 
-<img src="/images/app-screenshots/welcome-to-honcho.png" alt="Honcho Platform Dashboard" width="400" />
+Create an account and get started using Honcho. If you have a team member
+already on Honcho, have them invite you to their organization, otherwise you'll
+see a banner asking you to create a new one. 
 
-## Why Use the Honcho Dashboard?
+<Frame>
+<img src="/images/app-screenshots/welcome-to-honcho.png" alt="Honcho Platform
+Dashboard" width="400" />
+</Frame>
 
-The Honcho management platform streamlines machine creation and monitoring so you can focus on building great AI experiences:
+Once you've created an organization, you'll be taken to the dashboard and see
+the welcome page.
 
-**Machine Management Handled**: Run dedicated Honcho instances in seconds with zero infrastructure setup. We handle provisioning, memory, and maintenance automatically.
+<img src="/images/app-screenshots/get-started copy.png" alt="Honcho Dashboard
+Getting Started"/>
 
-**Developer-First Tools**: Create and manage API keys, utilize an API playground with a Postman-like experience, get machine status and performance analytics of your Honcho instance.
+Each organization has dedicated infrastructure running to isolate your
+workloads. Until you activate a subscription under the
+[Billing](https://app.honcho.dev/billing) page, the infrastructure will be
+deactivated. You can check the status of your instance by going to the
+[Status](https://app.honcho.dev/status) page.  
 
-**Workspace Dashboard**: Create and manage workspaces, peers, and sessions to integrate into your AI applications.
+<img src="/images/app-screenshots/no-subscription-status.png" alt="Honcho Status Page with No Subscription" />
 
-**Production Monitoring**: Real-time analytics, usage metrics, and health monitoring. Track performance and user engagement across all your AI applications.
+## **2. Set up billing to activate your Honcho instance**
 
-
-
-## Go to [app.honcho.dev](https://app.honcho.dev)
-
-Get up and running with Honcho in minutes through [our managed platform](https://app.honcho.dev):
-
-<img src="/images/app-screenshots/get-started copy.png" alt="Honcho Dashboard Getting Started" width="500" />
-
-### **1. Create Your Organization**
-Start by creating your account and setting up your organization. Each organization gets isolated workspaces, member access management, and dedicated infrastructure for your Honcho instances.
-
-
-### **2. Spin up a Honcho Instance & Monitor Performance**
-Navigate to the status page to activate your new set of Honcho machines. Your instance is automatically provisioned with a vector database and API endpoints - ready to handle production traffic for your workspace. The status page will show you the state of your machines and let you know when an upgrade becomes available.
+Once you've activated your subscription, your Honcho instance will
+automatically provision, you can monitor the status refresh until you see a
+green checkmark saying all systems are operational.
 
 <img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" />
 
-Here you can monitor your Honcho instance health, usage metrics, and performance analytics. See request volume, API response times, and endpoint usage across all your AI applications.
+Here you can monitor your Honcho instance health, usage metrics, and
+performance analytics. See request volume, API response times, and endpoint
+usage across all your AI applications.
 
+You can also upgrade Honcho when new versions are made available.
 
-View the status of your machines running Honcho: 
-<img src="/images/app-screenshots/machine-status.png" alt="Machine Status" />
-
-
-### **3. Generate API Keys** 
-Create and manage API keys for different environments. Each key provides secure access to your Honcho instance.
+## **3. Generate API Keys** 
+Create and manage API keys for different environments. You can create admin
+level keys that have access to the entire Honcho instance or scope keys to
+restrict access to `Workspaces`, `Peers`, or `Sessions`.
 
 <img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" />
 
-### **4. Test with API Playground**
+## **4. Test with API Playground**
 Use our Postman-like API playground to test queries, explore endpoints, and validate your integration. Send requests directly to your Honcho instance and see real-time responses with full request/response logging.
 
 <img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" />
 
-### **5. Create a Workspace**
-On the explore page, you can create a workspace for your app to store peers, sessions, and messages. 
-
+## **5. Create a Workspace**
+On the explore page, you can see and interact with the data stored in your
+Honcho instance. You can create `Workspaces`, `Peers`, `Sessions`, and `Messages`. 
 
 <img src="/images/app-screenshots/explore-honcho.png" alt="Explore Honcho Page" />
 
-
-### **6. Peers & Sessions Management**
-Click into a workspace to open up the workspace dashboard. Here you can create peers and sessions, use the chat endpoint and add messages to your peer representations. Utilize your ability to search across all messages in a workspace.
+## **6. Peers & Sessions Management**
+Click into a `Workspace` to open up the `Workspace` dashboard. Here you can create
+`Peers` and `Sessions`, use the Dialectic API and add `Messages` to your `Peer`
+representations. Utilize your ability to search across all `Messages` in a
+`Workspace`.
 
 <img src="/images/app-screenshots/workspace-dash.png" alt="Workspace Dashboard Overview" />
 
 
-### **7. Peer Utilities & Chat Endpoint**
-You can click on a peer to open the utilities. Here there are options to search across all messages for a particular peer, see participating sessions, or edit the metadata for the peer. 
-The Chat Endpoint allows you to send a query through the Honcho API to get information about the peer's representation. 
-If you include the session ID, the query will be scoped to messages and the representation of a peer within that session.
+## **7. Peer Utilities & Chat Endpoint**
+You can click on a `Peer` to open the utilities. Here there are options to search across all `Messages` for a particular `Peer`, see participating `Sessions`, or edit the metadata for the Peer. 
+The Chat Endpoint allows you to send a query through the Honcho API to get information about the `Peer`'s representation. 
+If you include the `Session` ID, the query will be scoped to `Messages` and the representation of a `Peer` within that `Session`.
 
+<Frame>
 <img src="/images/app-screenshots/peer-utilities.png" alt="Peer Utilities Dashboard" width="400" />
+</Frame>
 
 
-### **8. Session Dashboard & Get Context**
-From the workspace dashboard, navigate to a session to find options to add peers, view messages, and search across all messages for a particular session. 
-Here, you also have the ability to 'Get Context' which produces the message history with a tokenized summary of the session. 
-This is a great way to get a quick overview of what happened in a session and summaries can be used to enhance session memory, provide further personalization or aid in message prediction.
+## **8. Session Dashboard & Get Context**
+From the workspace dashboard, navigate to a `Session` to find options to add `Peers`, view `Messages`, and search across all `Messages` for a particular session. 
+Here, you also have the ability to 'Get Context' which produces the message history with a tokenized summary of the `Session`. 
+This is a great way to get a quick overview of what happened in a `Session` and summaries can be used to enhance session memory, provide further personalization or aid in message prediction.
 
 <img src="/images/app-screenshots/session-dash.png" alt="Session Dashboard Overview" />
 
+<Frame>
 <img src="/images/app-screenshots/create-message.png" alt="Create Message Interface" width="400" />
-
-
-
-
-
-
-
-
-
+</Frame>
 
 
 ## Go Further
