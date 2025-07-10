@@ -27,7 +27,7 @@ Dashboard" width="400" />
 Once you've created an organization, you'll be taken to the dashboard and see
 the welcome page.
 
-<img src="/images/app-screenshots/get-started copy.png" alt="Honcho Dashboard
+<img src="/images/app-screenshots/get-started-copy.png" alt="Honcho Dashboard
 Getting Started"/>
 
 Each organization has dedicated infrastructure running to isolate your
@@ -80,9 +80,13 @@ representations. Utilize your ability to search across all `Messages` in a
 
 
 ## **7. Peer Utilities & Chat Endpoint**
-You can click on a `Peer` to open the utilities. Here there are options to search across all `Messages` for a particular `Peer`, see participating `Sessions`, or edit the metadata for the Peer. 
-The Chat Endpoint allows you to send a query through the Honcho API to get information about the `Peer`'s representation. 
-If you include the `Session` ID, the query will be scoped to `Messages` and the representation of a `Peer` within that `Session`.
+Select a `Peer` to open its utilities. From here you can search that `Peer`'s
+`Messages`, view participating `Sessions`, or edit its metadata. 
+
+The Chat Endpoint allows you to send a query through the Honcho API to get
+information about the `Peer`'s representation. If you include the `Session` ID,
+the query will be scoped to `Messages` and the representation of a `Peer`
+within that `Session`.
 
 <Frame>
 <img src="/images/app-screenshots/peer-utilities.png" alt="Peer Utilities Dashboard" width="400" />
@@ -91,8 +95,10 @@ If you include the `Session` ID, the query will be scoped to `Messages` and the 
 
 ## **8. Session Dashboard & Get Context**
 From the workspace dashboard, navigate to a `Session` to find options to add `Peers`, view `Messages`, and search across all `Messages` for a particular session. 
-Here, you also have the ability to 'Get Context' which produces the message history with a tokenized summary of the `Session`. 
-This is a great way to get a quick overview of what happened in a `Session` and summaries can be used to enhance session memory, provide further personalization or aid in message prediction.
+
+Use the **Get Context** feature to quickly get an output that can fit into your
+LLMs context window. Get the a subset of messages with an optional summary
+based on the token count you input. The [Session Context](../../guides/get-context) guide goes over how to use this in your agents
 
 <img src="/images/app-screenshots/session-dash.png" alt="Session Dashboard Overview" />
 

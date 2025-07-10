@@ -5,25 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [2.0.4]
+## [2.0.4] - 2025-07-02
 
 ### Fixed
 
 - Migration/provision scripts did not have correct database connection arguments, causing timeouts
 
-## [2.0.3]
+## [2.0.3] - 2025-07-01
 
 ### Fixed
 
 - Bug that causes runtime error when Sentry flags are enabled
 
-## [2.0.2]
+## [2.0.2] - 2025-06-27
 
 ### Fixed
 
 - Database initialization was misconfigured and led to provision_db script failing: switch to consistent working configuration with transaction pooler
 
-## [2.0.1]
+## [2.0.1] - 2025-06-26
 
 ### Added
 
@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Use new config arrangement everywhere
 - Remove hardcoded responses
 
-## [2.0.0]
+## [2.0.0] - 2025-06-24
 
 ### Added
 
@@ -87,7 +87,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Collections and Documents no longer exposed in the API, solely internal
 - Obsolete tests for apps, users, collections, documents, and metamessages
 
-## [1.1.0]
+## [1.1.0] - 2025-05-15
 
 ### Added
 
@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Alembic Migrations to include initial database migrations
 - Sentry Middleware to not report Honcho Exceptions
 
-## [1.0.0]
+## [1.0.0] - 2025-04-10
 
 ### Added
 
@@ -123,7 +123,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Database provisioning is a separate script instead of happening on startup
 - Consolidated `session/chat` and `session/chat/stream` endpoints
 
-## [0.0.16]
+## [0.0.16] - 2025-03-05
 
 ### Added
 
@@ -144,7 +144,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Self-hosting documentation and README to mention `uv` instead of `poetry`
 
-## [0.0.15]
+## [0.0.15] - 2025-01-06
 
 ### Added
 
