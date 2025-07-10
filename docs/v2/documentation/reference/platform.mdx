@@ -1,116 +1,117 @@
 ---
-title: "Platform Overview"
+title: "Managed Honcho Platform"
 icon: "rocket"
-description: "Honcho is the personal identity platform for AI - enabling truly personalized, contextually aware agents and applications."
+description: "Build socially intelligent agents without worrying about infrastructure"
+sidebarTitle: "Platform Overview"
 ---
 
 <Card title="Sign up to start using Honcho!" icon="rocket" href="https://app.honcho.dev">
     Start using the platform to manage Honcho instances for your workspace or app.
 </Card>
 
-## Welcome to Honcho!
+The quickest way to begin using Honcho in production is with the 
+[Honcho Cloud Platform](https://app.honcho.dev). Sign up, generate an API key,
+and start building with Honcho.
 
-The Honcho Platform is a managed service and the easiest way to add personal memory and identity to your AI applications. Built by the team at Plastic Labs, Honcho enables **ambient personalization** - your AI learns about users automatically as they interact, with no surveys or additional user overhead.
+## 1. Go to [app.honcho.dev](https://app.honcho.dev)
 
+Create an account to start using Honcho. If a teammate already uses Honcho, ask
+them to invite you to their organization; otherwise, you’ll see a banner
+prompting you to create a new one.
+
+<Frame>
 <img src="/images/app-screenshots/welcome-to-honcho.png" alt="Honcho Platform Dashboard" width="400" />
+</Frame>
 
-## Why Use the Honcho Dashboard?
+Once you've created an organization, you'll be taken to the dashboard and see
+the welcome page.
 
-The Honcho management platform streamlines deployment and monitoring so you can focus on building great AI experiences:
+<img src="/images/app-screenshots/get-started-copy.png" alt="Honcho Dashboard Getting Started"/>
 
-**One-Click Deployment**: Launch dedicated Honcho instances in seconds with zero infrastructure setup. We handle provisioning, scaling, and maintenance automatically.
+Each organization has dedicated infrastructure running to isolate your
+workloads. Until you activate a subscription under the
+[Billing](https://app.honcho.dev/billing) page, the infrastructure will be
+deactivated. You can check the status of your instance by going to the
+[Status](https://app.honcho.dev/status) page.  
 
-**Developer-First Tools**: Create and manage API keys, utilize an API playground with a Postman-like experience, get machine status and performance analytics of your Honcho instance.
+<img src="/images/app-screenshots/no-subscription-status.png" alt="Honcho Status Page with No Subscription" />
 
-**Production Monitoring**: Real-time analytics, usage metrics, and health monitoring. Track performance and user engagement across all your AI applications.
+## **2. Set up billing to activate your Honcho instance**
 
-<img src="/images/app-screenshots/get-started copy.png" alt="Honcho Dashboard Getting Started" width="500" />
-
-## Go to app.honcho.dev
-
-Get up and running with Honcho in minutes through our managed platform:
-
-### **1. Sign Up & Create Your Organization**
-Start by creating your account and setting up your organization. Each organization gets isolated workspaces, team management, and dedicated infrastructure for your Honcho instances.
-
-### **2. Deploy Your Honcho Instance**
-One-click deployment creates a dedicated Honcho instance on Fly.io infrastructure. Your instance is automatically provisioned with PostgreSQL + pgvector, background workers, and API endpoints - ready to handle production traffic for your workspace.
-
-### **3. Generate API Keys** 
-Create and manage API keys for different environments (development, staging, production). Each key provides secure access to your Honcho instance with granular permissions and usage tracking.
-
-<img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" />
-
-### **4. Test with API Playground**
-Use our Postman-like API playground to test queries, explore endpoints, and validate your integration. Send requests directly to your Honcho instance and see real-time responses with full request/response logging.
-
-<img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" />
-
-### **5. Monitor Performance & Machine Status**
-Track your Honcho instance health, usage metrics, and performance analytics. Monitor API response times, background processing queues, memory usage, and user engagement across all your AI applications.
+Once you activate your subscription, your Honcho instance provisions
+automatically, and you can watch the status page until all systems show a green
+check mark.
 
 <img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" />
 
-View the status of your machines running Honcho:
-<img src="/images/app-screenshots/machine-status.png" alt="Machine Status" />
+Here you can monitor your Honcho instance health, usage metrics, and
+performance analytics. See request volume, API response times, and endpoint
+usage across all your AI applications.
 
-## What's Happening Under the Hood
+You can also upgrade Honcho when new versions are made available.
 
-```mermaid
+## **3. Manage API Keys**
+Create and manage API keys for different environments. You can create
+admin-level keys that have access to the entire Honcho instance or scope keys
+to restrict access to `Workspaces`, `Peers`, or `Sessions`.
 
-graph LR
-    User[User Interacts] --> App[Your AI App]
-    App --> Honcho[Honcho API]
-    Honcho --> Theory[Theory of Mind<br/>Processing]
-    Theory --> Profile[Living User<br/>Representation]
-    Profile --> Context[Rich Context<br/>for AI]
-    Context --> App
+<img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" />
+
+## **4. Test with API Playground**
+Use our Postman-like API playground to test queries, explore endpoints, and
+validate your integration. Send requests directly to your Honcho instance and
+see real-time responses with full request/response logging.
+
+<img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" />
+
+## **5. Create a Workspace**
+On the explore page, you can see and interact with the data stored in your
+Honcho instance. You can create `Workspaces`, `Peers`, `Sessions`, and `Messages`. 
+
+<img src="/images/app-screenshots/explore-honcho.png" alt="Explore Honcho Page" />
+
+## **6. Peers & Sessions Management**
+Click into a `Workspace` to open up the `Workspace` dashboard. Here you can create
+`Peers` and `Sessions`, use the Dialectic API and add `Messages` to your `Peer`
+representations. Utilize your ability to search across all `Messages` in a
+`Workspace`.
+
+<img src="/images/app-screenshots/workspace-dash.png" alt="Workspace Dashboard Overview" />
 
 
-```
+## **7. Peer Utilities & Chat Endpoint**
+Select a `Peer` to open its utilities. From here you can search that `Peer`'s
+`Messages`, view participating `Sessions`, or edit its metadata. 
 
-**1. Users interact naturally** with your AI application  
-**2. Honcho processes interactions via** using advanced theory of mind inference  
-**3. Builds living representations** of each user's psychology, preferences, and identity  
-**4. Provides rich context** to your AI when needed, in natural language
+The Chat Endpoint allows you to send a query through the Honcho API to get
+information about the `Peer`'s representation. If you include the `Session` ID,
+the query will be scoped to `Messages` and the representation of a `Peer`
+within that `Session`.
+
+<Frame>
+<img src="/images/app-screenshots/peer-utilities.png" alt="Peer Utilities Dashboard" width="400" />
+</Frame>
 
 
-**Memory Engine Architecture**
-- Hierarchical data storage (Workspaces → Peers / Sessions → Messages)
-- Vector similarity search for semantic queries
-- Metadata indexing for fast retrieval
-- Automatic data organization and cleanup
+## **8. Session Dashboard & Get Context**
+From the workspace dashboard, navigate to a `Session` to find options to add `Peers`, view `Messages`, and search across all `Messages` for a particular session. 
+
+Use the **Get Context** feature to quickly generate output that fits into your
+LLM’s context window. Get a subset of messages with an optional summary
+based on the token count you input. The [Session Context](../../guides/get-context) guide goes over how to use this in your agents
+
+<img src="/images/app-screenshots/session-dash.png" alt="Session Dashboard Overview" />
+
+<Frame>
+<img src="/images/app-screenshots/create-message.png" alt="Create Message Interface" width="400" />
+</Frame>
 
 
-```python
-import honcho
+## Go Further
 
-# Initialize client
-client = honcho.Client(api_key="your-api-key")
+View the [Architecture](/v2/documentation/reference/architecture) to see how Honcho works under the hood.
 
-# Create a workspace for your app
-workspace = client.workspaces.create(name="My AI App")
-
-# Create a peer (user)
-peer = client.peers.create(
-    workspace_id=workspace.id,
-    name="user_123"
-)
-
-# Get personalized context for AI response
-context = client.dialectic.query(
-    workspace_id=workspace.id,
-    peer_id=peer.id,
-    query="What communication style does this user prefer?"
-)
-# Returns rich, nuanced context about the user
-```
-
-## Getting Started
-
-Check out our [Platform Guide](/v2/documentation/platform/guided-tutorial) to start using Honcho platform quickly.
-
-Or dive into our [API Reference](/v2/api-reference) to explore all available endpoints.
+Dive into our [API Reference](/v2/api-reference) to explore all available endpoints.
 
 ## Next Steps
 
@@ -121,10 +122,10 @@ Or dive into our [API Reference](/v2/api-reference) to explore all available end
   <Card title="Join our Discord" icon="discord" href="http://discord.gg/plasticlabs">
     Connect with 1000+ developers building with Honcho
   </Card>
-  <Card title="Read the Docs" icon="book" href="/v2/documentation/introduction/quickstart">
-    Follow our comprehensive guides
+  <Card title="Contribute to Honcho" icon="code" href="/v2/contributing/guidelines">
+    View our guidelines and explore the codebase
   </Card>
-  <Card title="Explore Examples" icon="code" href="/v2/guides">
+  <Card title="Explore Examples" icon="book" href="/v2/guides">
     See Honcho in action with real examples
   </Card>
 </CardGroup>
