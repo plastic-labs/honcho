@@ -1,23 +1,20 @@
 [project]
-name = "honcho-ai"
-version = "1.1.0"
-description = "Official DX Optimized Python SDK for Honcho"
+name = "honcho-mcp"
+version = "1.0.0"
+description = "Official Honcho MCP Server"
 dynamic = ["readme"]
 license = "Apache-2.0"
 authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
-    "honcho-core>=1.1.0",
-    "httpx>=0.28.0, <1",
-    "pydantic>=2.0.0, <3",
+    "honcho-ai>=1.1.0",
+    "fastmcp>=2.10.4",
 ]
-requires-python = ">= 3.8"
+requires-python = ">= 3.10"
 classifiers = [
   "Typing :: Typed",
   "Intended Audience :: Developers",
-  "Programming Language :: Python :: 3.8",
-  "Programming Language :: Python :: 3.9",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
@@ -50,7 +47,3 @@ name = "testpypi"
 url = "https://test.pypi.org/simple/"
 publish-url = "https://test.pypi.org/legacy/"
 explicit = true
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["honcho", "honcho.async_client"]
