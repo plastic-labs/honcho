@@ -279,6 +279,9 @@ TYPESCRIPT_VERSION=
             with open(file_path, 'w') as f:
                 f.write(content)
         
+        # Update SDK's own CHANGELOG.md
+        self._update_sdk_changelog(new_version, changelog, 'sdks/python/CHANGELOG.md')
+        
         # Update docs changelog
         self._update_docs_changelog(new_version, changelog, 'python_sdk')
         
@@ -297,6 +300,9 @@ TYPESCRIPT_VERSION=
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=2)
             f.write('\n')  # Add trailing newline
+        
+        # Update SDK's own CHANGELOG.md
+        self._update_sdk_changelog(new_version, changelog, 'sdks/typescript/CHANGELOG.md')
         
         # Update docs changelog
         self._update_docs_changelog(new_version, changelog, 'typescript_sdk')
@@ -327,6 +333,41 @@ TYPESCRIPT_VERSION=
         with open(file_path, 'w') as f:
             json.dump(data, f, indent=2)
             f.write('\n')
+    
+    def _update_sdk_changelog(self, version: str, changelog: str, relative_path: str):
+        """Update an SDK's CHANGELOG.md file."""
+        file_path = os.path.join(self.base_path, relative_path)
+        
+        with open(file_path, 'r') as f:
+            content = f.read()
+        
+        # Find the position after the header
+        header_end = content.find('\n## [')
+        if header_end == -1:
+            header_end = content.find('\n##')
+        
+        if header_end == -1:
+            # No existing entries, add after title section
+            header_end = content.find('and this project adheres to')
+            if header_end != -1:
+                header_end = content.find('\n', header_end)
+        
+        # Create new entry with proper formatting
+        date = datetime.now().strftime('%Y-%m-%d')
+        
+        # Ensure changelog content is properly formatted
+        if changelog.strip():
+            formatted_changelog = changelog.strip()
+        else:
+            formatted_changelog = "### Changed\n\n- Updated version"
+        
+        new_entry = f"\n\n## [{version}] - {date}\n\n{formatted_changelog}\n"
+        
+        # Insert the new entry
+        new_content = content[:header_end] + new_entry + content[header_end:]
+        
+        with open(file_path, 'w') as f:
+            f.write(new_content)
     
     def _update_changelog_md(self, version: str, changelog: str):
         """Update the main CHANGELOG.md file."""
