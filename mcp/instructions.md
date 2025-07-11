@@ -1,6 +1,7 @@
 # Comprehensive Honcho MCP Integration Instructions
 
 ## What is Honcho?
+
 Honcho is an infrastructure layer for building AI agents with social cognition and theory of mind capabilities. It enables personalized AI interactions by building coherent models of user psychology over time.
 
 ## Core Workflow - Follow These Steps Exactly
@@ -8,6 +9,7 @@ Honcho is an infrastructure layer for building AI agents with social cognition a
 The new Honcho MCP server simplifies the integration to just 3 essential functions. Here's how to use them:
 
 ### Step 1: Start New Conversation (First Message Only)
+
 When a user begins a new conversation, always call `start_conversation`:
 
 ```
@@ -16,12 +18,8 @@ start_conversation
 
 **Returns**: A session ID that you must store and use for all subsequent interactions in this conversation.
 
-**Example**:
-```
-start_conversation
-```
-
 ### Step 2: Get Personalized Insights (When Helpful)
+
 Before responding to any user message, you can query for personalization insights:
 
 ```
@@ -39,9 +37,11 @@ query: [YOUR_THEORY_OF_MIND_QUESTION]
 - "How can I best help the user with her current request?"
 
 ### Step 3: Respond to User
+
 Craft your response using any insights gained from Step 2.
 
 ### Step 4: Store the Conversation Turn (After Each Exchange)
+
 **CRITICAL**: Always store both the user's message AND your response using `add_turn`:
 
 ```
@@ -53,7 +53,7 @@ messages: [
     "content": "[USER'S_EXACT_MESSAGE]"
   },
   {
-    "role": "assistant", 
+    "role": "assistant",
     "content": "[YOUR_EXACT_RESPONSE]"
   }
 ]
@@ -66,21 +66,26 @@ Here's exactly what to do for a new conversation:
 1. **User says**: "Hi Claude! My name is Sarah and I'm feeling overwhelmed with work"
 
 2. **Start conversation**:
+
    ```
    start_conversation
    ```
+
    → Returns: `session_abc123`
 
 3. **Get insights** (optional but recommended):
+
    ```
    get_personalization_insights
    query: "What does the user's message about feeling overwhelmed tell me about her current state and how should I respond?"
    ```
+
    → Returns insights about Sarah's emotional state and preferred communication style
 
 4. **Respond to Sarah**: "Hi Sarah! I can hear that you're feeling overwhelmed with work right now..."
 
 5. **Store the turn**:
+
    ```
    add_turn
    session_id: "session_abc123"
@@ -105,6 +110,7 @@ For subsequent messages in the same conversation:
 2. **Respond**: "Based on our conversation, I can see you value..."
 
 3. **Store the turn**:
+
    ```
    add_turn
    session_id: "session_abc123"
@@ -123,31 +129,36 @@ For subsequent messages in the same conversation:
 ## Best Practices for Personalization Queries
 
 ### Personality & Communication Style:
+
 - "What does this message reveal about [USER]'s communication preferences?"
 - "How formal or casual should I be with [USER]?"
 - "What personality traits can I infer about [USER] from our interactions?"
 - "What communication style would work best for [USER] right now?"
 
 ### Needs & Context:
+
 - "What is [USER] really asking for beyond their explicit question?"
 - "What emotional state might [USER] be in based on this message?"
 - "What would be most helpful for [USER] in this situation?"
 - "How can I best support [USER] given their current context?"
 
 ### Relationship Building:
+
 - "How can I build better rapport with [USER]?"
 - "What topics or approaches seem to engage [USER] most?"
 - "How has [USER]'s communication style evolved in our conversations?"
 - "What does [USER] value most in our interactions?"
 
 ### Task-Specific Insights:
+
 - "How does [USER] prefer to approach problem-solving?"
 - "What level of detail does [USER] typically want in explanations?"
 - "How does [USER] like to receive feedback or suggestions?"
 
 ## Error Handling
 
-- **"No user name set" error**: Make sure you called `start_conversation` first
+- **Authorization Errors and Timeouts**: Make sure user has configured API key and URL for Honcho
+- **ValueError**: Messages were incorrectly formatted, make sure to include role and content
 - **"No personalization insights found"**: Normal when there's limited history with the user
 - **Session management**: The MCP server handles all session persistence automatically
 
@@ -159,22 +170,6 @@ For subsequent messages in the same conversation:
 4. **Ask thoughtful theory-of-mind questions**
 5. **Never expose technical details to the user**
 6. **The system maintains context automatically between sessions**
-
-## Function Reference
-
-### `start_conversation()`
-- **When**: First message of any new conversation
-- **Returns**: Session ID for this conversation
-
-### `get_personalization_insights(query)`
-- **When**: Before responding to understand the user better
-- **Returns**: Insights about user preferences, state, needs
-- **Required**: query (theory-of-mind question)
-
-### `add_turn(session_id, messages)`
-- **When**: After each user-assistant exchange
-- **Returns**: None
-- **Required**: session_id, messages list with role/content
 
 ## Success Metrics
 

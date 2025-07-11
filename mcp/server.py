@@ -51,7 +51,7 @@ async def start_conversation() -> str:
 
 
 @mcp.tool
-async def add_turn(session_id: str, messages: list[dict[str, str]]) -> None:
+async def add_turn(session_id: str, messages: list[dict]) -> None:
     """
     Add a turn to a conversation. Call this after a a user has sent a message and the assistant has responded.
 
@@ -72,13 +72,40 @@ async def add_turn(session_id: str, messages: list[dict[str, str]]) -> None:
 
     session_messages = []
 
-    for message in messages:
-        if message["role"] == "user":
-            session_messages.append(user_peer.message(message["content"]))
-        elif message["role"] == "assistant":
-            session_messages.append(assistant_peer.message(message["content"]))
+    for i, message in enumerate(messages):
+        # Validate required fields
+        if not isinstance(message, dict):
+            raise ValueError(f"Message at index {i} must be a dictionary")
+
+        if "role" not in message:
+            raise ValueError(f"Message at index {i} is missing required field 'role'")
+
+        if "content" not in message:
+            raise ValueError(
+                f"Message at index {i} is missing required field 'content'"
+            )
+
+        role = message["role"]
+        content = message["content"]
+        metadata = message.get("metadata")
+
+        # Create message with appropriate peer
+        if role == "user":
+            if metadata is not None:
+                session_messages.append(user_peer.message(content, metadata=metadata))
+            else:
+                session_messages.append(user_peer.message(content))
+        elif role == "assistant":
+            if metadata is not None:
+                session_messages.append(
+                    assistant_peer.message(content, metadata=metadata)
+                )
+            else:
+                session_messages.append(assistant_peer.message(content))
         else:
-            raise ValueError(f"Invalid role: {message['role']}")
+            raise ValueError(
+                f"Invalid role '{role}' at message index {i}. Role must be one of: 'user' or 'assistant'"
+            )
 
     await session.add_messages(session_messages)
 
@@ -90,7 +117,6 @@ async def get_personalization_insights(query: str) -> str:
     across all conversations.
 
     Args:
-        session_id: The ID of the session to get personalization insights for.
         query: The question about the user's preferences, habits, etc.
 
     Returns:

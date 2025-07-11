@@ -1,6 +1,6 @@
 # Honcho MCP Server
 
-### To run:
+## To run
 
 ```bash
 uv sync
@@ -8,12 +8,14 @@ source .venv/bin/activate
 python server.py
 ```
 
-### To integrate with Claude Desktop:
+## To integrate with Claude Desktop
 
 First, create a `.env` file and save your HONCHO_API_KEY there.
 
 Then, run this command:
+
 ```bash
+uv pip install fastmcp
 fastmcp install claude-desktop server.py --env-file .env
 ```
 
