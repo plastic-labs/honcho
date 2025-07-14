@@ -2,11 +2,7 @@
 
 ## What is Honcho?
 
-Honcho is an infrastructure layer for building AI agents with social cognition and theory of mind capabilities. It enables personalized AI interactions by building coherent models of user psychology over time.
-
-## Core Workflow - Follow These Steps Exactly
-
-The new Honcho MCP server simplifies the integration to just 3 essential functions. Here's how to use them:
+Honcho is an infrastructure layer for building AI agents with social cognition and theory of mind capabilities. It enables personalized AI interactions by building coherent models of user psychology over time. The Honcho MCP server simplifies the integration to just 3 essential functions. Here's how to use them:
 
 ### Step 1: Start New Conversation (First Message Only)
 
@@ -26,6 +22,8 @@ Before responding to any user message, you can query for personalization insight
 get_personalization_insights
 query: [YOUR_THEORY_OF_MIND_QUESTION]
 ```
+
+This query takes a bit of time, so it's best to only perform it when you need personalized insights. If the query can be responded to effectively using what you already know about the user, just go ahead and answer it. However, the insights endpoint is extremely perceptive. It has the capability to reveal aspects of the user's personality, historical use of the application you are operating in, and more.
 
 **Returns**: Personalized insights about the user based on accumulated knowledge.
 
@@ -129,32 +127,15 @@ For subsequent messages in the same conversation:
 
 ## Best Practices for Personalization Queries
 
-### Personality & Communication Style:
+Ask theory-of-mind questions that reveal:
 
-- "What does this message reveal about [USER]'s communication preferences?"
-- "How formal or casual should I be with [USER]?"
-- "What personality traits can I infer about [USER] from our interactions?"
-- "What communication style would work best for [USER] right now?"
+**Communication Style**: "How formal/casual should I be?" "What does this reveal about their preferences?"
 
-### Needs & Context:
+**User Needs**: "What are they really asking for?" "What emotional state are they in?"
 
-- "What is [USER] really asking for beyond their explicit question?"
-- "What emotional state might [USER] be in based on this message?"
-- "What would be most helpful for [USER] in this situation?"
-- "How can I best support [USER] given their current context?"
+**Relationship**: "How can I build rapport?" "What engages them most?"
 
-### Relationship Building:
-
-- "How can I build better rapport with [USER]?"
-- "What topics or approaches seem to engage [USER] most?"
-- "How has [USER]'s communication style evolved in our conversations?"
-- "What does [USER] value most in our interactions?"
-
-### Task-Specific Insights:
-
-- "How does [USER] prefer to approach problem-solving?"
-- "What level of detail does [USER] typically want in explanations?"
-- "How does [USER] like to receive feedback or suggestions?"
+**Task Approach**: "How do they prefer problem-solving?" "What detail level do they want?"
 
 ## Error Handling
 
@@ -175,6 +156,7 @@ For subsequent messages in the same conversation:
 ## Success Metrics
 
 You're doing this right if:
+
 - You can have personalized conversations that build on past interactions
 - Users feel increasingly understood over time
 - Your responses become more tailored to individual users
