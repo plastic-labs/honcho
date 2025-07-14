@@ -75,15 +75,13 @@ async def add_turn(session_id: str, messages: list[dict]) -> None:
     for i, message in enumerate(messages):
         # Validate required fields
         if not isinstance(message, dict):
-            raise ValueError(f"Message at index {i} must be a dictionary")
+            raise TypeError(f"Message at index {i} must be a dictionary")
 
         if "role" not in message:
-            raise ValueError(f"Message at index {i} is missing required field 'role'")
+            raise TypeError(f"Message at index {i} is missing required field 'role'")
 
         if "content" not in message:
-            raise ValueError(
-                f"Message at index {i} is missing required field 'content'"
-            )
+            raise TypeError(f"Message at index {i} is missing required field 'content'")
 
         role = message["role"]
         content = message["content"]

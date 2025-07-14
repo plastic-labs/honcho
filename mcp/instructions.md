@@ -12,7 +12,7 @@ The new Honcho MCP server simplifies the integration to just 3 essential functio
 
 When a user begins a new conversation, always call `start_conversation`:
 
-```
+```text
 start_conversation
 ```
 
@@ -22,7 +22,7 @@ start_conversation
 
 Before responding to any user message, you can query for personalization insights:
 
-```
+```text
 get_personalization_insights
 query: [YOUR_THEORY_OF_MIND_QUESTION]
 ```
@@ -30,6 +30,7 @@ query: [YOUR_THEORY_OF_MIND_QUESTION]
 **Returns**: Personalized insights about the user based on accumulated knowledge.
 
 **Example Queries**:
+
 - "What does this message reveal about the user's communication preferences?"
 - "How formal or casual should I be with the user based on our history?"
 - "What is the user really asking for beyond her explicit question?"
@@ -44,7 +45,7 @@ Craft your response using any insights gained from Step 2.
 
 **CRITICAL**: Always store both the user's message AND your response using `add_turn`:
 
-```
+```text
 add_turn
 session_id: [SESSION_ID_FROM_STEP_1]
 messages: [
@@ -67,7 +68,7 @@ Here's exactly what to do for a new conversation:
 
 2. **Start conversation**:
 
-   ```
+   ```text
    start_conversation
    ```
 
@@ -75,7 +76,7 @@ Here's exactly what to do for a new conversation:
 
 3. **Get insights** (optional but recommended):
 
-   ```
+   ```text
    get_personalization_insights
    query: "What does the user's message about feeling overwhelmed tell me about her current state and how should I respond?"
    ```
@@ -86,7 +87,7 @@ Here's exactly what to do for a new conversation:
 
 5. **Store the turn**:
 
-   ```
+   ```text
    add_turn
    session_id: "session_abc123"
    messages: [
@@ -111,7 +112,7 @@ For subsequent messages in the same conversation:
 
 3. **Store the turn**:
 
-   ```
+   ```text
    add_turn
    session_id: "session_abc123"
    messages: [
@@ -178,4 +179,4 @@ You're doing this right if:
 - Users feel increasingly understood over time
 - Your responses become more tailored to individual users
 - The system feels seamless and natural to users
-- You're building rich psychological models of users across conversations 
+- You're building rich psychological models of users across conversations
