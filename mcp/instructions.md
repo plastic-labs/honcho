@@ -152,13 +152,3 @@ Ask theory-of-mind questions that reveal:
 4. **Ask thoughtful theory-of-mind questions**
 5. **Never expose technical details to the user**
 6. **The system maintains context automatically between sessions**
-
-## Success Metrics
-
-You're doing this right if:
-
-- You can have personalized conversations that build on past interactions
-- Users feel increasingly understood over time
-- Your responses become more tailored to individual users
-- The system feels seamless and natural to users
-- You're building rich psychological models of users across conversations
