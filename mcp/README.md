@@ -2,8 +2,64 @@
 
 This directory contains two ways to use Honcho's MCP functionality:
 
-1. **Local MCP Server** - For integration with Claude Desktop and other MCP clients
-2. **Cloudflare Worker Proxy** - For public REST API access
+1. **Hosted MCP Server**
+2. **Local MCP Server** - For integration with Claude Desktop and other MCP clients
+
+## Hosted MCP Server
+
+Go to https://app.honcho.dev and get an API key. Then go to Claude Desktop and navigate to custom MCP servers.
+
+If you don't have node/npm/npx install you will need to do that. Claude Desktop or Claude Code can help!
+
+Add or integrate this into your claude desktop config:
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>"
+      }
+    }
+  }
+}
+```
+
+Alternatively you may customize your username, assistant name, and/or workspace ID. All are optional.
+
+```json
+{
+  "mcpServers": {
+    "honcho": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://mcp.honcho.dev",
+        "--header",
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}",
+        "--header",
+        "X-Honcho-Assistant-Name:${ASSISTANT_NAME}",
+        "--header",
+        "X-Honcho-Workspace-ID:${WORKSPACE_ID}"
+      ],
+      "env": {
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>",
+        "ASSISTANT_NAME": "<your-assistant-name>",
+        "WORKSPACE_ID": "<your-custom-workspace-id>"
+      }
+    }
+  }
+}
+```
 
 ## Local MCP Server
 
@@ -34,45 +90,3 @@ uv sync
 source .venv/bin/activate
 python server.py
 ```
-
-## Cloudflare Worker Proxy
-
-For public access via REST API, you can deploy the Honcho MCP functionality as a Cloudflare Worker. This allows users to access the same functionality through HTTP requests with their own API keys.
-
-### Quick Start
-
-1. Navigate to the cloudflare-worker directory:
-   ```bash
-   cd cloudflare-worker
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Configure your worker name in `wrangler.toml`
-
-4. Deploy:
-   ```bash
-   npx wrangler login
-   npm run deploy
-   ```
-
-### Usage
-
-The deployed worker provides a REST API with these endpoints:
-
-- `POST /start-conversation` - Start a new conversation
-- `POST /add-turn` - Add messages to a conversation
-- `POST /get-insights` - Get personalization insights
-
-All requests require a `Authorization: Bearer YOUR_HONCHO_API_KEY` header.
-
-### Documentation
-
-See the `cloudflare-worker/` directory for:
-- `README.md` - Complete API documentation and usage examples
-- `DEPLOYMENT.md` - Step-by-step deployment guide
-
-This provides the same functionality as the MCP server but accessible as a public REST API that users can integrate into any application.
