@@ -332,10 +332,6 @@ def mock_mirascope_functions():
         patch(
             "src.dialectic.utils.generate_semantic_queries", new_callable=AsyncMock
         ) as mock_semantic_queries,
-        patch(
-            "src.dialectic.utils.generate_semantic_queries_gemini",
-            new_callable=AsyncMock,
-        ) as mock_semantic_queries_gemini,
     ):
         # Import the required models for proper mocking
         from src.utils.shared_models import DeductiveObservation, SemanticQueries
@@ -370,9 +366,6 @@ def mock_mirascope_functions():
         mock_semantic_queries.return_value = SemanticQueries(
             queries=["test query 1", "test query 2"]
         )
-        mock_semantic_queries_gemini.return_value = SemanticQueries(
-            queries=["test gemini query 1", "test gemini query 2"]
-        )
 
         yield {
             "short_summary": mock_short_summary,
@@ -381,7 +374,6 @@ def mock_mirascope_functions():
             "dialectic_call": mock_dialectic_call,
             "dialectic_stream": mock_dialectic_stream,
             "semantic_queries": mock_semantic_queries,
-            "semantic_queries_gemini": mock_semantic_queries_gemini,
         }
 
 
