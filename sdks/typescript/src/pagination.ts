@@ -40,14 +40,14 @@ export class Page<T> implements AsyncIterable<T> {
    * Get the size of the page.
    */
   get size(): number {
-    return this._originalPage?.size ?? 0;
+    return this._originalPage?.size;
   }
 
   /**
    * Get the total number of items.
    */
   get total(): number {
-    return this._originalPage?.total ?? 0;
+    return this._originalPage?.total;
   }
 
   /**
@@ -63,7 +63,7 @@ export class Page<T> implements AsyncIterable<T> {
    * Check if there's a next page.
    */
   get hasNextPage(): boolean {
-    return this._originalPage?.hasNextPage ?? false;
+    return this._originalPage?.hasNextPage;
   }
 
   /**

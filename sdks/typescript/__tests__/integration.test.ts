@@ -229,7 +229,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(workspaceResults).toBeInstanceOf(Page);
       expect(mockWorkspacesApi.workspaces.search).toHaveBeenCalledWith(
         'integration-test-workspace',
-        'test query'
+        { body: 'test query' }
       );
 
       // Step 2: Search peer
@@ -249,7 +249,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(mockWorkspacesApi.workspaces.sessions.search).toHaveBeenCalledWith(
         'integration-test-workspace',
         'test-session',
-        'session query'
+        { query: 'session query' }
       );
     });
 

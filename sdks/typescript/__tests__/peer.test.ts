@@ -20,6 +20,10 @@ jest.mock('@honcho-ai/core', () => {
         update: jest.fn(),
         search: jest.fn(),
       },
+      getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
+      update: jest.fn(),
+      list: jest.fn(),
+      search: jest.fn(),
     },
   }));
 });
@@ -343,7 +347,7 @@ describe('Peer', () => {
       expect(mockClient.workspaces.peers.search).toHaveBeenCalledWith(
         'test-workspace',
         'test-peer',
-        { body: 'hello' }
+        { query: 'hello' }
       );
     });
 
@@ -387,7 +391,7 @@ describe('Peer', () => {
       expect(mockClient.workspaces.peers.search).toHaveBeenCalledWith(
         'test-workspace',
         'test-peer',
-        { body: complexQuery }
+        { query: complexQuery }
       );
     });
 
