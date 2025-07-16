@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING
 
 import sentry_sdk
 from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
+from pydantic import ValidationError
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
@@ -71,8 +73,10 @@ if SENTRY_ENABLED:
     def before_send(event: "Event", hint: "Hint") -> "Event | None":
         if "exc_info" in hint:
             _, exc_value, _ = hint["exc_info"]
-            # Filter out HonchoExceptions from being sent to Sentry
-            if isinstance(exc_value, HonchoException):
+            # Filter out exceptions that shouldn't be sent to Sentry
+            if isinstance(
+                exc_value, HonchoException | ValidationError | RequestValidationError
+            ):
                 return None
 
         return event
