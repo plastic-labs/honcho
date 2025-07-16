@@ -304,121 +304,6 @@ def test_get_sessions_for_peer_with_empty_filter(
     assert isinstance(data["items"], list)
 
 
-def test_create_and_get_messages_for_peer(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    test_workspace, test_peer = sample_data
-
-    # Create messages for the peer
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
-        json={
-            "messages": [
-                {
-                    "content": "Hello world",
-                    "peer_id": test_peer.name,
-                    "metadata": {"message_key": "message_value"},
-                },
-                {
-                    "content": "Second message",
-                    "peer_id": test_peer.name,
-                    "metadata": {"message_key": "message_value2"},
-                },
-            ]
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) == 2
-    assert data[0]["content"] == "Hello world"
-    assert data[1]["content"] == "Second message"
-    assert data[0]["metadata"] == {"message_key": "message_value"}
-
-    # Get messages for the peer
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
-        json={},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert len(data["items"]) == 2
-    assert data["items"][0]["content"] == "Hello world"
-    assert data["items"][1]["content"] == "Second message"
-    assert data["items"][0]["metadata"] == {"message_key": "message_value"}
-    assert data["items"][1]["metadata"] == {"message_key": "message_value2"}
-
-
-def test_get_messages_for_peer_with_reverse(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Test getting messages for peer with reverse parameter"""
-    test_workspace, test_peer = sample_data
-
-    # Create messages
-    client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
-        json={
-            "messages": [
-                {"content": "First message", "peer_id": test_peer.name},
-                {"content": "Second message", "peer_id": test_peer.name},
-            ]
-        },
-    )
-
-    # Test normal order
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
-        json={},
-    )
-    assert response.status_code == 200
-    normal_data = response.json()
-
-    # Test reversed order
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list?reverse=true",
-        json={},
-    )
-    assert response.status_code == 200
-    reversed_data = response.json()
-
-    # Both should have items
-    assert len(normal_data["items"]) > 0
-    assert len(reversed_data["items"]) > 0
-
-
-def test_get_messages_for_peer_with_empty_filter(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Test getting messages for peer with empty filter object"""
-    test_workspace, test_peer = sample_data
-
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
-        json={"filter": {}},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert isinstance(data["items"], list)
-
-
-def test_get_messages_for_peer_with_null_filter(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    """Test getting messages for peer with null filter"""
-    test_workspace, test_peer = sample_data
-
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages/list",
-        json={"filter": None},
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "items" in data
-    assert isinstance(data["items"], list)
-
-
 def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
     test_workspace, test_peer = sample_data
     target_peer = str(generate_nanoid())
@@ -427,7 +312,7 @@ def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         json={
-            "queries": "Hello, how are you?",
+            "query": "Hello, how are you?",
             "stream": False,
             "target": target_peer,
         },
@@ -455,7 +340,7 @@ def test_chat_with_optional_params(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         json={
-            "queries": "Hello, how are you?",
+            "query": "Hello, how are you?",
             "stream": False,
             "session_id": session_id,
         },
@@ -495,7 +380,7 @@ def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
 
     # Add some messages to search through
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/test_session/messages",
         json={
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},
@@ -550,9 +435,8 @@ def test_search_peer_nonexistent(
         f"/v2/workspaces/{test_workspace.name}/peers/{nonexistent_peer_id}/search",
         json={"query": "test query"},
     )
-    # This should probably return 404 or handle gracefully
-    # The exact behavior depends on the crud.search implementation
-    assert response.status_code in [200, 404, 422]
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 def test_search_peer_with_semantic_search_false(
@@ -563,7 +447,7 @@ def test_search_peer_with_semantic_search_false(
 
     # Add some messages to search through
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/test_session/messages",
         json={
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},
@@ -595,13 +479,13 @@ def test_search_peer_with_semantic_search_true_disabled(
 ):
     """Test peer search with semantic=true when EMBED_MESSAGES is disabled"""
     # Override the EMBED_MESSAGES setting to False for this test
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", False)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", False)
 
     test_workspace, test_peer = sample_data
 
     # Add some messages to search through
     client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/messages",
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions/test_session/messages",
         json={
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},

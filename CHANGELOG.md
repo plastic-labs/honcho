@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.0] - 2025-7-17
+
+### Added
+
+- File uploads
+- Brand new "ROTE" deriver system
+- Updated dialectic system
+- Local working representations
+- Better logging for deriver/dialectic
+- Endpoint for deriver queue status
+
+### Fixed
+
+- Document insertion
+- Session-scoped and peer-targeted dialectic queries work now
+
+### Removed
+
+- Peer-level messages
+
+### Changed
+
+- Dialectic chat endpoint takes a single query
+- Rearranged configuration values (LLM, Deriver, Dialectic, History->Summary)
 
 ## [2.0.5] - 2025-07-11
 

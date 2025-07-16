@@ -1,18 +1,28 @@
 import logging
-from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, Path, Query
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Body,
+    Depends,
+    File,
+    Form,
+    Path,
+    Query,
+    UploadFile,
+)
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import insert
+from sqlalchemy.orm.attributes import flag_modified
 
 from src import crud, schemas
 from src.config import settings
-from src.dependencies import db, tracked_db
-from src.exceptions import ResourceNotFoundException
-from src.models import QueueItem
+from src.dependencies import db
+from src.deriver import enqueue
+from src.exceptions import FileTooLargeError, ResourceNotFoundException
 from src.security import require_auth
+from src.utils.files import process_file_uploads_for_messages
 
 logger = logging.getLogger(__name__)
 
@@ -25,286 +35,113 @@ router = APIRouter(
 )
 
 
-def create_processed_payload(
-    message: dict[str, Any],
-    sender_name: str | None,
-    target_name: str | None,
-    task_type: str,
-) -> dict[str, Any]:
-    """
-    Create a processed payload from a message for queue processing.
-
-    Args:
-        message: The original message dictionary
-        sender_name: Name of the message sender
-        target_name: Name of the target peer
-        task_type: Type of task ('representation' or 'summary')
-
-    Returns:
-        Processed payload dictionary ready for queue processing
-    """
-    processed_payload = {
-        k: str(v) if isinstance(v, str) else v for k, v in message.items()
-    }
-    # Remove peer_name from payload
-    processed_payload.pop("peer_name", None)  # Use None as default to avoid KeyError
-    processed_payload["sender_name"] = sender_name
-    processed_payload["target_name"] = target_name
-    processed_payload["task_type"] = task_type
-    return processed_payload
-
-
-async def enqueue(payload: list[dict[str, Any]]):
-    """
-    Add message(s) to the deriver queue for processing.
-
-    Args:
-        payload: Single message payload or list of message payloads
-    """
-
-    # Use the get_db dependency to ensure proper transaction handling
-    async with tracked_db("message_enqueue") as db_session:
-        try:
-            # Determine if batch or single processing
-            if not payload:  # Empty list check
-                logger.debug("Empty payload list, skipping enqueue")
-                return
-            logger.debug(f"Enqueueing batch of {len(payload)} messages")
-            workspace_name = payload[0]["workspace_name"]
-            session_name = payload[0]["session_name"]
-
-            # Case 1: session_name is None — only create representation for peer
-            if session_name is None:
-                peer_name = payload[0]["peer_name"]
-                logger.info(
-                    "Session name is None, creating single representation queue items"
-                )
-                peer = await crud.get_or_create_peers(
-                    db_session,
-                    workspace_name=workspace_name,
-                    peers=[schemas.PeerCreate(name=peer_name)],
-                )
-                peer = peer[0]
-
-                # Cast configuration to PeerConfig and check observe_me
-                peer_config = (
-                    schemas.PeerConfig(**peer.configuration)
-                    if peer.configuration
-                    else schemas.PeerConfig()
-                )
-                if not peer_config.observe_me:
-                    logger.info(
-                        f"Peer {peer_name} has observe_me=False, skipping enqueue"
-                    )
-                    return
-
-                queue_records: list[dict[str, Any]] = []
-
-                for message in payload:
-                    processed_payload = create_processed_payload(
-                        message=message,
-                        sender_name=message["peer_name"],
-                        target_name=message["peer_name"],
-                        task_type="representation",
-                    )
-                    queue_records.append(
-                        {
-                            "payload": processed_payload,
-                            "session_id": None,
-                        }
-                    )
-
-                logger.debug(
-                    f"Inserting {len(queue_records)} queue records for None session"
-                )
-                stmt = insert(QueueItem).returning(QueueItem)
-                await db_session.execute(stmt, queue_records)
-                await db_session.commit()
-                logger.info(
-                    f"Successfully enqueued {len(queue_records)} messages with None session"
-                )
-                return
-
-            # Case 2: Normal session processing
-            session = await crud.get_or_create_session(
-                db_session,
-                session=schemas.SessionCreate(name=session_name),
-                workspace_name=workspace_name,
-            )
-
-            # Check if deriver is disabled for this session
-            deriver_disabled = (
-                session.configuration.get("deriver_disabled") is not None
-                and session.configuration.get("deriver_disabled") is not False
-            )
-
-            configuration_query = await crud.get_session_peer_configuration(
-                workspace_name=workspace_name, session_name=session_name
-            )
-            peers_with_configuration_result = await db_session.execute(
-                configuration_query
-            )
-            peers_with_configuration_list = peers_with_configuration_result.all()
-            peers_with_configuration = {
-                row.peer_name: [row.peer_configuration, row.session_peer_configuration]
-                for row in peers_with_configuration_list
-            }
-
-            # Process all payloads - create multiple queue items per message
-            queue_records = []
-
-            for message in payload:
-                if deriver_disabled:
-                    # still create a summary queue item for the session
-                    processed_payload = create_processed_payload(
-                        message=message,
-                        sender_name=None,
-                        target_name=None,
-                        task_type="summary",
-                    )
-                    queue_records.append(
-                        {
-                            "payload": processed_payload,
-                            "session_id": session.id,
-                        }
-                    )
-                    continue
-
-                sender_name = message["peer_name"]
-
-                sender_session_peer_config = (
-                    schemas.SessionPeerConfig(
-                        **peers_with_configuration[sender_name][1]
-                    )
-                    if peers_with_configuration[sender_name][1]
-                    else None
-                )
-                sender_peer_config = (
-                    schemas.PeerConfig(**peers_with_configuration[sender_name][0])
-                    if peers_with_configuration[sender_name][0]
-                    else schemas.PeerConfig()
-                )
-
-                observe_me = (
-                    (
-                        sender_session_peer_config.observe_me
-                        if sender_session_peer_config.observe_me is not None
-                        else sender_peer_config.observe_me
-                    )
-                    if sender_session_peer_config
-                    else sender_peer_config.observe_me
-                )
-                if not observe_me:
-                    continue
-
-                # Handle working representation for sender
-                processed_payload = create_processed_payload(
-                    message=message,
-                    sender_name=sender_name,
-                    target_name=sender_name,
-                    task_type="representation",
-                )
-
-                queue_records.append(
-                    {
-                        "payload": processed_payload,
-                        "session_id": session.id,
-                    }
-                )
-                for peer_name, configuration in peers_with_configuration.items():
-                    session_peer_config = (
-                        schemas.SessionPeerConfig(**configuration[1])
-                        if configuration[1]
-                        else None
-                    )
-
-                    if peer_name != sender_name:
-                        # Handle local representation for other peers
-                        if (
-                            session_peer_config is None
-                            or not session_peer_config.observe_others
-                        ):
-                            continue
-                        else:
-                            # Create local representation for peer
-                            processed_payload = create_processed_payload(
-                                message=message,
-                                sender_name=sender_name,
-                                target_name=peer_name,
-                                task_type="representation",
-                            )
-
-                            queue_records.append(
-                                {
-                                    "payload": processed_payload,
-                                    "session_id": session.id,
-                                }
-                            )
-
-            logger.debug(f"Inserting {len(queue_records)} queue records")
-
-            if len(queue_records) > 0:
-                # Use insert to maintain order
-                stmt = insert(QueueItem).returning(QueueItem)
-                await db_session.execute(stmt, queue_records)
-                await db_session.commit()
-
-                logger.info(
-                    f"Successfully enqueued {len(payload)} messages with {len(queue_records)} total queue items"
-                )
-
-        except Exception as e:
-            logger.error(f"Failed to enqueue messages: {str(e)}", exc_info=True)
-            if settings.SENTRY.ENABLED:
-                import sentry_sdk
-
-                sentry_sdk.capture_exception(e)
+async def parse_upload_form(peer_id: str = Form(...)) -> schemas.MessageUploadCreate:
+    """Parse form data for file upload requests"""
+    return schemas.MessageUploadCreate(peer_id=peer_id)
 
 
 @router.post("/", response_model=list[schemas.Message])
 async def create_messages_for_session(
     background_tasks: BackgroundTasks,
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    session_id: str = Path(..., description="ID of the session"),
-    messages: schemas.MessageBatchCreate = Body(
-        ..., description="Batch of messages to create"
-    ),
+    messages: schemas.MessageBatchCreate,
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
     db: AsyncSession = db,
 ):
-    workspace_name, session_name = workspace_id, session_id
-    """Bulk create messages for a session while maintaining order. Maximum 100 messages per batch."""
-    try:
-        created_messages = await crud.create_messages(
-            db,
-            messages=messages.messages,
-            workspace_name=workspace_name,
-            session_name=session_name,
+    """Create messages for a session with JSON data (original functionality)."""
+
+    created_messages = await crud.create_messages(
+        db,
+        messages=messages.messages,
+        workspace_name=workspace_id,
+        session_name=session_id,
+    )
+
+    # Enqueue for processing (existing logic)
+    payloads = [
+        {
+            "workspace_name": workspace_id,
+            "session_name": session_id,
+            "message_id": message.id,
+            "content": message.content,
+            "peer_name": message.peer_name,
+            "created_at": message.created_at.isoformat()
+            if message.created_at
+            else None,
+        }
+        for message in created_messages
+    ]
+
+    # Enqueue all messages in one call
+    background_tasks.add_task(enqueue, payloads)
+    logger.info(
+        f"Batch of {len(created_messages)} messages created and queued for processing"
+    )
+
+    return created_messages
+
+
+@router.post("/upload", response_model=list[schemas.Message])
+async def create_messages_with_file(
+    background_tasks: BackgroundTasks,
+    workspace_id: str = Path(...),
+    session_id: str = Path(...),
+    form_data: schemas.MessageUploadCreate = Depends(parse_upload_form),
+    file: UploadFile = File(...),
+    db: AsyncSession = db,
+):
+    """Create messages from uploaded files. Files are converted to text and split into multiple messages."""
+
+    # Validate file size
+    if file.size and file.size > settings.MAX_FILE_SIZE:
+        raise FileTooLargeError(
+            f"File size ({file.size} bytes) exceeds maximum allowed size ({settings.MAX_FILE_SIZE} bytes)",
         )
 
-        # Create payloads for all messages
-        payloads = [
-            {
-                "workspace_name": workspace_name,
-                "session_name": session_name,
-                "message_id": message.id,
-                "content": message.content,
-                "peer_name": message.peer_name,
-            }
-            for message in created_messages
-        ]
+    # Process files using shared utility function
+    all_message_data = await process_file_uploads_for_messages(
+        file=file,
+        peer_id=form_data.peer_id,
+    )
 
-        # Enqueue all messages in one call
-        background_tasks.add_task(enqueue, payloads)  # type: ignore
-        logger.info(
-            f"Batch of {len(created_messages)} messages created and queued for processing"
-        )
+    # Create messages
+    message_creates = [item["message_create"] for item in all_message_data]
+    created_messages = await crud.create_messages(
+        db,
+        messages=message_creates,
+        workspace_name=workspace_id,
+        session_name=session_id,
+    )
 
-        return created_messages
-    except ValueError as e:
-        logger.error(
-            f"Failed to create batch messages for session {session_id}: {str(e)}"
-        )
-        raise ResourceNotFoundException("Session not found") from e
+    # Update internal_metadata for file-related messages
+    for i, message in enumerate(created_messages):
+        file_metadata = all_message_data[i]["file_metadata"]
+        message.internal_metadata.update(file_metadata)
+        flag_modified(message, "internal_metadata")
+
+    await db.commit()
+
+    # Enqueue for processing (same as regular messages)
+    payloads = [
+        {
+            "workspace_name": workspace_id,
+            "session_name": session_id,
+            "message_id": message.id,
+            "content": message.content,
+            "peer_name": message.peer_name,
+            "created_at": message.created_at.isoformat()
+            if message.created_at
+            else None,
+        }
+        for message in created_messages
+    ]
+
+    background_tasks.add_task(enqueue, payloads)
+    logger.info(
+        f"Batch of {len(created_messages)} messages created from file uploads and queued for processing"
+    )
+
+    return created_messages
 
 
 @router.post("/list", response_model=Page[schemas.Message])

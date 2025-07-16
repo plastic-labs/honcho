@@ -1,7 +1,6 @@
-import logging  # noqa: I001
-from collections.abc import AsyncGenerator
+import logging
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
-from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -27,11 +26,11 @@ from sqlalchemy_utils import (
 )
 
 from src import models
+from src.config import settings
 from src.db import Base
 from src.dependencies import get_db
 from src.exceptions import HonchoException
 from src.main import app
-from src.config import settings
 from src.models import Peer, Workspace
 from src.security import JWTParams, create_admin_jwt, create_jwt
 
@@ -191,9 +190,7 @@ async def client(db_session: AsyncSession):
 
 
 def create_invalid_jwt() -> str:
-    return jwt.encode(  # pyright: ignore[reportUnknownMemberType]
-        {"ad": "invalid"}, "this is not the secret", algorithm="HS256"
-    )
+    return jwt.encode({"ad": "invalid"}, "this is not the secret", algorithm="HS256")
 
 
 class AuthClient(TestClient):
@@ -291,8 +288,8 @@ def mock_langfuse():
 def mock_openai_embeddings():
     """Mock OpenAI embeddings API calls for testing"""
     with (
-        patch("src.crud.embedding_client.embed") as mock_embed,
-        patch("src.crud.embedding_client.batch_embed") as mock_batch_embed,
+        patch("src.embedding_client.embedding_client.embed") as mock_embed,
+        patch("src.embedding_client.embedding_client.batch_embed") as mock_batch_embed,
     ):
         # Mock the embed method to return a fake embedding vector
         mock_embed.return_value = [0.1] * 1536
@@ -318,56 +315,49 @@ def mock_mirascope_functions():
     # Create mock responses for different function types
     with (
         patch(
-            "src.utils.history.create_short_summary", new_callable=AsyncMock
+            "src.utils.summarizer.create_short_summary", new_callable=AsyncMock
         ) as mock_short_summary,
         patch(
-            "src.utils.history.create_long_summary", new_callable=AsyncMock
+            "src.utils.summarizer.create_long_summary", new_callable=AsyncMock
         ) as mock_long_summary,
         patch(
-            "src.deriver.tom.single_prompt.tom_inference", new_callable=AsyncMock
-        ) as mock_tom_inference,
+            "src.deriver.deriver.critical_analysis_call", new_callable=AsyncMock
+        ) as mock_critical_analysis,
         patch(
-            "src.deriver.tom.tom_inference_single_prompt",
-            new_callable=AsyncMock,
-        ) as mock_tom_inference_conversational,
-        patch(
-            "src.deriver.tom.single_prompt.user_representation", new_callable=AsyncMock
-        ) as mock_user_rep_inference,
-        patch(
-            "src.deriver.tom.long_term.get_user_representation_long_term",
-            new_callable=AsyncMock,
-        ) as mock_long_rep,
-        patch(
-            "src.deriver.tom.long_term.extract_facts_long_term",
-            new_callable=AsyncMock,
-        ) as mock_extract_facts,
-        patch(
-            "src.agent.dialectic_call", new_callable=AsyncMock
+            "src.dialectic.chat.dialectic_call", new_callable=AsyncMock
         ) as mock_dialectic_call,
         patch(
-            "src.agent.dialectic_stream", new_callable=AsyncMock
+            "src.dialectic.chat.dialectic_stream", new_callable=AsyncMock
         ) as mock_dialectic_stream,
         patch(
-            "src.agent.generate_semantic_queries_llm", new_callable=AsyncMock
+            "src.dialectic.utils.generate_semantic_queries", new_callable=AsyncMock
         ) as mock_semantic_queries,
+        patch(
+            "src.dialectic.utils.generate_semantic_queries_gemini",
+            new_callable=AsyncMock,
+        ) as mock_semantic_queries_gemini,
     ):
+        # Import the required models for proper mocking
+        from src.utils.shared_models import DeductiveObservation, SemanticQueries
+
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
-        mock_tom_inference.return_value = AsyncMock(inference="Test tom inference")
-        mock_tom_inference_conversational.return_value = AsyncMock(
-            inference="Test tom inference"
-        )
-        mock_user_rep_inference.return_value = "Test user representation"
-        # Mock single_tom to return a proper Pydantic object
-        mock_long_rep.return_value = MagicMock(
-            current_state="Test state",
-            tentative_patterns=[],
-            knowledge_gaps=[],
-            expectation_violations=[],
-            updates=[],
-        )
-        mock_extract_facts.return_value = MagicMock(facts=["fact 1", "fact 2"])
+
+        # Mock critical_analysis_call to return a proper object with _response attribute
+        mock_critical_analysis_result = MagicMock()
+        mock_critical_analysis_result.explicit = ["Test explicit observation"]
+        mock_critical_analysis_result.deductive = [
+            DeductiveObservation(
+                conclusion="Test deductive conclusion",
+                premises=["Test premise 1", "Test premise 2"],
+            )
+        ]
+        # Add the _response attribute that contains thinking (used in the actual code)
+        mock_response = MagicMock()
+        mock_response.thinking = "Test thinking content"
+        mock_critical_analysis_result._response = mock_response
+        mock_critical_analysis.return_value = mock_critical_analysis_result
 
         # Create a proper async mock result for dialectic_call
         mock_dialectic_result = MagicMock()
@@ -375,19 +365,23 @@ def mock_mirascope_functions():
         mock_dialectic_call.return_value = mock_dialectic_result
 
         mock_dialectic_stream.return_value = AsyncMock()
-        mock_semantic_queries.return_value = ["test query 1", "test query 2"]
+
+        # Mock semantic query generation
+        mock_semantic_queries.return_value = SemanticQueries(
+            queries=["test query 1", "test query 2"]
+        )
+        mock_semantic_queries_gemini.return_value = SemanticQueries(
+            queries=["test gemini query 1", "test gemini query 2"]
+        )
 
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
-            "tom_inference": mock_tom_inference,
-            "tom_inference_conversational": mock_tom_inference_conversational,
-            "user_rep_inference": mock_user_rep_inference,
-            "long_rep": mock_long_rep,
-            "extract_facts": mock_extract_facts,
+            "critical_analysis": mock_critical_analysis,
             "dialectic_call": mock_dialectic_call,
             "dialectic_stream": mock_dialectic_stream,
             "semantic_queries": mock_semantic_queries,
+            "semantic_queries_gemini": mock_semantic_queries_gemini,
         }
 
 
@@ -431,44 +425,3 @@ def mock_crud_collection_operations():
         mock_get_or_create_collection,
     ):
         yield
-
-
-@pytest.fixture(autouse=True)
-def mock_agent_api_calls():
-    """Mock API calls made by the agent during tests"""
-    # Mock the agent-specific functions
-    with (
-        patch("src.agent.generate_semantic_queries") as mock_generate_queries,
-        patch("src.agent.get_user_representation_long_term") as mock_user_rep,
-        patch(
-            "src.deriver.tom.embeddings.CollectionEmbeddingStore.get_relevant_facts"
-        ) as mock_get_facts,
-        patch(
-            "src.agent.dialectic_call", new_callable=AsyncMock
-        ) as mock_dialectic_call,
-        patch("src.agent.dialectic_stream") as mock_dialectic_stream,
-    ):
-        # Mock semantic query generation
-        mock_generate_queries.return_value = ["test query 1", "test query 2"]
-
-        # Mock user representation generation
-        mock_user_rep.return_value = (
-            "<representation>Test user representation</representation>"
-        )
-
-        # Mock embedding store facts retrieval
-        mock_get_facts.return_value = ["fact 1", "fact 2", "fact 3"]
-
-        # Mock Dialectic API calls
-        mock_dialectic_result = MagicMock()
-        mock_dialectic_result.content = "Test dialectic response"
-        mock_dialectic_call.return_value = mock_dialectic_result
-        mock_dialectic_stream.return_value = AsyncMock()
-
-        yield {
-            "generate_queries": mock_generate_queries,
-            "user_rep": mock_user_rep,
-            "get_facts": mock_get_facts,
-            "dialectic_call": mock_dialectic_call,
-            "dialectic_stream": mock_dialectic_stream,
-        }

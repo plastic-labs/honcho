@@ -31,9 +31,9 @@ class EmbeddingClient:
             raise ValueError("API key is required")
         self.client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
         self.encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base")
-        self.max_embedding_tokens: int = settings.LLM.MAX_EMBEDDING_TOKENS
+        self.max_embedding_tokens: int = settings.MAX_EMBEDDING_TOKENS
         self.max_embedding_tokens_per_request: int = (
-            settings.LLM.MAX_EMBEDDING_TOKENS_PER_REQUEST
+            settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )
 
     async def embed(self, query: str) -> list[float]:
@@ -226,3 +226,7 @@ def _chunk_text_with_tokens(
         for i in range(0, len(encoded_tokens), step_size)
         if i < len(encoded_tokens)  # Ensure we don't create empty chunks
     ]
+
+
+# Shared embedding client instance
+embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)

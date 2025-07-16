@@ -136,7 +136,7 @@ def test_agent_query_validations_api(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     test_workspace, test_peer = sample_data
-    # Create a session first since agent queries are session-based
+    # Create a session first since agent query are session-based
     session_id = str(generate_nanoid())
     session_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
@@ -148,7 +148,7 @@ def test_agent_query_validations_api(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         params={"session_id": session_id, "target": "test_target"},
-        json={"queries": "a" * 9999, "stream": False},
+        json={"query": "a" * 9999, "stream": False},
     )
     assert response.status_code == 200
 
@@ -156,50 +156,19 @@ def test_agent_query_validations_api(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         params={"session_id": session_id, "target": "test_target"},
-        json={"queries": "a" * 10001, "stream": False},
+        json={"query": "a" * 10001, "stream": False},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "queries"]
-    assert error["msg"] == "Value error, Query too long"
-    assert error["type"] == "value_error"
-
-    # Test valid list query (under 25 items, each under 10000 chars)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
-        params={"session_id": session_id, "target": "test_target"},
-        json={"queries": ["a" * 9999 for _ in range(25)], "stream": False},
-    )
-    assert response.status_code == 200
-
-    # Test list too long (over 25 items)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
-        params={"session_id": session_id, "target": "test_target"},
-        json={"queries": ["test" for _ in range(26)], "stream": False},
-    )
-    assert response.status_code == 422
-    error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "queries"]
-    assert error["type"] == "value_error"
-
-    # Test list item too long (item over 10000 chars)
-    response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
-        params={"session_id": session_id, "target": "test_target"},
-        json={"queries": ["a" * 10001], "stream": False},
-    )
-    assert response.status_code == 422
-    error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "queries"]
-    assert error["msg"] == "Value error, One or more queries too long"
-    assert error["type"] == "value_error"
+    assert error["loc"] == ["body", "query"]
+    assert error["msg"] == "String should have at most 10000 characters"
+    assert error["type"] == "string_too_long"
 
     # Test that strings over 20 chars are allowed
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/chat",
         params={"session_id": session_id, "target": "test_target"},
-        json={"queries": "a" * 100, "stream": False},  # 100 chars should be fine
+        json={"query": "a" * 100, "stream": False},  # 100 chars should be fine
     )
     assert response.status_code == 200
 

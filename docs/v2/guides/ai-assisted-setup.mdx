@@ -1,0 +1,296 @@
+---
+title: "Cursor & Claude: AI-Powered Honcho Setup"
+icon: "wand-magic-sparkles"
+description: "Build Honcho-powered AI agents quickly using Cursor or Claude. Zero configuration required."
+sidebarTitle: 'AI-Assisted Setup'
+---
+
+Get Honcho up and running in minutes using AI coding assistants. These prompts are specifically optimized for Cursor and Claude to generate production-ready code with minimal effort.
+
+## 🚀 Quick Start
+
+Choose your path based on your use case:
+
+### Personal AI Assistant
+
+Build an AI assistant that remembers conversations and learns user preferences.
+
+<Tip>
+Copy this prompt into Cursor or Claude to get a complete implementation:
+</Tip>
+
+```
+Create a personal AI assistant using Honcho that remembers user preferences and conversations. Requirements:
+
+REFERENCE DOCUMENTATION:
+- Honcho Docs: https://docs.honcho.dev
+- Honcho GitHub: https://github.com/plastic-labs/honcho
+- Python SDK: https://github.com/plastic-labs/honcho-python
+- API Reference: https://docs.honcho.dev/v2/api-reference/introduction
+
+WHAT TO BUILD:
+- Personal assistant that learns about the user automatically
+- Remembers preferences, habits, and conversation history
+- Provides personalized responses based on past interactions
+- Uses Honcho's demo server (no setup required)
+
+TECHNICAL SETUP:
+- Python with Honcho SDK and OpenAI
+- Simple command-line interface for testing
+- Environment: Use demo.honcho.dev (no API key needed)
+- LLM: OpenAI GPT-4 (provide env var setup)
+
+CODE REQUIREMENTS:
+- Complete working example with extensive comments
+- Error handling and user-friendly messages
+- Demonstration of key Honcho concepts:
+  * Creating peers (user and assistant)
+  * Managing sessions and conversations
+  * Automatic learning from interactions
+  * Querying learned information
+  * Getting context for AI responses
+
+EXAMPLE WORKFLOW:
+1. User starts conversation with assistant
+2. Assistant responds using any existing knowledge about user
+3. System automatically learns facts from the conversation
+4. System stores conversation in session
+5. Future conversations reference past interactions
+
+Include installation instructions, environment setup, and example conversations to test.
+```
+
+### Discord Bot with Memory
+
+Create a Discord bot that learns about server members and provides personalized interactions.
+
+```
+Build a Discord bot using Honcho that learns about server members and provides personalized interactions.
+
+REFERENCE DOCUMENTATION:
+- Honcho Docs: https://docs.honcho.dev
+- Honcho GitHub: https://github.com/plastic-labs/honcho
+- Python SDK: https://github.com/plastic-labs/honcho-python
+- Discord Guide: https://docs.honcho.dev/v2/guides/discord
+- API Reference: https://docs.honcho.dev/v2/api-reference/introduction
+
+STARTER TEMPLATE:
+- Use the official discord-python-starter from Plastic Labs: https://github.com/plastic-labs/discord-python-starter
+- This template already includes Honcho integration, py-cord, and fly.io deployment
+- Modify the existing bot.py file to add enhanced memory features
+
+WHAT TO BUILD:
+- Discord bot with persistent memory using Honcho
+- Learns about users through natural conversation  
+- Provides personalized responses based on user history
+- Handles multi-user conversations with context awareness
+- Extends the starter template with advanced memory features
+
+TECHNICAL SETUP:
+- Clone the discord-python-starter repository
+- Python with py-cord, Honcho SDK, and OpenRouter LLM support
+- Uses uv for package management (already configured)
+- Environment variables template provided (.env.template)
+- Docker and fly.io deployment ready
+
+CORE FEATURES TO ADD:
+- Enhanced per-user memory and personality modeling
+- Channel-specific session management  
+- Theory-of-mind queries ("What does this user like?")
+- Advanced fact extraction from conversations
+- Multi-participant conversation handling
+- Slash commands for memory management
+
+IMPLEMENTATION REQUIREMENTS:
+- Extend the existing on_message function with memory features
+- Add new slash commands for memory testing and management
+- Integrate Honcho's dialectic API for personalized responses
+- Add session management for different channels
+- Implement background fact learning and storage
+- Error handling and comprehensive logging
+
+DEPLOYMENT:
+- Use the included fly.toml for deployment
+- Environment variable management with fly secrets
+- Docker containerization (Dockerfile provided)
+
+Include examples of enhanced bot interactions and memory demonstrations.
+```
+
+## 🎯 Using Cursor
+
+### Setup Workflow
+
+<Tabs>
+  <Tab title="New Project">
+    ```bash
+    # Create project
+    mkdir my-honcho-agent
+    cd my-honcho-agent
+    
+    # Open in Cursor
+    cursor .
+    
+    # Use Cmd+L to open AI chat
+    # Paste one of the prompts above
+    ```
+  </Tab>
+  <Tab title="Discord Starter">
+    ```bash
+    # Clone the starter template
+    git clone https://github.com/plastic-labs/discord-python-starter.git
+    cd discord-python-starter
+    
+    # Install dependencies
+    uv sync
+    
+    # Configure environment
+    cp .env.template .env
+    # Add your Discord token and API keys
+    ```
+  </Tab>
+</Tabs>
+
+### Cursor Tips
+
+<CardGroup cols={2}>
+  <Card title="Reference Codebase" icon="code">
+    Use `@codebase` to ask questions about your entire project
+  </Card>
+  <Card title="Reference Docs" icon="book">
+    Use `@docs https://docs.honcho.dev` for documentation context
+  </Card>
+  <Card title="Generate Tests" icon="vial">
+    Ask Cursor to write comprehensive tests for your Honcho integration
+  </Card>
+  <Card title="Iterate Quickly" icon="arrows-rotate">
+    Request specific improvements: "Add better error handling"
+  </Card>
+</CardGroup>
+
+## 🤖 Claude Workflows
+
+### Rapid Development
+
+```
+I want to quickly prototype an AI agent with Honcho. Help me build:
+
+REFERENCE DOCUMENTATION:
+- Honcho Docs: https://docs.honcho.dev
+- Honcho GitHub: https://github.com/plastic-labs/honcho
+- Quickstart Guide: https://docs.honcho.dev/v2/documentation/introduction/quickstart
+- SDK Documentation: https://docs.honcho.dev/v2/documentation/platform/sdk
+
+1. SETUP: Complete development environment with Honcho demo server
+2. CORE: Basic peer/session/message workflow with memory
+3. INTEGRATION: OpenAI LLM integration with context management
+4. TESTING: Simple test cases to verify memory functionality
+5. ITERATION: Framework for adding features incrementally
+
+Focus on:
+- Working code over perfect architecture
+- Clear comments explaining Honcho concepts
+- Easy-to-modify structure for experimentation
+- Immediate feedback and testing capabilities
+
+Start with the most minimal viable example and show me how to extend it.
+```
+
+### Production Deployment
+
+```
+Help me deploy my Honcho application to production:
+
+REFERENCE DOCUMENTATION:
+- Self-Hosting Guide: https://docs.honcho.dev/v2/contributing/self-hosting
+- Configuration Guide: https://docs.honcho.dev/v2/contributing/configuration-guide
+- Platform Overview: https://docs.honcho.dev/v2/documentation/platform/overview
+
+REQUIREMENTS:
+- Environment configuration and secrets management
+- Database setup and migrations
+- API authentication and rate limiting
+- Monitoring and logging setup
+- Deployment automation
+
+Provide step-by-step deployment instructions for [Fly.io/Vercel/Railway/Heroku].
+```
+
+## 💡 Common Patterns
+
+### Basic Conversation Flow
+
+1. **Initialize**: Create peers and start a session
+2. **Converse**: Exchange messages between user and assistant
+3. **Learn**: Honcho automatically extracts facts from conversations
+4. **Remember**: Future conversations use accumulated context
+5. **Personalize**: Responses adapt based on learned information
+
+### Advanced Features
+
+<Steps>
+  <Step title="Multi-User Sessions">
+    Implement separate memory contexts for different users or channels
+  </Step>
+  <Step title="Context Windows">
+    Manage conversation history to stay within LLM token limits
+  </Step>
+  <Step title="Fact Management">
+    Query and update the knowledge graph programmatically
+  </Step>
+  <Step title="Theory of Mind">
+    Use dialectic API to reason about user preferences and mental states
+  </Step>
+</Steps>
+
+## 🛠️ Troubleshooting
+
+<CodeGroup>
+```text Connection Issues
+"My Honcho connection is failing with [ERROR]. Here's my environment setup: [paste code]. What's wrong and how do I fix it?"
+```
+
+```text Memory Not Persisting
+"The agent isn't remembering conversations between sessions. Here's my session management code: [paste code]. Help me debug this."
+```
+
+```text Performance Optimization
+"My Honcho queries are slow. Here's my implementation: [paste code]. How can I optimize this?"
+```
+
+```text Integration Problems
+"I'm trying to integrate Honcho with [SYSTEM] but getting [ERROR]. Here's my approach: [paste code]. What's the correct way to do this?"
+```
+</CodeGroup>
+
+## 🚀 Next Steps
+
+After your initial setup:
+
+1. **Add Features**: Extend with voice input, web UI, or API endpoints
+2. **Improve Memory**: Implement custom fact extraction and retrieval
+3. **Scale Up**: Add caching, background processing, and optimization
+4. **Deploy**: Move from demo server to production environment
+5. **Monitor**: Add logging, metrics, and error tracking
+
+## 📚 Resources
+
+### Documentation
+- **Main Docs**: [docs.honcho.dev](https://docs.honcho.dev)
+- **API Reference**: [docs.honcho.dev/v2/api-reference](https://docs.honcho.dev/v2/api-reference/introduction)
+
+### Code & Examples
+- **Honcho Core**: [github.com/plastic-labs/honcho](https://github.com/plastic-labs/honcho)
+- **Python SDK**: [github.com/plastic-labs/honcho-python](https://github.com/plastic-labs/honcho-python)
+- **TypeScript SDK**: [github.com/plastic-labs/honcho-node](https://github.com/plastic-labs/honcho-node)
+- **Discord Starter**: [github.com/plastic-labs/discord-python-starter](https://github.com/plastic-labs/discord-python-starter)
+
+### Key Concepts for AI Prompts
+When working with AI assistants, mention these concepts:
+- **Core**: "peers, sessions, messages, facts"
+- **Advanced**: "dialectic API, theory of mind, context management"
+- **Integration**: "LLM context injection, session persistence, multi-user handling"
+
+<Note>
+**Pro Tip**: Be specific about your requirements and constraints when prompting AI. The more context you provide, the better the generated code will match your needs.
+</Note>

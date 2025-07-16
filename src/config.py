@@ -51,9 +51,9 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "AUTH": "auth",
         "SENTRY": "sentry",
         "LLM": "llm",
-        "AGENT": "agent",
         "DERIVER": "deriver",
-        "HISTORY": "history",
+        "DIALECTIC": "dialectic",
+        "SUMMARY": "summary",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -174,72 +174,60 @@ class LLMSettings(HonchoSettings):
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # General LLM settings
-    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 1000
-    DEFAULT_TEMPERATURE: Annotated[float, Field(default=0.0, ge=0.0, le=2.0)] = 0.0
-
-    # Dialectic specific
-    DIALECTIC_PROVIDER: Providers = "anthropic"
-    DIALECTIC_MODEL: str = "claude-3-5-haiku-20241022"
-    # DIALECTIC_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/dialectic_system.txt" # Example for file-based
-
-    # Query Generation specific
-    QUERY_GENERATION_PROVIDER: Providers = "google"
-    QUERY_GENERATION_MODEL: str = "gemini-2.0-flash-lite"
-    # QUERY_GENERATION_SYSTEM_PROMPT_FILE: Optional[str] = "prompts/query_generation_system.txt"
-
-    # Tom Inference specific
-    # TOM_INFERENCE_PROVIDER: Providers = "groq"
-    # TOM_INFERENCE_MODEL: str = "llama-3.3-70b-versatile"
-    TOM_INFERENCE_PROVIDER: Providers = "anthropic"
-    TOM_INFERENCE_MODEL: str = "claude-3-5-haiku-20241022"
-
-    # Summarization specific
-    SUMMARY_PROVIDER: Providers = "google"
-    SUMMARY_MODEL: str = (
-        "gemini-1.5-flash-latest"  # Consider specific model version if needed
-    )
-    SUMMARY_MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10000)] = 1000
-    SUMMARY_MAX_TOKENS_LONG: Annotated[int, Field(default=2000, gt=0, le=20000)] = 2000
-    # SUMMARY_SYSTEM_PROMPT_SHORT_FILE: Optional[str] = "prompts/summary_short_system.txt"
-    # SUMMARY_SYSTEM_PROMPT_LONG_FILE: Optional[str] = "prompts/summary_long_system.txt"
-
-    # Embed all messages that are sent by peers
-    EMBED_MESSAGES: bool = False
-    MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
-    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300000, gt=0)] = (
-        300000
-    )
-
-
-class AgentSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AGENT_")  # pyright: ignore
-
-    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
-    SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
-        float, Field(default=0.85, ge=0.0, le=1.0)
-    ] = 0.85  # Max distance for semantic search relevance
-    TOM_INFERENCE_METHOD: str = "single_prompt"
+    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 2500
 
 
 class DeriverSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DERIVER_")  # pyright: ignore
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
-    STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = (
-        5  # Max 24 hours
-    )
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
         float, Field(default=1.0, gt=0.0, le=60.0)
     ] = 1.0
-    TOM_METHOD: str = "single_prompt"
-    USER_REPRESENTATION_METHOD: str = "long_term"
+    STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
+
+    PROVIDER: Providers = "google"
+    MODEL: str = "gemini-2.5-flash"
+
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100000)] = 2500
+    # Thinking budget tokens are only applied when using Anthropic as provider
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+
+    # Default number of observations to retrieve for each reasoning level
+    DEDUCTIVE_OBSERVATIONS_COUNT: Annotated[int, Field(default=6, gt=0, le=50)] = 6
+    EXPLICIT_OBSERVATIONS_COUNT: Annotated[int, Field(default=10, gt=0, le=50)] = 10
 
 
-class HistorySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="HISTORY_")  # pyright: ignore
+class DialecticSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="DIALECTIC_")  # pyright: ignore
+
+    PROVIDER: Providers = "anthropic"
+    MODEL: str = "claude-sonnet-4-20250514"
+    QUERY_GENERATION_PROVIDER: Providers = "groq"
+    QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
+
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100000)] = 2500
+
+    SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
+    SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
+        float, Field(default=0.85, ge=0.0, le=1.0)
+    ] = 0.85  # Max distance for semantic search relevance
+
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+
+
+class SummarySettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="SUMMARY_")  # pyright: ignore
 
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
+
+    PROVIDER: Providers = "google"
+    MODEL: str = "gemini-2.5-flash"
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10000)] = 1000
+    MAX_TOKENS_LONG: Annotated[int, Field(default=2000, gt=0, le=20000)] = 2000
+
+    THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
 
 
 class AppSettings(HonchoSettings):
@@ -253,18 +241,24 @@ class AppSettings(HonchoSettings):
     FASTAPI_HOST: str = "0.0.0.0"
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
     SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
+    MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
+
+    EMBED_MESSAGES: bool = True
+    MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
+    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300000, gt=0)] = (
+        300000
+    )
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
     SENTRY: SentrySettings = Field(default_factory=SentrySettings)
     LLM: LLMSettings = Field(default_factory=LLMSettings)
-    AGENT: AgentSettings = Field(default_factory=AgentSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
-    HISTORY: HistorySettings = Field(default_factory=HistorySettings)
+    DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
+    SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
 
     @field_validator("LOG_LEVEL")
-    @classmethod
     def validate_log_level(cls, v: str) -> str:
         log_level = v.upper()
         if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
