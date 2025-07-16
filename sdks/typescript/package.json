@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@types/node": "^24.0.1",
-    "@honcho-ai/core": "^1.1.0"
+    "@honcho-ai/core": "1.2.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

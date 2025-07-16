@@ -222,11 +222,48 @@ export class Session {
   }
 
   /**
+   * Upload a file to create messages in this session.
+   *
+   * Makes an API call to upload a file and convert it into messages. The file is
+   * processed to extract text content, split into appropriately sized chunks,
+   * and created as messages attributed to this peer.
+   *
+   * @param file File to upload. Should be an object with filename, content (as Buffer or Uint8Array), and content_type
+   * @returns A list of Message objects representing the created messages
+   * 
+   * @note Supported file types include PDFs, text files, and JSON documents.
+   *       Large files will be automatically split into multiple messages to fit
+   *       within message size limits.
+   */
+  async uploadFile(
+    file: { filename: string; content: Buffer | Uint8Array; content_type: string },
+    peerId: string,
+  ): Promise<any[]> {
+    // Convert file to the format expected by the API
+    const fileData = {
+      filename: file.filename,
+      content: file.content,
+      content_type: file.content_type
+    };
+
+    // Call the upload endpoint
+    const response = await (this._honcho['_client'] as any).workspaces.sessions.messages.upload(
+      this._honcho.workspaceId,
+      this.id,
+      {
+        files: fileData,
+        peer_id: peerId,
+      }
+    );
+
+    return response;
+  }
+
+  /**
    * Get the current working representation of the peer in this session.
    * 
    * @param peer The peer to get the working representation of.
-   * @param target The target peer to get the representation of. If provided,
-   *                    queries what `peer` knows about the `target`.
+   * @param target The target peer to get the representation of. If provided, queries what `peer` knows about the `target`.
    * @returns A dictionary containing information about the peer.
    */
   async workingRep(peer: string | Peer, target?: string | Peer): Promise<Record<string, unknown>> {

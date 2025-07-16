@@ -30,7 +30,7 @@ export class Peer {
   /**
    * Query the peer's representation with a natural language question.
    */
-  async chat(queries: string | string[], opts?: {
+  async chat(query: string, opts?: {
     stream?: boolean;
     target?: string | Peer;
     sessionId?: string;
@@ -38,7 +38,7 @@ export class Peer {
     const response = await this._honcho['_client'].workspaces.peers.chat(
       this._honcho.workspaceId,
       this.id,
-      { queries, stream: opts?.stream, target: opts?.target ? (typeof opts.target === 'string' ? opts.target : opts.target.id) : undefined, session_id: opts?.sessionId },
+      { query, stream: opts?.stream, target: opts?.target ? (typeof opts.target === 'string' ? opts.target : opts.target.id) : undefined, session_id: opts?.sessionId },
     );
     if (!response.content || response.content === 'None') {
       return null;
@@ -55,45 +55,6 @@ export class Peer {
       this._honcho.workspaceId,
     );
     return new Page(sessionsPage, (session: any) => new Session(session.id, this._honcho));
-  }
-
-  /**
-   * Add messages or content to this peer's global representation.
-   */
-  async addMessages(content: string | any | any[]): Promise<void> {
-    let messages: any[];
-    if (typeof content === 'string') {
-      messages = [{ peer_id: this.id, content, metadata: undefined }];
-    } else if (Array.isArray(content)) {
-      messages = content.map((msg) => ({
-        peer_id: msg.peerId || this.id,
-        content: msg.content,
-        metadata: msg.metadata,
-      }));
-    } else {
-      messages = [{
-        peer_id: content.peerId || this.id,
-        content: content.content,
-        metadata: content.metadata,
-      }];
-    }
-    await this._honcho['_client'].workspaces.peers.messages.create(
-      this._honcho.workspaceId,
-      this.id,
-      { messages }
-    );
-  }
-
-  /**
-   * Get messages saved to this peer outside of a session with optional filtering.
-   */
-  async getMessages(opts?: { filter?: Record<string, unknown> }): Promise<Page<any>> {
-    const messagesPage = await this._honcho['_client'].workspaces.peers.messages.list(
-      this.id,
-      this._honcho.workspaceId,
-      opts?.filter,
-    );
-    return new Page(messagesPage);
   }
 
   /**
@@ -130,9 +91,9 @@ export class Peer {
   }
 
   /**
-   * Search for messages in this peer's global representation.
+   * Search for messages in the workspace with this peer as author.
    *
-   * Makes an API call to search for messages in this peer's global representation.
+   * Makes an API call to search endpoint.
    *
    * @param query The search query to use
    * @returns A Page of Message objects representing the search results.
@@ -148,5 +109,41 @@ export class Peer {
       { query: query }
     );
     return new Page(messagesPage);
+  }
+
+  /**
+   * Upload a file to create messages in this peer's global representation.
+   *
+   * Makes an API call to upload a file and convert it into messages. The file is
+   * processed to extract text content, split into appropriately sized chunks,
+   * and created as messages attributed to this peer.
+   *
+   * @param file File to upload. Should be an object with filename, content (as Buffer or Uint8Array), and content_type
+   * @returns A list of Message objects representing the created messages
+   * 
+   * @note Supported file types include PDFs, text files, and JSON documents.
+   *       Large files will be automatically split into multiple messages to fit
+   *       within message size limits.
+   */
+  async uploadFile(
+    file: { filename: string; content: Buffer | Uint8Array; content_type: string }
+  ): Promise<any[]> {
+    // Convert file to the format expected by the API
+    const fileData = {
+      filename: file.filename,
+      content: file.content,
+      content_type: file.content_type
+    };
+
+    // Call the upload endpoint
+    const response = await (this._honcho['_client'] as any).workspaces.peers.messages.upload(
+      this._honcho.workspaceId,
+      this.id,
+      {
+        file: fileData
+      }
+    );
+
+    return response;
   }
 } 

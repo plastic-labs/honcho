@@ -138,7 +138,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(mockWorkspacesApi.workspaces.peers.chat).toHaveBeenCalledWith(
         'integration-test-workspace',
         'assistant',
-        { queries: 'How are you?', stream: undefined, target: undefined, session_id: undefined }
+        { query: 'How are you?', stream: undefined, target: undefined, session_id: undefined }
       );
     });
 

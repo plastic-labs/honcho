@@ -1,10 +1,12 @@
 import logging
 import os
+import time
 from collections.abc import Mapping
 from typing import Any, Literal
 
 import httpx
 from honcho_core import Honcho as HonchoCore
+from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -28,6 +30,8 @@ class Honcho(BaseModel):
         base_url: Base URL for the Honcho API
         workspace_id: Workspace ID for scoping operations
     """
+
+    model_config = ConfigDict(extra="allow")  # pyright: ignore
 
     workspace_id: str = Field(
         ...,
@@ -284,6 +288,103 @@ class Honcho(BaseModel):
         """
         messages_page = self._client.workspaces.search(self.workspace_id, body=query)
         return SyncPage(messages_page)
+
+    @validate_call
+    def get_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+        session_id: str | None = None,
+    ) -> DeriverStatus:
+        """
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        """
+        return self._client.workspaces.deriver_status(
+            workspace_id=self.workspace_id,
+            observer_id=observer_id,
+            sender_id=sender_id,
+            session_id=session_id,
+        )
+
+    @validate_call
+    def poll_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+        session_id: str | None = None,
+        timeout: float = Field(
+            300.0,
+            gt=0,
+            description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
+        ),
+    ) -> DeriverStatus:
+        """
+        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
+        This allows you to guarantee that all messages have been processed by the deriver for
+        use with the dialectic endpoint.
+
+        The polling estimates sleep time by assuming each work unit takes 1 second.
+
+        Args:
+            observer_id: Optional observer ID to scope the status check
+            sender_id: Optional sender ID to scope the status check
+            session_id: Optional session ID to scope the status check
+            timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
+
+        Returns:
+            DeriverStatus when all work units are complete
+
+        Raises:
+            TimeoutError: If timeout is exceeded before work units complete
+            Exception: If get_deriver_status fails repeatedly
+        """
+        start_time = time.time()
+
+        while True:
+            try:
+                status = self.get_deriver_status(observer_id, sender_id, session_id)
+            except Exception as e:
+                logger.warning(f"Failed to get deriver status: {e}")
+                # Sleep briefly before retrying
+                time.sleep(1)
+
+                # Check timeout after error
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= timeout:
+                    raise TimeoutError(
+                        f"Polling timeout exceeded after {timeout}s. "
+                        + f"Error during status check: {e}"
+                    ) from e
+                continue
+
+            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
+                return status
+
+            # Check timeout before sleeping
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= timeout:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            # Sleep for the expected time to complete all current work units
+            # Assuming each pending and in-progress work unit takes 1 second
+            total_work_units = status.pending_work_units + status.in_progress_work_units
+            sleep_time = max(1, total_work_units)
+
+            # Don't sleep past the timeout
+            remaining_time = timeout - elapsed_time
+            sleep_time = min(sleep_time, remaining_time)
+            if sleep_time <= 0:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            time.sleep(sleep_time)
 
     def __repr__(self) -> str:
         """

@@ -8,7 +8,7 @@ authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
-    "honcho-core>=1.1.0",
+    "honcho-core>=1.2.0",
     "httpx>=0.28.0, <1",
     "pydantic>=2.0.0, <3",
 ]
