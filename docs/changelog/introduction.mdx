@@ -27,12 +27,38 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
+        <Update label="v2.1.0 (Current)">
+        ### Added
+
+        - File uploads
+        - Brand new "ROTE" deriver system
+        - Updated dialectic system
+        - Local working representations
+        - Better logging for deriver/dialectic
+        - Deriver Queue Status no longer has redundant data
+
+        ### Fixed
+
+        - Document insertion
+        - Session-scoped and peer-targeted dialectic queries work now
+        - Minor bugs
+
+        ### Removed
+
+        - Peer-level messages
+
+        ### Changed
+
+        - Dialectic chat endpoint takes a single query
+        - Rearranged configuration values (LLM, Deriver, Dialectic, History->Summary)
+        </Update>
+
         <Update label="v2.0.5 (Current)">
         ### Fixed
 
         - Groq API client to use the Async library
         </Update>
-        
+
         <Update label="v2.0.4">
         ### Fixed
 

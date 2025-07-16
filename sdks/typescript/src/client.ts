@@ -116,4 +116,100 @@ export class Honcho {
     const messagesPage = await this._client.workspaces.search(this.workspaceId, { body: query });
     return new Page(messagesPage);
   }
+
+  /**
+   * Get the deriver processing status, optionally scoped to an observer, sender, and/or session.
+   *
+   * @param options Configuration options for the status request
+   * @param options.observerId Optional observer ID to scope the status to
+   * @param options.senderId Optional sender ID to scope the status to
+   * @param options.sessionId Optional session ID to scope the status to  
+   * @returns Promise resolving to the deriver status information
+   */
+  async getDeriverStatus(options?: {
+    observerId?: string;
+    senderId?: string;
+    sessionId?: string;
+  }): Promise<{
+    totalWorkUnits: number;
+    completedWorkUnits: number;
+    inProgressWorkUnits: number;
+    pendingWorkUnits: number;
+    sessions?: Record<string, any>;
+  }> {
+    const queryParams: any = {};
+    if (options?.observerId) queryParams.observer_id = options.observerId;
+    if (options?.senderId) queryParams.sender_id = options.senderId;
+    if (options?.sessionId) queryParams.session_id = options.sessionId;
+
+    const status = await this._client.workspaces.deriverStatus(this.workspaceId, queryParams);
+
+    return {
+      totalWorkUnits: status.total_work_units,
+      completedWorkUnits: status.completed_work_units,
+      inProgressWorkUnits: status.in_progress_work_units,
+      pendingWorkUnits: status.pending_work_units,
+      sessions: status.sessions || undefined,
+    };
+  }
+
+  /**
+   * Poll getDeriverStatus until pendingWorkUnits and inProgressWorkUnits are both 0.
+   * This allows you to guarantee that all messages have been processed by the deriver for
+   * use with the dialectic endpoint.
+   *
+   * The polling estimates sleep time by assuming each work unit takes 1 second.
+   *
+   * @param options Configuration options for the status request
+   * @param options.observerId Optional observer ID to scope the status to
+   * @param options.senderId Optional sender ID to scope the status to
+   * @param options.sessionId Optional session ID to scope the status to
+   * @param options.timeoutMs Optional timeout in milliseconds (default: 300000 - 5 minutes)
+   * @returns Promise resolving to the final deriver status when processing is complete
+   * @throws Error if timeout is exceeded before processing completes
+   */
+  async pollDeriverStatus(options?: {
+    observerId?: string;
+    senderId?: string;
+    sessionId?: string;
+    timeoutMs?: number;
+  }): Promise<{
+    totalWorkUnits: number;
+    completedWorkUnits: number;
+    inProgressWorkUnits: number;
+    pendingWorkUnits: number;
+    sessions?: Record<string, any>;
+  }> {
+    const timeoutMs = options?.timeoutMs ?? 300000; // Default to 5 minutes
+    const startTime = Date.now();
+
+    while (true) {
+      const status = await this.getDeriverStatus(options);
+      if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
+        return status;
+      }
+
+      // Check if timeout has been exceeded
+      const elapsedTime = Date.now() - startTime;
+      if (elapsedTime >= timeoutMs) {
+        throw new Error(
+          `Polling timeout exceeded after ${timeoutMs}ms. ` +
+          `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
+        );
+      }
+
+      // Sleep for the expected time to complete all current work units
+      // Assuming each pending and in-progress work unit takes 1 second
+      const totalWorkUnits = status.pendingWorkUnits + status.inProgressWorkUnits;
+      const sleepMs = Math.max(1000, totalWorkUnits * 1000); // Sleep at least 1 second
+
+      // Ensure we don't sleep past the timeout
+      const remainingTime = timeoutMs - elapsedTime;
+      const actualSleepMs = Math.min(sleepMs, remainingTime);
+
+      if (actualSleepMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, actualSleepMs));
+      }
+    }
+  }
 } 

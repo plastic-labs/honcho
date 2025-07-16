@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/sdk",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Official DX Optimized TypeScript SDK for Honcho",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "Apache-2.0",
@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@types/node": "^24.0.1",
-    "@honcho-ai/core": "^1.1.0"
+    "@honcho-ai/core": "1.2.0"
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",

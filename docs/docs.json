@@ -19,7 +19,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.0.5",
+        "version": "v2.1.0",
         "api": {
           "openapi": [
             "openapi.documented.yml"
@@ -61,6 +61,7 @@
                 "group": "Getting Started",
                 "pages": [
                   "v2/guides/overview",
+                  "v2/guides/ai-assisted-setup",
                   "v2/guides/mcp"
                 ]
               },
@@ -125,8 +126,6 @@
                   "v2/api-reference/endpoint/peers/update-peer",
                   "v2/api-reference/endpoint/peers/get-sessions-for-peer",
                   "v2/api-reference/endpoint/peers/chat",
-                  "v2/api-reference/endpoint/peers/create-messages-for-peer",
-                  "v2/api-reference/endpoint/peers/get-messages-for-peer",
                   "v2/api-reference/endpoint/peers/get-working-representation",
                   "v2/api-reference/endpoint/peers/search-peer"
                 ]
@@ -155,7 +154,8 @@
                   "v2/api-reference/endpoint/messages/create-messages-for-session",
                   "v2/api-reference/endpoint/messages/get-messages",
                   "v2/api-reference/endpoint/messages/get-message",
-                  "v2/api-reference/endpoint/messages/update-message"
+                  "v2/api-reference/endpoint/messages/update-message",
+                  "v2/api-reference/endpoint/messages/upload-file"
                 ]
               },
               {

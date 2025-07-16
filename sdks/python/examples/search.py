@@ -12,12 +12,14 @@ peers = [
     honcho.peer("charlie"),
 ]
 
+alice = peers[0]
+
 # Create a new session
 session = honcho.session("search_test_" + str(uuid.uuid4()))
 
 # Create a message with our special keyword
 keyword = f"~special-{str(uuid.uuid4())}~"
-session.add_messages(peers[0].message(f"I am a {keyword} message"))
+session.add_messages(alice.message(f"I am a {keyword} message"))
 
 # Generate some random messages from alice, bob, and charlie and add them to the session
 messages = []
@@ -39,13 +41,7 @@ search_results = honcho.search(keyword)
 print("searching the workspace")
 print("search results returned:", [message for message in search_results])
 
-alice = peers[0]
-
-# Add a different message to alice's global representation
-different_keyword = f"~different-{str(uuid.uuid4())}~"
-alice.add_messages(alice.message(f"I am a {different_keyword} message"))
-
-# Search alice's global representation for the different message
-search_results = alice.search(different_keyword)
-print("searching alice's global representation")
+# Search alice's messages for the special keyword
+search_results = alice.search(keyword)
+print("searching alice's messages")
 print("search results returned:", [message for message in search_results])

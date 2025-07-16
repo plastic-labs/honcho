@@ -1,6 +1,6 @@
 import asyncio
 import signal
-from _asyncio import Task
+from asyncio import Task
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -60,6 +60,8 @@ class QueueManager:
             sentry_sdk.init(
                 dsn=settings.SENTRY.DSN,
                 enable_tracing=True,
+                release=settings.SENTRY.RELEASE,
+                environment=settings.SENTRY.ENVIRONMENT,
                 traces_sample_rate=settings.SENTRY.TRACES_SAMPLE_RATE,
                 profiles_sample_rate=settings.SENTRY.PROFILES_SAMPLE_RATE,
                 integrations=[AsyncioIntegration()],
@@ -146,7 +148,9 @@ class QueueManager:
         Returns a list of WorkUnit objects.
         """
         # Clean up stale work units
-        five_minutes_ago = datetime.now(UTC) - timedelta(minutes=5)
+        five_minutes_ago = datetime.now(UTC) - timedelta(
+            minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
+        )
         await db.execute(
             delete(models.ActiveQueueSession).where(
                 models.ActiveQueueSession.last_updated < five_minutes_ago
@@ -176,7 +180,7 @@ class QueueManager:
             )
             .where(~models.QueueItem.processed)
             .where(
-                models.ActiveQueueSession.id == None  # noqa: E711
+                models.ActiveQueueSession.id.is_(None)
             )  # Only work units not in active_queue_sessions
             .group_by(
                 models.QueueItem.session_id,

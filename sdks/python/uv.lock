@@ -112,7 +112,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.1.0" },
+    { name = "honcho-core", specifier = ">=1.2.0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
 ]
@@ -122,7 +122,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.1.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", version = "4.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
@@ -135,9 +135,9 @@ dependencies = [
     { name = "typing-extensions", version = "4.13.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "typing-extensions", version = "4.14.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/2f/27739b0d8950da05743cba5085be66f1184195c07ba9b852988d45ba252d/honcho_core-1.1.0.tar.gz", hash = "sha256:d31dc932573b771056952d234cf0c615a4ca591a11eb29c543e9a2277fcc0926", size = 121388, upload-time = "2025-06-26T19:31:00.814Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/60/e870902c5d247b5a0fb38401d6f3730e11eaf038f5a15c68afc4465e332f/honcho_core-1.2.0.tar.gz", hash = "sha256:1f16fd9ecd236bfc4c30ecc33354baf4bdd9a4206e84f92ec785ecd61b25d193", size = 122450, upload-time = "2025-07-16T19:59:06.362Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/14/14/c2bc7dce35a76a7d89166c55f35f2be21fdb3a94ee3f6502aa83f399bb1a/honcho_core-1.1.0-py3-none-any.whl", hash = "sha256:5716aa572cf33416d1c2c475dbd714879e9d351f2e2b1c6c37751b2c91adc6ce", size = 112730, upload-time = "2025-06-26T19:30:59.455Z" },
+    { url = "https://files.pythonhosted.org/packages/98/99/f435c093ea2067d7da50545cfbe2037e28370541ba161f5c8df6e33030b0/honcho_core-1.2.0-py3-none-any.whl", hash = "sha256:d9260e1a2a1254c26aeec464f8bca7ebb6c2fa9b5ae568a9344b5458467d78ab", size = 110721, upload-time = "2025-07-16T19:59:05.189Z" },
 ]
 
 [[package]]

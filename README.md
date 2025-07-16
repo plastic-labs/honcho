@@ -1,6 +1,6 @@
 # 🫡 Honcho
 
-![Static Badge](https://img.shields.io/badge/Version-2.0.5-blue)
+![Static Badge](https://img.shields.io/badge/Version-2.1.0-blue)
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 ![GitHub License](https://img.shields.io/github/license/plastic-labs/honcho)
@@ -143,9 +143,13 @@ security.
 Below are the required configurations:
 
 ```env
-DB_CONNECTION_URI= # Connection uri for a postgres database
-OPENAI_API_KEY= # API Key for OpenAI used for embedding documents
-ANTHROPIC_API_KEY= # API Key for Anthropic used for the deriver and dialectic API
+DB_CONNECTION_URI= # Connection uri for a postgres database (with postgresql+psycopg prefix)
+
+# LLM Provider API Keys (at least one required depending on your configuration)
+LLM_ANTHROPIC_API_KEY= # API Key for Anthropic (used for dialectic by default)
+LLM_OPENAI_API_KEY= # API Key for OpenAI (optional, for embeddings if EMBED_MESSAGES=true)
+LLM_GEMINI_API_KEY= # API Key for Google Gemini (used for summary/deriver by default)
+LLM_GROQ_API_KEY= # API Key for Groq (used for query generation by default)
 ```
 
 > Note that the `DB_CONNECTION_URI` must have the prefix `postgresql+psycopg` to
@@ -247,13 +251,14 @@ cp config.toml.example config.toml
 
 Then modify the values as needed. The TOML file is organized into sections:
 
-- `[app]` - Application-level settings (log level, host, port)
+- `[app]` - Application-level settings (log level, host, port, embedding settings)
 - `[db]` - Database connection and pool settings
 - `[auth]` - Authentication configuration
-- `[llm]` - LLM provider and model settings
-- `[agent]` - Agent behavior settings
-- `[deriver]` - Background worker settings
-- `[history]` - Message history settings
+- `[llm]` - LLM provider API keys and general settings
+- `[dialectic]` - Dialectic API configuration (provider, model, search settings)
+- `[deriver]` - Background worker settings and theory of mind configuration
+- `[summary]` - Session summarization settings
+- `[sentry]` - Error tracking and monitoring settings
 
 ### Using Environment Variables
 
@@ -266,7 +271,8 @@ Examples:
 
 - `DB_CONNECTION_URI` - Database connection string
 - `AUTH_JWT_SECRET` - JWT secret key
-- `LLM_DIALECTIC_MODEL` - Dialectic LLM model
+- `DIALECTIC_MODEL` - Dialectic API model
+- `SUMMARY_PROVIDER` - Summary generation provider
 - `LOG_LEVEL` - Application log level
 
 ### Configuration Priority

@@ -13,7 +13,7 @@ from src.exceptions import (
     ValidationException,
 )
 from src.security import JWTParams, require_auth
-from src.utils import history
+from src.utils import summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -388,7 +388,12 @@ async def get_session_context(
     summary_tokens = int(token_limit * 0.4) if summary else 0
     messages_tokens = token_limit - summary_tokens
 
-    # Get the messages to return verbatim
+    logger.info(
+        f"Context request for session {session_id}: token_limit={token_limit}, "
+        + f"summary_tokens={summary_tokens}, messages_tokens={messages_tokens}, summary_requested={summary}"
+    )
+
+    # Get the recent messages to return verbatim
     messages_stmt = await crud.get_messages(
         workspace_name=workspace_id,
         session_name=session_id,
@@ -397,42 +402,134 @@ async def get_session_context(
     result = await db.execute(messages_stmt)
     messages = list(result.scalars().all())
 
-    # Get the most recently created summary for the session
-    last_summary = await history.get_summary(
-        db,
-        workspace_name=workspace_id,
-        session_name=session_id,
+    logger.info(
+        f"Retrieved {len(messages)} recent messages for verbatim return (IDs: {[m.id for m in messages]})"
     )
 
-    # Get messages between the last summary and the first message we'll return verbatim, if any
-    messages_before = await crud.get_messages_id_range(
-        db,
-        workspace_name=workspace_id,
-        session_name=session_id,
-        peer_name=None,
-        start_id=last_summary["message_id"] if last_summary else 0,
-        end_id=messages[0].id if messages else None,
-    )
+    summary_content = ""
 
-    # Make a summary if the user wants one
-    if summary_tokens > 0:
-        # Make a *new* summary if there are unsummarized messages between the last summary and the ones
-        # we'll return verbatim, or if the last summary is too many tokens -- otherwise, just use the last summary
-        if (
-            not last_summary
-            or len(messages_before) > 0
-            or last_summary["token_count"] > summary_tokens
-        ):
-            new_summary = await history.create_summary(
-                messages=messages_before,
-                max_tokens=summary_tokens,
+    if summary_tokens > 0 and messages:
+        # Check if we should create a new cumulative summary
+        (
+            should_create,
+            messages_to_summarize,
+            latest_summary,
+        ) = await summarizer.should_create_summary(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
+            peer_name=None,  # Session-level summary
+            message_id=messages[
+                0
+            ].id,  # Cutoff at the first message we'll return verbatim
+            summary_type=summarizer.SummaryType.SHORT,
+        )
+
+        # Check for gaps: if latest summary exists but doesn't cover up to the recent messages,
+        # we have a gap that must be filled regardless of the threshold
+        has_gap = False
+        if latest_summary and messages:
+            gap_start = latest_summary["message_id"] + 1
+            gap_end = messages[0].id
+            has_gap = gap_start < gap_end
+            if has_gap:
+                logger.info(
+                    f"Gap detected: summary ends at message {latest_summary['message_id']}, recent messages start at {messages[0].id} (missing messages {gap_start}-{gap_end - 1})"
+                )
+
+        logger.info(
+            f"Summary decision: should_create={should_create}, "
+            + f"unsummarized_messages={len(messages_to_summarize)}, "
+            + f"has_existing_summary={latest_summary is not None}, "
+            + f"has_gap={has_gap}"
+        )
+
+        if latest_summary:
+            logger.info(
+                f"Existing summary covers {latest_summary['message_count']} messages "
+                + f"up to message {latest_summary['message_id']}, "
+                + f"token_count={latest_summary['token_count']}"
             )
-            summary_content = new_summary["content"]
+
+        # We must create a new summary if either:
+        # 1. The threshold is met (should_create=True), OR
+        # 2. There's a gap between existing summary and recent messages
+        must_create_summary = should_create or has_gap
+
+        if must_create_summary:
+            # Create a new cumulative summary covering ALL messages from the beginning
+            # up to the start of the recent messages
+            all_messages_to_summarize = await crud.get_messages_id_range(
+                db,
+                workspace_name=workspace_id,
+                session_name=session_id,
+                peer_name=None,
+                start_id=0,
+                end_id=messages[0].id,
+            )
+
+            if has_gap:
+                logger.info(
+                    f"Creating NEW cumulative summary to fill gap: covering {len(all_messages_to_summarize)} messages "
+                    + f"from start to message {messages[0].id}"
+                )
+            else:
+                logger.info(
+                    f"Creating NEW cumulative summary (threshold met): covering {len(all_messages_to_summarize)} messages "
+                    + f"from start to message {messages[0].id}"
+                )
+
+            if all_messages_to_summarize:
+                # Create cumulative summary
+                new_summary = await summarizer.create_summary(
+                    messages=all_messages_to_summarize,
+                    previous_summary_text=None,  # Start fresh for cumulative summary
+                    summary_type=summarizer.SummaryType.SHORT,
+                    max_tokens=summary_tokens,
+                )
+
+                # Save the new cumulative summary
+                await summarizer.save_summary(
+                    db,
+                    summary=new_summary,
+                    workspace_name=workspace_id,
+                    session_name=session_id,
+                )
+                summary_content = new_summary["content"]
+                logger.info(
+                    f"Saved new cumulative summary with {new_summary['token_count']} tokens"
+                )
+            else:
+                summary_content = ""
+                logger.info("No messages to summarize, using empty summary")
+
+        elif latest_summary:
+            # Use existing summary if it fits within token limit and there's no gap
+            if latest_summary["token_count"] <= summary_tokens:
+                summary_content = latest_summary["content"]
+                logger.info(
+                    f"Reusing existing summary ({latest_summary['token_count']} tokens fits in {summary_tokens} limit)"
+                )
+            else:
+                # Existing summary is too big - truncate it
+                # This is a simple truncation - could be improved with smarter trimming
+                summary_content = latest_summary["content"][
+                    : summary_tokens * 4
+                ]  # Rough estimate: 4 chars per token
+                logger.info(
+                    f"Truncated existing summary to fit {summary_tokens} token limit"
+                )
         else:
-            summary_content = last_summary["content"]
-            summary_tokens = last_summary["token_count"]
+            # No existing summary and not enough messages to create one
+            summary_content = ""
+            logger.info(
+                "No existing summary and insufficient messages to create new summary"
+            )
     else:
-        summary_content = ""
+        if summary_tokens == 0:
+            logger.info("Summary not requested, returning messages only")
+        else:
+            logger.info("No messages available for summarization")
 
     return schemas.SessionContext(
         name=session_id,

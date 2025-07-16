@@ -1,52 +1,27 @@
 import logging
-import os
-from typing import Any, Literal
+from typing import Any
 
-import sentry_sdk
-from langfuse.decorators import observe  # pyright: ignore
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from rich.console import Console
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import settings
+from src.utils.summarizer import summarize_if_needed
 
-from .. import crud
-from ..utils import history
-from .tom.embeddings import CollectionEmbeddingStore
-from .tom.long_term import extract_facts_long_term
+from .deriver import Deriver
+from .queue_payload import DeriverQueuePayload
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=False)
 
-TOM_METHOD = settings.DERIVER.TOM_METHOD
-USER_REPRESENTATION_METHOD = settings.DERIVER.USER_REPRESENTATION_METHOD
-
-
-class PayloadSchema(BaseModel):
-    """
-    Schema for validating payload data in process_item function.
-    Ensures all required fields are present with correct types and prevents injection risks.
-    """
-
-    content: str
-    workspace_name: str
-    sender_name: str
-    target_name: str
-    session_name: str | None
-    message_id: int
-    task_type: Literal["representation", "summary"]
-
-    class Config:
-        # Forbid extra fields to prevent injection of unexpected data
-        extra = "forbid"  # pyright: ignore
+deriver = Deriver()
 
 
 async def process_item(db: AsyncSession, payload: dict[str, Any]):
     # Validate payload structure and types before processing
     try:
-        validated_payload = PayloadSchema(**payload)
+        validated_payload = DeriverQueuePayload(**payload)
     except ValidationError as e:
         logger.error("Invalid payload received: %s. Payload: %s", str(e), payload)
         raise ValueError(f"Invalid payload structure: {str(e)}") from e
@@ -63,15 +38,7 @@ async def process_item(db: AsyncSession, payload: dict[str, Any]):
             validated_payload.message_id,
             validated_payload.session_name,
         )
-        await process_message(
-            validated_payload.content,
-            validated_payload.workspace_name,
-            validated_payload.sender_name,
-            validated_payload.target_name,
-            validated_payload.session_name,
-            validated_payload.message_id,
-            db,
-        )
+        await deriver.process_message(validated_payload)
         logger.debug(
             "Finished processing message %s in %s %s",
             validated_payload.message_id,
@@ -90,211 +57,3 @@ async def process_item(db: AsyncSession, payload: dict[str, Any]):
         validated_payload.message_id,
     )
     return
-
-
-@sentry_sdk.trace
-@observe()
-async def process_message(
-    content: str,
-    workspace_name: str,
-    peer_name: str,
-    target_name: str,
-    session_name: str | None,
-    message_id: int,
-    db: AsyncSession,
-):
-    """
-    Process a user message by extracting facts and saving them to the vector store.
-    This runs as a background process after a user message is logged.
-    """
-    console.print(f"Processing User Message: {content}", style="orange1")
-    process_start = os.times()[4]  # Get current CPU time
-    logger.debug(
-        "Starting fact extraction for user message %s in %s %s",
-        message_id,
-        "session" if session_name else "peer",
-        session_name if session_name else peer_name,
-    )
-
-    if session_name:
-        # Get chat history and append current message
-        logger.debug(
-            "Retrieving chat history for %s %s",
-            "session" if session_name else "peer",
-            session_name if session_name else peer_name,
-        )
-        short_history_text = await history.get_summarized_history(
-            db,
-            workspace_name,
-            session_name,
-            peer_name,
-            cutoff=message_id,
-            summary_type=history.SummaryType.SHORT,
-        )
-
-        chat_history_str = f"{short_history_text}\nuser: {content}"
-    else:
-        chat_history_str = f"user: {content}"
-
-    # Extract facts from chat history
-    logger.debug("Extracting facts from chat history")
-    extract_start = os.times()[4]
-    fact_extraction = await extract_facts_long_term(chat_history_str)
-    facts: list[str] = fact_extraction.facts or []
-    extract_time = os.times()[4] - extract_start
-    console.print(f"Extracted Facts: {facts}", style="bright_blue")
-    logger.debug(f"Extracted {len(facts)} facts in {extract_time:.2f}s")
-
-    # Save the facts to the collection
-    logger.debug(
-        f"Setting up embedding store for workspace: {workspace_name}, peer: {peer_name}"
-    )
-    collection_name = (
-        crud.construct_collection_name(peer_name, target_name)
-        if peer_name != target_name
-        else "global_representation"
-    )
-    collection = await crud.get_or_create_collection(
-        db, workspace_name, collection_name, peer_name
-    )
-    embedding_store = CollectionEmbeddingStore(
-        workspace_name=workspace_name,
-        peer_name=peer_name,
-        collection_name=collection.name,
-    )
-
-    # Filter out facts that are duplicates of existing facts in the vector store
-    logger.debug("Removing duplicate facts")
-    dedup_start = os.times()[4]
-    unique_facts = await embedding_store.remove_duplicates(facts)
-    dedup_time = os.times()[4] - dedup_start
-    logger.debug(
-        f"Found {len(unique_facts)}/{len(facts)} unique facts in {dedup_time:.2f}s"
-    )
-
-    # Only save the unique facts
-    if unique_facts:
-        logger.debug(f"Saving {len(unique_facts)} unique facts to vector store")
-        save_start = os.times()[4]
-        await embedding_store.save_facts(unique_facts, message_id=message_id)
-        save_time = os.times()[4] - save_start
-        logger.debug(f"Facts saved in {save_time:.2f}s")
-    else:
-        logger.debug("No unique facts to save")
-
-    console.print(f"Saved {len(unique_facts)} unique facts", style="bright_green")
-
-    total_time = os.times()[4] - process_start
-    logger.debug(f"Total processing time: {total_time:.2f}s")
-
-
-async def summarize_if_needed(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str | None,
-    peer_name: str,
-    message_id: int,
-):
-    if not session_name:
-        return
-
-    summary_start = os.times()[4]
-    logger.debug("Checking if summaries should be created for session %s", session_name)
-
-    # STEP 1: First check if we need a short summary (every 10 messages)
-    (
-        should_create_short,
-        short_messages,
-        _,
-    ) = await history.should_create_summary(
-        db,
-        workspace_name,
-        session_name,
-        peer_name,
-        message_id,
-        summary_type=history.SummaryType.SHORT,
-    )
-
-    if should_create_short:
-        logger.debug(f"Short summary needed for {len(short_messages)} messages")
-
-        # STEP 2: If we need a short summary, check if we also need a long summary
-        (
-            should_create_long,
-            long_messages,
-            latest_long_summary,
-        ) = await history.should_create_summary(
-            db,
-            workspace_name,
-            session_name,
-            peer_name,
-            message_id,
-            summary_type=history.SummaryType.LONG,
-        )
-
-        # STEP 3: If we need a long summary, create it first before creating the short summary
-        if should_create_long:
-            logger.debug(
-                f"Creating new long summary covering {len(long_messages)} messages"
-            )
-            try:
-                # Get previous long summary context if available
-                previous_long_summary_text = (
-                    latest_long_summary["content"] if latest_long_summary else None
-                )
-
-                # Create a new long summary
-                new_long_summary = await history.create_summary(
-                    messages=long_messages,
-                    previous_summary_text=previous_long_summary_text,
-                    summary_type=history.SummaryType.LONG,
-                )
-
-                # Save the long summary
-                await history.save_summary(
-                    db,
-                    new_long_summary,
-                    workspace_name,
-                    session_name,
-                )
-                logger.debug("Long summary created and saved successfully")
-            except Exception as e:
-                logger.error(f"Error creating long summary: {str(e)}")
-        else:
-            logger.debug(
-                f"No long summary needed. Need {history.MESSAGES_PER_LONG_SUMMARY} messages since last long summary."
-            )
-
-        # STEP 4: Now create the short summary, using the latest long summary for context if available
-        logger.debug(
-            f"Creating new short summary covering {len(short_messages)} messages"
-        )
-        try:
-            previous_long_summary_text = (
-                latest_long_summary["content"] if latest_long_summary else None
-            )
-
-            # Create a new short summary
-            new_short_summary = await history.create_summary(
-                messages=short_messages,
-                previous_summary_text=previous_long_summary_text,
-                summary_type=history.SummaryType.SHORT,
-            )
-
-            # Save the short summary
-            await history.save_summary(
-                db,
-                new_short_summary,
-                workspace_name,
-                session_name,
-            )
-            logger.debug("Short summary created and saved successfully")
-        except Exception as e:
-            logger.error(f"Error creating short summary: {str(e)}")
-    else:
-        logger.debug(
-            f"No short summary needed. Need {history.MESSAGES_PER_SHORT_SUMMARY} messages since last short summary."
-        )
-
-    summary_time = os.times()[4] - summary_start
-    logger.debug(f"Summary check completed in {summary_time:.2f}s")

@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.0.5"
+version = "2.1.0"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -26,10 +26,12 @@ dependencies = [
     "openai>=1.91.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
+    "google-generativeai>=0.8.5",
+    "pdfplumber>=0.11.7",
 ]
 [tool.uv]
 dev-dependencies = [
-    "honcho-core>=1.1.0",
+    "honcho-core>=1.2.0",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
