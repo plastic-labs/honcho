@@ -178,8 +178,6 @@ export class Honcho {
     completedWorkUnits: number;
     inProgressWorkUnits: number;
     pendingWorkUnits: number;
-    peerId?: string;
-    sessionId?: string;
     sessions?: Record<string, any>;
   }> {
     const timeoutMs = options?.timeoutMs ?? 300000; // Default to 5 minutes

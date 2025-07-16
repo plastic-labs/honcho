@@ -28,6 +28,7 @@ messages.append(alice.message("I had pancakes and eggs and bacon."))
 
 session.add_messages(messages)
 
+# sleep to get later timestamps on these "future" messages
 time.sleep(5)
 
 # Create a separate session

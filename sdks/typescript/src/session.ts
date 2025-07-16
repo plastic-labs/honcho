@@ -229,6 +229,7 @@ export class Session {
    * and created as messages attributed to this peer.
    *
    * @param file File to upload. Should be an object with filename, content (as Buffer or Uint8Array), and content_type
+   * @param peerId The peer ID to attribute the messages to
    * @returns A list of Message objects representing the created messages
    * 
    * @note Supported file types include PDFs, text files, and JSON documents.
@@ -251,7 +252,7 @@ export class Session {
       this._honcho.workspaceId,
       this.id,
       {
-        files: fileData,
+        file: fileData,
         peer_id: peerId,
       }
     );

@@ -5,7 +5,8 @@ to create beautiful, human-readable markdown output in Langfuse traces.
 """
 
 import json
-from typing import Any
+from textwrap import shorten
+from typing import Any, cast
 
 from rich.console import Console
 
@@ -279,8 +280,6 @@ def format_question_eval_input(
                     text_part = ""  # default
                     if isinstance(ev_text_map, dict):
                         # Safely get and cast the text value with proper typing
-                        from typing import cast
-
                         text_map: dict[str, Any] = cast(dict[str, Any], ev_text_map)
                         raw_txt: Any = text_map.get(ev, "")
                         try:
@@ -289,10 +288,8 @@ def format_question_eval_input(
                             txt = ""
 
                         if txt:
-                            from textwrap import shorten
-
                             text_part = (
-                                f' – "{shorten(txt, width=60, placeholder="...")}"'
+                                f' - "{shorten(txt, width=60, placeholder="...")}"'
                             )
                     bullet = f"* {ev}{text_part}"
                     if isinstance(ev_links, dict) and ev in ev_links:

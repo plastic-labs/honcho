@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+
 @honcho_llm_call(
     provider=settings.DIALECTIC.PROVIDER,
     model=settings.DIALECTIC.MODEL,
@@ -118,9 +119,9 @@ async def dialectic_stream(
     else:
         prompt_content = str(prompt_result)
 
-    logger.info("=== DIALECTIC PROMPT (STREAM) ===")
-    logger.info(prompt_content)
-    logger.info("=== END DIALECTIC PROMPT ===")
+    logger.debug("=== DIALECTIC PROMPT (STREAM) ===")
+    logger.debug(prompt_content)
+    logger.debug("=== END DIALECTIC PROMPT ===")
 
     return prompt_result
 
@@ -171,14 +172,14 @@ async def chat(
         async with tracked_db("chat.get_working_representation") as db:
             # If no target specified, get global representation (peer observing themselves)
             target_peer = target_name if target_name is not None else peer_name
-            
+
             working_representation = await crud.get_working_representation(
                 db, workspace_name, peer_name, target_peer, session_name
             )
     else:
         # For global queries, working representation isn't useful - use historical context instead
         working_representation = ""
-        
+
     logger.debug(f"Working representation length: {len(working_representation)}")
 
     # 2. Additional context (long-term semantic search) ------------------------

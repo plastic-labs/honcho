@@ -117,9 +117,7 @@ async def get_peers(
 
     stmt = apply_filter(stmt, models.Peer, filters)
 
-    stmt = stmt.order_by(models.Peer.created_at)
-
-    return stmt
+    return stmt.order_by(models.Peer.created_at)
 
 
 async def update_peer(

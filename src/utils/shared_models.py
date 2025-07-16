@@ -6,12 +6,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, TypedDict
+from typing import TypedDict
 
 from pydantic import BaseModel, Field
-
-if TYPE_CHECKING:
-    pass
 
 
 class ReasoningLevel(str, Enum):

@@ -110,8 +110,7 @@ def format_new_turn_with_timestamp(
         current_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
     if current_time and current_time != "unknown":
         return f"{current_time} {speaker}: {new_turn}"
-    else:
-        return f"{speaker}: {new_turn}"
+    return f"{speaker}: {new_turn}"
 
 
 def format_context_for_prompt(
@@ -184,22 +183,20 @@ def format_datetime_simple(dt: datetime | str | Any) -> str:
     if isinstance(dt, datetime):
         # It's a datetime object
         return dt.strftime("%Y-%m-%d %H:%M:%S")
-    elif isinstance(dt, str):
+    if isinstance(dt, str):
         # It's a string - try to parse it first
         try:
             # Handle ISO format strings
             if "T" in dt:
                 parsed_dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
                 return parsed_dt.strftime("%Y-%m-%d %H:%M:%S")
-            else:
-                # Already in simple format
-                return dt
+            # Already in simple format
+            return dt
         except ValueError:
             # If parsing fails, return as-is
             return dt
-    else:
-        # Fallback
-        return str(dt)
+    # Fallback
+    return str(dt)
 
 
 def normalize_observations_for_comparison(observations: list[Any]) -> set[str]:
@@ -234,9 +231,8 @@ def find_new_observations(
         if isinstance(context, ReasoningResponse):
             # It's a ReasoningResponse object
             return getattr(context, level, [])
-        else:
-            # It's a dict
-            return context.get(level, [])
+        # It's a dict
+        return context.get(level, [])
 
     for level in REASONING_LEVELS:
         original_observations = normalize_observations_for_comparison(
