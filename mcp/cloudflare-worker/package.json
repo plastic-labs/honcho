@@ -1,0 +1,16 @@
+{
+  "name": "honcho-mcp-proxy",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker proxy for Honcho MCP Server",
+  "main": "worker.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241002.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.24.3"
+  }
+}

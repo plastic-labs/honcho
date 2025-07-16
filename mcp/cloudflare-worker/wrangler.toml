@@ -1,0 +1,13 @@
+name = "honcho-mcp"
+main = "worker.ts"
+compatibility_date = "2024-12-09"
+compatibility_flags = ["nodejs_compat"]
+
+[env.production]
+name = "honcho-mcp"
+
+[env.staging]
+name = "honcho-mcp-staging" 
+
+[observability.logs]
+enabled = true

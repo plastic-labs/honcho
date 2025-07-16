@@ -1721,6 +1721,8 @@ async def create_document(
         # Check if there are duplicates within the threshold
         stmt = (
             select(models.Document)
+            .where(models.Document.workspace_name == workspace_name)
+            .where(models.Document.peer_name == peer_name)
             .where(models.Document.collection_name == collection_name)
             .where(
                 models.Document.embedding.cosine_distance(embedding)
