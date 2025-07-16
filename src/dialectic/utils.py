@@ -53,37 +53,16 @@ async def get_observations(
     # Generate search queries with multiple fallback strategies
     search_queries_result = None
 
-    # Try Groq first (original implementation)
-    try:
-        logger.debug("Attempting to generate semantic queries using Groq")
-        search_queries_result = await generate_semantic_queries(query, peer_name)
-        logger.debug(
-            "Successfully generated queries via Groq: %s", search_queries_result
-        )
-    except Exception as e:
-        logger.warning(
-            "Groq semantic query generation failed: %s: %s", type(e).__name__, e
-        )
-
-        # Try Gemini as backup
-        try:
-            logger.debug("Attempting to generate semantic queries using Gemini")
-            search_queries_result = await generate_semantic_queries_gemini(
-                query, peer_name
-            )
-            logger.debug(
-                "Successfully generated queries via Gemini: %s", search_queries_result
-            )
-        except Exception as e2:
-            logger.warning(
-                "Gemini semantic query generation also failed: %s: %s",
-                type(e2).__name__,
-                e2,
-            )
-
-            # Final fallback to rule-based generation
-            logger.info("Falling back to rule-based query generation")
-            search_queries_result = await generate_semantic_queries_fallback(query)
+    logger.debug(
+        "Attempting to generate semantic queries using %s",
+        settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
+    )
+    search_queries_result = await generate_semantic_queries(query, peer_name)
+    logger.debug(
+        "Successfully generated queries via %s: %s",
+        settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
+        search_queries_result,
+    )
 
     # search_queries_result should never be None based on function return types
 
@@ -284,48 +263,6 @@ def _format_observations(
 async def generate_semantic_queries(query: str, peer_name: str | None = None):
     """Generate semantic search queries for observation retrieval."""
     return query_generation_prompt(query, peer_name or "")
-
-
-@honcho_llm_call(
-    provider="google",
-    model="gemini-2.0-flash-lite",
-    response_model=SemanticQueries,
-    enable_retry=True,
-    retry_attempts=3,
-)
-async def generate_semantic_queries_gemini(query: str, peer_name: str | None = None):
-    """Alternative query generation using Gemini instead of Groq."""
-    return query_generation_prompt(query, peer_name or "")
-
-
-async def generate_semantic_queries_fallback(query: str) -> SemanticQueries:
-    """Fallback function for semantic query generation when Groq fails."""
-    logger.warning("Using fallback semantic query generation")
-
-    # Simple rule-based query expansion as fallback
-    base_queries: list[str] = [query]
-
-    # Add some common variations
-    if "like" in query.lower() or "prefer" in query.lower():
-        base_queries.extend(
-            [
-                f"user preferences {query}",
-                f"user interests {query}",
-                f"user enjoys {query}",
-            ]
-        )
-    elif "work" in query.lower() or "job" in query.lower():
-        base_queries.extend(
-            [
-                f"user profession {query}",
-                f"user career {query}",
-                f"user employment {query}",
-            ]
-        )
-    else:
-        base_queries.extend([f"user {query}", f"person {query}"])
-
-    return SemanticQueries(queries=base_queries[:3])  # Limit to 3 queries
 
 
 def _filter_current_session_observations(
