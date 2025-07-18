@@ -1,6 +1,6 @@
 [project]
 name = "honcho-ai"
-version = "1.2.0"
+version = "1.2.1"
 description = "Official DX Optimized Python SDK for Honcho"
 dynamic = ["readme"]
 license = "Apache-2.0"
@@ -53,4 +53,4 @@ explicit = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["honcho", "honcho.async_client"]
+include = ["honcho", "honcho.async_client", "honcho.utils"]
