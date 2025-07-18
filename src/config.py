@@ -117,7 +117,7 @@ class HonchoSettings(BaseSettings):
 
 
 class DBSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DB_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="DB_", extra="ignore")  # pyright: ignore
 
     CONNECTION_URI: str = (
         "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
@@ -139,7 +139,7 @@ class DBSettings(HonchoSettings):
 
 
 class AuthSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="AUTH_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="AUTH_", extra="ignore")  # pyright: ignore
 
     USE_AUTH: bool = False
     JWT_SECRET: str | None = None  # Must be set if USE_AUTH is true
@@ -152,7 +152,7 @@ class AuthSettings(HonchoSettings):
 
 
 class SentrySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="SENTRY_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="SENTRY_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
     DSN: str | None = None
@@ -163,7 +163,7 @@ class SentrySettings(HonchoSettings):
 
 
 class LLMSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="LLM_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="LLM_", extra="ignore")  # pyright: ignore
 
     # API Keys for LLM providers
     ANTHROPIC_API_KEY: str | None = None
@@ -178,7 +178,7 @@ class LLMSettings(HonchoSettings):
 
 
 class DeriverSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DERIVER_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="DERIVER_", extra="ignore")  # pyright: ignore
 
     WORKERS: Annotated[int, Field(default=1, gt=0, le=100)] = 1
     POLLING_SLEEP_INTERVAL_SECONDS: Annotated[
@@ -199,7 +199,7 @@ class DeriverSettings(HonchoSettings):
 
 
 class DialecticSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="DIALECTIC_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
 
     PROVIDER: Providers = "anthropic"
     MODEL: str = "claude-sonnet-4-20250514"
@@ -217,7 +217,7 @@ class DialecticSettings(HonchoSettings):
 
 
 class SummarySettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="SUMMARY_")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
@@ -233,7 +233,7 @@ class SummarySettings(HonchoSettings):
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
-        env_prefix="", env_nested_delimiter="__"
+        env_prefix="", env_nested_delimiter="__", extra="ignore"
     )
 
     # Application-wide settings
