@@ -142,8 +142,7 @@ class Message(MessageBase):
     public_id: str = Field(serialization_alias="id")
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
-    # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session. See models.py for more details.
-    session_name: str | None = Field(serialization_alias="session_id")
+    session_name: str = Field(serialization_alias="session_id")
     h_metadata: dict[str, Any] = Field(
         default_factory=dict, serialization_alias="metadata"
     )
