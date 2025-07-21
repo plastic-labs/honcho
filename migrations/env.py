@@ -4,7 +4,6 @@ from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
-from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool, text
 
 from src.config import settings
@@ -19,9 +18,6 @@ logging.getLogger("alembic").setLevel(logging.DEBUG)
 
 # Add project root to Python path
 sys.path.append(str(Path(__file__).parents[1]))
-
-# Load environment variables
-load_dotenv(override=True)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -98,6 +94,7 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         echo=False,
         poolclass=pool.NullPool,
+        connect_args={"prepare_threshold": None},
     )
 
     with connectable.connect() as connection:

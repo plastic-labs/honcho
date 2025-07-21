@@ -180,3 +180,4 @@ docs/node_modules
 timing_logs.csv
 
 config.toml
+.aider*

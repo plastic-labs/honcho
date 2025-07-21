@@ -823,9 +823,8 @@ def test_search_session_nonexistent(
         f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/search",
         json={"query": "test query"},
     )
-    # This should probably return 404 or handle gracefully
-    # The exact behavior depends on the crud.search implementation
-    assert response.status_code in [200, 404, 422]
+    assert response.status_code == 200
+    assert response.json()["items"] == []
 
 
 def test_search_session_with_semantic_search_false(
@@ -875,7 +874,7 @@ def test_search_session_with_semantic_search_true_disabled(
 ):
     """Test session search with semantic=true when EMBED_MESSAGES is disabled"""
     # Override the EMBED_MESSAGES setting to False for this test
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", False)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", False)
 
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())

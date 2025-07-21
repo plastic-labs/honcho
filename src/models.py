@@ -177,6 +177,11 @@ class Message(Base):
     public_id: Mapped[str] = mapped_column(
         TEXT, index=True, unique=True, default=generate_nanoid
     )
+    # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
+    # This is no longer the case, so in the future `session_name` will be required.
+    # Peer-level search will be able to retrieve any message with peer as author and
+    # derived facts are retained, so these messages are not abandoned. A future migration
+    # may assign them all to a default session of some kind.
     session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)

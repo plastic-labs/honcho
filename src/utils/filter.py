@@ -191,6 +191,9 @@ def _build_field_condition(
     """
     if model_class.__name__ == "Message":
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
+    elif model_class.__name__ == "Document":
+        # documents are fully internal so we can use any column name directly
+        column_name = key
     else:
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key)
 

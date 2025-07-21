@@ -12,10 +12,9 @@
   "license": "ISC",
   "dependencies": {
     "@mintlify/scraping": "^4.0.284",
-    "honcho-ai": "^0.0.11",
-    "mintlify": "^4.1.96"
+    "honcho-ai": "^0.0.11"
   },
   "devDependencies": {
-    "mint": "^4.1.96"
+    "mint": "^4.2.13"
   }
 }

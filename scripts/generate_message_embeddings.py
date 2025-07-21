@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 from src import models  # noqa: E402
 from src.config import settings  # noqa: E402
 from src.dependencies import tracked_db  # noqa: E402
-from src.embeddings import EmbeddingClient  # noqa: E402
+from src.embedding_client import EmbeddingClient  # noqa: E402
 
 
 async def get_messages_without_embeddings(

@@ -27,6 +27,10 @@ jest.mock('@honcho-ai/core', () => {
       peers: {
         workingRepresentation: jest.fn(),
       },
+      getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
+      update: jest.fn(),
+      list: jest.fn(),
+      search: jest.fn(),
     },
   }));
 });
@@ -38,13 +42,13 @@ describe('Session', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    
+
     honcho = new Honcho({
       workspaceId: 'test-workspace',
       apiKey: 'test-key',
       environment: 'local',
     });
-    
+
     session = new Session('test-session', honcho);
     mockClient = (honcho as any)._client;
   });
@@ -52,17 +56,17 @@ describe('Session', () => {
   describe('constructor', () => {
     it('should initialize with correct properties', () => {
       const newSession = new Session('session-id', honcho);
-      
+
       expect(newSession.id).toBe('session-id');
       expect(newSession['_honcho']).toBe(honcho);
     });
 
     it('should handle constructor options', () => {
-      const newSession = new Session('session-id', honcho, { 
-        anonymous: true, 
-        summarize: false 
+      const newSession = new Session('session-id', honcho, {
+        anonymous: true,
+        summarize: false
       });
-      
+
       expect(newSession.id).toBe('session-id');
     });
   });
@@ -72,7 +76,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
       await session.addPeers('peer1');
-      
+
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -85,7 +89,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
       await session.addPeers(peer);
-      
+
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -97,11 +101,11 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
       await session.addPeers(['peer1', 'peer2', 'peer3']);
-      
+
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 
+        {
           'peer1': { observe_me: true, observe_others: false },
           'peer2': { observe_me: true, observe_others: false },
           'peer3': { observe_me: true, observe_others: false }
@@ -118,11 +122,11 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
       await session.addPeers(peers);
-      
+
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 
+        {
           'peer1': { observe_me: true, observe_others: false },
           'peer2': { observe_me: true, observe_others: false },
           'peer3': { observe_me: true, observe_others: false }
@@ -138,11 +142,11 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
       await session.addPeers(peers);
-      
+
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 
+        {
           'string-peer': { observe_me: true, observe_others: false },
           'object-peer': { observe_me: true, observe_others: false }
         }
@@ -161,7 +165,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.set.mockResolvedValue({});
 
       await session.setPeers('peer1');
-      
+
       expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -174,7 +178,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.set.mockResolvedValue({});
 
       await session.setPeers(peer);
-      
+
       expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -187,11 +191,11 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.set.mockResolvedValue({});
 
       await session.setPeers(peers);
-      
+
       expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 
+        {
           'peer1': { observe_me: true, observe_others: false },
           'peer2': { observe_me: true, observe_others: false }
         }
@@ -210,7 +214,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.remove.mockResolvedValue({});
 
       await session.removePeers('peer1');
-      
+
       expect(mockClient.workspaces.sessions.peers.remove).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -223,7 +227,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.remove.mockResolvedValue({});
 
       await session.removePeers(peer);
-      
+
       expect(mockClient.workspaces.sessions.peers.remove).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -236,7 +240,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.remove.mockResolvedValue({});
 
       await session.removePeers(peers);
-      
+
       expect(mockClient.workspaces.sessions.peers.remove).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -265,7 +269,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.list.mockResolvedValue(mockPeersData);
 
       const peers = await session.getPeers();
-      
+
       expect(peers).toBeInstanceOf(Array);
       expect(mockClient.workspaces.sessions.peers.list).toHaveBeenCalledWith(
         'test-workspace',
@@ -283,7 +287,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.peers.list.mockResolvedValue(mockPeersData);
 
       const peers = await session.getPeers();
-      
+
       expect(peers).toBeInstanceOf(Array);
       expect(peers.length).toBe(0);
     });
@@ -305,16 +309,16 @@ describe('Session', () => {
       mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
 
       await session.addMessages(message);
-      
+
       expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 
-          messages: [{ 
-            peer_id: 'peer1', 
-            content: 'Hello world', 
-            metadata: { type: 'greeting' } 
-          }] 
+        {
+          messages: [{
+            peer_id: 'peer1',
+            content: 'Hello world',
+            metadata: { type: 'greeting' }
+          }]
         }
       );
     });
@@ -327,15 +331,15 @@ describe('Session', () => {
       mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
 
       await session.addMessages(messages);
-      
+
       expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 
+        {
           messages: [
             { peer_id: 'peer1', content: 'Message 1', metadata: { order: 1 } },
             { peer_id: 'peer2', content: 'Message 2', metadata: { order: 2 } },
-          ] 
+          ]
         }
       );
     });
@@ -348,7 +352,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
 
       await session.addMessages(message);
-      
+
       expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -360,7 +364,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
 
       await session.addMessages([]);
-      
+
       expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -389,7 +393,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.messages.list.mockResolvedValue(mockMessagesData);
 
       const messagesPage = await session.getMessages();
-      
+
       expect(messagesPage).toBeInstanceOf(Page);
       expect(mockClient.workspaces.sessions.messages.list).toHaveBeenCalledWith(
         'test-workspace',
@@ -407,11 +411,11 @@ describe('Session', () => {
       };
       mockClient.workspaces.sessions.messages.list.mockResolvedValue(mockMessagesData);
 
-      const options = { 
-        filter: { peer_id: 'peer1', type: 'important' } 
+      const options = {
+        filter: { peer_id: 'peer1', type: 'important' }
       };
       await session.getMessages(options);
-      
+
       expect(mockClient.workspaces.sessions.messages.list).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -435,7 +439,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.getOrCreate.mockResolvedValue(mockSession);
 
       const metadata = await session.getMetadata();
-      
+
       expect(metadata).toEqual({ name: 'Test Session', active: true });
       expect(mockClient.workspaces.sessions.getOrCreate).toHaveBeenCalledWith(
         'test-workspace',
@@ -451,7 +455,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.getOrCreate.mockResolvedValue(mockSession);
 
       const metadata = await session.getMetadata();
-      
+
       expect(metadata).toEqual({});
     });
 
@@ -468,7 +472,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.update.mockResolvedValue({});
 
       await session.setMetadata(metadata);
-      
+
       expect(mockClient.workspaces.sessions.update).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -480,7 +484,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.update.mockResolvedValue({});
 
       await session.setMetadata({});
-      
+
       expect(mockClient.workspaces.sessions.update).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -507,7 +511,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
       const context = await session.getContext();
-      
+
       expect(context).toBeInstanceOf(SessionContext);
       expect(context.sessionId).toBe('test-session');
       expect(context.messages).toEqual(mockContext.messages);
@@ -528,7 +532,7 @@ describe('Session', () => {
 
       const options = { summary: true, tokens: 1000 };
       const context = await session.getContext(options);
-      
+
       expect(context).toBeInstanceOf(SessionContext);
       expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
         'test-workspace',
@@ -544,7 +548,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
       const context = await session.getContext();
-      
+
       expect(context.summary).toBe('');
     });
 
@@ -569,12 +573,12 @@ describe('Session', () => {
       mockClient.workspaces.sessions.search.mockResolvedValue(mockSearchResults);
 
       const results = await session.search('hello');
-      
+
       expect(results).toBeInstanceOf(Page);
       expect(mockClient.workspaces.sessions.search).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        'hello'
+        { query: 'hello' }
       );
     });
 
@@ -588,7 +592,7 @@ describe('Session', () => {
       mockClient.workspaces.sessions.search.mockResolvedValue(mockSearchResults);
 
       const results = await session.search('nonexistent');
-      
+
       expect(results).toBeInstanceOf(Page);
     });
 
@@ -620,7 +624,7 @@ describe('Session', () => {
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(mockRepresentation);
 
       const result = await session.workingRep('peer1');
-      
+
       expect(result).toEqual(mockRepresentation);
       expect(mockClient.workspaces.peers.workingRepresentation).toHaveBeenCalledWith(
         'test-workspace',
@@ -638,7 +642,7 @@ describe('Session', () => {
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(mockRepresentation);
 
       const result = await session.workingRep(peer);
-      
+
       expect(result).toEqual(mockRepresentation);
       expect(mockClient.workspaces.peers.workingRepresentation).toHaveBeenCalledWith(
         'test-workspace',
@@ -655,7 +659,7 @@ describe('Session', () => {
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(mockRepresentation);
 
       const result = await session.workingRep('peer1', 'target-peer');
-      
+
       expect(result).toEqual(mockRepresentation);
       expect(mockClient.workspaces.peers.workingRepresentation).toHaveBeenCalledWith(
         'test-workspace',
@@ -674,7 +678,7 @@ describe('Session', () => {
       mockClient.workspaces.peers.workingRepresentation.mockResolvedValue(mockRepresentation);
 
       const result = await session.workingRep(peer, target);
-      
+
       expect(result).toEqual(mockRepresentation);
       expect(mockClient.workspaces.peers.workingRepresentation).toHaveBeenCalledWith(
         'test-workspace',

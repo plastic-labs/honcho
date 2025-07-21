@@ -2,7 +2,7 @@ import asyncio
 
 import uvloop
 
-from .queue import main
+from .queue_manager import main
 
 if __name__ == "__main__":
     print("[DERIVER] Starting deriver queue processor")

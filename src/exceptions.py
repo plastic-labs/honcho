@@ -71,3 +71,21 @@ class FilterError(HonchoException):
 
     status_code = 422
     detail = "Invalid filter configuration"
+
+
+@final
+class UnsupportedFileTypeError(HonchoException):
+    status_code = 415
+    detail = "Unsupported file type"
+
+
+@final
+class FileTooLargeError(HonchoException):
+    status_code = 413
+    detail = "File too large"
+
+
+@final
+class FileProcessingError(HonchoException):
+    status_code = 500
+    detail = "File processing error"

@@ -115,30 +115,23 @@ async def search_workspace(
 )
 async def get_deriver_status(
     workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str | None = Query(None, description="Optional peer ID to filter by"),
+    observer_id: str | None = Query(
+        None, description="Optional observer ID to filter by"
+    ),
+    sender_id: str | None = Query(None, description="Optional sender ID to filter by"),
     session_id: str | None = Query(
         None, description="Optional session ID to filter by"
     ),
-    include_sender: bool = Query(
-        False, description="Include work units triggered by this peer"
-    ),
     db: AsyncSession = db,
 ):
-    """Get the deriver processing status, optionally scoped to a peer and/or session"""
-    # Validate that at least one of peer_id or session_id is provided
-    if peer_id is None and session_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one of 'peer_id' or 'session_id' must be provided",
-        )
-
+    """Get the deriver processing status, optionally scoped to an observer, sender, and/or session"""
     try:
         return await crud.get_deriver_status(
             db,
             workspace_name=workspace_id,
-            peer_name=peer_id,
+            observer_name=observer_id,
+            sender_name=sender_id,
             session_name=session_id,
-            include_sender=include_sender,
         )
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")

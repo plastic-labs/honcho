@@ -1,39 +1,52 @@
 ---
-title: "Architecture"
+title: "Architecture & Intuition"
 description: "Understanding Honcho's core concepts and data model."
 icon: "sitemap"
+sidebarTitle: "Architecture"
 ---
 
-Honcho is built around a hierarchical data model that enables scalable memory management for AI applications. Understanding these core concepts is essential for effectively using the platform.
+<Note> The goal of this page is to build an intuition for the primitives in Honcho and how they fit together </Note>
 
-## Data Model Overview
+Honcho has 3 main components that work together to manage agent identity and context. 
+
+- **The Storage API**: The Memory layer for storing interaction history for your agents
+- **The Deriver**: The background processing layer that builds representations of users and agents
+- **The Dialectic API**: The natural language API for chatting with representations
+
+Below we'll deep dive into these different areas, discussing the data
+primitives, the flow of data through the system, artifacts Honcho produces, and
+how to use them.
+
+
+## Data Model
+
+Honcho has a hierarchical data model centered around the entities below. 
 
 ```mermaid
-graph TD
-    W[Workspace] --> P[Peers]
-    W --> S[Sessions]
-    W --> D[Background Processing]
-    P --> PM[Messages]
-    S --> SM[Messages]
-    S --> SP[Session Peers]
-    SP --> Config[Configurations]
-    D --> DQ[Deriver Queue]
-    
-    style W fill:#FF5A7E,stroke:#333,stroke-width:2px,color:#fff
-    style P fill:#e1f5fe
-    style S fill:#f3e5f5
-    style D fill:#fff3e0
+ graph TD
+      W[Workspaces] -->|have| P[Peers]
+      W -->|have| S[Sessions]
+
+      P -->|have| PM[Messages]
+
+      S -->|have| SM[Messages]
+
+      P <-.->|many-to-many| S
+
+      style W fill:#FF5A7E,stroke:#333,stroke-width:2px,color:#fff
+      style P fill:#e1f5fe,stroke:#0277bd,color:#000
+      style S fill:#f3e5f5,stroke:#7b1fa2,color:#000
+      style PM fill:#e8f5e9,stroke:#2e7d32,color:#000
+      style SM fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
-<Info>
-See the [Storage API](/v2/api-reference/introduction) to learn how to use the data model in practice.
-</Info>
-
-## Core Concepts
+There are `Workspaces` at the top that contain `Peers` and `Sessions`. A `Peer`
+can be part of many `Sessions` and a `Session` can have many `Peers`. Both
+`Sessions` and `Peers` can have `Messages` 
 
 ### <Icon icon="building" /> Workspaces
 
-Workspaces are the top-level containers that provide complete isolation between different applications or environments.
+Workspaces are the top-level containers that provide complete isolation between different applications or environments; they essentially as a namespace to isolate different workloads or environments
 
 **Key Features:**
 - **Isolation**: Complete data separation between workspaces
@@ -47,24 +60,16 @@ Workspaces are the top-level containers that provide complete isolation between 
 - Different product lines or use cases
 - Complete data separation between teams
 
-```json
-{
-  "name": "my-production-app",
-  "metadata": {
-    "environment": "production",
-    "version": "1.0.0"
-  },
-  "configuration": {
-    "deriver_enabled": true
-  }
-}
-```
-
 ---
 
 ### <Icon icon="user" /> Peers
 
-Peers represent individual users, agents, or entities in a workspace. They are the primary subjects for memory and context management.
+Honcho has a Peer-Centric Architecture: Peers are the most important entity within Honcho, with everything revolving around Peers and their representations.
+
+Peers represent individual users, agents, or entities in a workspace. They are
+the primary subjects for memory and context management. Treating humans and
+agents the same lets us support arbitrary combinations of Peers for
+multi-agent or group chat scenarios.
 
 **Key Features:**
 - **Identity**: Unique identifier within a workspace
@@ -77,22 +82,7 @@ Peers represent individual users, agents, or entities in a workspace. They are t
 - AI agents interacting with users or other agents
 - Customer profiles in support systems
 - Student profiles in educational platforms
-
-```json
-{
-  "name": "user-123",
-  "metadata": {
-    "email": "user@example.com",
-    "preferences": {
-      "language": "en",
-      "timezone": "UTC"
-    }
-  },
-  "configuration": {
-    "observe_me": true
-  }
-}
-```
+- NPCs in role-playing games
 
 ---
 
@@ -112,33 +102,15 @@ Sessions represent individual conversation threads or interaction contexts betwe
 - Meeting transcripts
 - Learning sessions
 
-```json
-{
-  "id": "conversation-456",
-  "peers": {
-    "user-123": {
-      "observe_others": true,
-      "observe_me": true
-    },
-    "assistant-ai": {
-      "observe_others": false,
-      "observe_me": false
-    }
-  },
-  "metadata": {
-    "topic": "product-support",
-    "priority": "high"
-  }
-}
-```
-
 ---
 
 ### <Icon icon="envelope" /> Messages
 
-Messages are the fundamental units of interaction within sessions. They may also be used at the peer level to represent stored information of any kind.
+Messages are the fundamental units of interaction within sessions. They may
+also be used at the peer level to ingest information of any kind that is not related to a specific interaction, but provides
+important context for a peer (emails, docs, files, etc.).
 
-**Key Features:**
+**Key Features:** 
 - **Rich Content**: Support for text, metadata, and structured data
 - **Attribution**: Clear association with sending peer
 - **Ordering**: Chronological sequence within sessions
@@ -149,85 +121,101 @@ Messages are the fundamental units of interaction within sessions. They may also
 - AI responses
 - System notifications
 - Rich media content
+- User actions (clicked, reacted, etc.)
 
-```json
-{
-  "content": "I need help with my order",
-  "peer_id": "user-123",
-  "metadata": {
-    "intent": "support_request",
-    "urgency": "medium",
-    "order_id": "12345"
-  }
-}
-```
 
----
+## Deriver
 
-## Deriver System
+At the core of developing representations of Peers, we have the Deriver. The
+Deriver refers to a set of processes in Honcho that enqueue new messages sent
+by peers and reasons over them to extract facts, insights, and context.
 
-### Deriver Queue
+Depending on the configuration of a `Peer` or `Session`, the deriver will behave
+differently and update different representations.
 
-The deriver system provides automatic background processing of user interactions to derive facts, insights, and context. Messages ingested by Honcho are automatically queued for background processing by the deriver. Depending on the configuration of peer that authored the message and the session in which the message is created, the deriver may enqueue the message multiple times -- we can store facts derived from the message in the peer's global representation, their session-level representation, and/or the representations of other peers observing the author.
-
-Facts derived here are used in the Dialectic chat endpoint to generate context-aware responses that can correctly reference both concrete facts extracted from messages and social insights deduced from facts, tone, and opinion.  
+Facts derived here are used in the Dialectic chat endpoint to generate
+context-aware responses that can correctly reference both concrete facts
+extracted from messages and social insights deduced from facts, tone, and
+opinion.  
 
 <Info>
 Deriver tasks are processed in parallel, but tasks affecting the same peer representation will always be processed serially in order of message creation, so as to properly understand their cumulative effect.
 </Info>
 
-### Deriver Tasks
+There are two types of tasks that the deriver currently does:
 
-#### Representation
+- **Representation Tasks**: Generate/update peer representations
+- **Summary Tasks**: Generate conversation summaries
 
-Representation tasks generate peer representations. They may be enqueued for each peer that observes a message, depending on configuration. Representations are accessed via the `chat` endpoint, allowing developers to query a peer's representation: from the "omnipresent" perspective of Honcho, the session-level representation, and the representation of that peer *from the perspective of other peers*.
+### Peer Representations
 
-Representation tasks create comprehensive user profiles including:
+Peer representations are more of an abstract concept, as they are made up of
+various pieces of data stored throughout Honcho. There are however
+multiple types of representations that Honcho can produce. 
 
-**Psychological Insights:**
-- Personality traits
-- Communication style
-- Preferences and interests
-- Behavioral patterns
+Honcho handles both **local** and **global** representations of Peers, where
+**local** representations are specific to a single Peer's view of another Peer,
+while Global Representations are based on any message ever produced by a Peer. 
 
-**Contextual Information:**
-- Current conversation topics
-- User goals and objectives
-- Emotional state indicators
-- Relationship dynamics
+<img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
 
-**Example Output:**
+Everything is framed with regards to perspective. Alice owns her own global
+representation, but she also maintains a local representation of Bob based on what she
+observes and similarly Bob has a global representation of himself and local
+representation of Alice. So in the example above, when Alice sends a message to
+Bob it triggers an update to both Alice's global representation of herself and Bob's local
+representation of Alice. 
+
+If Alice were to have another conversation with a different Peer, Nico, and
+sent them a message, this action would trigger an update to Alice's Global
+Representation and Nico's local representation of Alice. Bob's local
+representation of Alice would not change since Bob would never receive that
+message.
+
+<Note>By default, local representations are disabled, but can be enabled in a
+Peer or Session level configuration</Note>
+
+Depending on the use case, a developer may choose to only use global
+representation, only use local, or a combination.
+
+### Summary
+
+Summary tasks create conversation summaries. Periodically, a
+"short" summary will be created for each session as messages are added -- every
+20 messages by default. "Long" summaries are created every 60 messages by
+default and maintain a total overview of the session by including the previous
+summary in a recursive fashion. These summaries are accessed in the
+`get_context` endpoint along with recent messages, allowing developers to
+easily fetch everything necessary to generate the next LLM completion for an
+agent.
+
+The system defaults are also the checkpoints used on the managed version of
+Honcho hosted at [https://api.honcho.dev](https://api.honcho.dev)
+
+
+## Dialectic API
+
+The Dialectic API is one of the most integral components of Honcho and acts as
+the main way to leverage Peer Representations. By using the `/chat` endpoint,
+developers can directly talk to Honcho about any Peer in a workspace to get
+insights into the psychology of a Peer and help them steer their behavior.
+
+This allows us to use this one endpoint for a wide variety of use cases. Model
+steering, personalization, hydrating a prompt, etc. Additionally, since the
+endpoint works through natural language, a developer can allow an agent to
+backchannel directly with Honcho, via MCP or a direct API call.
+
+Developers should frame the Dialectic as talking to an expert on the Peer rather than addressing the Peer itself, meaning:
+
+```python
+alice.chat("What is alice's mood like") # ✅ Correct
+
+alice.chat("What is your mood like") # ❌ Wrong
 ```
-The user demonstrates high technical competency and prefers direct communication. 
-They show interest in software development topics and value efficiency in conversations. 
-Current session indicates they're seeking help with API integration issues.
-```
-
-#### Summary
-
-Summary tasks create conversation summaries and key insights. Periodically, a "short" summary will be created for each session as messages are added -- every 20 messages by default. "Long" summaries are created every 60 messages by default and maintain a total overview of the session by including the previous summary in a recursive fashion. These summaries are accessed in the `get_context` endpoint along with recent messages, allowing developers to easily fetch everything necessary to generate the next LLM completion for an agent.
-
-## Dialectic Chat
-
-Honcho's killer feature is the `chat` endpoint. By storing messages in Honcho, you may query in natural language to get intelligent answer's about a user or agent's personality, theory of mind, history, and more. Dialectic Chat should be thought of as an assisting agent which your agent can reach out to for useful context and answers about actors, human or AI, operating your application.
 
 <Note>
 Think of Dialectic Chat as an assisting agent that your main agent can consult for contextual information about any actor in your application.
 </Note>
-
-## Scalability Considerations
-
-- **Stateless API**: Scale API servers independently
-- **Queue Workers**: Scale background processing workers
-- **Database**: PostgreSQL with read replicas
-
-## Security Architecture
-
-- **JWTs**: Secure API access
-- **Scoped Access**: Workspace/peer/session level permissions
-- **Admin Controls**: Super-user capabilities
-- **Workspace Isolation**: Complete data separation
-- **Encryption**: Data encryption at rest and in transit
 
 ## Next Steps
 
@@ -238,7 +226,7 @@ Think of Dialectic Chat as an assisting agent that your main agent can consult f
   <Card title="Glossary" icon="book" href="/v2/documentation/core-concepts/glossary">
     Reference for all technical terms and concepts
   </Card>
-  <Card title="API Reference" icon="api" href="/v2/api-reference/introduction">
+  <Card title="API Reference" icon="play" href="/v2/api-reference/introduction">
     Detailed API documentation and examples
   </Card>
   <Card title="Quick Start" icon="rocket" href="/v2/documentation/introduction/quickstart">

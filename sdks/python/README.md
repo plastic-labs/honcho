@@ -29,8 +29,11 @@ session.add_messages([
     bob.message("Hi Alice, how are you?")
 ])
 
+# Wait for deriver to process all messages (only necessary if very recent messages are critical to query)
+client.poll_deriver_status()
+
 # Query conversation context
-response = alice.chat("What did Bob say to me?")
+response = alice.chat("What did Bob say to the user?")
 print(response)
 ```
 
@@ -95,10 +98,6 @@ from honcho import AsyncHoncho
 
 async def main():
     client = AsyncHoncho(api_key="your-api-key")
-
-    peer = client.peer("user")
-    response = await peer.chat("Hello!")
-    print(response)
 ```
 
 ### Metadata Management
@@ -106,9 +105,6 @@ async def main():
 ```python
 # Set peer metadata
 user.set_metadata({"location": "San Francisco", "preferences": {"theme": "dark"}})
-
-# Query using metadata context
-response = user.chat("What's the weather like where I am?")
 
 # Session metadata
 session.set_metadata({"topic": "project-planning", "priority": "high"})

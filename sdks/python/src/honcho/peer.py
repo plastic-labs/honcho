@@ -74,7 +74,7 @@ class Peer(BaseModel):
 
     def chat(
         self,
-        queries: str | list[str],
+        query: str,
         *,
         stream: bool = False,
         target: str | Peer | None = None,
@@ -88,9 +88,9 @@ class Peer(BaseModel):
         representation of another peer (what this peer knows about the target peer).
 
         Args:
-            queries: The natural language question(s) to ask. Can be a single string or a list of strings.
+            query: The natural language question to ask.
             stream: Whether to stream the response
-            target: Optional target peer for local representation queries. If provided,
+            target: Optional target peer for local representation query. If provided,
                     queries what this peer knows about the target peer rather than
                     querying the peer's global representation
             session_id: Optional session ID to scope the query to a specific session.
@@ -103,7 +103,7 @@ class Peer(BaseModel):
         response = self._client.workspaces.peers.chat(
             peer_id=self.id,
             workspace_id=self.workspace_id,
-            queries=queries,
+            query=query,
             stream=stream,
             target=str(target.id) if isinstance(target, Peer) else target,
             session_id=session_id,
@@ -112,7 +112,9 @@ class Peer(BaseModel):
             return None
         return response.content
 
-    def get_sessions(self) -> SyncPage[Session]:
+    def get_sessions(
+        self, filter: dict[str, object] | None = None
+    ) -> SyncPage[Session]:
         """
         Get all sessions this peer is a member of.
 
@@ -128,80 +130,12 @@ class Peer(BaseModel):
         sessions_page = self._client.workspaces.peers.sessions.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,
+            filter=filter,
         )
         return SyncPage(
             sessions_page,
             lambda session: Session(session.id, self.workspace_id, self._client),
         )
-
-    @validate_call
-    def add_messages(
-        self,
-        content: str | MessageCreateParam | list[MessageCreateParam] = Field(
-            ..., description="Content to add to the peer's representation"
-        ),
-    ) -> None:
-        """
-        Add messages or content to this peer's global representation.
-
-        Makes an API call to store content associated with this peer. This content
-        becomes part of the peer's global knowledge base and can be retrieved
-        through chat queries. Content can be provided as raw strings, Message objects,
-        or lists of Message objects.
-
-        Args:
-            content: Content to add to the peer's representation. Can be:
-                     - str: Raw text content that will be converted to a Message
-                     - Message: A single Message object to add
-                     - List[Message]: Multiple Message objects to add in batch
-        """
-        messages: list[MessageCreateParam]
-        if isinstance(content, str):
-            messages = [
-                MessageCreateParam(peer_id=self.id, content=content, metadata=None)
-            ]
-        elif isinstance(content, list):
-            messages = content
-        else:
-            messages = [content]
-
-        self._client.workspaces.peers.messages.create(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            messages=messages,
-        )
-
-    @validate_call
-    def get_messages(
-        self,
-        *,
-        filters: dict[str, object] | None = Field(
-            None, description="Dictionary of filter criteria"
-        ),
-    ) -> SyncPage[Message]:
-        """
-        Get messages saved to this peer outside of a session with optional filtering.
-
-        Makes an API call to retrieve messages saved to this peer outside of a session.
-        Results can be filtered based on various criteria.
-
-        Args:
-            filters: Dictionary of filter criteria. Supported filters include:
-                    - peer_id: Filter messages by the peer who created them
-                    - metadata: Filter messages by metadata key-value pairs
-                    - timestamp_start: Filter messages after a specific timestamp
-                    - timestamp_end: Filter messages before a specific timestamp
-
-        Returns:
-            A SyncPage of Message objects matching the specified criteria, ordered by
-            creation time (most recent first)
-        """
-        messages_page = self._client.workspaces.peers.messages.list(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            filter=filters,
-        )
-        return SyncPage(messages_page)
 
     @validate_call
     def message(
@@ -276,9 +210,9 @@ class Peer(BaseModel):
         query: str = Field(..., min_length=1, description="The search query to use"),
     ) -> SyncPage[Message]:
         """
-        Search for messages in this peer's global representation.
+        Search across all messages in the workspace with this peer as author.
 
-        Makes an API call to search for messages in this peer's global representation.
+        Makes an API call to search endpoint.
 
         Args:
             query: The search query to use
