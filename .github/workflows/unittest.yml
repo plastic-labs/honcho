@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  test-python:
     runs-on: ubuntu-latest
 
     services:
@@ -59,3 +59,45 @@ jobs:
           DIALECTIC_QUERY_GENERATION_MODEL: test
           SUMMARY_PROVIDER: openai
           SUMMARY_MODEL: test
+
+  test-typescript:
+    runs-on: ubuntu-latest
+
+    services:
+      database:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: 'sdks/typescript/package-lock.json'
+
+      - name: Install TypeScript SDK dependencies
+        run: |
+          cd sdks/typescript
+          npm ci
+
+      - name: Run TypeScript SDK tests
+        run: |
+          cd sdks/typescript
+          npm test
+        env:
+          HONCHO_API_KEY: test-key
+          HONCHO_BASE_URL: http://localhost:8000
