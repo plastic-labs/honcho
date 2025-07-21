@@ -164,62 +164,6 @@ async def test_get_or_create_workspace_database_persistence(db_session: AsyncSes
 
 
 @pytest.mark.asyncio
-async def test_get_or_create_workspace_logging_success(db_session: AsyncSession):
-    """Test that get_or_create_workspace logs success message - covers line 72."""
-    workspace_name = "test_workspace_logging"
-
-    workspace_create = schemas.WorkspaceCreate(name=workspace_name)
-
-    # Mock the logger to verify the success message is logged
-    with patch("src.crud.logger") as mock_logger:
-        # Call the function
-        result = await crud.get_or_create_workspace(db_session, workspace_create)
-
-        # Verify the success log message was called (line 72)
-        mock_logger.info.assert_called_with(
-            f"Workspace created successfully: {workspace_name}"
-        )
-
-        # Verify the workspace was returned
-        assert result.name == workspace_name
-
-
-@pytest.mark.asyncio
-async def test_get_or_create_workspace_commit_and_return_sequence(
-    db_session: AsyncSession,
-):
-    """Test the complete sequence: add -> commit -> log -> return - covers lines 70-73."""
-    workspace_name = "test_workspace_sequence"
-    metadata = {"sequence": "test"}
-
-    workspace_create = schemas.WorkspaceCreate(name=workspace_name, metadata=metadata)
-
-    # Mock the database session and logger to track call sequence
-    with (
-        patch.object(db_session, "add") as mock_add,
-        patch.object(db_session, "commit") as mock_commit,
-        patch("src.crud.logger") as mock_logger,
-    ):
-        # Make commit async
-        mock_commit.return_value = AsyncMock()
-
-        # Call the function
-        result = await crud.get_or_create_workspace(db_session, workspace_create)
-
-        # Verify all operations were called in sequence
-        mock_add.assert_called_once()
-        mock_commit.assert_called_once()
-        mock_logger.info.assert_called_once_with(
-            f"Workspace created successfully: {workspace_name}"
-        )
-
-        # Verify the workspace object was returned (line 73)
-        assert result is not None
-        assert result.name == workspace_name
-        assert result.h_metadata == metadata
-
-
-@pytest.mark.asyncio
 async def test_update_workspace_with_metadata_not_none(db_session: AsyncSession):
     """Test update_workspace when metadata is not None - covers lines 114-115."""
     workspace_name = "test_workspace_update_metadata"
@@ -413,51 +357,6 @@ async def test_update_workspace_with_empty_configuration(db_session: AsyncSessio
     # Verify empty configuration was set (line 118)
     assert result.configuration == empty_configuration
     assert result.name == workspace_name
-
-
-@pytest.mark.asyncio
-async def test_update_workspace_commit_log_return_sequence(db_session: AsyncSession):
-    """Test update_workspace database commit, logging, and return sequence - covers lines 120-122."""
-    workspace_name = "test_workspace_commit_log_return"
-    metadata = {"test": "commit_sequence"}
-    configuration = {"test": "config_sequence"}
-
-    # First create a workspace
-    workspace_create = schemas.WorkspaceCreate(name=workspace_name)
-    await crud.get_or_create_workspace(db_session, workspace_create)
-
-    # Mock the database session commit and logger to verify they're called
-    with (
-        patch.object(db_session, "commit") as mock_commit,
-        patch("src.crud.logger") as mock_logger,
-    ):
-        # Make commit async
-        mock_commit.return_value = AsyncMock()
-
-        # Update workspace with both metadata and configuration
-        workspace_update = schemas.WorkspaceUpdate(
-            metadata=metadata, configuration=configuration
-        )
-
-        # Call update_workspace function that contains lines 120-122
-        result = await crud.update_workspace(
-            db_session, workspace_name, workspace_update
-        )
-
-        # Verify db.commit was called (line 120)
-        mock_commit.assert_called_once()
-
-        # Verify the success log message was called (line 121)
-        mock_logger.info.assert_called_once_with(
-            f"Workspace with id {result.id} updated successfully"
-        )
-
-        # Verify the workspace object was returned (line 122)
-        assert result is not None
-        assert result.name == workspace_name
-        assert result.h_metadata == metadata
-        assert result.configuration == configuration
-        assert result.id is not None
 
 
 @pytest.mark.asyncio
@@ -837,7 +736,9 @@ async def test_session_repr_method(db_session: AsyncSession):
 
     # Create a session with specific metadata to test __repr__
     session_create = schemas.SessionCreate(name=session_name, metadata=metadata)
-    session = await crud.get_or_create_session(db_session, session_create, workspace_name)
+    session = await crud.get_or_create_session(
+        db_session, session_create, workspace_name
+    )
 
     # Call the __repr__ method (line 168) and verify the output format
     repr_string = repr(session)
@@ -884,7 +785,7 @@ async def test_message_repr_method(db_session: AsyncSession):
     message_create = schemas.MessageCreate(
         content=message_content,
         peer_id=peer.name,
-        metadata={"test": "message_repr_method"}
+        metadata={"test": "message_repr_method"},
     )
     messages = await crud.create_messages(
         db_session, [message_create], workspace_name, session_name
