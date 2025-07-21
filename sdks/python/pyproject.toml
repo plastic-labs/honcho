@@ -38,6 +38,9 @@ dev = [
     "ruff>=0.11.13",
 ]
 
+[tool.ruff.lint]
+ignore = ["E501", "B008", "COM812"]
+
 [tool.setuptools.dynamic]
 readme = {file = ["README.md"], content-type = "text/markdown"}
 
