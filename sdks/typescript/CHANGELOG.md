@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- Linting via biome
+- Linting via Biome
 - Adding filter parameter to various endpoints
 
 ## [1.2.0] - 2025-07-16

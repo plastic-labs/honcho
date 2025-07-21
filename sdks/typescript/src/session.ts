@@ -51,10 +51,8 @@ export class Session {
       | Array<string | Peer | [string | Peer, SessionPeerConfig]>
   ): Promise<void> {
     const peerDict: Record<string, SessionPeerConfig> = {}
-    if (!Array.isArray(peers)) {
-      peers = [peers]
-    }
-    for (const peer of peers) {
+    const peersArray = Array.isArray(peers) ? peers : [peers]
+    for (const peer of peersArray) {
       if (typeof peer === 'string') {
         peerDict[peer] = { observe_others: false, observe_me: true }
       } else if (typeof peer === 'object' && 'id' in peer) {
@@ -94,10 +92,8 @@ export class Session {
       | Array<string | Peer | [string | Peer, SessionPeerConfig]>
   ): Promise<void> {
     const peerDict: Record<string, SessionPeerConfig> = {}
-    if (!Array.isArray(peers)) {
-      peers = [peers]
-    }
-    for (const peer of peers) {
+    const peersArray = Array.isArray(peers) ? peers : [peers]
+    for (const peer of peersArray) {
       if (typeof peer === 'string') {
         peerDict[peer] = { observe_others: false, observe_me: true }
       } else if (typeof peer === 'object' && 'id' in peer) {
