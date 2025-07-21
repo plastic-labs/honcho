@@ -24,13 +24,14 @@ schema = settings.DB.SCHEMA
 
 
 def upgrade() -> None:
-    """Make session_name required on messages table.
+    """Make session_name required on messages and message_embeddings tables.
 
     This migration:
     1. Identifies messages without a session_name
     2. Creates a default session for each workspace that has messages without a session_name
     3. Assigns messages without a session_name to the default sessions
-    4. Makes session_name non-nullable
+    4. Makes session_name non-nullable on messages table
+    5. Makes session_name non-nullable on message_embeddings table
     """
     conn = op.get_bind()
 
@@ -113,6 +114,17 @@ def upgrade() -> None:
                 """)
             )
 
+            # Step 4.5: Handle orphaned message embeddings for this peer
+            op.execute(
+                sa.text(f"""
+                    UPDATE {schema}.message_embeddings 
+                    SET session_name = '{default_session_name}'
+                    WHERE workspace_name = '{workspace_name}' 
+                    AND peer_name = '{peer_name}'
+                    AND session_name IS NULL
+                """)
+            )
+
     # Step 5: Sanity check that no orphaned messages remain
     remaining_orphaned = conn.execute(
         sa.text(f"SELECT COUNT(*) FROM {schema}.messages WHERE session_name IS NULL")
@@ -123,9 +135,25 @@ def upgrade() -> None:
             f"Still have {remaining_orphaned} orphaned messages after migration"
         )
 
-    # Step 6: Make session_name NOT NULL
-    print("Making session_name NOT NULL")
+    # Step 6: Make session_name NOT NULL on messages table
+    print("Making session_name NOT NULL on messages table")
     op.alter_column("messages", "session_name", nullable=False, schema=schema)
+
+    # Step 7: Sanity check that no orphaned message embeddings remain
+    remaining_orphaned_embeddings = conn.execute(
+        sa.text(
+            f"SELECT COUNT(*) FROM {schema}.message_embeddings WHERE session_name IS NULL"
+        )
+    ).scalar()
+
+    if remaining_orphaned_embeddings and remaining_orphaned_embeddings > 0:
+        raise Exception(
+            f"Still have {remaining_orphaned_embeddings} orphaned message embeddings after migration"
+        )
+
+    # Step 8: Make session_name NOT NULL on message_embeddings table
+    print("Making session_name NOT NULL on message_embeddings table")
+    op.alter_column("message_embeddings", "session_name", nullable=False, schema=schema)
 
 
 def downgrade() -> None:
@@ -134,5 +162,8 @@ def downgrade() -> None:
     Note: This will not restore the original orphaned messages to their previous state, nor will it
     delete the default sessions created during the upgrade.
     """
-    print("Making session_name nullable again")
+    print("Making session_name nullable again on message_embeddings table")
+    op.alter_column("message_embeddings", "session_name", nullable=True, schema=schema)
+
+    print("Making session_name nullable again on messages table")
     op.alter_column("messages", "session_name", nullable=True, schema=schema)

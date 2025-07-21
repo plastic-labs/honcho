@@ -179,7 +179,7 @@ class Message(Base):
     )
     # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
     # We have since assigned all of these messages to a default session.
-    session_name: Mapped[str | None] = mapped_column(index=True, nullable=False)
+    session_name: Mapped[str] = mapped_column(index=True, nullable=False)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -244,7 +244,7 @@ class MessageEmbedding(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
     peer_name: Mapped[str | None] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
