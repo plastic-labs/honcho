@@ -76,7 +76,7 @@ def upgrade() -> None:
                         '{workspace_name}',
                         true,
                         '{{}}',
-                        '{{"migration_note": "Default session created for orphaned messages from peer {peer_name}"}}',
+                        '{{"Default session created for orphaned messages from peer {peer_name}"}}',
                         '{{}}',
                         NOW()
                     )
