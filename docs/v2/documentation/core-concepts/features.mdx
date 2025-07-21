@@ -14,17 +14,17 @@ Peers in Honcho are abstract entities that can represent humans, agents, or NPCs
 - At the Session level, you can configure which Peers are able to observe messages from other Peers in that Session. This determines which Peers form representations of others within the Session.
 
 ### Ingest Arbitrary Data
-To facilitate the construction of a Peer's global representation, Honcho is able to ingest arbitrary data to a Peer by adding messages to the Peer directly, outside of the context of a Session. 
+To facilitate the construction of a Peer's global representation, Honcho is able to ingest arbitrary data to a Peer by adding messages to the Peer directly, outside of the context of a Session.
 - Currently, Honcho supports the ingestion of arbitrary text data.
 
 ### Queue Status
-To help developers understand when a Peer's representation is fully up to date, Honcho exposes the ability to poll the status of Peer-centric queues that construct representations. 
+To help developers understand when a Peer's representation is fully up to date, Honcho exposes the ability to poll the status of Peer-centric queues that construct representations.
 - If no Session is specified, the queue status reflects pending work for the Peer's global representation.
 - If a Session is specified, the queue status reflects pending work for the Peer's working representation in that Session.
 
 ### Search
-Honcho supports full-text search across message content across different scopes. 
-- You can search within a specific Session, Peer, or across all messages in a Workspace. 
+Honcho supports full-text search across message content across different scopes.
+- You can search within a specific Session, Peer, or across all messages in a Workspace.
 - Search results are ordered by relevance, making it easy to quickly retrieve important past messages.
 
 ### Scoped API Keys
@@ -33,8 +33,8 @@ Builders can create scoped API keys to control access to different resources wit
 - **Peer-Level Keys**: Access to everything scoped to a Peer.
 - **Session-Level Keys**: Access to everything scoped to a Session.
 
-### Get Context 
+### Get Context
 Honcho provides a powerful context retrieval feature that delivers formatted conversation context from sessions, making it easy to integrate with LLMs like OpenAI, Anthropic, and others.
-- By default, the context includes a blend of summary and messages which covers the entire history of the session. 
+- By default, the context includes a blend of summary and messages which covers the entire history of the session.
 - Summaries are generated automatically at intervals, and recent messages are included based on your specified token budget for the context.
 - You can set any token limit, and if you prefer, you can disable summaries so that the context consists entirely of the most recent messages up to your chosen limit.

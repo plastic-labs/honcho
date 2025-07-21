@@ -52,9 +52,9 @@ async def test_client_init(
 
         page += 1
 
-    assert found_workspace, (
-        f"Workspace {honcho_client.workspace_id} not found in any page of results"
-    )
+    assert (
+        found_workspace
+    ), f"Workspace {honcho_client.workspace_id} not found in any page of results"
 
 
 @pytest.mark.asyncio

@@ -693,4 +693,4 @@ describe('Session', () => {
       await expect(session.workingRep('peer1')).rejects.toThrow('Failed to get working representation');
     });
   });
-}); 
+});

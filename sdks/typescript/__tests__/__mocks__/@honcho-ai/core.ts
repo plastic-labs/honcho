@@ -42,4 +42,4 @@ export default class MockHonchoCore {
   constructor(options?: any) {
     // Mock constructor
   }
-} 
+}

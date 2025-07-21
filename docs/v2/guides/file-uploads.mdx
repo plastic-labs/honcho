@@ -120,7 +120,7 @@ The upload methods accept the following parameters:
 Introduction
 This document provides...
 
-[Page 2] 
+[Page 2]
 Methodology
 Our approach involves...
 ```
@@ -134,7 +134,7 @@ Our approach involves...
 Large files are automatically split into chunks of ~49,500 characters. The system seeks to break at natural boundaries if present:
 
 1. Paragraph breaks (`\n\n`)
-2. Line breaks (`\n`) 
+2. Line breaks (`\n`)
 3. Sentence endings (`. `)
 4. Word boundaries (` `)
 
@@ -230,17 +230,17 @@ def analyze_documents():
     """Get AI analysis of uploaded documents"""
     context = session.get_context(tokens=4000)
     messages = context.to_openai(assistant=assistant)
-    
+
     # Add analysis request
     messages.append({
         "role": "user",
         "content": "Please analyze all the documents I've uploaded and provide a comprehensive summary of the key findings, trends, and recommendations."
     })
-    
+
     # Call OpenAI (or your preferred LLM)
     # response = openai.chat.completions.create(model="gpt-4", messages=messages)
     # return response.choices[0].message.content
-    
+
     return "Analysis would be generated here"
 
 # Upload multiple documents
@@ -281,17 +281,17 @@ async function uploadDocument(filePath: string, description: string) {
 async function analyzeDocuments() {
   const context = await session.getContext({ tokens: 4000 });
   const messages = context.toOpenAI(assistant);
-  
+
   // Add analysis request
   messages.push({
     role: "user",
     content: "Please analyze all the documents I've uploaded and provide a comprehensive summary of the key findings, trends, and recommendations."
   });
-  
+
   // Call OpenAI (or your preferred LLM)
   // const response = await openai.chat.completions.create({ model: "gpt-4", messages });
   // return response.choices[0].message.content;
-  
+
   return "Analysis would be generated here";
 }
 

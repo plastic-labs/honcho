@@ -25,7 +25,7 @@ describe('Page', () => {
   describe('constructor', () => {
     it('should initialize with original page', () => {
       const page = new Page(mockOriginalPage);
-      
+
       expect(page['_originalPage']).toBe(mockOriginalPage);
       expect(page['_transformFunc']).toBeUndefined();
     });
@@ -33,7 +33,7 @@ describe('Page', () => {
     it('should initialize with transform function', () => {
       const transformFunc = (item: any) => ({ ...item, transformed: true });
       const page = new Page(mockOriginalPage, transformFunc);
-      
+
       expect(page['_originalPage']).toBe(mockOriginalPage);
       expect(page['_transformFunc']).toBe(transformFunc);
     });
@@ -43,11 +43,11 @@ describe('Page', () => {
     it('should iterate through items without transform', async () => {
       const page = new Page(mockOriginalPage);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual(mockItems);
     });
 
@@ -55,11 +55,11 @@ describe('Page', () => {
       const transformFunc = (item: any) => ({ ...item, transformed: true });
       const page = new Page(mockOriginalPage, transformFunc);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual([
         { id: 'item1', name: 'Item 1', transformed: true },
         { id: 'item2', name: 'Item 2', transformed: true },
@@ -71,11 +71,11 @@ describe('Page', () => {
       const emptyPage = { items: [], data: [], size: 0, total: 0, hasNextPage: false };
       const page = new Page(emptyPage);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual([]);
     });
 
@@ -88,11 +88,11 @@ describe('Page', () => {
       };
       const page = new Page(pageWithData);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual(mockItems);
     });
 
@@ -104,11 +104,11 @@ describe('Page', () => {
       };
       const page = new Page(pageWithoutItems);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual([]);
     });
   });
@@ -117,9 +117,9 @@ describe('Page', () => {
     it('should get item by index without transform', async () => {
       mockOriginalPage.get.mockResolvedValue(mockItems[1]);
       const page = new Page(mockOriginalPage);
-      
+
       const item = await page.get(1);
-      
+
       expect(item).toEqual(mockItems[1]);
       expect(mockOriginalPage.get).toHaveBeenCalledWith(1);
     });
@@ -128,9 +128,9 @@ describe('Page', () => {
       const transformFunc = (item: any) => ({ ...item, transformed: true });
       mockOriginalPage.get.mockResolvedValue(mockItems[1]);
       const page = new Page(mockOriginalPage, transformFunc);
-      
+
       const item = await page.get(1);
-      
+
       expect(item).toEqual({ ...mockItems[1], transformed: true });
       expect(mockOriginalPage.get).toHaveBeenCalledWith(1);
     });
@@ -138,9 +138,9 @@ describe('Page', () => {
     it('should handle out of bounds index', async () => {
       mockOriginalPage.get.mockResolvedValue(undefined);
       const page = new Page(mockOriginalPage);
-      
+
       const item = await page.get(999);
-      
+
       expect(item).toBeUndefined();
       expect(mockOriginalPage.get).toHaveBeenCalledWith(999);
     });
@@ -148,9 +148,9 @@ describe('Page', () => {
     it('should handle negative index', async () => {
       mockOriginalPage.get.mockResolvedValue(undefined);
       const page = new Page(mockOriginalPage);
-      
+
       const item = await page.get(-1);
-      
+
       expect(item).toBeUndefined();
       expect(mockOriginalPage.get).toHaveBeenCalledWith(-1);
     });
@@ -159,14 +159,14 @@ describe('Page', () => {
   describe('size getter', () => {
     it('should return size from original page', () => {
       const page = new Page(mockOriginalPage);
-      
+
       expect(page.size).toBe(3);
     });
 
     it('should handle missing size', () => {
       const pageWithoutSize = { items: mockItems };
       const page = new Page(pageWithoutSize);
-      
+
       expect(page.size).toBeUndefined();
     });
   });
@@ -174,14 +174,14 @@ describe('Page', () => {
   describe('total getter', () => {
     it('should return total from original page', () => {
       const page = new Page(mockOriginalPage);
-      
+
       expect(page.total).toBe(10);
     });
 
     it('should handle missing total', () => {
       const pageWithoutTotal = { items: mockItems };
       const page = new Page(pageWithoutTotal);
-      
+
       expect(page.total).toBeUndefined();
     });
   });
@@ -189,18 +189,18 @@ describe('Page', () => {
   describe('data', () => {
     it('should return data array without transform', async () => {
       const page = new Page(mockOriginalPage);
-      
+
       const data = await page.data();
-      
+
       expect(data).toEqual(mockItems);
     });
 
     it('should return data array with transform', async () => {
       const transformFunc = (item: any) => ({ ...item, transformed: true });
       const page = new Page(mockOriginalPage, transformFunc);
-      
+
       const data = await page.data();
-      
+
       expect(data).toEqual([
         { id: 'item1', name: 'Item 1', transformed: true },
         { id: 'item2', name: 'Item 2', transformed: true },
@@ -217,9 +217,9 @@ describe('Page', () => {
         hasNextPage: true,
       };
       const page = new Page(pageWithDataFunction);
-      
+
       const data = await page.data();
-      
+
       expect(data).toEqual(mockItems);
       expect(mockDataFunction).toHaveBeenCalled();
     });
@@ -233,9 +233,9 @@ describe('Page', () => {
         hasNextPage: true,
       };
       const page = new Page(pageWithItemsFunction);
-      
+
       const data = await page.data();
-      
+
       expect(data).toEqual(mockItems);
       expect(mockItemsFunction).toHaveBeenCalled();
     });
@@ -243,9 +243,9 @@ describe('Page', () => {
     it('should handle empty data', async () => {
       const emptyPage = { items: [], size: 0, total: 0, hasNextPage: false };
       const page = new Page(emptyPage);
-      
+
       const data = await page.data();
-      
+
       expect(data).toEqual([]);
     });
 
@@ -258,9 +258,9 @@ describe('Page', () => {
         hasNextPage: false,
       };
       const page = new Page(pageWithBoth);
-      
+
       const data = await page.data();
-      
+
       expect(data).toEqual([{ id: 'from-items' }]);
     });
   });
@@ -268,21 +268,21 @@ describe('Page', () => {
   describe('hasNextPage getter', () => {
     it('should return hasNextPage from original page', () => {
       const page = new Page(mockOriginalPage);
-      
+
       expect(page.hasNextPage).toBe(true);
     });
 
     it('should handle missing hasNextPage', () => {
       const pageWithoutHasNextPage = { items: mockItems };
       const page = new Page(pageWithoutHasNextPage);
-      
+
       expect(page.hasNextPage).toBeUndefined();
     });
 
     it('should handle false hasNextPage', () => {
       const lastPage = { ...mockOriginalPage, hasNextPage: false };
       const page = new Page(lastPage);
-      
+
       expect(page.hasNextPage).toBe(false);
     });
   });
@@ -298,9 +298,9 @@ describe('Page', () => {
       const transformFunc = (item: any) => ({ ...item, transformed: true });
       mockOriginalPage.nextPage.mockResolvedValue(nextPageData);
       const page = new Page(mockOriginalPage, transformFunc);
-      
+
       const nextPage = await page.nextPage();
-      
+
       expect(nextPage).toBeInstanceOf(Page);
       expect(nextPage!['_transformFunc']).toBe(transformFunc);
       expect(mockOriginalPage.nextPage).toHaveBeenCalled();
@@ -309,25 +309,25 @@ describe('Page', () => {
     it('should return null when no next page', async () => {
       mockOriginalPage.nextPage.mockResolvedValue(null);
       const page = new Page(mockOriginalPage);
-      
+
       const nextPage = await page.nextPage();
-      
+
       expect(nextPage).toBeNull();
     });
 
     it('should handle next page returning undefined', async () => {
       mockOriginalPage.nextPage.mockResolvedValue(undefined);
       const page = new Page(mockOriginalPage);
-      
+
       const nextPage = await page.nextPage();
-      
+
       expect(nextPage).toBeNull();
     });
 
     it('should handle error from original page nextPage', async () => {
       mockOriginalPage.nextPage.mockRejectedValue(new Error('Failed to get next page'));
       const page = new Page(mockOriginalPage);
-      
+
       await expect(page.nextPage()).rejects.toThrow('Failed to get next page');
     });
   });
@@ -335,7 +335,7 @@ describe('Page', () => {
   describe('edge cases and error handling', () => {
     it('should handle null original page', () => {
       const page = new Page(null);
-      
+
       expect(page['_originalPage']).toBeNull();
       expect(page.size).toBeUndefined();
       expect(page.total).toBeUndefined();
@@ -347,7 +347,7 @@ describe('Page', () => {
         throw new Error('Transform error');
       };
       const page = new Page(mockOriginalPage, errorTransform);
-      
+
       await expect(async () => {
         for await (const item of page) {
           // This should throw
@@ -359,11 +359,11 @@ describe('Page', () => {
       const nullTransform = () => null;
       const page = new Page(mockOriginalPage, nullTransform);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual([null, null, null]);
     });
 
@@ -377,12 +377,12 @@ describe('Page', () => {
       };
       const page = new Page(largePage);
       let count = 0;
-      
+
       for await (const item of page) {
         count++;
         if (count > 10) break; // Don't actually iterate through all 10k items
       }
-      
+
       expect(count).toBe(11);
     });
 
@@ -397,11 +397,11 @@ describe('Page', () => {
       };
       const page = new Page(pageWithCircular);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toHaveLength(1);
       expect(items[0].id).toBe('circular');
       expect(items[0].self).toBe(items[0]);
@@ -428,11 +428,11 @@ describe('Page', () => {
       };
       const page = new Page(complexPage);
       const items: any[] = [];
-      
+
       for await (const item of page) {
         items.push(item);
       }
-      
+
       expect(items).toEqual(complexItems);
       expect(items[0].nested.deep.array[2].nested).toBe('array object');
     });
@@ -444,10 +444,10 @@ describe('Page', () => {
       };
       mockOriginalPage.get.mockResolvedValue(mockItems[0]);
       const page = new Page(mockOriginalPage, asyncTransform);
-      
+
       const item = await page.get(0);
-      
+
       expect(item).toEqual({ ...mockItems[0], asyncTransformed: true });
     });
   });
-}); 
+});

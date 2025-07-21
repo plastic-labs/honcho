@@ -382,4 +382,4 @@ describe('Honcho Client', () => {
       await expect(honcho.search('test')).rejects.toThrow('Search failed');
     });
   });
-}); 
+});

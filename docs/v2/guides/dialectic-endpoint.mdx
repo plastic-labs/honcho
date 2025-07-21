@@ -4,11 +4,11 @@ description: "An endpoint for reasoning about your users"
 icon: "comments"
 ---
 
-Honcho by default runs ambient inference on top of the `message` objects you store. Those messages serve as the ground truth upon which facts about the user are derived and stored. The **Dialectic Endpoint** is the natural language interface through which insights are synthesized from those facts. We believe [intellectual respect](https://blog.plasticlabs.ai/extrusions/Extrusion-02.24) for LLMs is paramount in building effective AI agents/apps. It follows that the LLM should know better than any human what would aid them in their generation task. Thus, the Dialectic endpoint exists for flexible agent-to-agent communication. 
+Honcho by default runs ambient inference on top of the `message` objects you store. Those messages serve as the ground truth upon which facts about the user are derived and stored. The **Dialectic Endpoint** is the natural language interface through which insights are synthesized from those facts. We believe [intellectual respect](https://blog.plasticlabs.ai/extrusions/Extrusion-02.24) for LLMs is paramount in building effective AI agents/apps. It follows that the LLM should know better than any human what would aid them in their generation task. Thus, the Dialectic endpoint exists for flexible agent-to-agent communication.
 
 ## Automatic Fact Derivation
 
-On every message written to a session, an automatic callback is run that will reason about the conversation and store facts in a `collection` named `honcho`. This is a reserved `collection` specifically for the backend Honcho agent to interact with. 
+On every message written to a session, an automatic callback is run that will reason about the conversation and store facts in a `collection` named `honcho`. This is a reserved `collection` specifically for the backend Honcho agent to interact with.
 
 ## Dialectic Endpoint
 
@@ -49,7 +49,7 @@ const session = await honcho.session('demo-session');
 // (assuming some messages have been written to Honcho for the deriver to use)
 ```
 </CodeGroup>
-## Static Dialectic Call 
+## Static Dialectic Call
 
 <CodeGroup>
 ```python Python
@@ -85,6 +85,3 @@ for await (const line of responseStream.iter_text()) {
 </CodeGroup>
 
 We've designed the Dialectic endpoint to be infinitely flexible. We wrote an incomplete list of ideas on how to use it on our blog [here](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API#how-it-works).
-
-
-

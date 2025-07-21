@@ -58,7 +58,7 @@ class DeriverQueuePayload(BaseModel):
         message_id = message.get("message_id")
         if not isinstance(message_id, int):
             raise TypeError("Message ID must be an integer")
-        
+
         # Ensure created_at exists and is a datetime
         if "created_at" not in message:
             raise TypeError("created_at is required")
@@ -85,7 +85,7 @@ class DeriverQueuePayload(BaseModel):
             )
             # Convert back to dict for compatibility with JSON serialization
             # mode='json' ensures datetime is converted to ISO string
-            payload = validated_payload.model_dump(mode='json')
+            payload = validated_payload.model_dump(mode="json")
         except Exception as e:
             raise ValueError(f"Failed to create valid payload: {str(e)}") from e
 
