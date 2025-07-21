@@ -184,7 +184,34 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v1.1.0 (Current)">
+        <Update label="v1.2.2 (Current)">
+            ### Added
+
+            - Filter parameter to various endpoints
+
+        </Update>
+        <Update label="v1.2.1">
+            ### Fixed
+
+            - Honcho util import paths
+
+        </Update>
+        <Update label="v1.2.0">
+            ### Added
+
+            - Get/poll deriver queue status endpoints added to workspace
+            - Added endpoint to upload files as messages
+            
+            ### Removed
+
+            - Removed peer messages in accordance with Honcho 2.1.0
+
+            ### Changed
+
+            - Updated chat endpoint to use singular `query` in accordance with Honcho 2.1.0
+
+        </Update>
+        <Update label="v1.1.0">
             ### Fixed
 
             - Properly handle AsyncClient
@@ -193,7 +220,31 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v1.1.0 (Current)">
+        <Update label="v1.2.1 (Current)">
+            ### Added
+            
+            - linting via Biome
+            - Adding filter parameter to various endpoints
+
+            ### Fixed
+
+            - Order of parameters in `getSessions` endpoint
+        </Update>
+        <Update label="v1.2.0">
+            ### Added
+
+            - Get/poll deriver queue status endpoints added to workspace
+            - Added endpoint to upload files as messages
+
+            ### Removed
+
+            - Removed peer messages in accordance with Honcho 2.1.0
+
+            ### Changed
+
+            - Updated chat endpoint to use singular `query` in accordance with Honcho 2.1.0
+        </Update>
+        <Update label="v1.1.0">
             ### Fixed
 
             - Create default workspace on Honcho client instantiation

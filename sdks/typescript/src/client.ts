@@ -1,30 +1,31 @@
-import HonchoCore from '@honcho-ai/core';
-import { Page } from './pagination';
-import { Peer } from './peer';
-import { Session } from './session';
+import HonchoCore from '@honcho-ai/core'
+import { Page } from './pagination'
+import { Peer } from './peer'
+import { Session } from './session'
 
 /**
  * Main client for the Honcho TypeScript SDK.
  * Provides access to peers, sessions, and workspace operations.
  */
 export class Honcho {
-  private _client: InstanceType<typeof HonchoCore>;
-  readonly workspaceId: string;
+  private _client: InstanceType<typeof HonchoCore>
+  readonly workspaceId: string
 
   /**
    * Initialize the Honcho client.
    */
   constructor(options: {
-    apiKey?: string;
-    environment?: 'local' | 'production' | 'demo';
-    baseURL?: string;
-    workspaceId?: string;
-    timeout?: number;
-    maxRetries?: number;
-    defaultHeaders?: Record<string, string>;
-    defaultQuery?: Record<string, unknown>;
+    apiKey?: string
+    environment?: 'local' | 'production' | 'demo'
+    baseURL?: string
+    workspaceId?: string
+    timeout?: number
+    maxRetries?: number
+    defaultHeaders?: Record<string, string>
+    defaultQuery?: Record<string, unknown>
   }) {
-    this.workspaceId = options.workspaceId || process.env.HONCHO_WORKSPACE_ID || 'default';
+    this.workspaceId =
+      options.workspaceId || process.env.HONCHO_WORKSPACE_ID || 'default'
     this._client = new HonchoCore({
       apiKey: options.apiKey || process.env.HONCHO_API_KEY,
       environment: options.environment,
@@ -33,7 +34,7 @@ export class Honcho {
       maxRetries: options.maxRetries,
       defaultHeaders: options.defaultHeaders,
       defaultQuery: options.defaultQuery as any,
-    }) as any;
+    }) as any
     this._client.workspaces.getOrCreate({ id: this.workspaceId })
   }
 
@@ -42,17 +43,22 @@ export class Honcho {
    */
   peer(id: string, options?: { config?: Record<string, unknown> }): Peer {
     if (!id || typeof id !== 'string') {
-      throw new Error('Peer ID must be a non-empty string');
+      throw new Error('Peer ID must be a non-empty string')
     }
-    return new Peer(id, this, options?.config);
+    return new Peer(id, this, options?.config)
   }
 
   /**
    * Get all peers in the current workspace.
    */
-  async getPeers(): Promise<Page<Peer>> {
-    const peersPage = await this._client.workspaces.peers.list(this.workspaceId);
-    return new Page(peersPage, (peer: any) => new Peer(peer.id, this));
+  async getPeers(
+    filter?: { [key: string]: unknown } | null
+  ): Promise<Page<Peer>> {
+    const peersPage = await this._client.workspaces.peers.list(
+      this.workspaceId,
+      { filter }
+    )
+    return new Page(peersPage, (peer: any) => new Peer(peer.id, this))
   }
 
   /**
@@ -60,44 +66,56 @@ export class Honcho {
    */
   session(id: string, options?: { config?: Record<string, unknown> }): Session {
     if (!id || typeof id !== 'string') {
-      throw new Error('Session ID must be a non-empty string');
+      throw new Error('Session ID must be a non-empty string')
     }
-    return new Session(id, this, options?.config);
+    return new Session(id, this, options?.config)
   }
 
   /**
    * Get all sessions in the current workspace.
    */
-  async getSessions(): Promise<Page<Session>> {
-    const sessionsPage = await this._client.workspaces.sessions.list(this.workspaceId);
-    return new Page(sessionsPage, (session: any) => new Session(session.id, this));
+  async getSessions(
+    filter?: { [key: string]: unknown } | null
+  ): Promise<Page<Session>> {
+    const sessionsPage = await this._client.workspaces.sessions.list(
+      this.workspaceId,
+      { filter }
+    )
+    return new Page(
+      sessionsPage,
+      (session: any) => new Session(session.id, this)
+    )
   }
 
   /**
    * Get metadata for the current workspace.
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const workspace = await this._client.workspaces.getOrCreate({ id: this.workspaceId });
-    return workspace.metadata || {};
+    const workspace = await this._client.workspaces.getOrCreate({
+      id: this.workspaceId,
+    })
+    return workspace.metadata || {}
   }
 
   /**
    * Set metadata for the current workspace.
    */
   async setMetadata(metadata: Record<string, unknown>): Promise<void> {
-    await this._client.workspaces.update(this.workspaceId, { metadata });
+    await this._client.workspaces.update(this.workspaceId, { metadata })
   }
 
   /**
    * Get all workspace IDs from the Honcho instance.
    */
-  async getWorkspaces(): Promise<string[]> {
-    const workspacesPage = await this._client.workspaces.list();
-    const ids: string[] = [];
+  async getWorkspaces(
+    filter?: { [key: string]: unknown } | null
+  ): Promise<string[]> {
+    const workspacesPage = await this._client.workspaces.list({ filter })
+    const ids: string[] = []
     for await (const workspace of workspacesPage) {
-      ids.push(workspace.id);
+      ids.push(workspace.id)
     }
-    return ids;
+    return ids
   }
 
   /**
@@ -111,10 +129,13 @@ export class Honcho {
    */
   async search(query: string): Promise<Page<any>> {
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      throw new Error('Search query must be a non-empty string');
+      throw new Error('Search query must be a non-empty string')
     }
-    const messagesPage = await this._client.workspaces.search(this.workspaceId, { body: query });
-    return new Page(messagesPage);
+    const messagesPage = await this._client.workspaces.search(
+      this.workspaceId,
+      { body: query }
+    )
+    return new Page(messagesPage)
   }
 
   /**
@@ -123,26 +144,29 @@ export class Honcho {
    * @param options Configuration options for the status request
    * @param options.observerId Optional observer ID to scope the status to
    * @param options.senderId Optional sender ID to scope the status to
-   * @param options.sessionId Optional session ID to scope the status to  
+   * @param options.sessionId Optional session ID to scope the status to
    * @returns Promise resolving to the deriver status information
    */
   async getDeriverStatus(options?: {
-    observerId?: string;
-    senderId?: string;
-    sessionId?: string;
+    observerId?: string
+    senderId?: string
+    sessionId?: string
   }): Promise<{
-    totalWorkUnits: number;
-    completedWorkUnits: number;
-    inProgressWorkUnits: number;
-    pendingWorkUnits: number;
-    sessions?: Record<string, any>;
+    totalWorkUnits: number
+    completedWorkUnits: number
+    inProgressWorkUnits: number
+    pendingWorkUnits: number
+    sessions?: Record<string, any>
   }> {
-    const queryParams: any = {};
-    if (options?.observerId) queryParams.observer_id = options.observerId;
-    if (options?.senderId) queryParams.sender_id = options.senderId;
-    if (options?.sessionId) queryParams.session_id = options.sessionId;
+    const queryParams: any = {}
+    if (options?.observerId) queryParams.observer_id = options.observerId
+    if (options?.senderId) queryParams.sender_id = options.senderId
+    if (options?.sessionId) queryParams.session_id = options.sessionId
 
-    const status = await this._client.workspaces.deriverStatus(this.workspaceId, queryParams);
+    const status = await this._client.workspaces.deriverStatus(
+      this.workspaceId,
+      queryParams
+    )
 
     return {
       totalWorkUnits: status.total_work_units,
@@ -150,7 +174,7 @@ export class Honcho {
       inProgressWorkUnits: status.in_progress_work_units,
       pendingWorkUnits: status.pending_work_units,
       sessions: status.sessions || undefined,
-    };
+    }
   }
 
   /**
@@ -169,47 +193,48 @@ export class Honcho {
    * @throws Error if timeout is exceeded before processing completes
    */
   async pollDeriverStatus(options?: {
-    observerId?: string;
-    senderId?: string;
-    sessionId?: string;
-    timeoutMs?: number;
+    observerId?: string
+    senderId?: string
+    sessionId?: string
+    timeoutMs?: number
   }): Promise<{
-    totalWorkUnits: number;
-    completedWorkUnits: number;
-    inProgressWorkUnits: number;
-    pendingWorkUnits: number;
-    sessions?: Record<string, any>;
+    totalWorkUnits: number
+    completedWorkUnits: number
+    inProgressWorkUnits: number
+    pendingWorkUnits: number
+    sessions?: Record<string, any>
   }> {
-    const timeoutMs = options?.timeoutMs ?? 300000; // Default to 5 minutes
-    const startTime = Date.now();
+    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
+    const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(options);
+      const status = await this.getDeriverStatus(options)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
-        return status;
+        return status
       }
 
       // Check if timeout has been exceeded
-      const elapsedTime = Date.now() - startTime;
+      const elapsedTime = Date.now() - startTime
       if (elapsedTime >= timeoutMs) {
         throw new Error(
           `Polling timeout exceeded after ${timeoutMs}ms. ` +
-          `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
-        );
+            `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
+        )
       }
 
       // Sleep for the expected time to complete all current work units
       // Assuming each pending and in-progress work unit takes 1 second
-      const totalWorkUnits = status.pendingWorkUnits + status.inProgressWorkUnits;
-      const sleepMs = Math.max(1000, totalWorkUnits * 1000); // Sleep at least 1 second
+      const totalWorkUnits =
+        status.pendingWorkUnits + status.inProgressWorkUnits
+      const sleepMs = Math.max(1000, totalWorkUnits * 1000) // Sleep at least 1 second
 
       // Ensure we don't sleep past the timeout
-      const remainingTime = timeoutMs - elapsedTime;
-      const actualSleepMs = Math.min(sleepMs, remainingTime);
+      const remainingTime = timeoutMs - elapsedTime
+      const actualSleepMs = Math.min(sleepMs, remainingTime)
 
       if (actualSleepMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, actualSleepMs));
+        await new Promise((resolve) => setTimeout(resolve, actualSleepMs))
       }
     }
   }
-} 
+}

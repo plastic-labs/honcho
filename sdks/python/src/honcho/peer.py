@@ -112,7 +112,9 @@ class Peer(BaseModel):
             return None
         return response.content
 
-    def get_sessions(self) -> SyncPage[Session]:
+    def get_sessions(
+        self, filter: dict[str, object] | None = None
+    ) -> SyncPage[Session]:
         """
         Get all sessions this peer is a member of.
 
@@ -128,6 +130,7 @@ class Peer(BaseModel):
         sessions_page = self._client.workspaces.peers.sessions.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,
+            filter=filter,
         )
         return SyncPage(
             sessions_page,

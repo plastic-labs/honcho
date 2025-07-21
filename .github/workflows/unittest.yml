@@ -6,8 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  test:
+  test-python:
     runs-on: ubuntu-latest
 
     services:
@@ -59,3 +62,27 @@ jobs:
           DIALECTIC_QUERY_GENERATION_MODEL: test
           SUMMARY_PROVIDER: openai
           SUMMARY_MODEL: test
+
+  test-typescript:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install TypeScript SDK dependencies
+        run: |
+          cd sdks/typescript
+          bun install
+
+      - name: Run TypeScript SDK tests
+        run: |
+          cd sdks/typescript
+          bun run test
+        env:
+          HONCHO_API_KEY: test-key
+          HONCHO_BASE_URL: http://localhost:8000

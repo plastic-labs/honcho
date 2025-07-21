@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/sdk",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Official DX Optimized TypeScript SDK for Honcho",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "Apache-2.0",
@@ -11,7 +11,9 @@
   ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
-    "lint": "eslint src --ext .ts",
+    "lint": "biome check src/",
+    "lint:fix": "biome check src/ --write",
+    "format": "biome format src/ --write",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage"
@@ -21,8 +23,8 @@
     "@honcho-ai/core": "1.2.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.1.2",
     "@types/jest": "^29.5.14",
-    "eslint": "^8.0.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.0",
     "typescript": "^5.0.0"
