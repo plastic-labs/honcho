@@ -50,8 +50,8 @@ export class Honcho {
   /**
    * Get all peers in the current workspace.
    */
-  async getPeers(): Promise<Page<Peer>> {
-    const peersPage = await this._client.workspaces.peers.list(this.workspaceId);
+  async getPeers(filter?: { [key: string]: unknown } | null): Promise<Page<Peer>> {
+    const peersPage = await this._client.workspaces.peers.list(this.workspaceId, { filter });
     return new Page(peersPage, (peer: any) => new Peer(peer.id, this));
   }
 
@@ -68,8 +68,8 @@ export class Honcho {
   /**
    * Get all sessions in the current workspace.
    */
-  async getSessions(): Promise<Page<Session>> {
-    const sessionsPage = await this._client.workspaces.sessions.list(this.workspaceId);
+  async getSessions(filter?: { [key: string]: unknown } | null): Promise<Page<Session>> {
+    const sessionsPage = await this._client.workspaces.sessions.list(this.workspaceId, { filter });
     return new Page(sessionsPage, (session: any) => new Session(session.id, this));
   }
 
@@ -91,8 +91,8 @@ export class Honcho {
   /**
    * Get all workspace IDs from the Honcho instance.
    */
-  async getWorkspaces(): Promise<string[]> {
-    const workspacesPage = await this._client.workspaces.list();
+  async getWorkspaces(filter?: { [key: string]: unknown } | null): Promise<string[]> {
+    const workspacesPage = await this._client.workspaces.list({ filter });
     const ids: string[] = [];
     for await (const workspace of workspacesPage) {
       ids.push(workspace.id);

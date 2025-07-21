@@ -169,7 +169,9 @@ class AsyncHoncho(BaseModel):
             )
         return AsyncPeer(id, self.workspace_id, self._client)
 
-    async def get_peers(self) -> AsyncPage[AsyncPeer]:
+    async def get_peers(
+        self, filter: dict[str, object] | None = None
+    ) -> AsyncPage[AsyncPeer]:
         """
         Get all peers in the current workspace.
 
@@ -182,7 +184,7 @@ class AsyncHoncho(BaseModel):
             The page preserves pagination functionality while transforming objects
         """
         peers_page = await self._client.workspaces.peers.list(
-            workspace_id=self.workspace_id
+            workspace_id=self.workspace_id, filter=filter
         )
         return AsyncPage(
             peers_page, lambda peer: AsyncPeer(peer.id, self.workspace_id, self._client)
@@ -226,7 +228,9 @@ class AsyncHoncho(BaseModel):
             )
         return AsyncSession(id, self.workspace_id, self._client)
 
-    async def get_sessions(self) -> AsyncPage[AsyncSession]:
+    async def get_sessions(
+        self, filter: dict[str, object] | None = None
+    ) -> AsyncPage[AsyncSession]:
         """
         Get all sessions in the current workspace.
 
@@ -238,7 +242,7 @@ class AsyncHoncho(BaseModel):
             Returns an empty page if no sessions exist
         """
         sessions_page = await self._client.workspaces.sessions.list(
-            workspace_id=self.workspace_id
+            workspace_id=self.workspace_id, filter=filter
         )
         return AsyncPage(
             sessions_page,
@@ -277,7 +281,9 @@ class AsyncHoncho(BaseModel):
         """
         await self._client.workspaces.update(self.workspace_id, metadata=metadata)
 
-    async def get_workspaces(self) -> list[str]:
+    async def get_workspaces(
+        self, filter: dict[str, object] | None = None
+    ) -> list[str]:
         """
         Get all workspace IDs from the Honcho instance.
 
@@ -288,7 +294,7 @@ class AsyncHoncho(BaseModel):
             A list of workspace ID strings. Returns an empty list if no workspaces
             are accessible or none exist
         """
-        workspaces_page = await self._client.workspaces.list()
+        workspaces_page = await self._client.workspaces.list(filter=filter)
         workspace_ids: list[str] = []
         async for workspace in workspaces_page:
             workspace_ids.append(workspace.id)

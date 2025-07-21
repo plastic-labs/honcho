@@ -132,7 +132,9 @@ class AsyncPeer(BaseModel):
             return None
         return response.content
 
-    async def get_sessions(self) -> AsyncPage[AsyncSession]:
+    async def get_sessions(
+        self, filter: dict[str, object] | None = None
+    ) -> AsyncPage[AsyncSession]:
         """
         Get all sessions this peer is a member of.
 
@@ -148,6 +150,7 @@ class AsyncPeer(BaseModel):
         sessions_page = await self._client.workspaces.peers.sessions.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,
+            filter=filter,
         )
         return AsyncPage(
             sessions_page,

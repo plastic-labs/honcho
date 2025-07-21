@@ -49,10 +49,11 @@ export class Peer {
   /**
    * Get all sessions this peer is a member of.
    */
-  async getSessions(): Promise<Page<Session>> {
+  async getSessions(filter?: { [key: string]: unknown } | null): Promise<Page<Session>> {
     const sessionsPage = await this._honcho['_client'].workspaces.peers.sessions.list(
-      this.id,
       this._honcho.workspaceId,
+      this.id,
+      { filter }
     );
     return new Page(sessionsPage, (session: any) => new Session(session.id, this._honcho));
   }
