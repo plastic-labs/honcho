@@ -18,7 +18,9 @@ def test_load_toml_config_file_not_found():
     assert load_toml_config("non_existent_file.toml") == {}
 
 
-def test_load_toml_config_toml_decode_error(tmp_path: Path, caplog):
+def test_load_toml_config_toml_decode_error(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
     """Test that load_toml_config handles TOML decode errors gracefully."""
     # Create a file with invalid TOML content
     invalid_toml_file = tmp_path / "invalid.toml"
@@ -33,7 +35,7 @@ def test_load_toml_config_toml_decode_error(tmp_path: Path, caplog):
     assert str(invalid_toml_file) in caplog.text
 
 
-def test_load_toml_config_os_error(tmp_path: Path, caplog):
+def test_load_toml_config_os_error(tmp_path: Path, caplog: pytest.LogCaptureFixture):
     """Test that load_toml_config handles OS errors gracefully."""
     # Create a file that exists but will cause an OS error when opened
     config_file = tmp_path / "config.toml"
@@ -50,7 +52,9 @@ def test_load_toml_config_os_error(tmp_path: Path, caplog):
     assert str(config_file) in caplog.text
 
 
-def test_toml_config_source_with_unmapped_prefix(monkeypatch, tmp_path: Path):
+def test_toml_config_source_with_unmapped_prefix(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test that TomlConfigSettingsSource can handle prefixes not in SECTION_MAP
     by converting them to lowercase for the section name. This covers lines 69-70.
@@ -68,7 +72,7 @@ test_field = "hello from toml"
 
     # 3. Define a settings class with an unmapped prefix
     class UnmappedSettings(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="UNMAPPED_")
+        model_config = SettingsConfigDict(env_prefix="UNMAPPED_")  # pyright: ignore
         TEST_FIELD: str = "default"
 
     # 4. Instantiate the settings class
@@ -78,7 +82,9 @@ test_field = "hello from toml"
     assert settings.TEST_FIELD == "hello from toml"
 
 
-def test_toml_config_source_prefix_cleanup(monkeypatch, tmp_path: Path):
+def test_toml_config_source_prefix_cleanup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test that TomlConfigSettingsSource correctly strips trailing underscore from prefix.
     This covers lines 64-66 where prefix is cleaned up.
@@ -96,9 +102,7 @@ test_field = "value_from_toml"
 
     # 3. Define a settings class with a prefix ending in underscore
     class TestPrefixSettings(HonchoSettings):
-        model_config = SettingsConfigDict(
-            env_prefix="TESTPREFIX_"
-        )  # Note the trailing underscore
+        model_config = SettingsConfigDict(env_prefix="TESTPREFIX_")  # pyright: ignore
         TEST_FIELD: str = "default"
 
     # 4. Instantiate the settings class
@@ -109,7 +113,9 @@ test_field = "value_from_toml"
     assert settings.TEST_FIELD == "value_from_toml"
 
 
-def test_toml_config_source_prefix_no_underscore(monkeypatch, tmp_path: Path):
+def test_toml_config_source_prefix_no_underscore(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test that TomlConfigSettingsSource handles prefixes without trailing underscore.
     This covers lines 64-66 by testing the case where prefix doesn't end with underscore.
@@ -127,9 +133,7 @@ test_field = "value_without_underscore"
 
     # 3. Define a settings class with a prefix NOT ending in underscore
     class NoUnderscoreSettings(HonchoSettings):
-        model_config = SettingsConfigDict(
-            env_prefix="NOUNDER"
-        )  # No trailing underscore
+        model_config = SettingsConfigDict(env_prefix="NOUNDER")  # pyright: ignore
         TEST_FIELD: str = "default"
 
     # 4. Instantiate the settings class
@@ -140,7 +144,9 @@ test_field = "value_without_underscore"
     assert settings.TEST_FIELD == "value_without_underscore"
 
 
-def test_toml_config_source_get_field_value_direct(monkeypatch, tmp_path: Path):
+def test_toml_config_source_get_field_value_direct(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test TomlConfigSettingsSource.get_field_value directly to ensure lines 64-66 are covered.
     """
@@ -159,10 +165,10 @@ field_name = "direct_test_value"
 
     # 3. Create settings classes to test both cases
     class SettingsWithUnderscore(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="TESTNOUNDER_")
+        model_config = SettingsConfigDict(env_prefix="TESTNOUNDER_")  # pyright: ignore
 
     class SettingsWithoutUnderscore(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="TESTNOUNDER")
+        model_config = SettingsConfigDict(env_prefix="TESTNOUNDER")  # pyright: ignore
 
     # 4. Test prefix with underscore (covers lines 64-66, true branch)
     source_with_underscore = TomlConfigSettingsSource(SettingsWithUnderscore)
@@ -176,7 +182,9 @@ field_name = "direct_test_value"
     assert result[0] == "direct_test_value"  # Value found
 
 
-def test_toml_config_source_field_case_variations(monkeypatch, tmp_path: Path):
+def test_toml_config_source_field_case_variations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test TomlConfigSettingsSource field name case variations.
     This covers lines 75 and 77 in get_field_value method.
@@ -197,7 +205,7 @@ ExactCase = "exact_case_value"
 
     # 3. Create a settings class
     class TestCaseSettings(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="TESTCASE_")
+        model_config = SettingsConfigDict(env_prefix="TESTCASE_")  # pyright: ignore
 
     # 4. Test finding field by uppercase name (line 75)
     source = TomlConfigSettingsSource(TestCaseSettings)
@@ -219,7 +227,9 @@ def test_app_settings_invalid_log_level():
         AppSettings(LOG_LEVEL="INVALID")
 
 
-def test_toml_config_source_case_fallback_to_exact_match(monkeypatch, tmp_path: Path):
+def test_toml_config_source_case_fallback_to_exact_match(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test TomlConfigSettingsSource field name case fallback logic.
     This covers lines 73-77: when lowercase and uppercase don't match,
@@ -240,7 +250,7 @@ MixedCase_Field = "exact_match_value"
 
     # Create a settings class
     class TestFallbackSettings(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="TESTFALLBACK_")
+        model_config = SettingsConfigDict(env_prefix="TESTFALLBACK_")  # pyright: ignore
 
     # Test finding field by exact case when lower/upper don't match
     source = TomlConfigSettingsSource(TestFallbackSettings)
@@ -254,7 +264,9 @@ MixedCase_Field = "exact_match_value"
     assert result[0] == "exact_match_value"
 
 
-def test_toml_config_source_get_field_value_return_format(monkeypatch, tmp_path: Path):
+def test_toml_config_source_get_field_value_return_format(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test that TomlConfigSettingsSource.get_field_value returns the correct tuple format.
     This specifically tests line 79 to ensure the return statement is executed.
@@ -274,7 +286,7 @@ test_field = "test_value"
 
     # Create a settings class
     class TestReturnSettings(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="TESTRETURN_")
+        model_config = SettingsConfigDict(env_prefix="TESTRETURN_")  # pyright: ignore
 
     # Test that get_field_value returns the correct tuple format
     source = TomlConfigSettingsSource(TestReturnSettings)
@@ -291,7 +303,9 @@ test_field = "test_value"
     assert result[2] is False  # always False as per line 79
 
 
-def test_toml_config_source_get_field_value_none_return(monkeypatch, tmp_path: Path):
+def test_toml_config_source_get_field_value_none_return(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     """
     Test that TomlConfigSettingsSource.get_field_value returns None when field not found.
     This ensures line 79 is covered when field_value is None.
@@ -311,7 +325,7 @@ other_field = "other_value"
 
     # Create a settings class
     class TestReturnSettings(HonchoSettings):
-        model_config = SettingsConfigDict(env_prefix="TESTRETURN_")
+        model_config = SettingsConfigDict(env_prefix="TESTRETURN_")  # pyright: ignore
 
     # Test that get_field_value returns None when field not found
     source = TomlConfigSettingsSource(TestReturnSettings)

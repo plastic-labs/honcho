@@ -57,7 +57,7 @@ class TestSecurity:
 
     @pytest.mark.asyncio
     async def test_verify_jwt_raises_authentication_exception_when_token_expired(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ):
         """Test that verify_jwt raises AuthenticationException when JWT is expired (covers lines 96-101)."""
         # Set up the JWT secret
@@ -77,7 +77,7 @@ class TestSecurity:
 
     @pytest.mark.asyncio
     async def test_verify_jwt_raises_authentication_exception_when_iso_token_expired(
-        self, monkeypatch
+        self, monkeypatch: pytest.MonkeyPatch
     ):
         """Test that verify_jwt raises AuthenticationException when JWT with ISO exp string is expired (covers line 101)."""
         # Set up the JWT secret

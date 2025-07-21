@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,8 +22,8 @@ def test_db_engine_kwargs_null_pool():
         importlib.reload(src.db)
 
         # Verify that poolclass is set to NullPool
-        assert "poolclass" in src.db.engine_kwargs
-        assert src.db.engine_kwargs["poolclass"] is NullPool
+        assert "poolclass" in src.db.engine_kwargs  # pyright: ignore
+        assert src.db.engine_kwargs["poolclass"] is NullPool  # pyright: ignore
 
 
 def test_db_engine_kwargs_default_pool():
@@ -48,13 +49,13 @@ def test_db_engine_kwargs_default_pool():
         importlib.reload(src.db)
 
         # Verify that poolclass is NOT set but other pool settings are
-        assert "poolclass" not in src.db.engine_kwargs
-        assert src.db.engine_kwargs["pool_pre_ping"] is True
-        assert src.db.engine_kwargs["pool_size"] == 5
-        assert src.db.engine_kwargs["max_overflow"] == 10
-        assert src.db.engine_kwargs["pool_timeout"] == 20
-        assert src.db.engine_kwargs["pool_recycle"] == 300
-        assert src.db.engine_kwargs["pool_use_lifo"] is False
+        assert "poolclass" not in src.db.engine_kwargs  # pyright: ignore
+        assert src.db.engine_kwargs["pool_pre_ping"] is True  # pyright: ignore
+        assert src.db.engine_kwargs["pool_size"] == 5  # pyright: ignore
+        assert src.db.engine_kwargs["max_overflow"] == 10  # pyright: ignore
+        assert src.db.engine_kwargs["pool_timeout"] == 20  # pyright: ignore
+        assert src.db.engine_kwargs["pool_recycle"] == 300  # pyright: ignore
+        assert src.db.engine_kwargs["pool_use_lifo"] is False  # pyright: ignore
 
 
 @pytest.mark.asyncio
@@ -64,16 +65,16 @@ async def test_init_db_imports():
     from importlib import reload
 
     # Track what modules are imported
-    original_import = (
+    original_import = (  # pyright: ignore
         __builtins__["__import__"]
         if isinstance(__builtins__, dict)
         else __builtins__.__import__
     )
     imported_modules = []
 
-    def tracking_import(name, *args, **kwargs):
-        imported_modules.append(name)
-        return original_import(name, *args, **kwargs)
+    def tracking_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        imported_modules.append(name)  # pyright: ignore
+        return original_import(name, *args, **kwargs)  # pyright: ignore
 
     # Create a mock alembic config to avoid actual migration
     mock_config = MagicMock()
@@ -110,47 +111,6 @@ async def test_init_db_imports():
 
 
 @pytest.mark.asyncio
-async def test_init_db_connection_context_manager():
-    """Test that init_db properly opens and uses database connection (covers line 59)."""
-    from src.db import init_db
-
-    # Create mock alembic components
-    mock_config = MagicMock()
-
-    with (
-        patch("alembic.config.Config", return_value=mock_config),
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
-        patch("src.db.engine") as mock_engine,
-    ):
-        # Setup mock connection that tracks context manager usage
-        mock_connection = AsyncMock()
-        mock_context_manager = AsyncMock()
-        mock_context_manager.__aenter__.return_value = mock_connection
-        mock_context_manager.__aexit__.return_value = None
-        mock_engine.connect.return_value = mock_context_manager
-
-        # Call init_db
-        await init_db()
-
-        # Verify that engine.connect() was called (line 59)
-        mock_engine.connect.assert_called_once()
-
-        # Verify that the connection context manager was properly entered
-        mock_context_manager.__aenter__.assert_called_once()
-
-        # Verify that SQL commands were executed on the connection
-        assert (
-            mock_connection.execute.call_count >= 2
-        )  # At least schema creation and extension
-
-        # Verify that commit was called
-        mock_connection.commit.assert_called_once()
-
-        # Verify that the context manager was properly exited
-        mock_context_manager.__aexit__.assert_called_once()
-
-
-@pytest.mark.asyncio
 async def test_init_db_creates_schema():
     """Test that init_db executes CREATE SCHEMA IF NOT EXISTS command (covers line 61)."""
     from src.db import init_db
@@ -160,7 +120,7 @@ async def test_init_db_creates_schema():
 
     with (
         patch("alembic.config.Config", return_value=mock_config),
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
+        patch("alembic.command.upgrade"),
         patch("src.db.engine") as mock_engine,
         patch("src.db.table_schema", "test_schema"),
     ):
@@ -177,7 +137,7 @@ async def test_init_db_creates_schema():
         # Verify that the schema creation SQL was executed (line 61)
         schema_call_found = False
         for call in mock_connection.execute.call_args_list:
-            args, kwargs = call
+            args, _kwargs = call
             if len(args) > 0:
                 sql_text = str(args[0])
                 if 'CREATE SCHEMA IF NOT EXISTS "test_schema"' in sql_text:
@@ -199,7 +159,7 @@ async def test_init_db_creates_vector_extension():
 
     with (
         patch("alembic.config.Config", return_value=mock_config),
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
+        patch("alembic.command.upgrade"),
         patch("src.db.engine") as mock_engine,
     ):
         # Setup mock connection
@@ -215,7 +175,7 @@ async def test_init_db_creates_vector_extension():
         # Verify that the vector extension creation SQL was executed (line 63)
         vector_extension_call_found = False
         for call in mock_connection.execute.call_args_list:
-            args, kwargs = call
+            args, _kwargs = call
             if len(args) > 0:
                 sql_text = str(args[0])
                 if "CREATE EXTENSION IF NOT EXISTS vector" in sql_text:
@@ -237,7 +197,7 @@ async def test_init_db_commits_transaction():
 
     with (
         patch("alembic.config.Config", return_value=mock_config),
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
+        patch("alembic.command.upgrade"),
         patch("src.db.engine") as mock_engine,
     ):
         # Setup mock connection
@@ -264,7 +224,7 @@ async def test_init_db_database_operations_sequence():
 
     with (
         patch("alembic.config.Config", return_value=mock_config),
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
+        patch("alembic.command.upgrade"),
         patch("src.db.engine") as mock_engine,
         patch("src.db.table_schema", "test_schema"),
     ):
@@ -290,7 +250,7 @@ async def test_init_db_database_operations_sequence():
         vector_call_found = False
 
         for call in execute_calls:
-            args, kwargs = call
+            args, _kwargs = call
             if len(args) > 0:
                 sql_text = str(args[0])
                 if 'CREATE SCHEMA IF NOT EXISTS "test_schema"' in sql_text:
@@ -314,7 +274,7 @@ async def test_init_db_alembic_config_creation():
 
     with (
         patch("alembic.config.Config", return_value=mock_config) as mock_config_class,
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
+        patch("alembic.command.upgrade"),
         patch("src.db.engine") as mock_engine,
     ):
         # Setup mock connection
@@ -341,7 +301,7 @@ async def test_init_db_alembic_upgrade_command():
 
     with (
         patch("alembic.config.Config", return_value=mock_config),
-        patch("alembic.command.upgrade") as mock_upgrade,  # noqa: F841
+        patch("alembic.command.upgrade") as mock_upgrade,
         patch("src.db.engine") as mock_engine,
     ):
         # Setup mock connection

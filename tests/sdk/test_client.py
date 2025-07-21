@@ -838,7 +838,7 @@ def test_client_repr(client: TestClient):
 
     # Verify the format and content of the repr string
     # Get the actual base_url from the client to match against
-    actual_base_url = str(honcho_client._client.base_url)
+    actual_base_url = str(honcho_client._client.base_url)  # pyright: ignore
     expected_repr = (
         f"Honcho(workspace_id='test-workspace-repr', base_url='{actual_base_url}')"
     )
@@ -876,7 +876,7 @@ def test_client_repr_with_long_workspace_id(client: TestClient):
     repr_result = repr(honcho_client)
 
     # Verify the format and content of the repr string
-    actual_base_url = str(honcho_client._client.base_url)
+    actual_base_url = str(honcho_client._client.base_url)  # pyright: ignore
     expected_repr = (
         f"Honcho(workspace_id='{long_workspace_id}', base_url='{actual_base_url}')"
     )
@@ -910,7 +910,7 @@ def test_client_repr_with_numeric_workspace_id(client: TestClient):
     repr_result = repr(honcho_client)
 
     # Verify the format and content of the repr string
-    actual_base_url = str(honcho_client._client.base_url)
+    actual_base_url = str(honcho_client._client.base_url)  # pyright: ignore
     expected_repr = (
         f"Honcho(workspace_id='{numeric_workspace_id}', base_url='{actual_base_url}')"
     )
@@ -951,7 +951,7 @@ def test_client_repr_multiple_calls(client: TestClient):
     assert repr_result_2 == repr_result_3
 
     # Verify the format is correct
-    actual_base_url = str(honcho_client._client.base_url)
+    actual_base_url = str(honcho_client._client.base_url)  # pyright: ignore
     expected_repr = f"Honcho(workspace_id='test-workspace-multiple-calls', base_url='{actual_base_url}')"
     assert repr_result_1 == expected_repr
 

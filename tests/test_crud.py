@@ -349,7 +349,7 @@ async def test_update_workspace_with_empty_configuration(db_session: AsyncSessio
     await crud.get_or_create_workspace(db_session, workspace_create)
 
     # Update with empty configuration (still not None, so should trigger lines 117-118)
-    workspace_update = schemas.WorkspaceUpdate(configuration=empty_configuration)
+    workspace_update = schemas.WorkspaceUpdate(configuration=empty_configuration)  # pyright: ignore
 
     # Call update_workspace function that contains lines 117-118
     result = await crud.update_workspace(db_session, workspace_name, workspace_update)
@@ -446,7 +446,7 @@ async def test_get_all_workspaces_with_empty_filters():
     filters = {}
 
     # Call the function with empty filters
-    stmt = await crud.get_all_workspaces(filters=filters)
+    stmt = await crud.get_all_workspaces(filters=filters)  # pyright: ignore
 
     # Verify the statement is built correctly
     # Line 86: stmt = select(models.Workspace)

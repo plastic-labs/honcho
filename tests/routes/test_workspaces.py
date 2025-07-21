@@ -261,7 +261,7 @@ def test_search_workspace_nonexistent(client: TestClient):
     assert response.status_code == 200
 
 
-def test_get_or_create_workspace_no_name_no_jwt_workspace(client):
+def test_get_or_create_workspace_no_name_no_jwt_workspace(client: TestClient):
     """Test workspace creation with no name and no workspace in JWT"""
 
     # Try to create workspace with empty name and empty JWT

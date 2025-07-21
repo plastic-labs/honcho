@@ -96,14 +96,11 @@ async def test_session_context_to_openai_with_peer_object(
 
 
 @pytest.mark.asyncio
-async def test_session_context_to_openai_with_string_assistant(
-    client_fixture: tuple[Honcho | AsyncHoncho, str],
-):
+async def test_session_context_to_openai_with_string_assistant():
     """
     Test SessionContext.to_openai method with a string as assistant parameter.
     This test covers the else branch in line 79 where assistant is used directly as string.
     """
-    honcho_client, client_type = client_fixture
     session_id = "test-session-context-string"
 
     # Create test messages with different peer IDs

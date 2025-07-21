@@ -98,7 +98,7 @@ async def test_async_peer_create_without_config():
     assert isinstance(peer, AsyncPeer)
     assert peer.id == "test-peer-id"
     assert peer.workspace_id == "test-workspace-id"
-    assert peer._client is mock_client
+    assert peer._client is mock_client  # pyright: ignore
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,10 @@ async def test_async_peer_create_with_config():
     mock_client.workspaces.peers.get_or_create = AsyncMock()
 
     # Define test config
-    test_config = {"feature_flags": {"test_flag": True}, "model": "gpt-4"}
+    test_config: dict[str, object] = {
+        "feature_flags": {"test_flag": True},
+        "model": "gpt-4",
+    }
 
     # Call the create method with config
     peer = await AsyncPeer.create(
@@ -129,7 +132,7 @@ async def test_async_peer_create_with_config():
     assert isinstance(peer, AsyncPeer)
     assert peer.id == "test-peer-with-config"
     assert peer.workspace_id == "test-workspace"
-    assert peer._client is mock_client
+    assert peer._client is mock_client  # pyright: ignore
 
     # Verify get_or_create was called with the correct parameters
     mock_client.workspaces.peers.get_or_create.assert_called_once_with(
@@ -228,7 +231,7 @@ async def test_peer_chat_empty_response(
         # Test with empty string response
         mock_response = Mock()
         mock_response.content = ""
-        peer._client.workspaces.peers.chat = AsyncMock(return_value=mock_response)
+        peer._client.workspaces.peers.chat = AsyncMock(return_value=mock_response)  # pyright: ignore
         result = await peer.chat("test question")
         assert result is None
 
@@ -250,7 +253,7 @@ async def test_peer_chat_empty_response(
         # Test with empty string response
         mock_response = Mock()
         mock_response.content = ""
-        peer._client.workspaces.peers.chat = Mock(return_value=mock_response)
+        peer._client.workspaces.peers.chat = Mock(return_value=mock_response)  # pyright: ignore
         result = peer.chat("test question")
         assert result is None
 
