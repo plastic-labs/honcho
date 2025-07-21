@@ -57,7 +57,6 @@ def upgrade() -> None:
         print(
             f"Found {len(workspace_peer_combinations)} workspace-peer combinations with orphaned messages"
         )
-
         # Step 3: Create individual sessions for each workspace-peer combination
         for workspace_name, peer_name in workspace_peer_combinations:
             default_session_name = f"default_session_{peer_name}"
@@ -67,7 +66,7 @@ def upgrade() -> None:
                 f"Creating default session '{default_session_name}' for workspace '{workspace_name}' and peer '{peer_name}'"
             )
 
-            # Create the default session
+            # Create the default session (ON CONFLICT DO NOTHING to handle existing sessions)
             op.execute(
                 sa.text(f"""
                     INSERT INTO {schema}.sessions (id, name, workspace_name, is_active, metadata, internal_metadata, configuration, created_at)
@@ -77,14 +76,15 @@ def upgrade() -> None:
                         '{workspace_name}',
                         true,
                         '{{}}',
-                        '{{"Default session created for orphaned messages from peer {peer_name}"}}',
+                        '{{"migration note" : "Default session created for orphaned messages from peer {peer_name}"}}',
                         '{{}}',
                         NOW()
                     )
+                    ON CONFLICT (name, workspace_name) DO NOTHING
                 """)
             )
 
-            # Step 3.5: Create session peer association for this peer
+            # Step 3.5: Create session peer association for this peer (ON CONFLICT DO NOTHING to handle existing associations)
             op.execute(
                 sa.text(f"""
                     INSERT INTO {schema}.session_peers (workspace_name, session_name, peer_name, configuration, internal_metadata, joined_at, left_at)
@@ -97,6 +97,7 @@ def upgrade() -> None:
                         NOW(),
                         NULL
                     )
+                    ON CONFLICT (workspace_name, session_name, peer_name) DO NOTHING
                 """)
             )
             print(
