@@ -192,6 +192,56 @@ This is a development server that will reload whenever code is changed. When
 first launching the API with a connection to the database it will provision the
 necessary tables for Honcho to operate.
 
+### Pre-commit Hooks
+
+Honcho uses pre-commit hooks to ensure code quality and consistency across the project. These hooks automatically run checks on your code before each commit, including linting, formatting, type checking, and security scans.
+
+#### Installation
+
+To set up pre-commit hooks in your development environment:
+
+1. **Install pre-commit using uv**
+
+```bash
+uv add --dev pre-commit
+```
+
+2. **Install the pre-commit hooks**
+
+```bash
+uv run pre-commit install
+uv run pre-commit install --hook-type pre-push
+```
+
+This will install hooks for `pre-commit`, `commit-msg`, and `pre-push` stages.
+
+#### What the hooks do
+
+The pre-commit configuration includes:
+
+- **Code Quality**: Python linting and formatting (ruff), TypeScript linting (biome)
+- **Type Checking**: Static type analysis with basedpyright
+- **Security**: Vulnerability scanning with bandit
+- **Documentation**: Markdown linting and license header checks
+- **Testing**: Automated test runs for Python and TypeScript code
+- **File Hygiene**: Trailing whitespace, line endings, file size checks
+- **Commit Standards**: Conventional commit message validation
+
+#### Manual execution
+
+You can run the hooks manually on all files without making a commit:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+Or run specific hooks:
+
+```bash
+uv run pre-commit run ruff --all-files
+uv run pre-commit run basedpyright --all-files
+```
+
 ### Docker
 
 As mentioned earlier a `docker-compose` template is included for running Honcho.
