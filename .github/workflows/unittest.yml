@@ -63,41 +63,23 @@ jobs:
   test-typescript:
     runs-on: ubuntu-latest
 
-    services:
-      database:
-        image: pgvector/pgvector:pg15
-        env:
-          POSTGRES_DB: test_db
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_HOST_AUTH_METHOD: trust
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: 'sdks/typescript/package-lock.json'
+          bun-version: latest
 
       - name: Install TypeScript SDK dependencies
         run: |
           cd sdks/typescript
-          npm ci
+          bun install
 
       - name: Run TypeScript SDK tests
         run: |
           cd sdks/typescript
-          npm test
+          bun test
         env:
           HONCHO_API_KEY: test-key
           HONCHO_BASE_URL: http://localhost:8000
