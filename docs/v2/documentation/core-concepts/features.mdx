@@ -13,17 +13,13 @@ Peers in Honcho are abstract entities that can represent humans, agents, or NPCs
 - **Local Representation**: The representation that a Peer forms of other Peers, based on the messages those other Peers have sent (as observed by the Peer forming the representation).
 - At the Session level, you can configure which Peers are able to observe messages from other Peers in that Session. This determines which Peers form representations of others within the Session.
 
-### Ingest Arbitrary Data
-To facilitate the construction of a Peer's global representation, Honcho is able to ingest arbitrary data to a Peer by adding messages to the Peer directly, outside of the context of a Session.
-- Currently, Honcho supports the ingestion of arbitrary text data.
-
 ### Queue Status
 To help developers understand when a Peer's representation is fully up to date, Honcho exposes the ability to poll the status of Peer-centric queues that construct representations.
 - If no Session is specified, the queue status reflects pending work for the Peer's global representation.
 - If a Session is specified, the queue status reflects pending work for the Peer's working representation in that Session.
 
 ### Search
-Honcho supports full-text search across message content across different scopes.
+Honcho supports full-text search across message content in different scopes.
 - You can search within a specific Session, Peer, or across all messages in a Workspace.
 - Search results are ordered by relevance, making it easy to quickly retrieve important past messages.
 

@@ -209,8 +209,10 @@ uv add --dev pre-commit
 2. **Install the pre-commit hooks**
 
 ```bash
-uv run pre-commit install
-uv run pre-commit install --hook-type pre-push
+uv run pre-commit install \
+    --hook-type pre-commit \
+    --hook-type commit-msg \
+    --hook-type pre-push
 ```
 
 This will install hooks for `pre-commit`, `commit-msg`, and `pre-push` stages.

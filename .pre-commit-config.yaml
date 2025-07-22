@@ -58,7 +58,7 @@ repos:
         name: basedpyright
         entry: uv run basedpyright
         language: system
-        files: ^(src/|tests/|sdks/python/).*\.py$
+        files: ^(src/|tests/|sdks/python/|scripts/).*\.py$
         require_serial: true
         pass_filenames: false
 
