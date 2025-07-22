@@ -178,11 +178,8 @@ class Message(Base):
         TEXT, index=True, unique=True, default=generate_nanoid
     )
     # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
-    # This is no longer the case, so in the future `session_name` will be required.
-    # Peer-level search will be able to retrieve any message with peer as author and
-    # derived facts are retained, so these messages are not abandoned. A future migration
-    # may assign them all to a default session of some kind.
-    session_name: Mapped[str | None] = mapped_column(index=True, nullable=True)
+    # We have since assigned all of these messages to a default session.
+    session_name: Mapped[str] = mapped_column(index=True, nullable=False)
     content: Mapped[str] = mapped_column(TEXT)
     h_metadata: Mapped[dict[str, Any]] = mapped_column("metadata", JSONB, default=dict)
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
@@ -247,7 +244,7 @@ class MessageEmbedding(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    session_name: Mapped[str] = mapped_column(TEXT, index=True, nullable=False)
     peer_name: Mapped[str | None] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -305,7 +302,7 @@ class Collection(Base):
         ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
-        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("length(name) <= 1025", name="name_length"),
         # Composite foreign key constraint for peers
         ForeignKeyConstraint(
             ["peer_name", "workspace_name"],
