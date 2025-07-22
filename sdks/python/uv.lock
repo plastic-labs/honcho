@@ -96,7 +96,7 @@ wheels = [
 
 [[package]]
 name = "honcho-ai"
-version = "1.2.1"
+version = "1.2.2"
 source = { editable = "." }
 dependencies = [
     { name = "honcho-core" },

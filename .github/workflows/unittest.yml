@@ -3,14 +3,60 @@ name: FastAPI Tests with PostgreSQL and uv
 on:
   push:
     branches: [main]
+    paths:
+      - '**.py'
+      - '**.ts'
+      - '**.js'
+      - '**.tsx'
+      - '**.jsx'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'sdks/typescript/package.json'
+      - 'sdks/typescript/bun.lock'
+      - '.github/workflows/unittest.yml'
   pull_request:
     branches: [main]
+    paths:
+      - '**.py'
+      - '**.ts'
+      - '**.js'
+      - '**.tsx'
+      - '**.jsx'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'sdks/typescript/package.json'
+      - 'sdks/typescript/bun.lock'
+      - '.github/workflows/unittest.yml'
 
 permissions:
   contents: read
 
 jobs:
+  # Determine which tests to run based on changed files
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - '**.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'migrations/**'
+              - '.github/workflows/unittest.yml'
+            typescript:
+              - 'sdks/typescript/**'
+              - '.github/workflows/unittest.yml'
+
   test-python:
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
     runs-on: ubuntu-latest
 
     services:
@@ -64,6 +110,8 @@ jobs:
           SUMMARY_MODEL: test
 
   test-typescript:
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -86,3 +134,22 @@ jobs:
         env:
           HONCHO_API_KEY: test-key
           HONCHO_BASE_URL: http://localhost:8000
+
+  # Status check for branch protection rules
+  # This job always runs and reports success only if all required jobs pass
+  test-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-python, test-typescript]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          if [[ "${{ needs.changes.outputs.python }}" == "true" && "${{ needs.test-python.result }}" != "success" && "${{ needs.test-python.result }}" != "skipped" ]]; then
+            echo "Python tests failed or were cancelled"
+            exit 1
+          fi
+          if [[ "${{ needs.changes.outputs.typescript }}" == "true" && "${{ needs.test-typescript.result }}" != "success" && "${{ needs.test-typescript.result }}" != "skipped" ]]; then
+            echo "TypeScript tests failed or were cancelled"
+            exit 1
+          fi
+          echo "All required tests passed!"

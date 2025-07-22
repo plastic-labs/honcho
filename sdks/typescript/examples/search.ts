@@ -2,7 +2,7 @@ import { Honcho } from '../src';
 
 /**
  * Example demonstrating search functionality across different scopes.
- * 
+ *
  * This creates sessions with special keywords and demonstrates
  * searching at session, workspace, and peer levels.
  */
@@ -74,4 +74,4 @@ async function main() {
 
 main().catch((err) => {
   console.error('Error running search example:', err);
-}); 
+});

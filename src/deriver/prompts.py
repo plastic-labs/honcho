@@ -46,17 +46,17 @@ Your goal is to IMPROVE understanding of the user through careful analysis. Your
 Here are strict definitions for the reasoning modes you are to employ:
 
 1. **EXPLICIT REASONING**:
-    - Conclusions about the user that MUST be true given premises ONLY of the following types: 
+    - Conclusions about the user that MUST be true given premises ONLY of the following types:
         - Most recent user message
         - Knowledge about the conversation history
-        - Current date and time (which is: {message_created_at}) 
+        - Current date and time (which is: {message_created_at})
         - Timestamps from conversation history
 2. **DEDUCTIVE REASONING**:
-    - Conclusions about the user that MUST be true given premises ONLY of the following types: 
-        - Explicit conclusions 
-        - Previous deductive conclusions 
-        - General, open domain knowledge known to be true 
-        - Current date and time (which is: {message_created_at}) 
+    - Conclusions about the user that MUST be true given premises ONLY of the following types:
+        - Explicit conclusions
+        - Previous deductive conclusions
+        - General, open domain knowledge known to be true
+        - Current date and time (which is: {message_created_at})
         - Timestamps for user messages, and previous premises and conclusions
 
 Here's the current user understanding

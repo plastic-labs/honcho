@@ -45,7 +45,7 @@ PROFILES_SAMPLE_RATE = 0.1
 [llm]
 DEFAULT_MAX_TOKENS = 2500
 
-# API Keys for LLM providers 
+# API Keys for LLM providers
 # ANTHROPIC_API_KEY = "your-api-key"
 # OPENAI_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_API_KEY = "your-api-key"

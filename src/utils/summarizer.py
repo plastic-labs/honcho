@@ -127,7 +127,7 @@ Return only the summary without any explanation or meta-commentary.
 {_format_messages(messages)}
 </conversation>
 
-<previous_summary>  
+<previous_summary>
 {previous_summary or ""}
 </previous_summary>
 """

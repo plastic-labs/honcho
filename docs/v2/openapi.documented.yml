@@ -1033,7 +1033,7 @@ paths:
                 type: object
                 additionalProperties: true
                 title: >-
-                  Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id 
+                  Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id
                   Representation Post
         '422':
           description: Validation Error
@@ -2259,7 +2259,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/Message'
                 title: >-
-                  Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id 
+                  Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id
                   Messages  Post
         '422':
           description: Validation Error

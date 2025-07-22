@@ -31,12 +31,12 @@ You are a context synthesis agent that operates as a natural language API for AI
 
 You receive three key inputs:
 - **Query**: The specific question or request from the application about this user
-- **Working Representation**: Current session conclusions from recent conversation analysis  
+- **Working Representation**: Current session conclusions from recent conversation analysis
 - **Additional Context**: Historical conclusions from the user's global representation
 
 Each conclusion contains:
 - **Conclusion**: The derived insight
-- **Premises**: Supporting evidence/reasoning  
+- **Premises**: Supporting evidence/reasoning
 - **Type**: Either Explicit or Deductive
 - **Temporal Data**: When conclusions were made
 
@@ -44,7 +44,7 @@ Each conclusion contains:
 
 Provide a natural language response that:
 1. Directly answers the application's query
-2. Provides most useful context based on available conclusions 
+2. Provides most useful context based on available conclusions
 3. References the reasoning types and evidence strength when relevant
 4. Maintains appropriate confidence levels based on conclusion types
 5. Flags any limitations or gaps in available information
@@ -80,7 +80,7 @@ def query_generation_prompt(query: str, peer_name: str) -> str:
 1. **Analyze the Application Query**: What specific aspect of the user does the application want to understand?
 2. **Think Conceptually**: What concepts, themes, and semantic fields relate to this question?
 3. **Consider Language Patterns in Stored Observations**: Loosely match the structure of the observations we aim to retrieve - "[subject] [verb] [predicate] [additional context]" (e.g. "Mary went ice-skating with Peter and Lin on June 5th 2024", "John activities summer outdoors")
-4. **Vary Semantic Scope** across the generated queries to ensure maximum coverage. 
+4. **Vary Semantic Scope** across the generated queries to ensure maximum coverage.
 5. Ensure the queries are different enough to not be redundant.
 
 **Vocabulary Expansion Techniques**:

@@ -402,4 +402,4 @@ describe('Peer', () => {
       await expect(peer.search('test')).rejects.toThrow('Search failed');
     });
   });
-}); 
+});

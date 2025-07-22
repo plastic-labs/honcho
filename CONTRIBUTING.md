@@ -18,11 +18,14 @@ Before you start contributing, please:
 
 1. Fork the repository on GitHub
 2. Clone your fork locally:
+
    ```bash
    git clone https://github.com/YOUR_USERNAME/honcho.git
    cd honcho
    ```
+
 3. Add the upstream repository as a remote:
+
    ```bash
    git remote add upstream https://github.com/plastic-labs/honcho.git
    ```

@@ -37,4 +37,3 @@ console.log(response);
 ```
 
 See `examples/` for more.
-

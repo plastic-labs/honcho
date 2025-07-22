@@ -4,26 +4,26 @@ description: 'Learn the core primitives and the structure of Honcho'
 icon: 'building'
 ---
 
-Honcho is a user context management system for AI powered applications. 
-The storage concepts are inspired by, but not a 1:1 mapping of, the OpenAI 
-Assistants API. The insights concepts are inspired by cognitive science, 
+Honcho is a user context management system for AI-powered applications.
+The storage concepts are inspired by, but not a 1:1 mapping of, the OpenAI
+Assistants API. The insights concepts are inspired by cognitive science,
 philosophy, and machine learning.
 
 Honcho is open source. We believe trust and transparency are vital for
 developing AI technology. We're also focused on using and supporting existing
 tools rather than developing from scratch.
 
-We focus on flexible, user-centric storage primitives to promote community 
-exploration of novel memory frameworks and the usage of the 
-[Dialectic API](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API) 
-to support them. Language models are highly capable of modeling human psychology. 
-By building a data management framework that is user-centric, we aim to address 
-not only practical application development issues (like scaling, statefulness, 
-etc.) but also kickstart exploration of the design space of what's possible 
-given access to rich user models. You can read more about Honcho's origin, 
+We focus on flexible, user-centric storage primitives to promote community
+exploration of novel memory frameworks and the usage of the
+[Dialectic API](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API)
+to support them. Language models are highly capable of modeling human psychology.
+By building a data management framework that is user-centric, we aim to address
+not only practical application development issues (like scaling, statefulness,
+etc.) but also kickstart exploration of the design space of what's possible
+given access to rich user models. You can read more about Honcho's origin,
 inspiration and philosophy on our [blog](https://blog.plasticlabs.ai).
 
-## Core Primitives 
+## Core Primitives
 
 Using Honcho has the following flow:
 1. Initialize your `Honcho` instance and `App`
@@ -53,7 +53,7 @@ erDiagram
         datetime created_at
         jsonb h_metadata "metadata"
     }
-    
+
     User {
         BigInteger id PK
         string public_id
@@ -62,7 +62,7 @@ erDiagram
         datetime created_at
         string app_id FK
     }
-    
+
     Session {
         BigInteger id PK
         string public_id
@@ -71,7 +71,7 @@ erDiagram
         datetime created_at
         string user_id FK
     }
-    
+
     Message {
         BigInteger id PK
         string public_id
@@ -81,7 +81,7 @@ erDiagram
         jsonb h_metadata "metadata"
         datetime created_at
     }
-    
+
     Metamessage {
         BigInteger id PK
         string public_id
@@ -93,7 +93,7 @@ erDiagram
         datetime created_at
         jsonb h_metadata "metadata"
     }
-    
+
     Collection {
         BigInteger id PK
         string public_id
@@ -102,7 +102,7 @@ erDiagram
         jsonb h_metadata "metadata"
         string user_id FK
     }
-    
+
     Document {
         BigInteger id PK
         string public_id
@@ -121,30 +121,30 @@ An `App` is the highest-level primitive in Honcho. It is the scope that all of y
 ### Users
 
 The `User` object is the main interface for managing a User's context. With it
-you can interface with the `User`'s `Session`s and `Collections`s directly. 
+you can interface with the `User`'s `Session`s and `Collections`s directly.
 
-### Sessions 
+### Sessions
 
 The `Session` object is useful for organizing your interactions with `User`s.
 Different `User`s can have different sessions enabling you to neatly segment user
 context. It also accepts a `location_id` parameter which can specifically
-denote *where* users' sessions are taking place. 
+denote *where* users' sessions are taking place.
 
-### Messages 
+### Messages
 
 Sessions are made up of `Message` objects. You can append them to sessions.
 This is pretty straightforward.
 
 ### Metamessages
 
-Success in LLM applications is dependent on elegant context management, so we 
-provide a `Metamessage` object for flexible context storage and construction. Each 
-`Metamessage` is tied to a `User` object via the required `user_id` argument. Keeping 
-this separate from the core user-assistant message history ensures the 
+Success in LLM applications is dependent on elegant context management, so we
+provide a `Metamessage` object for flexible context storage and construction. Each
+`Metamessage` is tied to a `User` object via the required `user_id` argument. Keeping
+this separate from the core user-assistant message history ensures the
 insights service running ambiently is doing so on authentic ground truth
-We've found this particularly useful for storing intermediate inferences, 
-constructing very specific chat histories, and more. Metamessages can optionally be 
-attached to sessions and/or messages, so constructing historical context for inference is 
+We've found this particularly useful for storing intermediate inferences,
+constructing very specific chat histories, and more. Metamessages can optionally be
+attached to sessions and/or messages, so constructing historical context for inference is
 as easy as possible.
 
 ### Collections

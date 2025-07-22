@@ -124,7 +124,7 @@ async def restaurant_recommendation_chat():
     app = await honcho.apps.get_or_create(name="food-app")
     user = await honcho.apps.users.get_or_create(app_id=app.id, name="food-lover")
     session = await honcho.apps.users.sessions.create(app_id=app.id, user_id=user.id)
-    
+
     # Store multiple user messages about food preferences
     user_messages = [
         "I absolutely love spicy Thai food, especially curries with coconut milk.",
@@ -132,7 +132,7 @@ async def restaurant_recommendation_chat():
         "I try to eat vegetarian most of the time, but occasionally enjoy seafood.",
         "I can't handle overly sweet desserts, but love something with dark chocolate."
     ]
-    
+
     # Store the user's messages in the session
     for message in user_messages:
         await honcho.apps.users.sessions.messages.create(
@@ -143,12 +143,12 @@ async def restaurant_recommendation_chat():
             is_user=True
         )
         print(f"User: {message}")
-    
+
     # Ask for restaurant recommendations based on preferences
     print("\nRequesting restaurant recommendations...")
     print("Assistant: ", end="", flush=True)
     full_response = ""
-    
+
     # Stream the response
     with honcho.apps.users.sessions.with_streaming_response.stream(
         app_id=app.id,
@@ -160,7 +160,7 @@ async def restaurant_recommendation_chat():
             print(chunk, end="", flush=True)
             full_response += chunk
             await asyncio.sleep(0.01)
-    
+
     # Store the assistant's complete response
     await honcho.apps.users.sessions.messages.create(
         app_id=app.id,
@@ -183,7 +183,7 @@ async function restaurantRecommendationChat() {
   const app = await honcho.apps.getOrCreate('food-app');
   const user = await honcho.apps.users.getOrCreate(app.id, 'food-lover');
   const session = await honcho.apps.users.sessions.create(app.id, user.id, {});
-  
+
   // Store multiple user messages about food preferences
   const userMessages = [
     "I absolutely love spicy Thai food, especially curries with coconut milk.",
@@ -191,7 +191,7 @@ async function restaurantRecommendationChat() {
     "I try to eat vegetarian most of the time, but occasionally enjoy seafood.",
     "I can't handle overly sweet desserts, but love something with dark chocolate."
   ];
-  
+
   // Store the user's messages in the session
   for (const message of userMessages) {
     await honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
@@ -200,23 +200,23 @@ async function restaurantRecommendationChat() {
     });
     console.log(`User: ${message}`);
   }
-  
+
   // Ask for restaurant recommendations based on preferences
   console.log("\nRequesting restaurant recommendations...");
   process.stdout.write("Assistant: ");
   let fullResponse = "";
-  
+
   // Stream the response
   const stream = await honcho.apps.users.sessions.chat(app.id, user.id, session.id, {
     queries: "Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side.",
     stream: true
   });
-  
+
   for await (const chunk of stream) {
     process.stdout.write(chunk);
     fullResponse += chunk;
   }
-  
+
   // Store the assistant's complete response
   await honcho.apps.users.sessions.messages.create(app.id, user.id, session.id, {
     content: fullResponse,
@@ -237,4 +237,4 @@ When implementing streaming:
 - Be mindful of memory usage when accumulating large responses
 - Use appropriate error handling for network interruptions
 
-Streaming responses provide a more interactive and engaging user experience. By implementing streaming in your Honcho applications, you can create more responsive AI-powered features that feel natural and immediate to your users. 
+Streaming responses provide a more interactive and engaging user experience. By implementing streaming in your Honcho applications, you can create more responsive AI-powered features that feel natural and immediate to your users.
