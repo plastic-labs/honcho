@@ -302,7 +302,7 @@ class Collection(Base):
         ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
-        CheckConstraint("length(name) <= 512", name="name_length"),
+        CheckConstraint("length(name) <= 1024", name="name_length"),
         # Composite foreign key constraint for peers
         ForeignKeyConstraint(
             ["peer_name", "workspace_name"],
