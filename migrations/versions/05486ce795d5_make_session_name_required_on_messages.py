@@ -33,7 +33,7 @@ def upgrade() -> None:
     3. Assigns messages without a session_name to the default sessions
     4. Makes session_name non-nullable on messages table
     5. Makes session_name non-nullable on message_embeddings table
-    6. Updates the collections table name_length check constraint from 512 to 1024 to support peer-namespaced collections
+    6. Updates the collections table name_length check constraint from 512 to 1025 to support peer-namespaced collections
     """
     conn = op.get_bind()
 
@@ -158,13 +158,13 @@ def upgrade() -> None:
     print("Making session_name NOT NULL on message_embeddings table")
     op.alter_column("message_embeddings", "session_name", nullable=False, schema=schema)
 
-    # Step 9: Update the collections table name_length check constraint from 512 to 1024
-    print("Updating collections table name_length check constraint from 512 to 1024")
+    # Step 9: Update the collections table name_length check constraint from 512 to 1025
+    print("Updating collections table name_length check constraint from 512 to 1025")
 
     if constraint_exists("collections", "name_length", "check"):
         op.drop_constraint("name_length", "collections", schema=schema)
     op.create_check_constraint(
-        "name_length", "collections", "length(name) <= 1024", schema=schema
+        "name_length", "collections", "length(name) <= 1025", schema=schema
     )
 
 
@@ -174,9 +174,9 @@ def downgrade() -> None:
     Note: This will not restore the original orphaned messages to their previous state, nor will it
     delete the default sessions created during the upgrade.
     """
-    # Step 1: Revert the collections table name_length check constraint from 1024 back to 512
+    # Step 1: Revert the collections table name_length check constraint from 1025 back to 512
     print(
-        "Reverting collections table name_length check constraint from 1024 back to 512"
+        "Reverting collections table name_length check constraint from 1025 back to 512"
     )
 
     if constraint_exists("collections", "name_length", "check"):
