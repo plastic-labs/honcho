@@ -1,14 +1,5 @@
 import { Honcho } from '@honcho-ai/sdk';
 
-interface Env {
-    // You can add environment variables here if needed
-}
-
-interface ExecutionContext {
-    waitUntil(promise: Promise<any>): void;
-    passThroughOnException(): void;
-}
-
 interface HonchoConfig {
     apiKey: string;
     userName: string;
@@ -47,8 +38,6 @@ interface JsonRpcResponse {
     };
 }
 
-
-
 // MCP Tool definitions
 interface Tool {
     name: string;
@@ -58,6 +47,55 @@ interface Tool {
         properties: Record<string, any>;
         required?: string[];
     };
+}
+
+/**
+ * Helper function to validate required arguments and create error responses
+ */
+function validateArguments(args: Record<string, any>, required: string[], requestId: string | number | null): Response | null {
+    for (const param of required) {
+        if (!args[param]) {
+            return createErrorResponse(requestId, -32602, `${param} is required`);
+        }
+    }
+
+    // Special validation for arrays
+    if (args.messages && !Array.isArray(args.messages)) {
+        return createErrorResponse(requestId, -32602, 'messages must be an array');
+    }
+    if (args.peer_ids && !Array.isArray(args.peer_ids)) {
+        return createErrorResponse(requestId, -32602, 'peer_ids must be an array');
+    }
+
+    return null;
+}
+
+/**
+ * Helper function to create error responses
+ */
+function createErrorResponse(id: string | number | null, code: number, message: string): Response {
+    return new Response(JSON.stringify(createJsonRpcResponse(id, undefined, createJsonRpcError(code, message))), {
+        status: code === -32602 ? 400 : (code === -32601 ? 404 : 500),
+        headers: { 'Content-Type': 'application/json' },
+    });
+}
+
+/**
+ * Helper function to format messages for async iteration
+ */
+async function formatMessages(messagesPage: any): Promise<any[]> {
+    const messages = [];
+    for await (const message of messagesPage) {
+        messages.push({
+            id: message.id,
+            content: message.content,
+            peer_id: message.peer_id,
+            session_id: message.session_id,
+            metadata: message.metadata,
+            created_at: message.created_at?.toISOString(),
+        });
+    }
+    return messages;
 }
 
 class HonchoWorker {
@@ -192,20 +230,7 @@ class HonchoWorker {
      */
     async searchWorkspace(query: string): Promise<any[]> {
         const messagesPage = await this.honcho.search(query);
-        const messages = [];
-
-        for await (const message of messagesPage) {
-            messages.push({
-                id: message.id,
-                content: message.content,
-                peer_id: message.peer_id,
-                session_id: message.session_id,
-                metadata: message.metadata,
-                created_at: message.created_at?.toISOString(),
-            });
-        }
-
-        return messages;
+        return await formatMessages(messagesPage);
     }
 
     /**
@@ -273,18 +298,7 @@ class HonchoWorker {
     async searchPeerMessages(peerId: string, query: string): Promise<any[]> {
         const peer = this.honcho.peer(peerId);
         const messagesPage = await peer.search(query);
-        const messages = [];
-
-        for await (const message of messagesPage) {
-            messages.push({
-                id: message.id,
-                content: message.content,
-                metadata: message.metadata,
-                created_at: message.created_at?.toISOString(),
-            });
-        }
-
-        return messages;
+        return await formatMessages(messagesPage);
     }
 
     /**
@@ -424,20 +438,7 @@ class HonchoWorker {
     async getSessionMessages(sessionId: string, filters?: Record<string, any>): Promise<any[]> {
         const session = this.honcho.session(sessionId);
         const messagesPage = await session.getMessages({ filter: filters });
-        const messages = [];
-
-        for await (const message of messagesPage) {
-            messages.push({
-                id: message.id,
-                content: message.content,
-                peer_id: message.peer_id,
-                session_id: message.session_id,
-                metadata: message.metadata,
-                created_at: message.created_at?.toISOString(),
-            });
-        }
-
-        return messages;
+        return await formatMessages(messagesPage);
     }
 
     /**
@@ -473,19 +474,7 @@ class HonchoWorker {
     async searchSessionMessages(sessionId: string, query: string): Promise<any[]> {
         const session = this.honcho.session(sessionId);
         const messagesPage = await session.search(query);
-        const messages = [];
-
-        for await (const message of messagesPage) {
-            messages.push({
-                id: message.id,
-                content: message.content,
-                peer_id: message.peer_id,
-                metadata: message.metadata,
-                created_at: message.created_at?.toISOString(),
-            });
-        }
-
-        return messages;
+        return await formatMessages(messagesPage);
     }
 
     /**
@@ -1033,10 +1022,223 @@ const tools: Tool[] = [
 ];
 
 /**
+ * Execute a tool with validation and consistent response handling
+ */
+async function executeToolCall(honcho: HonchoWorker, toolName: string, toolArguments: any, requestId: string | number | null): Promise<Response> {
+    let result: any;
+
+    switch (toolName) {
+        // Bespoke tools
+        case 'start_conversation':
+            result = await honcho.startConversation();
+            break;
+
+        case 'add_turn': {
+            const validation = validateArguments(toolArguments, ['session_id', 'messages'], requestId);
+            if (validation) return validation;
+
+            await honcho.addTurn(toolArguments.session_id, toolArguments.messages);
+            result = 'Turn added successfully';
+            break;
+        }
+
+        case 'get_personalization_insights': {
+            const validation = validateArguments(toolArguments, ['session_id', 'query'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getPersonalizationInsights(toolArguments.session_id, toolArguments.query);
+            break;
+        }
+
+        // Workspace operations
+        case 'search_workspace': {
+            const validation = validateArguments(toolArguments, ['query'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.searchWorkspace(toolArguments.query);
+            break;
+        }
+
+        case 'get_workspace_metadata':
+            result = await honcho.getWorkspaceMetadata();
+            break;
+
+        case 'set_workspace_metadata': {
+            const validation = validateArguments(toolArguments, ['metadata'], requestId);
+            if (validation) return validation;
+
+            await honcho.setWorkspaceMetadata(toolArguments.metadata);
+            result = 'Workspace metadata set successfully';
+            break;
+        }
+
+        // Peer operations
+        case 'create_peer': {
+            const validation = validateArguments(toolArguments, ['peer_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.createPeer(toolArguments.peer_id, toolArguments.config);
+            break;
+        }
+
+        case 'get_peer_metadata': {
+            const validation = validateArguments(toolArguments, ['peer_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getPeerMetadata(toolArguments.peer_id);
+            break;
+        }
+
+        case 'set_peer_metadata': {
+            const validation = validateArguments(toolArguments, ['peer_id', 'metadata'], requestId);
+            if (validation) return validation;
+
+            await honcho.setPeerMetadata(toolArguments.peer_id, toolArguments.metadata);
+            result = 'Peer metadata set successfully';
+            break;
+        }
+
+        case 'search_peer_messages': {
+            const validation = validateArguments(toolArguments, ['peer_id', 'query'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.searchPeerMessages(toolArguments.peer_id, toolArguments.query);
+            break;
+        }
+
+        case 'chat': {
+            const validation = validateArguments(toolArguments, ['peer_id', 'query'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.chat(toolArguments.peer_id, toolArguments.query, toolArguments.target_peer_id, toolArguments.session_id);
+            break;
+        }
+
+        case 'list_peers':
+            result = await honcho.listPeers();
+            break;
+
+        // Session operations
+        case 'create_session': {
+            const validation = validateArguments(toolArguments, ['session_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.createSession(toolArguments.session_id, toolArguments.config);
+            break;
+        }
+
+        case 'get_session_metadata': {
+            const validation = validateArguments(toolArguments, ['session_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getSessionMetadata(toolArguments.session_id);
+            break;
+        }
+
+        case 'set_session_metadata': {
+            const validation = validateArguments(toolArguments, ['session_id', 'metadata'], requestId);
+            if (validation) return validation;
+
+            await honcho.setSessionMetadata(toolArguments.session_id, toolArguments.metadata);
+            result = 'Session metadata set successfully';
+            break;
+        }
+
+        case 'add_peers_to_session': {
+            const validation = validateArguments(toolArguments, ['session_id', 'peer_ids'], requestId);
+            if (validation) return validation;
+
+            await honcho.addPeersToSession(toolArguments.session_id, toolArguments.peer_ids);
+            result = 'Peers added to session successfully';
+            break;
+        }
+
+        case 'remove_peers_from_session': {
+            const validation = validateArguments(toolArguments, ['session_id', 'peer_ids'], requestId);
+            if (validation) return validation;
+
+            await honcho.removePeersFromSession(toolArguments.session_id, toolArguments.peer_ids);
+            result = 'Peers removed from session successfully';
+            break;
+        }
+
+        case 'get_session_peers': {
+            const validation = validateArguments(toolArguments, ['session_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getSessionPeers(toolArguments.session_id);
+            break;
+        }
+
+        case 'add_messages_to_session': {
+            const validation = validateArguments(toolArguments, ['session_id', 'messages'], requestId);
+            if (validation) return validation;
+
+            await honcho.addMessagesToSession(toolArguments.session_id, toolArguments.messages);
+            result = 'Messages added to session successfully';
+            break;
+        }
+
+        case 'get_session_messages': {
+            const validation = validateArguments(toolArguments, ['session_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getSessionMessages(toolArguments.session_id, toolArguments.filters);
+            break;
+        }
+
+        case 'get_session_context': {
+            const validation = validateArguments(toolArguments, ['session_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getSessionContext(toolArguments.session_id, toolArguments.summary, toolArguments.tokens);
+            break;
+        }
+
+        case 'search_session_messages': {
+            const validation = validateArguments(toolArguments, ['session_id', 'query'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.searchSessionMessages(toolArguments.session_id, toolArguments.query);
+            break;
+        }
+
+        case 'get_working_representation': {
+            const validation = validateArguments(toolArguments, ['session_id', 'peer_id'], requestId);
+            if (validation) return validation;
+
+            result = await honcho.getWorkingRepresentation(toolArguments.session_id, toolArguments.peer_id, toolArguments.target_peer_id);
+            break;
+        }
+
+        case 'list_sessions':
+            result = await honcho.listSessions();
+            break;
+
+        default:
+            return createErrorResponse(requestId, -32601, `Method not found: ${toolName}`);
+    }
+
+    const responseData = typeof result === 'string' ? result : JSON.stringify(result);
+    return new Response(JSON.stringify(createJsonRpcResponse(requestId, {
+        content: [{
+            type: 'text',
+            text: responseData,
+        }],
+    })), {
+        status: 200,
+        headers: {
+            'Content-Type': 'application/json',
+            'Access-Control-Allow-Origin': '*',
+        },
+    });
+}
+
+/**
  * Main Cloudflare Worker export
  */
 export default {
-    async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    async fetch(request: Request): Promise<Response> {
         // Handle CORS preflight requests
         if (request.method === 'OPTIONS') {
             return new Response(null, {
@@ -1051,10 +1253,7 @@ export default {
 
         // Only accept POST requests for JSON-RPC
         if (request.method !== 'POST') {
-            return new Response(JSON.stringify(createJsonRpcResponse(null, undefined, createJsonRpcError(-32600, 'Invalid Request'))), {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return createErrorResponse(null, -32600, 'Invalid Request');
         }
 
         let requestData: JsonRpcRequest;
@@ -1062,34 +1261,22 @@ export default {
         try {
             requestData = await request.json() as JsonRpcRequest;
         } catch (error) {
-            return new Response(JSON.stringify(createJsonRpcResponse(null, undefined, createJsonRpcError(-32700, 'Parse error'))), {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return createErrorResponse(null, -32700, 'Parse error');
         }
 
         // Validate JSON-RPC format
         if (requestData.jsonrpc !== '2.0') {
-            return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32600, 'Invalid Request'))), {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return createErrorResponse(requestData.id ?? null, -32600, 'Invalid Request');
         }
 
         if (!requestData.method) {
-            return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32600, 'Invalid Request'))), {
-                status: 400,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return createErrorResponse(requestData.id ?? null, -32600, 'Invalid Request');
         }
 
         // Parse configuration
         const config = parseConfig(request);
         if (!config && requestData.method !== 'initialize') {
-            return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'Missing or invalid API key'))), {
-                status: 401,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return createErrorResponse(requestData.id ?? null, -32602, 'Missing or invalid API key');
         }
 
         const honcho = config ? new HonchoWorker(config) : null;
@@ -1097,7 +1284,6 @@ export default {
         try {
             switch (requestData.method) {
                 case 'initialize':
-                    // MCP initialization
                     return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, {
                         protocolVersion: '2024-11-05',
                         capabilities: {
@@ -1125,7 +1311,6 @@ export default {
                     });
 
                 case 'tools/list':
-                    // Return available tools
                     return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, {
                         tools: tools,
                     })), {
@@ -1138,344 +1323,21 @@ export default {
 
                 case 'tools/call':
                     if (!honcho) {
-                        return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'Missing API key'))), {
-                            status: 401,
-                            headers: { 'Content-Type': 'application/json' },
-                        });
+                        return createErrorResponse(requestData.id ?? null, -32602, 'Missing API key');
                     }
 
                     const toolName = requestData.params?.name;
                     const toolArguments = requestData.params?.arguments || {};
 
-                    let result: any;
-
-                    switch (toolName) {
-                        // Bespoke tools
-                        case 'start_conversation':
-                            result = await honcho.startConversation();
-                            break;
-
-                        case 'add_turn':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!Array.isArray(toolArguments.messages)) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'messages must be an array'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.addTurn(toolArguments.session_id, toolArguments.messages);
-                            result = 'Turn added successfully';
-                            break;
-
-                        case 'get_personalization_insights':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.query) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'query is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getPersonalizationInsights(toolArguments.session_id, toolArguments.query);
-                            break;
-
-                        // Workspace operations
-                        case 'search_workspace':
-                            if (!toolArguments.query) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'query is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.searchWorkspace(toolArguments.query);
-                            break;
-
-                        case 'get_workspace_metadata':
-                            result = await honcho.getWorkspaceMetadata();
-                            break;
-
-                        case 'set_workspace_metadata':
-                            if (!toolArguments.metadata) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'metadata is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.setWorkspaceMetadata(toolArguments.metadata);
-                            result = 'Workspace metadata set successfully';
-                            break;
-
-                        // Peer operations
-                        case 'create_peer':
-                            if (!toolArguments.peer_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.createPeer(toolArguments.peer_id, toolArguments.config);
-                            break;
-
-                        case 'get_peer_metadata':
-                            if (!toolArguments.peer_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getPeerMetadata(toolArguments.peer_id);
-                            break;
-
-                        case 'set_peer_metadata':
-                            if (!toolArguments.peer_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.metadata) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'metadata is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.setPeerMetadata(toolArguments.peer_id, toolArguments.metadata);
-                            result = 'Peer metadata set successfully';
-                            break;
-
-                        case 'search_peer_messages':
-                            if (!toolArguments.peer_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.query) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'query is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.searchPeerMessages(toolArguments.peer_id, toolArguments.query);
-                            break;
-
-                        case 'chat':
-                            if (!toolArguments.peer_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.query) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'query is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.chat(toolArguments.peer_id, toolArguments.query, toolArguments.target_peer_id, toolArguments.session_id);
-                            break;
-
-                        case 'list_peers':
-                            result = await honcho.listPeers();
-                            break;
-
-                        // Session operations
-                        case 'create_session':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.createSession(toolArguments.session_id, toolArguments.config);
-                            break;
-
-                        case 'get_session_metadata':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getSessionMetadata(toolArguments.session_id);
-                            break;
-
-                        case 'set_session_metadata':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.metadata) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'metadata is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.setSessionMetadata(toolArguments.session_id, toolArguments.metadata);
-                            result = 'Session metadata set successfully';
-                            break;
-
-                        case 'add_peers_to_session':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!Array.isArray(toolArguments.peer_ids)) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_ids must be an array'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.addPeersToSession(toolArguments.session_id, toolArguments.peer_ids);
-                            result = 'Peers added to session successfully';
-                            break;
-
-                        case 'remove_peers_from_session':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!Array.isArray(toolArguments.peer_ids)) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_ids must be an array'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.removePeersFromSession(toolArguments.session_id, toolArguments.peer_ids);
-                            result = 'Peers removed from session successfully';
-                            break;
-
-                        case 'get_session_peers':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getSessionPeers(toolArguments.session_id);
-                            break;
-
-                        case 'add_messages_to_session':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!Array.isArray(toolArguments.messages)) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'messages must be an array'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            await honcho.addMessagesToSession(toolArguments.session_id, toolArguments.messages);
-                            result = 'Messages added to session successfully';
-                            break;
-
-                        case 'get_session_messages':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getSessionMessages(toolArguments.session_id, toolArguments.filters);
-                            break;
-
-                        case 'get_session_context':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getSessionContext(toolArguments.session_id, toolArguments.summary, toolArguments.tokens);
-                            break;
-
-                        case 'search_session_messages':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.query) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'query is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.searchSessionMessages(toolArguments.session_id, toolArguments.query);
-                            break;
-
-                        case 'get_working_representation':
-                            if (!toolArguments.session_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'session_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            if (!toolArguments.peer_id) {
-                                return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32602, 'peer_id is required'))), {
-                                    status: 400,
-                                    headers: { 'Content-Type': 'application/json' },
-                                });
-                            }
-                            result = await honcho.getWorkingRepresentation(toolArguments.session_id, toolArguments.peer_id, toolArguments.target_peer_id);
-                            break;
-
-                        case 'list_sessions':
-                            result = await honcho.listSessions();
-                            break;
-
-                        default:
-                            return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32601, `Method not found: ${toolName}`))), {
-                                status: 404,
-                                headers: { 'Content-Type': 'application/json' },
-                            });
-                    }
-
-                    return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, {
-                        content: [{
-                            type: 'text',
-                            text: typeof result === 'string' ? result : JSON.stringify(result),
-                        }],
-                    })), {
-                        status: 200,
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Access-Control-Allow-Origin': '*',
-                        },
-                    });
+                    return await executeToolCall(honcho, toolName, toolArguments, requestData.id ?? null);
 
                 default:
-                    return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32601, `Method not found: ${requestData.method}`))), {
-                        status: 404,
-                        headers: { 'Content-Type': 'application/json' },
-                    });
+                    return createErrorResponse(requestData.id ?? null, -32601, `Method not found: ${requestData.method}`);
             }
         } catch (error) {
             console.error('Worker error:', error);
             const errorMessage = error instanceof Error ? error.message : 'Internal server error';
-            return new Response(JSON.stringify(createJsonRpcResponse(requestData.id ?? null, undefined, createJsonRpcError(-32603, errorMessage))), {
-                status: 500,
-                headers: { 'Content-Type': 'application/json' },
-            });
+            return createErrorResponse(requestData.id ?? null, -32603, errorMessage);
         }
     },
 }; 
