@@ -423,3 +423,133 @@ async def test_async_peer_chat_return_none():
     mock_response.content = "Actual response"
     result = await peer.chat("test question")
     assert result == "Actual response"
+
+
+@pytest.mark.asyncio
+async def test_async_peer_search():
+    """
+    Tests the AsyncPeer.search method.
+    This test specifically covers line 244: messages_page = await self._client.workspaces.peers.search()
+    """
+    from unittest.mock import AsyncMock, Mock, patch
+
+    from honcho_core import AsyncHoncho as AsyncHonchoCore
+
+    from sdks.python.src.honcho.async_client.pagination import AsyncPage
+
+    # Create a mock client
+    mock_client = Mock(spec=AsyncHonchoCore)
+    mock_client.workspaces = Mock()
+    mock_client.workspaces.peers = Mock()
+
+    # Create an AsyncPeer instance
+    peer = await AsyncPeer.create("test-peer-search", "test-workspace", mock_client)
+
+    # Create a simpler mock that has the basic attributes AsyncPage expects
+    mock_search_response = Mock()
+    mock_search_response.items = []  # AsyncPage expects an items attribute
+    mock_client.workspaces.peers.search = AsyncMock(return_value=mock_search_response)
+
+    # Patch the AsyncPage constructor to avoid validation issues
+    with patch.object(AsyncPage, "__init__", return_value=None) as mock_page_init:
+        # Call the search method to test line 244
+        _result = await peer.search("test query")
+
+        # Verify the search method was called with correct parameters (line 244)
+        mock_client.workspaces.peers.search.assert_called_once_with(
+            "test-peer-search", workspace_id="test-workspace", query="test query"
+        )
+
+        # Verify AsyncPage was initialized with the search response (line 247)
+        mock_page_init.assert_called_once_with(mock_search_response)
+
+        # Test with different query to ensure method works with various inputs
+        await peer.search("another query")
+        assert mock_client.workspaces.peers.search.call_count == 2
+        assert mock_page_init.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_async_peer_search_return_asyncpage(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests that AsyncPeer.search returns AsyncPage(messages_page).
+    This test specifically covers line 247: return AsyncPage(messages_page)
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+
+        # Create a peer for testing
+        peer = await honcho_client.peer(id="test-peer-search-return")
+        assert isinstance(peer, AsyncPeer)
+
+        # Ensure the peer exists by calling get_metadata (creates peer if needed)
+        await peer.get_metadata()
+
+        # Create a session and add a message to have something to search for
+        session = await honcho_client.session(id="test-session-search")
+        await session.add_messages([peer.message("searchable content for testing")])
+
+        # Call the search method to test line 247
+        result = await peer.search("searchable")
+
+        # Verify that an AsyncPage instance is returned (covering line 247)
+        from sdks.python.src.honcho.async_client.pagination import AsyncPage
+
+        assert isinstance(result, AsyncPage)
+
+        # Use result to avoid unused variable warning
+        assert result is not None
+
+        # Verify the result has the expected properties
+        assert hasattr(result, "items")
+        assert isinstance(result.items, list)
+
+
+def test_peer_search():
+    """
+    Tests the Peer.search method.
+    This test specifically covers line 224: messages_page = self._client.workspaces.peers.search()
+    and line 227: return SyncPage(messages_page)
+    """
+    from unittest.mock import Mock
+
+    from honcho_core import Honcho as HonchoCore
+
+    from sdks.python.src.honcho.pagination import SyncPage
+
+    # Create a mock client
+    mock_client = Mock(spec=HonchoCore)
+    mock_client.workspaces = Mock()
+    mock_client.workspaces.peers = Mock()
+
+    # Create a proper SyncPageCore instance that SyncPage expects
+    from honcho_core.pagination import SyncPage as SyncPageCore
+
+    mock_search_response: SyncPageCore = SyncPageCore(  # pyright: ignore
+        items=[], total=0, page=1, size=10, pages=0
+    )
+    mock_client.workspaces.peers.search = Mock(return_value=mock_search_response)
+
+    # Create a Peer instance
+    peer = Peer(
+        peer_id="test-peer-search", workspace_id="test-workspace", client=mock_client
+    )
+
+    # Call the search method to test line 224 and 227
+    result = peer.search("test query")
+
+    # Verify the search method was called with correct parameters (line 224)
+    mock_client.workspaces.peers.search.assert_called_once_with(
+        "test-peer-search", workspace_id="test-workspace", query="test query"
+    )
+
+    # Verify that a SyncPage instance is returned (covering line 227)
+    assert isinstance(result, SyncPage)
+
+    # Verify that the SyncPage was properly initialized with the original page
+    assert result._original_page == mock_search_response  # pyright: ignore
+    assert result._transform_func is None  # pyright: ignore
