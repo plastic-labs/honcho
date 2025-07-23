@@ -136,7 +136,7 @@ class HonchoWorker {
         const session = this.honcho.session(sessionId);
 
         // Add the user and assistant peers to the session
-        await session.addPeers([this.config.userName, assistant]);
+        await session.addPeers([this.config.userName, [assistant, { observe_me: false, observe_others: true }]]);
 
         return sessionId;
     }

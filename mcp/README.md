@@ -7,7 +7,7 @@ Go to https://app.honcho.dev and get an API key. Then go to Claude Desktop and n
 
 If you don't have node/npm/npx install you will need to do that. Claude Desktop or Claude Code can help!
 
-Add or integrate this into your claude desktop config:
+Add or integrate this into your Claude desktop config. You must provide a username for Honcho to refer to you as -- preferably what you want Claude to actually call you.
 ```json
 {
   "mcpServers": {
@@ -17,17 +17,20 @@ Add or integrate this into your claude desktop config:
         "mcp-remote",
         "https://mcp.honcho.dev",
         "--header",
-        "Authorization:${AUTH_HEADER}"
+        "Authorization:${AUTH_HEADER}",
+        "--header",
+        "X-Honcho-User-Name:${USER_NAME}"
       ],
       "env": {
-        "AUTH_HEADER": "Bearer <your-honcho-key>"
+        "AUTH_HEADER": "Bearer <your-honcho-key>",
+        "USER_NAME": "<your-name>"
       }
     }
   }
 }
 ```
 
-Alternatively you may customize your username, assistant name, and/or workspace ID. All are optional.
+You may customize your assistant name and/or workspace ID. Both are optional.
 
 ```json
 {
