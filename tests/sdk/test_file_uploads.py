@@ -1,9 +1,71 @@
 import json
+from io import BytesIO
 
 import pytest
 
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.client import Honcho
+from sdks.python.src.honcho.utils.file_upload import normalize_file_input
+
+
+def test_normalize_file_input_with_iobase_tuple():
+    """
+    Test normalize_file_input with tuple containing IOBase object.
+    This specifically tests lines 37-38 in file_upload.py.
+    """
+    # Create a BytesIO object (which is an IOBase)
+    test_content = b"This is test content"
+    file_obj = BytesIO(test_content)
+    file_obj.name = "test.txt"
+
+    # Test tuple with IOBase object
+    filename = "test_file.txt"
+    content_type = "text/plain"
+    input_tuple = (filename, file_obj, content_type)
+
+    # Call normalize_file_input - this should hit lines 37-38
+    result = normalize_file_input(input_tuple)
+
+    # Verify the result
+    assert result == (filename, file_obj, content_type)
+    assert result[0] == filename
+    assert result[1] is file_obj  # Should be the same object
+    assert result[2] == content_type
+
+
+def test_normalize_file_input_with_invalid_file_content():
+    """
+    Test normalize_file_input with invalid file content in tuple.
+    This specifically tests line 40 in file_upload.py.
+    """
+    # Test tuple with invalid file content (string instead of bytes or IOBase)
+    filename = "test_file.txt"
+    invalid_content = "This is a string, not bytes or IOBase"  # Invalid type
+    content_type = "text/plain"
+    input_tuple = (filename, invalid_content, content_type)
+
+    # Call normalize_file_input - this should hit line 40 and raise ValueError
+    with pytest.raises(
+        ValueError, match="File content must be bytes or a file-like object."
+    ):
+        normalize_file_input(input_tuple)  # pyright: ignore
+
+
+def test_normalize_file_input_with_file_object_without_name():
+    """
+    Test normalize_file_input with file object that lacks .name attribute.
+    This specifically tests line 46 in file_upload.py.
+    """
+    # Create a BytesIO object without setting the .name attribute
+    test_content = b"This is test content"
+    file_obj = BytesIO(test_content)
+    # Explicitly do NOT set file_obj.name to trigger the error condition
+
+    # Call normalize_file_input - this should hit line 46 and raise ValueError
+    with pytest.raises(
+        ValueError, match="File object must have a \\.name attribute\\."
+    ):
+        normalize_file_input(file_obj)
 
 
 @pytest.mark.asyncio
