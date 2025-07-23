@@ -20,6 +20,7 @@ Before responding to any user message, you can query for personalization insight
 
 ```text
 get_personalization_insights
+session_id: [SESSION_ID_FROM_STEP_1]
 query: [YOUR_THEORY_OF_MIND_QUESTION]
 ```
 
@@ -76,6 +77,7 @@ Here's exactly what to do for a new conversation:
 
    ```text
    get_personalization_insights
+   session_id: "session_abc123"
    query: "What does the user's message about feeling overwhelmed tell me about her current state and how should I respond?"
    ```
 

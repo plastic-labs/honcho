@@ -8,6 +8,9 @@
     "deploy": "wrangler deploy",
     "deploy:staging": "wrangler deploy --env staging"
   },
+  "dependencies": {
+    "@honcho-ai/sdk": "^1.2.1"
+  },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241002.0",
     "typescript": "^5.3.3",
