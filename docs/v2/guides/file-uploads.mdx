@@ -230,7 +230,6 @@ def analyze_documents():
     """Get AI analysis of uploaded documents"""
     context = session.get_context(tokens=4000)
     messages = context.to_openai(assistant=assistant)
-
     # Add analysis request
     messages.append({
         "role": "user",
@@ -281,7 +280,6 @@ async function uploadDocument(filePath: string, description: string) {
 async function analyzeDocuments() {
   const context = await session.getContext({ tokens: 4000 });
   const messages = context.toOpenAI(assistant);
-
   // Add analysis request
   messages.push({
     role: "user",

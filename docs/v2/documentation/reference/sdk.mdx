@@ -254,18 +254,18 @@ response = alice.chat("What did I have for breakfast?")
 response = alice.chat("What do I know about Bob?", target="bob")
 response = alice.chat("What happened in session-1?", session_id="session-1")
 
-# Add content to peer's global representation
-alice.add_messages("I love Python programming")
-alice.add_messages([
-    alice.message("Today I learned about async programming"),
-    alice.message("I prefer functional programming patterns")
+# Add content to a session with a peer
+session = honcho.session("session-1")
+session.add_messages([
+  alice.message("I love Python programming"),
+  alice.message("Today I learned about async programming"),
+  alice.message("I prefer functional programming patterns")
 ])
 
-# Get peer's sessions and messages
+# Get peer's sessions
 sessions = alice.get_sessions()
-messages = alice.get_messages()
 
-# Search peer's content
+# Search peer's messages
 results = alice.search("programming")
 
 # Metadata management
@@ -292,18 +292,18 @@ const sessionResponse = await alice.chat("What happened in session-1?", {
 // Chat with streaming support
 const streamResponse = await alice.chat("Tell me a story", { stream: true });
 
-// Add content to peer's global representation
-await alice.addMessages("I love TypeScript programming");
-await alice.addMessages([
+// Add content to a session with a peer
+const session = honcho.session("session-1");
+await session.addMessages([
+  alice.message("I love TypeScript programming"),
   alice.message("Today I learned about async programming"),
   alice.message("I prefer functional programming patterns")
 ]);
 
-// Get peer's sessions and messages
+// Get peer's sessions
 const sessions = await alice.getSessions();
-const messages = await alice.getMessages();
 
-// Search peer's content
+// Search peer's messages
 const results = await alice.search("programming");
 
 // Metadata management

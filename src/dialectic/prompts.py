@@ -6,9 +6,11 @@ from mirascope import prompt_template
 @prompt_template()
 def dialectic_prompt(
     query: str,
-    working_representation: str,
+    working_representation: str | None,
+    recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
+    target_name: str | None = None,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
@@ -22,9 +24,14 @@ def dialectic_prompt(
     Returns:
         Formatted prompt string for the dialectic model
     """
+    query_target = (
+        f"user {peer_name}'s understanding of {target_name}"
+        if target_name
+        else f"user {peer_name}"
+    )
     return c(
         f"""
-The query is about user {peer_name}.
+The query is about {query_target}.
 You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.
 
 ## INPUT STRUCTURE
@@ -49,6 +56,10 @@ Provide a natural language response that:
 4. Maintains appropriate confidence levels based on conclusion types
 5. Flags any limitations or gaps in available information
 
+<recent_conversation_history>
+{recent_conversation_history}
+</recent_conversation_history>
+
 <query>{query}</query>
 <working_representation>{working_representation}</working_representation>
 {f"<global_context>{additional_context}</global_context>" if additional_context else ""}"""
@@ -56,20 +67,21 @@ Provide a natural language response that:
 
 
 @prompt_template()
-def query_generation_prompt(query: str, peer_name: str) -> str:
+def query_generation_prompt(query: str, target_peer_name: str) -> str:
     """
     Generate the prompt for semantic query expansion.
 
     Args:
         query: The original user query
         peer_name: Name of the user/peer
+        target_name: Name of the target/peer if dialectic query is targeted
 
     Returns:
         Formatted prompt string for query generation
     """
     return c(
         f"""
-        You are a query expansion agent helping AI applications understand their users. The user's name is {peer_name}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
+        You are a query expansion agent helping AI applications understand their users. The user's name is {target_peer_name}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
 
 ## QUERY EXPANSION STRATEGY FOR SEMANTIC SIMILARITY
 
@@ -103,5 +115,5 @@ Format: `{{"queries": ["query1", "query2", "query3"]}}`
 No markdown, no explanations, just the JSON object.
 
 <query>{query}</query>
-        """
+"""
     )

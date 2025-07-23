@@ -8,8 +8,7 @@ and handling temporal metadata for the reasoning system.
 from datetime import datetime
 from typing import Any, Protocol, cast, runtime_checkable
 
-from langfuse.decorators import observe  # pyright: ignore
-
+from src.utils.logging import conditional_observe
 from src.utils.shared_models import ReasoningResponse
 
 
@@ -168,37 +167,6 @@ def format_context_for_prompt(
     )
 
 
-def format_datetime_simple(dt: datetime | str | Any) -> str:
-    """
-    Format datetime object to simple format matching new turn formatting.
-    Converts from ISO format like '2025-06-02T19:43:41.392640+00:00'
-    to simple format like '2025-06-03 20:23:43'
-
-    Args:
-        dt: datetime object or datetime string
-
-    Returns:
-        Formatted datetime string in simple format
-    """
-    if isinstance(dt, datetime):
-        # It's a datetime object
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(dt, str):
-        # It's a string - try to parse it first
-        try:
-            # Handle ISO format strings
-            if "T" in dt:
-                parsed_dt = datetime.fromisoformat(dt.replace("Z", "+00:00"))
-                return parsed_dt.strftime("%Y-%m-%d %H:%M:%S")
-            # Already in simple format
-            return dt
-        except ValueError:
-            # If parsing fails, return as-is
-            return dt
-    # Fallback
-    return str(dt)
-
-
 def normalize_observations_for_comparison(observations: list[Any]) -> set[str]:
     """Convert observations to normalized strings for comparison."""
     normalized: set[str] = set()
@@ -208,7 +176,7 @@ def normalize_observations_for_comparison(observations: list[Any]) -> set[str]:
     return normalized
 
 
-@observe()
+@conditional_observe
 def find_new_observations(
     original_context: ReasoningResponse, revised_observations: ReasoningResponse
 ) -> dict[str, Any]:
@@ -224,21 +192,11 @@ def find_new_observations(
     """
     new_observations_by_level: dict[str, Any] = {}
 
-    # Helper function to get observations from either ReasoningResponse or dict
-    def get_observations(
-        context: ReasoningResponse | dict[str, Any], level: str
-    ) -> list[Any]:
-        if isinstance(context, ReasoningResponse):
-            # It's a ReasoningResponse object
-            return getattr(context, level, [])
-        # It's a dict
-        return context.get(level, [])
-
     for level in REASONING_LEVELS:
         original_observations = normalize_observations_for_comparison(
-            get_observations(original_context, level)
+            getattr(original_context, level, [])
         )
-        revised_list = get_observations(revised_observations, level)
+        revised_list = getattr(revised_observations, level, [])
 
         # Find genuinely new observations
         new_observations: list[Any] = []

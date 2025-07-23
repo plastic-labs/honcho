@@ -25,14 +25,34 @@ async def query_documents(
     filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
+    embedding: list[float] | None = None,
 ) -> Sequence[models.Document]:
-    # Using ModelClient for embeddings
-    try:
-        embedding_query = await embedding_client.embed(query)
-    except ValueError as e:
-        raise ValidationException(
-            f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
-        ) from e
+    """
+    Query documents using semantic similarity.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+        collection_name: Name of the collection
+        query: Search query text
+        filters: Optional filters to apply
+        max_distance: Maximum cosine distance for results
+        top_k: Number of results to return
+        embedding: Optional pre-computed embedding for the query (avoids API call)
+
+    Returns:
+        Sequence of matching documents
+    """
+    # Use provided embedding or generate one
+    if embedding is None:
+        # Using ModelClient for embeddings
+        try:
+            embedding = await embedding_client.embed(query)
+        except ValueError as e:
+            raise ValidationException(
+                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+            ) from e
 
     stmt = (
         select(models.Document)
@@ -43,11 +63,11 @@ async def query_documents(
     )
     if max_distance is not None:
         stmt = stmt.where(
-            models.Document.embedding.cosine_distance(embedding_query) < max_distance
+            models.Document.embedding.cosine_distance(embedding) < max_distance
         )
     stmt = apply_filter(stmt, models.Document, filters)
     stmt = stmt.limit(top_k).order_by(
-        models.Document.embedding.cosine_distance(embedding_query)
+        models.Document.embedding.cosine_distance(embedding)
     )
     result = await db.execute(stmt)
     return result.scalars().all()

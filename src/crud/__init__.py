@@ -4,6 +4,7 @@ from .document import create_document, get_duplicate_documents, query_documents
 from .message import (
     create_messages,
     get_message,
+    get_message_seq_in_session,
     get_messages,
     get_messages_id_range,
     search,
@@ -53,6 +54,7 @@ __all__ = [
     "get_messages",
     "get_messages_id_range",
     "get_message",
+    "get_message_seq_in_session",
     "update_message",
     "search",
     # Peer

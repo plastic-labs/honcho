@@ -2,7 +2,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, cast, func, insert, select, update
+from sqlalchemy import Select, case, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
@@ -116,9 +116,6 @@ async def get_or_create_session(
         )
 
     await db.commit()
-    logger.info(
-        f"Session {session.name} updated successfully in workspace {workspace_name} with {len(session.peer_names or [])} peers"
-    )
     return honcho_session
 
 
@@ -575,12 +572,17 @@ async def _get_or_add_peers_to_session(
     )
 
     # On conflict, update joined_at and clear left_at (rejoin scenario)
+    # If left_at is not None (peer has left the session): Use the new configuration (stmt.excluded.configuration)
+    # If left_at is None (peer is still active): Keep the existing configuration (models.SessionPeer.configuration)
     stmt = stmt.on_conflict_do_update(
         index_elements=["session_name", "peer_name", "workspace_name"],
         set_={
             "joined_at": func.now(),
             "left_at": None,
-            "configuration": stmt.excluded.configuration,
+            "configuration": case(
+                (models.SessionPeer.left_at.is_not(None), stmt.excluded.configuration),
+                else_=models.SessionPeer.configuration,
+            ),
         },
     )
     await db.execute(stmt)

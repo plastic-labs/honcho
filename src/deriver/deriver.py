@@ -1,14 +1,14 @@
 import datetime
 import logging
-import os
 import time
 from typing import Any
 
-from langfuse.decorators import langfuse_context, observe  # pyright: ignore
+from langfuse.decorators import langfuse_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import settings
+from src.dependencies import tracked_db
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
@@ -17,8 +17,16 @@ from src.utils.formatting import (
     extract_observation_content,
     find_new_observations,
     format_context_for_prompt,
-    format_datetime_simple,
     format_new_turn_with_timestamp,
+)
+from src.utils.logging import (
+    accumulate_metric,
+    conditional_observe,
+    format_reasoning_inputs_as_markdown,
+    format_reasoning_response_as_markdown,
+    log_observations_tree,
+    log_performance_metrics,
+    log_thinking_panel,
 )
 from src.utils.shared_models import (
     DeductiveObservation,
@@ -28,15 +36,8 @@ from src.utils.shared_models import (
     UnifiedObservation,
 )
 
-from .logging import (
-    format_reasoning_inputs_as_markdown,
-    format_reasoning_response_as_markdown,
-    log_observations_tree,
-    log_performance_metrics,
-    log_thinking_panel,
-)
 from .prompts import critical_analysis_prompt
-from .queue_payload import DeriverQueuePayload
+from .queue_payload import DeriverQueuePayload, RepresentationPayload, SummaryPayload
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -71,205 +72,231 @@ async def critical_analysis_call(
     )
 
 
-@observe()
+@conditional_observe
 class Deriver:
     """Deriver class for processing messages and extracting insights."""
 
     async def process_message(
         self,
         payload: DeriverQueuePayload,
-    ) -> ReasoningResponseWithThinking:
+    ) -> None:
         """
         Process a user message by extracting insights and saving them to the vector store.
         This runs as a background process after a user message is logged.
         """
 
-        langfuse_context.update_current_trace(
-            metadata={
-                "critical_analysis_model": settings.DERIVER.MODEL,
-            }
+        if settings.LANGFUSE_PUBLIC_KEY:
+            langfuse_context.update_current_trace(
+                metadata={
+                    "critical_analysis_model": settings.DERIVER.MODEL,
+                }
+            )
+
+        # Open a DB session only for the duration of the processing call
+        async with tracked_db("deriver") as db:
+            if payload.task_type == "summary":
+                await self.process_summary_task(db, payload)
+            else:
+                await self.process_representation_task(db, payload)
+
+    async def process_summary_task(
+        self,
+        db: AsyncSession,
+        payload: SummaryPayload,
+    ) -> None:
+        """
+        Process a summary task by generating summaries if needed.
+        """
+        await summarizer.summarize_if_needed(
+            db,
+            payload.workspace_name,
+            payload.session_name,
+            payload.message_id,
+            payload.message_seq_in_session,
         )
+        log_performance_metrics(f"deriver_message_{payload.message_id}")
+
+    async def process_representation_task(
+        self,
+        db: AsyncSession,
+        payload: RepresentationPayload,
+    ) -> None:
+        """
+        Process a representation task by extracting insights and updating working representations.
+        """
+        # Start overall timing
+        overall_start = time.perf_counter()
 
         # Extract variables from payload for cleaner access
         content = payload.content
         workspace_name = payload.workspace_name
-        sender_name = payload.sender_name
-        target_name = payload.target_name
         session_name = payload.session_name
         message_id = payload.message_id
+        sender_name = payload.sender_name
+        target_name = payload.target_name
         created_at = payload.created_at
 
-        # Open a DB session only for the duration of the processing call
-        from src.dependencies import tracked_db
+        logger.debug("Starting insight extraction for user message: %s", message_id)
 
-        async with tracked_db("deriver") as db:
-            logger.debug("Processing user message: %s", content)
-            process_start = os.times()[4]  # Get current CPU time
-            logger.debug("Starting insight extraction for user message: %s", message_id)
+        # Use message timestamp instead of wall-clock time for reasoning/insight dating
+        # created_at is now always a datetime object from Pydantic validation
+        message_dt_obj = created_at
 
-            # Use message timestamp instead of wall-clock time for reasoning/insight dating
-            # created_at is now always a datetime object from Pydantic validation
-            current_time = format_datetime_simple(created_at)
-            message_dt_obj = created_at
-            logger.info(
-                f"Using message timestamp '{current_time}' for message {message_id}"
+        formatted_history = await summarizer.get_summarized_history(
+            db,
+            workspace_name,
+            session_name,
+            cutoff=message_id,
+            summary_type=summarizer.SummaryType.SHORT,
+        )
+
+        # instantiate embedding store from collection
+        collection_name = (
+            crud.construct_collection_name(observer=target_name, observed=sender_name)
+            if sender_name != target_name
+            else "global_representation"
+        )
+        try:
+            collection = await crud.get_or_create_collection(
+                db, workspace_name, collection_name, sender_name
             )
-
-            # Create summary if needed BEFORE history retrieval to ensure consistent state
-            await summarizer.summarize_if_needed(
-                db, workspace_name, session_name, sender_name, message_id
-            )
-
-            # Instead of the complex 3-return tuple approach, use the simple formatted text approach
-            if session_name:
-                formatted_history = await summarizer.get_summarized_history(
-                    db,
-                    workspace_name,
-                    session_name,
-                    sender_name,
-                    cutoff=message_id,
-                    summary_type=summarizer.SummaryType.SHORT,
-                )
-            else:
-                formatted_history = ""
-
-            # Debug: Check if we just created a summary and messages are missing
-            logger.info(f"History retrieved: {len(formatted_history)} characters")
-
-            # instantiate embedding store from collection
-            collection_name = (
-                crud.construct_collection_name(
-                    observer=target_name, observed=sender_name
-                )
-                if sender_name != target_name
-                else "global_representation"
-            )
-            try:
-                collection = await crud.get_or_create_collection(
+        except Exception as e:
+            # Handle race condition from concurrent processing
+            if "duplicate key" in str(e).lower():
+                # Rollback the failed transaction
+                await db.rollback()
+                # Collection already exists, fetch it
+                collection = await crud.get_collection(
                     db, workspace_name, collection_name, sender_name
                 )
-            except Exception as e:
-                # Handle race condition from concurrent processing
-                if "duplicate key" in str(e).lower():
-                    # Rollback the failed transaction
-                    await db.rollback()
-                    # Collection already exists, fetch it
-                    collection = await crud.get_collection(
-                        db, workspace_name, collection_name, sender_name
-                    )
-                else:
-                    raise
-
-            # Use the ed embedding store directly
-            embedding_store = EmbeddingStore(
-                workspace_name=workspace_name,
-                peer_name=sender_name,
-                collection_name=collection.name,
-            )
-
-            # Create reasoner instance
-            reasoner = CertaintyReasoner(embedding_store=embedding_store)
-
-            # Check for existing working representation first, fall back to global search
-            working_rep_data: (
-                dict[str, Any] | str | None
-            ) = await crud.get_working_representation_data(
-                db, workspace_name, target_name, sender_name, session_name
-            )
-
-            if (
-                working_rep_data
-                and isinstance(working_rep_data, dict)
-                and working_rep_data.get("final_observations")
-            ):
-                # Reconstruct ReasoningResponse from stored peer data
-                final_obs: dict[str, Any] = working_rep_data["final_observations"]
-                deductive_observations: list[DeductiveObservation] = []
-                for deductive_data in final_obs.get("deductive", []):
-                    deductive_observations.append(
-                        DeductiveObservation(
-                            conclusion=deductive_data["conclusion"],
-                            premises=deductive_data.get("premises", []),
-                        )
-                    )
-
-                initial_reasoning_context = ReasoningResponseWithThinking(
-                    thinking=final_obs.get("thinking"),
-                    explicit=final_obs.get("explicit", []),
-                    deductive=deductive_observations,
-                )
-                logger.info(
-                    f"Using existing working representation with {len(initial_reasoning_context.explicit)} explicit, {len(initial_reasoning_context.deductive)} deductive observations"
-                )
             else:
-                # No working representation, use global search
-                initial_context = await embedding_store.get_relevant_observations(
-                    query=content,
-                    conversation_context=formatted_history,
-                    for_reasoning=True,
+                raise
+
+        # Use the embedding store directly
+        embedding_store = EmbeddingStore(
+            workspace_name=workspace_name,
+            peer_name=sender_name,
+            collection_name=collection.name,
+        )
+
+        # Create reasoner instance
+        reasoner = CertaintyReasoner(embedding_store=embedding_store)
+
+        # Check for existing working representation first, fall back to global search
+        working_rep_data: (
+            dict[str, Any] | str | None
+        ) = await crud.get_working_representation_data(
+            db, workspace_name, target_name, sender_name, session_name
+        )
+
+        # Time context preparation
+        context_prep_start = time.perf_counter()
+        if (
+            working_rep_data
+            and isinstance(working_rep_data, dict)
+            and working_rep_data.get("final_observations")
+        ):
+            # Reconstruct ReasoningResponse from stored peer data
+            final_obs: dict[str, Any] = working_rep_data["final_observations"]
+            deductive_observations: list[DeductiveObservation] = []
+            for deductive_data in final_obs.get("deductive", []):
+                deductive_observations.append(
+                    DeductiveObservation(
+                        conclusion=deductive_data["conclusion"],
+                        premises=deductive_data.get("premises", []),
+                    )
                 )
-                initial_reasoning_context = (
-                    reasoner.observation_context_to_reasoning_response(initial_context)
-                )
-                logger.info(
-                    "No working representation found, using global semantic search"
-                )
 
-            # Run consolidated reasoning that handles explicit and deductive levels
-            logger.debug(
-                "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
+            initial_reasoning_context = ReasoningResponseWithThinking(
+                thinking=final_obs.get("thinking"),
+                explicit=final_obs.get("explicit", []),
+                deductive=deductive_observations,
+            )
+            logger.info(
+                "Using existing working representation with %s explicit, %s deductive observations",
+                len(initial_reasoning_context.explicit),
+                len(initial_reasoning_context.deductive),
+            )
+        else:
+            # No working representation, use global search
+            initial_context = await embedding_store.get_relevant_observations(
+                query=content,
+                conversation_context=formatted_history,
+                for_reasoning=True,
             )
 
-            # Run single-pass reasoning
-            final_observations = await reasoner.reason(
-                initial_reasoning_context,
-                formatted_history,
-                content,
-                str(message_id),  # Convert int to str
-                session_name,
-                message_dt_obj,
-                sender_name,  # Pass the speaker name
+            initial_reasoning_context = (
+                reasoner.observation_context_to_reasoning_response(initial_context)
             )
+            logger.info("No working representation found, using global semantic search")
+        context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
+        accumulate_metric(
+            f"deriver_message_{message_id}",
+            "context_preparation",
+            context_prep_duration,
+            "ms",
+        )
 
-            logger.debug(
-                "REASONING COMPLETION: Unified reasoning completed across all levels."
-            )
+        # Run consolidated reasoning that handles explicit and deductive levels
+        logger.debug(
+            "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
+        )
 
-            # Display final observations in a beautiful tree
-            final_obs_dict = {
-                level: getattr(final_observations, level, [])
-                for level in REASONING_LEVELS
-            }
-            log_observations_tree(final_obs_dict)
+        # Run single-pass reasoning
+        final_observations = await reasoner.reason(
+            initial_reasoning_context,
+            formatted_history,
+            content,
+            str(message_id),  # Convert int to str
+            session_name,
+            message_dt_obj,
+            sender_name,  # Pass the speaker name
+        )
 
-            # Display final reasoning metrics
-            rsr_time = os.times()[4] - process_start
-            total_observations = sum(
-                len(obs_list) for obs_list in final_obs_dict.values()
-            )
-            summary_metrics = {
-                "total_processing_time": rsr_time * 1000,  # Convert to ms
-                "final_observation_count": total_observations,
-            }
-            log_performance_metrics(summary_metrics)
+        logger.debug(
+            "REASONING COMPLETION: Unified reasoning completed across all levels."
+        )
 
+        # Display final observations in a beautiful tree
+        final_obs_dict = {
+            level: getattr(final_observations, level, []) for level in REASONING_LEVELS
+        }
+        log_observations_tree(final_obs_dict)
+
+        # Always save working representation to peer for dialectic access
+        await save_working_representation_to_peer(
+            db,
+            workspace_name,
+            target_name,  # observer (whose metadata we update)
+            sender_name,  # observed (for key calculation)
+            session_name,
+            final_observations,
+            message_id,
+        )
+
+        # Calculate and log overall timing
+        overall_duration = (time.perf_counter() - overall_start) * 1000
+        accumulate_metric(
+            f"deriver_message_{message_id}",
+            "total_processing_time",
+            overall_duration,
+            "ms",
+        )
+
+        total_observations = sum(len(obs_list) for obs_list in final_obs_dict.values())
+
+        accumulate_metric(
+            f"deriver_message_{message_id}",
+            "final_observation_count",
+            total_observations,
+            "",
+        )
+        log_performance_metrics(f"deriver_message_{message_id}")
+
+        if settings.LANGFUSE_PUBLIC_KEY:
             langfuse_context.update_current_trace(
                 output=format_reasoning_response_as_markdown(final_observations)
             )
-
-            # Always save working representation to peer for dialectic access
-            await save_working_representation_to_peer(
-                db,
-                workspace_name,
-                target_name,  # observer (whose metadata we update)
-                sender_name,  # observed (for key calculation)
-                session_name,
-                final_observations,
-                message_id,
-            )
-
-            # Return the structured observations so callers can capture them directly
-            return final_observations
 
 
 class CertaintyReasoner:
@@ -306,29 +333,31 @@ class CertaintyReasoner:
             deductive=deductive,
         )
 
-    @observe()
+    @conditional_observe
     async def derive_new_insights(
         self,
         context: ReasoningResponseWithThinking,
         history: str,
         new_turn: str,
         message_created_at: datetime.datetime,
-        speaker: str = "user",
+        speaker: str,
     ) -> ReasoningResponseWithThinking:
         """
         Critically analyzes and revises understanding, returning structured observations.
         """
 
-        langfuse_context.update_current_observation(
-            input=format_reasoning_inputs_as_markdown(
-                context, history, new_turn, message_created_at
+        if settings.LANGFUSE_PUBLIC_KEY:
+            langfuse_context.update_current_observation(
+                input=format_reasoning_inputs_as_markdown(
+                    context, history, new_turn, message_created_at
+                )
             )
-        )
 
         formatted_new_turn = format_new_turn_with_timestamp(
             new_turn, message_created_at, speaker
         )
         formatted_context = format_context_for_prompt(context)
+
         logger.debug(
             "CRITICAL ANALYSIS: message_created_at='%s', formatted_new_turn='%s'",
             message_created_at,
@@ -381,24 +410,26 @@ class CertaintyReasoner:
             logger.warning(f"Error accessing thinking content: {e}, setting to None")
             thinking = None
 
-        logger.debug(
-            "🚀 DEBUG: new_insights=%s, thinking_length=%s",
-            new_insights,
-            len(thinking) if thinking else 0,
-        )
         response = ReasoningResponseWithThinking(
             thinking=thinking,
             explicit=new_insights.explicit,
             deductive=new_insights.deductive,
         )
 
-        langfuse_context.update_current_observation(
-            output=format_reasoning_response_as_markdown(response),
+        logger.debug(
+            "🚀 DEBUG: new_insights=%s, thinking_length=%s",
+            new_insights,
+            len(thinking) if thinking else 0,
         )
+
+        if settings.LANGFUSE_PUBLIC_KEY:
+            langfuse_context.update_current_observation(
+                output=format_reasoning_response_as_markdown(response),
+            )
 
         return response
 
-    @observe()
+    @conditional_observe
     async def reason(
         self,
         context: ReasoningResponseWithThinking,
@@ -416,7 +447,7 @@ class CertaintyReasoner:
         if message_created_at is None:
             message_created_at = datetime.datetime.now(datetime.timezone.utc)
 
-        analysis_start = time.time()
+        analysis_start = time.perf_counter()
 
         # Perform critical analysis to get observation lists
         reasoning_response = await self.derive_new_insights(
@@ -426,10 +457,15 @@ class CertaintyReasoner:
         # Output the thinking content for this analysis
         log_thinking_panel(reasoning_response.thinking)
 
-        # Compare input context with output to detect changes
-        # Calculate analysis duration
-        analysis_duration_ms = int((time.time() - analysis_start) * 1000)
+        analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
+        accumulate_metric(
+            f"deriver_message_{message_id}",
+            "critical_analysis_duration",
+            analysis_duration_ms,
+            "ms",
+        )
 
+        save_observations_start = time.perf_counter()
         # Save only the NEW observations that weren't in the original context
         await self._save_new_observations(
             context,
@@ -438,22 +474,19 @@ class CertaintyReasoner:
             session_name,
             message_created_at,
         )
-
-        # Display observations in a tree structure and performance metrics
-        observations = {
-            level: getattr(reasoning_response, level, []) for level in REASONING_LEVELS
-        }
-        log_observations_tree(observations)
-
-        # Log performance metrics for this analysis
-        metrics = {
-            "analysis_duration": analysis_duration_ms,
-        }
-        log_performance_metrics(metrics, "⚡ REASONING METRICS")
+        save_observations_duration = (
+            time.perf_counter() - save_observations_start
+        ) * 1000
+        accumulate_metric(
+            f"deriver_message_{message_id}",
+            "save_new_observations",
+            save_observations_duration,
+            "ms",
+        )
 
         return reasoning_response
 
-    @observe()
+    @conditional_observe
     async def _save_new_observations(
         self,
         original_context: ReasoningResponse,
@@ -463,9 +496,6 @@ class CertaintyReasoner:
         message_created_at: datetime.datetime | None = None,
     ) -> None:
         """Save only the observations that are new compared to the original context."""
-        if not self.embedding_store:
-            return
-
         # Use the utility function to find new observations
         new_observations_by_level = find_new_observations(
             original_context, revised_observations
@@ -521,20 +551,11 @@ class CertaintyReasoner:
             logger.debug("No new observations to save")
             return
 
-        # Make a single save call for all observations
-        logger.info(
-            f"🚀 Making single optimized call for {total_observations_count} observations"
-        )
-
         await self.embedding_store.save_unified_observations(
             all_unified_observations,
             message_id=message_id,
             session_name=session_name,
             message_created_at=message_created_at,
-        )
-
-        logger.info(
-            f"✅ Successfully saved {total_observations_count} observations in 1 optimized call"
         )
 
 

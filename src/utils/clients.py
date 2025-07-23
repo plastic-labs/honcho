@@ -97,6 +97,11 @@ class SyncStringCallable(Protocol[P]):
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> str: ...
 
 
+@runtime_checkable
+class AsyncCallResponseCallable(Protocol[P]):
+    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> llm.CallResponse: ...
+
+
 # Overload for stream=True with async function
 @overload
 def honcho_llm_call(
@@ -133,7 +138,7 @@ def honcho_llm_call(
 ) -> Callable[[Callable[P, Awaitable[Any]]], AsyncResponseModelCallable[P, T]]: ...
 
 
-# Overload for no response_model with async function
+# Overload for return_call_response=True with async function
 @overload
 def honcho_llm_call(
     *,
@@ -147,6 +152,26 @@ def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
+    return_call_response: Literal[True],
+    **extra_call_params: Any,
+) -> Callable[[Callable[P, Awaitable[Any]]], AsyncCallResponseCallable[P]]: ...
+
+
+# Overload for no response_model with async function (string return)
+@overload
+def honcho_llm_call(
+    *,
+    provider: Providers | None = None,
+    model: str | None = None,
+    track_name: str | None = None,
+    response_model: None = None,
+    json_mode: bool = False,
+    max_tokens: int | None = None,
+    thinking_budget_tokens: int | None = None,
+    enable_retry: bool = True,
+    retry_attempts: int = 3,
+    stream: Literal[False] = False,
+    return_call_response: Literal[False],
     **extra_call_params: Any,
 ) -> Callable[[Callable[P, Awaitable[Any]]], AsyncStringCallable[P]]: ...
 
@@ -180,6 +205,7 @@ def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: bool = False,
+    return_call_response: bool = False,  # pyright: ignore
     **extra_call_params: Any,
 ) -> Any:
     """
@@ -204,12 +230,13 @@ def honcho_llm_call(
         enable_retry: Whether to enable retry logic (default: True)
         retry_attempts: Number of retry attempts (default: 3)
         stream: Whether to enable streaming responses (default: False)
+        _return_call_response: Whether to return the full CallResponse object (default: False)
         **extra_call_params: Additional provider-specific parameters
 
     Returns:
         A decorator that returns:
-        - For async functions: Callable[P, Awaitable[T]] where T is Stream, response_model, or str
-        - For sync functions: Callable[P, T] where T is Stream, response_model, or str
+        - For async functions: Callable[P, Awaitable[T]] where T is Stream, response_model, CallResponse, or str
+        - For sync functions: Callable[P, T] where T is Stream, response_model, CallResponse, or str
 
     Note: Type annotations may be needed at the call site for proper type checking.
 
@@ -252,10 +279,13 @@ def honcho_llm_call(
             config: dict[str, Any] = {}
             if max_tokens:
                 config["max_output_tokens"] = max_tokens
-            if json_mode or response_model:
+
+            if response_model:
+                config["response_schema"] = response_model
+
+            if json_mode:
                 config["response_mime_type"] = "application/json"
-                if response_model:
-                    config["response_schema"] = response_model
+
             if config:
                 call_params["config"] = config
         elif resolved_provider == "anthropic":
@@ -273,6 +303,9 @@ def honcho_llm_call(
                 call_params["max_tokens"] = max_tokens
 
         # Merge with any extra call params
+        # Remove return_call_response from extra_call_params --
+        # that one is just for our type system.
+        extra_call_params.pop("return_call_response", None)
         call_params.update(extra_call_params)
 
         # Build kwargs for llm.call
@@ -299,8 +332,9 @@ def honcho_llm_call(
         # Apply llm.call
         decorated = llm.call(**llm_kwargs)(decorated)  # pyright: ignore
 
-        # Apply langfuse
-        decorated = with_langfuse()(decorated)  # pyright: ignore
+        # Apply langfuse if enabled
+        if settings.LANGFUSE_PUBLIC_KEY:
+            decorated = with_langfuse()(decorated)  # pyright: ignore
 
         # Apply AI tracking if name provided
         if track_name:
@@ -308,11 +342,11 @@ def honcho_llm_call(
 
         # Apply retry logic if enabled
         if enable_retry:
-            decorated = retry(
+            decorated = retry(  # pyright: ignore
                 stop=stop_after_attempt(retry_attempts),
                 wait=wait_exponential(multiplier=1, min=4, max=10),
-            )(decorated)
+            )(decorated)  # pyright: ignore
 
-        return decorated
+        return decorated  # pyright: ignore
 
     return decorator

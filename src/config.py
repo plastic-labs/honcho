@@ -203,6 +203,8 @@ class DialecticSettings(HonchoSettings):
 
     PROVIDER: Providers = "anthropic"
     MODEL: str = "claude-sonnet-4-20250514"
+
+    PERFORM_QUERY_GENERATION: bool = False
     QUERY_GENERATION_PROVIDER: Providers = "groq"
     QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
 
@@ -214,6 +216,10 @@ class DialecticSettings(HonchoSettings):
     ] = 0.85  # Max distance for semantic search relevance
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
+
+    CONTEXT_WINDOW_SIZE: Annotated[
+        int, Field(default=100_000, gt=10_000, le=200_000)
+    ] = 100_000
 
 
 class SummarySettings(HonchoSettings):
@@ -242,12 +248,15 @@ class AppSettings(HonchoSettings):
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
     SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
+    GET_CONTEXT_DEFAULT_MAX_TOKENS: Annotated[int, Field(default=2048, gt=0)] = 2048
 
     EMBED_MESSAGES: bool = True
     MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300000, gt=0)] = (
         300000
     )
+    LANGFUSE_HOST: str | None = None
+    LANGFUSE_PUBLIC_KEY: str | None = None
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)

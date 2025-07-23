@@ -10,7 +10,7 @@ from src.dependencies import tracked_db
 from src.exceptions import ValidationException
 from src.models import QueueItem
 
-from .queue_payload import DeriverQueuePayload
+from .queue_payload import create_payload
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +43,9 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
                 stmt = insert(QueueItem).returning(QueueItem)
                 await db_session.execute(stmt, queue_records)
                 await db_session.commit()
-                logger.info(
-                    "Successfully enqueued %d messages with %d total queue items",
-                    len(payload),
-                    len(queue_records),
-                )
 
         except Exception as e:
-            logger.exception("Failed to enqueue messages!")
+            logger.exception("Failed to enqueue message(s)!")
             if settings.SENTRY.ENABLED:
                 import sentry_sdk
 
@@ -91,7 +86,8 @@ async def handle_session(
 
     for message in payload:
         queue_records.extend(
-            process_message(
+            await generate_queue_records(
+                db_session,
                 message,
                 peers_with_configuration,
                 session.id,
@@ -145,7 +141,7 @@ def create_representation_record(
     Returns:
         Queue record dictionary
     """
-    processed_payload = DeriverQueuePayload.create_payload(
+    processed_payload = create_payload(
         message=message,
         sender_name=sender_name,
         target_name=target_name,
@@ -158,7 +154,9 @@ def create_representation_record(
 
 
 def create_summary_record(
-    message: dict[str, Any], sender_name: str, target_name: str, session_id: str
+    message: dict[str, Any],
+    session_id: str,
+    message_seq_in_session: int,
 ) -> dict[str, Any]:
     """
     Create a queue record for summary task.
@@ -172,11 +170,10 @@ def create_summary_record(
     Returns:
         Queue record dictionary
     """
-    processed_payload = DeriverQueuePayload.create_payload(
+    processed_payload = create_payload(
         message=message,
-        sender_name=sender_name,
-        target_name=target_name,
         task_type="summary",
+        message_seq_in_session=message_seq_in_session,
     )
     return {
         "payload": processed_payload,
@@ -215,7 +212,8 @@ def get_effective_observe_me(
     return sender_peer_config.observe_me
 
 
-def process_message(
+async def generate_queue_records(
+    db_session: AsyncSession,
     message: dict[str, Any],
     peers_with_configuration: dict[str, list[dict[str, Any]]],
     session_id: str,
@@ -226,6 +224,7 @@ def process_message(
     Process a single message and generate queue records based on configurations.
 
     Args:
+        db_session: The database session
         message: The message payload
         deriver_disabled: Whether deriver is disabled for the session
         peers_with_configuration: Dictionary of peer configurations
@@ -235,52 +234,75 @@ def process_message(
         List of queue records for this message
     """
     sender_name = message["peer_name"]
+    message_id: int = message["message_id"]
+    message_seq_in_session: int = await crud.get_message_seq_in_session(
+        db_session,
+        workspace_name=message["workspace_name"],
+        session_name=message["session_name"],
+        message_id=message_id,
+    )
+
+    records: list[dict[str, Any]] = []
+
+    if (
+        message_seq_in_session % settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY == 0
+        or message_seq_in_session % settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY == 0
+    ):
+        records.append(
+            create_summary_record(
+                message,
+                session_id=session_id,
+                message_seq_in_session=message_seq_in_session,
+            )
+        )
 
     if deriver_disabled:
-        return [
-            create_summary_record(
+        return records
+
+    if get_effective_observe_me(sender_name, peers_with_configuration):
+        # global representation task
+        records.append(
+            create_representation_record(
                 message,
                 sender_name=sender_name,
                 target_name=sender_name,
                 session_id=session_id,
             )
-        ]
-
-    if not get_effective_observe_me(sender_name, peers_with_configuration):
-        return []
-
-    records: list[dict[str, Any]] = [
-        create_representation_record(
-            message,
-            sender_name=sender_name,
-            target_name=sender_name,
-            session_id=session_id,
-        )
-    ]
-
-    for peer_name, configuration in peers_with_configuration.items():
-        if peer_name == sender_name:
-            continue
-
-        session_peer_config = (
-            schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
         )
 
-        if session_peer_config is None or not session_peer_config.observe_others:
-            continue
+        for peer_name, configuration in peers_with_configuration.items():
+            if peer_name == sender_name:
+                continue
 
-        records.append(
-            create_representation_record(
-                message,
-                sender_name=sender_name,
-                target_name=peer_name,
-                session_id=session_id,
+            session_peer_config = (
+                schemas.SessionPeerConfig(**configuration[1])
+                if configuration[1]
+                else None
             )
-        )
-        logger.debug(
-            "enqueued representation task for %s's representation of %s",
-            peer_name,
-            sender_name,
-        )
+
+            if session_peer_config is None or not session_peer_config.observe_others:
+                continue
+
+            records.append(
+                # peer representation task
+                create_representation_record(
+                    message,
+                    sender_name=sender_name,
+                    target_name=peer_name,
+                    session_id=session_id,
+                )
+            )
+            logger.debug(
+                "enqueued representation task for %s's representation of %s",
+                peer_name,
+                sender_name,
+            )
+
+    logger.info(
+        "message %s from %s created %s queue items",
+        message_id,
+        sender_name,
+        len(records),
+    )
 
     return records
