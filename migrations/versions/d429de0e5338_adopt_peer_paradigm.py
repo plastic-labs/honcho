@@ -479,14 +479,14 @@ def update_messages_table(schema: str, inspector) -> None:
 
     op.execute(
         sa.text(f"""
-        UPDATE {schema}.messages SET 
+        UPDATE {schema}.messages SET
         workspace_name = (SELECT name FROM {schema}.workspaces WHERE workspaces.id = messages.app_id)
     """)
     )
 
     op.execute(
         sa.text(f"""
-        UPDATE {schema}.messages SET 
+        UPDATE {schema}.messages SET
         session_name = (SELECT name FROM {schema}.sessions WHERE sessions.id = messages.session_id)
     """)
     )
@@ -494,21 +494,21 @@ def update_messages_table(schema: str, inspector) -> None:
     op.execute(
         sa.text(f"""
         UPDATE {schema}.messages SET
-        peer_name = CASE 
+        peer_name = CASE
             WHEN is_user = true THEN (
-                SELECT p.name 
-                FROM {schema}.peers p 
-                JOIN {schema}.sessions s ON s.user_id = p.id 
+                SELECT p.name
+                FROM {schema}.peers p
+                JOIN {schema}.sessions s ON s.user_id = p.id
                 WHERE s.name = messages.session_name
             )
             ELSE (
-                SELECT sp.peer_name 
-                FROM {schema}.session_peers sp 
-                WHERE sp.session_name = messages.session_name 
+                SELECT sp.peer_name
+                FROM {schema}.session_peers sp
+                WHERE sp.session_name = messages.session_name
                 AND sp.peer_name != (
-                    SELECT p.name 
-                    FROM {schema}.peers p 
-                    JOIN {schema}.sessions s ON s.user_id = p.id 
+                    SELECT p.name
+                    FROM {schema}.peers p
+                    JOIN {schema}.sessions s ON s.user_id = p.id
                     WHERE s.name = messages.session_name
                 )
             )
@@ -649,7 +649,7 @@ def update_collections_table(schema: str, inspector) -> None:
     # Populate new columns from existing data
     op.execute(
         sa.text(f"""
-        UPDATE {schema}.collections SET 
+        UPDATE {schema}.collections SET
         peer_name = (SELECT name FROM {schema}.peers WHERE peers.id = collections.user_id),
         workspace_name = (SELECT name FROM {schema}.workspaces WHERE workspaces.id = collections.app_id)
     """)
@@ -759,7 +759,7 @@ def update_documents_table(schema: str, inspector) -> None:
     # Populate new columns from existing data
     op.execute(
         sa.text(f"""
-        UPDATE {schema}.documents SET 
+        UPDATE {schema}.documents SET
         peer_name = (SELECT name FROM {schema}.peers WHERE peers.id = documents.user_id),
         workspace_name = (SELECT name FROM {schema}.workspaces WHERE workspaces.id = documents.app_id)
     """)
@@ -811,12 +811,12 @@ def update_documents_table(schema: str, inspector) -> None:
     # (collection_id contains old collection IDs, we need to get the collection names)
     op.execute(
         sa.text(f"""
-        UPDATE {schema}.documents 
+        UPDATE {schema}.documents
         SET collection_name = (
-            SELECT c.name 
-            FROM {schema}.collections c 
-            WHERE c.id = documents.collection_name 
-            AND c.peer_name = documents.peer_name 
+            SELECT c.name
+            FROM {schema}.collections c
+            WHERE c.id = documents.collection_name
+            AND c.peer_name = documents.peer_name
             AND c.workspace_name = documents.workspace_name
         )
     """)
@@ -1097,7 +1097,7 @@ def backfill_token_counts(schema: str) -> None:
 
             connection.execute(
                 text(f"""
-                    UPDATE {schema}.messages 
+                    UPDATE {schema}.messages
                     SET token_count = batch_data.token_count
                     FROM (
                         SELECT UNNEST(:ids) as id, UNNEST(:token_counts) as token_count
@@ -1161,7 +1161,7 @@ def restore_app_user_columns(schema: str, inspector) -> None:
                 UPDATE {schema}.sessions SET user_id = (
                     SELECT p.id FROM {schema}.peers p
                     JOIN {schema}.session_peers sp ON p.name = sp.peer_name AND p.workspace_name = sp.workspace_name
-                    WHERE sp.session_name = sessions.name 
+                    WHERE sp.session_name = sessions.name
                     AND p.workspace_name = sessions.workspace_name
                     AND p.id != p.name
                     LIMIT 1
@@ -1185,7 +1185,7 @@ def restore_documents_table(schema: str, inspector) -> None:
     op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.documents_id_seq")
 
     op.execute(f"""
-        UPDATE {schema}.documents 
+        UPDATE {schema}.documents
         SET temp_id = nextval('{schema}.documents_id_seq')
         WHERE temp_id IS NULL
     """)
@@ -1319,7 +1319,7 @@ def restore_collections_table(schema: str, inspector) -> None:
     op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.collections_id_seq")
 
     op.execute(f"""
-        UPDATE {schema}.collections 
+        UPDATE {schema}.collections
         SET temp_id = nextval('{schema}.collections_id_seq')
         WHERE temp_id IS NULL
     """)
@@ -1493,11 +1493,11 @@ def restore_messages_table(schema: str, inspector) -> None:
         op.execute(
             sa.text(f"""
                 UPDATE {schema}.messages SET is_user = (
-                    SELECT CASE 
-                        WHEN s.user_id = messages.peer_name THEN true 
-                        ELSE false 
+                    SELECT CASE
+                        WHEN s.user_id = messages.peer_name THEN true
+                        ELSE false
                     END
-                    FROM {schema}.sessions s 
+                    FROM {schema}.sessions s
                     WHERE s.name = messages.session_name
                 )
             """)
@@ -1567,7 +1567,7 @@ def restore_sessions_table(schema: str, inspector) -> None:
     op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.sessions_id_seq")
 
     op.execute(f"""
-        UPDATE {schema}.sessions 
+        UPDATE {schema}.sessions
         SET temp_id = nextval('{schema}.sessions_id_seq')
         WHERE temp_id IS NULL
     """)
@@ -1638,7 +1638,7 @@ def restore_peers_table(schema: str, inspector) -> None:
     op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.peers_id_seq")
 
     op.execute(f"""
-        UPDATE {schema}.peers 
+        UPDATE {schema}.peers
         SET temp_id = nextval('{schema}.peers_id_seq')
         WHERE temp_id IS NULL
     """)
@@ -1716,7 +1716,7 @@ def restore_workspaces_table(schema: str, inspector) -> None:
     op.execute(f"CREATE SEQUENCE IF NOT EXISTS {schema}.workspaces_id_seq")
 
     op.execute(f"""
-        UPDATE {schema}.workspaces 
+        UPDATE {schema}.workspaces
         SET temp_id = nextval('{schema}.workspaces_id_seq')
         WHERE temp_id IS NULL
     """)

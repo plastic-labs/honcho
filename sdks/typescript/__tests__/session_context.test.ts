@@ -12,7 +12,7 @@ describe('SessionContext', () => {
       { id: 'msg3', content: 'How are you?', peer_name: 'user' },
       { id: 'msg4', content: 'I am doing well, thank you!', peer_name: 'assistant' },
     ];
-    
+
     sessionContext = new SessionContext('test-session', mockMessages, 'This is a summary');
   });
 
@@ -25,7 +25,7 @@ describe('SessionContext', () => {
 
     it('should initialize with empty summary when not provided', () => {
       const context = new SessionContext('session-id', mockMessages);
-      
+
       expect(context.sessionId).toBe('session-id');
       expect(context.messages).toEqual(mockMessages);
       expect(context.summary).toBe('');
@@ -33,7 +33,7 @@ describe('SessionContext', () => {
 
     it('should handle empty messages array', () => {
       const context = new SessionContext('session-id', [], 'No messages');
-      
+
       expect(context.sessionId).toBe('session-id');
       expect(context.messages).toEqual([]);
       expect(context.summary).toBe('No messages');
@@ -42,7 +42,7 @@ describe('SessionContext', () => {
     it('should handle null/undefined summary', () => {
       const context1 = new SessionContext('session-id', mockMessages, undefined as any);
       const context2 = new SessionContext('session-id', mockMessages, null as any);
-      
+
       expect(context1.summary).toBe('');
       expect(context2.summary).toBe('');
     });
@@ -51,7 +51,7 @@ describe('SessionContext', () => {
   describe('toOpenAI', () => {
     it('should convert messages to OpenAI format with string assistant', () => {
       const openAIMessages = sessionContext.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
         { role: 'user', content: 'Hi there' },
@@ -63,9 +63,9 @@ describe('SessionContext', () => {
     it('should convert messages to OpenAI format with Peer object', () => {
       const mockHoncho = {} as any;
       const assistantPeer = new Peer('assistant', mockHoncho);
-      
+
       const openAIMessages = sessionContext.toOpenAI(assistantPeer);
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
         { role: 'user', content: 'Hi there' },
@@ -76,7 +76,7 @@ describe('SessionContext', () => {
 
     it('should handle messages where assistant is different peer', () => {
       const openAIMessages = sessionContext.toOpenAI('different-assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'user', content: 'Hello' },
         { role: 'user', content: 'Hi there' },
@@ -88,7 +88,7 @@ describe('SessionContext', () => {
     it('should handle empty messages array', () => {
       const emptyContext = new SessionContext('session-id', []);
       const openAIMessages = emptyContext.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([]);
     });
 
@@ -99,9 +99,9 @@ describe('SessionContext', () => {
         { id: 'msg3', content: 'Another message', peer_name: null },
       ];
       const context = new SessionContext('test', messagesWithMissingPeer);
-      
+
       const openAIMessages = context.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
         { role: 'user', content: 'No peer' },
@@ -116,9 +116,9 @@ describe('SessionContext', () => {
         { id: 'msg3', content: '   whitespace   ', peer_name: 'assistant' },
       ];
       const context = new SessionContext('test', complexMessages);
-      
+
       const openAIMessages = context.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 'Message with\nnewlines and special chars!@#$%' },
         { role: 'user', content: '' },
@@ -130,7 +130,7 @@ describe('SessionContext', () => {
   describe('toAnthropic', () => {
     it('should convert messages to Anthropic format with string assistant', () => {
       const anthropicMessages = sessionContext.toAnthropic('assistant');
-      
+
       expect(anthropicMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
         { role: 'user', content: 'Hi there' },
@@ -142,9 +142,9 @@ describe('SessionContext', () => {
     it('should convert messages to Anthropic format with Peer object', () => {
       const mockHoncho = {} as any;
       const assistantPeer = new Peer('assistant', mockHoncho);
-      
+
       const anthropicMessages = sessionContext.toAnthropic(assistantPeer);
-      
+
       expect(anthropicMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
         { role: 'user', content: 'Hi there' },
@@ -155,7 +155,7 @@ describe('SessionContext', () => {
 
     it('should handle messages where assistant is different peer', () => {
       const anthropicMessages = sessionContext.toAnthropic('different-assistant');
-      
+
       expect(anthropicMessages).toEqual([
         { role: 'user', content: 'Hello' },
         { role: 'user', content: 'Hi there' },
@@ -167,7 +167,7 @@ describe('SessionContext', () => {
     it('should handle empty messages array', () => {
       const emptyContext = new SessionContext('session-id', []);
       const anthropicMessages = emptyContext.toAnthropic('assistant');
-      
+
       expect(anthropicMessages).toEqual([]);
     });
 
@@ -178,9 +178,9 @@ describe('SessionContext', () => {
         { id: 'msg3', content: 'Another message', peer_name: undefined },
       ];
       const context = new SessionContext('test', messagesWithMissingPeer);
-      
+
       const anthropicMessages = context.toAnthropic('assistant');
-      
+
       expect(anthropicMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
         { role: 'user', content: 'No peer' },
@@ -224,7 +224,7 @@ describe('SessionContext', () => {
         peer_name: i % 2 === 0 ? 'assistant' : 'user',
       }));
       const context = new SessionContext('session-id', manyMessages);
-      
+
       const result = context.toString();
       expect(result).toBe('SessionContext(messages=1000)');
     });
@@ -237,9 +237,9 @@ describe('SessionContext', () => {
         { id: 'msg2', content: undefined, peer_name: 'user' },
       ];
       const context = new SessionContext('test', messagesWithNullContent);
-      
+
       const openAIMessages = context.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: null },
         { role: 'user', content: undefined },
@@ -253,9 +253,9 @@ describe('SessionContext', () => {
         { id: 'msg3', content: true, peer_name: 'assistant' },
       ];
       const context = new SessionContext('test', messagesWithNonStringContent);
-      
+
       const openAIMessages = context.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 123 },
         { role: 'user', content: { text: 'object content' } },
@@ -267,7 +267,7 @@ describe('SessionContext', () => {
       const longSessionId = 'x'.repeat(1000);
       const longSummary = 'Very long summary that goes on and on...'.repeat(100);
       const context = new SessionContext(longSessionId, mockMessages, longSummary);
-      
+
       expect(context.sessionId).toBe(longSessionId);
       expect(context.summary).toBe(longSummary);
       expect(context.length).toBe(4);
@@ -275,9 +275,9 @@ describe('SessionContext', () => {
 
     it('should handle messages with additional properties', () => {
       const messagesWithExtraProps = [
-        { 
-          id: 'msg1', 
-          content: 'Hello', 
+        {
+          id: 'msg1',
+          content: 'Hello',
           peer_name: 'assistant',
           timestamp: '2023-01-01T00:00:00Z',
           metadata: { important: true },
@@ -285,9 +285,9 @@ describe('SessionContext', () => {
         },
       ];
       const context = new SessionContext('test', messagesWithExtraProps);
-      
+
       const openAIMessages = context.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'assistant', content: 'Hello' },
       ]);
@@ -300,9 +300,9 @@ describe('SessionContext', () => {
         { id: 'msg3', content: 'Hey', peer_name: 'assistant' },
       ];
       const context = new SessionContext('test', caseMessages);
-      
+
       const openAIMessages = context.toOpenAI('assistant');
-      
+
       expect(openAIMessages).toEqual([
         { role: 'user', content: 'Hello' }, // 'Assistant' != 'assistant'
         { role: 'user', content: 'Hi' }, // 'ASSISTANT' != 'assistant'
@@ -316,7 +316,7 @@ describe('SessionContext', () => {
         { peer_name: 'user', content: 'Another message' },
       ];
       const context = new SessionContext('test', messagesWithoutId);
-      
+
       expect(context.length).toBe(2);
       expect(context.toOpenAI('assistant')).toEqual([
         { role: 'assistant', content: 'Message without ID' },
@@ -324,4 +324,4 @@ describe('SessionContext', () => {
       ]);
     });
   });
-}); 
+});

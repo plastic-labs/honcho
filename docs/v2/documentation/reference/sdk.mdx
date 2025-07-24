@@ -113,13 +113,13 @@ response = alice.chat("What happened in our conversation?", session_id=session.i
 const response = await alice.chat("What does the user know about weather?");
 
 // Query what alice knows about the assistant (local representation)
-const targetResponse = await alice.chat("What does the user know about the assistant?", { 
-  target: assistant 
+const targetResponse = await alice.chat("What does the user know about the assistant?", {
+  target: assistant
 });
 
 // Query scoped to a specific session
-const sessionResponse = await alice.chat("What happened in our conversation?", { 
-  sessionId: session.id 
+const sessionResponse = await alice.chat("What happened in our conversation?", {
+  sessionId: session.id
 });
 ```
 </CodeGroup>
@@ -254,18 +254,18 @@ response = alice.chat("What did I have for breakfast?")
 response = alice.chat("What do I know about Bob?", target="bob")
 response = alice.chat("What happened in session-1?", session_id="session-1")
 
-# Add content to peer's global representation
-alice.add_messages("I love Python programming")
-alice.add_messages([
-    alice.message("Today I learned about async programming"),
-    alice.message("I prefer functional programming patterns")
+# Add content to a session with a peer
+session = honcho.session("session-1")
+session.add_messages([
+  alice.message("I love Python programming"),
+  alice.message("Today I learned about async programming"),
+  alice.message("I prefer functional programming patterns")
 ])
 
-# Get peer's sessions and messages
+# Get peer's sessions
 sessions = alice.get_sessions()
-messages = alice.get_messages()
 
-# Search peer's content
+# Search peer's messages
 results = alice.search("programming")
 
 # Metadata management
@@ -285,32 +285,32 @@ console.log(`Peer ID: ${alice.id}`);
 // Chat with peer's representations (supports streaming)
 const response = await alice.chat("What did I have for breakfast?");
 const targetResponse = await alice.chat("What do I know about Bob?", { target: "bob" });
-const sessionResponse = await alice.chat("What happened in session-1?", { 
-  sessionId: "session-1" 
+const sessionResponse = await alice.chat("What happened in session-1?", {
+  sessionId: "session-1"
 });
 
 // Chat with streaming support
 const streamResponse = await alice.chat("Tell me a story", { stream: true });
 
-// Add content to peer's global representation
-await alice.addMessages("I love TypeScript programming");
-await alice.addMessages([
+// Add content to a session with a peer
+const session = honcho.session("session-1");
+await session.addMessages([
+  alice.message("I love TypeScript programming"),
   alice.message("Today I learned about async programming"),
   alice.message("I prefer functional programming patterns")
 ]);
 
-// Get peer's sessions and messages
+// Get peer's sessions
 const sessions = await alice.getSessions();
-const messages = await alice.getMessages();
 
-// Search peer's content
+// Search peer's messages
 const results = await alice.search("programming");
 
 // Metadata management
 const metadata = await alice.getMetadata();
-await alice.setMetadata({ 
-  ...metadata, 
-  location: "Paris" 
+await alice.setMetadata({
+  ...metadata,
+  location: "Paris"
 });
 ```
 </CodeGroup>
@@ -404,9 +404,9 @@ const globalRep = await session.workingRep("alice");
 const targetedRep = await session.workingRep(alice, bob);
 
 // Metadata management
-await session.setMetadata({ 
-  topic: "product planning", 
-  status: "active" 
+await session.setMetadata({
+  topic: "product planning",
+  status: "active"
 });
 const metadata = await session.getMetadata();
 ```
@@ -510,8 +510,8 @@ await groupChat.addMessages([
 
 // Query different perspectives
 const userPerspective = await users[0].chat("What are people's concerns?");
-const moderatorView = await moderator.chat("What feedback am I getting?", { 
-  sessionId: groupChat.id 
+const moderatorView = await moderator.chat("What feedback am I getting?", {
+  sessionId: groupChat.id
 });
 ```
 </CodeGroup>
@@ -581,13 +581,13 @@ action_items = session.get_messages(filter={"metadata": {"action_item": True}})
 ```typescript TypeScript
 // Add messages with metadata
 await session.addMessages([
-  alice.message("Let's discuss the budget", { 
+  alice.message("Let's discuss the budget", {
     metadata: {
       topic: "finance",
       priority: "high"
     }
   }),
-  assistant.message("I'll prepare the financial report", { 
+  assistant.message("I'll prepare the financial report", {
     metadata: {
       action_item: true,
       due_date: "2024-01-15"
@@ -596,11 +596,11 @@ await session.addMessages([
 ]);
 
 // Filter messages by metadata
-const financeMessages = await session.getMessages({ 
-  filter: { metadata: { topic: "finance" } } 
+const financeMessages = await session.getMessages({
+  filter: { metadata: { topic: "finance" } }
 });
-const actionItems = await session.getMessages({ 
-  filter: { metadata: { action_item: true } } 
+const actionItems = await session.getMessages({
+  filter: { metadata: { action_item: true } }
 });
 ```
 </CodeGroup>
@@ -612,9 +612,9 @@ const actionItems = await session.getMessages({
 # Iterate through all sessions
 for session in honcho.get_sessions():
     print(f"Session: {session.id}")
-    
+
     # Iterate through session messages
-    for message in session.get_messages():  
+    for message in session.get_messages():
         print(f"  {message.peer_id}: {message.content}")
 ```
 

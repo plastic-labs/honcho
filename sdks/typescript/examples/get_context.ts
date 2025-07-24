@@ -2,7 +2,7 @@ import { Honcho } from '../src';
 
 /**
  * Example demonstrating how to get context from a session with summary and token limits.
- * 
+ *
  * This creates a session with random messages and retrieves context
  * with a low token limit to demonstrate the summarization feature.
  */
@@ -49,4 +49,4 @@ async function main() {
 
 main().catch((err) => {
   console.error('Error running get_context example:', err);
-}); 
+});

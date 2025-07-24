@@ -1,12 +1,11 @@
 import logging
+from collections.abc import AsyncGenerator
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Body,
     Depends,
     Path,
-    Query,
 )
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
@@ -15,13 +14,10 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from mirascope.llm import Stream
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import agent, crud, schemas
+from src import crud, schemas
 from src.dependencies import db
-from src.exceptions import (
-    AuthenticationException,
-    ResourceNotFoundException,
-)
-from src.routers.messages import enqueue
+from src.dialectic import chat as dialectic_chat
+from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
 
 logger = logging.getLogger(__name__)
@@ -171,24 +167,25 @@ async def chat(
     )
 
     if not options.stream:
-        return await agent.chat(
-            workspace_id,
-            peer_id,
-            options.session_id,
-            options.queries,
-            options.stream,
-            options.target,
+        response = await dialectic_chat(
+            workspace_name=workspace_id,
+            peer_name=peer_id,
+            target_name=options.target,
+            session_name=options.session_id,
+            query=options.query,
+            stream=options.stream,
         )
+        return schemas.DialecticResponse(content=str(response))
 
-    async def parse_stream():
+    async def parse_stream() -> AsyncGenerator[str, None]:
         try:
-            stream = await agent.chat(
-                workspace_id,
-                peer_id,
-                options.session_id,
-                options.queries,
-                stream=True,
-                target=options.target,
+            stream = await dialectic_chat(
+                workspace_name=workspace_id,
+                peer_name=peer_id,
+                target_name=options.target,
+                session_name=options.session_id,
+                query=options.query,
+                stream=options.stream,
             )
             if isinstance(stream, Stream):
                 async for chunk, _ in stream:
@@ -202,96 +199,6 @@ async def chat(
     return StreamingResponse(
         content=parse_stream(), media_type="text/event-stream", status_code=200
     )
-
-
-@router.post(
-    "/{peer_id}/messages",
-    response_model=list[schemas.Message],
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
-    ],
-)
-async def create_messages_for_peer(
-    background_tasks: BackgroundTasks,
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
-    messages: schemas.MessageBatchCreate = Body(
-        ..., description="Batch of messages to create"
-    ),
-    db: AsyncSession = db,
-):
-    """Create messages for a peer"""
-    workspace_name, peer_name = workspace_id, peer_id
-    """Bulk create messages for a peer while maintaining order."""
-    try:
-        created_messages = await crud.create_messages_for_peer(
-            db,
-            messages=messages.messages,
-            workspace_name=workspace_name,
-            peer_name=peer_name,
-        )
-
-        # Create payloads for all messages
-        payloads = [
-            {
-                "workspace_name": workspace_name,
-                "session_name": None,
-                "message_id": message.id,
-                "content": message.content,
-                "peer_name": message.peer_name,
-            }
-            for message in created_messages
-        ]
-
-        # Enqueue all messages in one call
-        background_tasks.add_task(enqueue, payloads)  # type: ignore
-        logger.info(
-            f"Batch of {len(created_messages)} messages created and queued for processing"
-        )
-
-        return created_messages
-    except ValueError as e:
-        logger.error(f"Failed to create batch messages for peer {peer_id}: {str(e)}")
-        raise ResourceNotFoundException("Peer not found") from e
-
-
-@router.post(
-    "/{peer_id}/messages/list",
-    response_model=Page[schemas.Message],
-    dependencies=[
-        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
-    ],
-)
-async def get_messages_for_peer(
-    workspace_id: str = Path(..., description="ID of the workspace"),
-    peer_id: str = Path(..., description="ID of the peer"),
-    options: schemas.MessageGet | None = Body(
-        None, description="Filtering options for the messages list"
-    ),
-    reverse: bool | None = Query(
-        False, description="Whether to reverse the order of results"
-    ),
-    db: AsyncSession = db,
-):
-    """Get all messages for a peer"""
-    try:
-        filters = None
-        if options and hasattr(options, "filter"):
-            filters = options.filter
-            if filters == {}:
-                filters = None
-
-        messages_query = await crud.get_messages_for_peer(
-            workspace_name=workspace_id,
-            peer_name=peer_id,
-            filters=filters,
-            reverse=reverse,
-        )
-
-        return await apaginate(db, messages_query)
-    except ValueError as e:
-        logger.warning(f"Failed to get messages for peer {peer_id}: {str(e)}")
-        raise ResourceNotFoundException("Peer not found") from e
 
 
 @router.post(
@@ -312,14 +219,22 @@ async def get_working_representation(
     """Get a peer's working representation for a session.
 
     If a session_id is provided in the body, we get the working representation of the peer in that session.
-
-    In the current implementation, we don't offer representations of `target` so that parameter is ignored.
-    Future releases will allow for this.
+    If a target is provided, we get the representation of the target from the perspective of the peer.
+    If no target is provided, we get the global representation of the peer.
     """
-    representation = await crud.get_working_representation(
-        db, workspace_id, peer_id, options.session_id
-    )
-    return {"representation": representation}
+    try:
+        # If no target specified, get global representation (peer observing themselves)
+        target_peer = options.target if options.target is not None else peer_id
+
+        representation = await crud.get_working_representation(
+            db, workspace_id, peer_id, target_peer, options.session_id
+        )
+        return {"representation": representation}
+    except ValueError as e:
+        logger.warning(
+            f"Failed to get working representation for peer {peer_id}: {str(e)}"
+        )
+        raise ResourceNotFoundException("Peer or session not found") from e
 
 
 @router.post(

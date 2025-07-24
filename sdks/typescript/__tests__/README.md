@@ -27,6 +27,7 @@ Each class has its own dedicated test file with comprehensive coverage:
 ## Test Coverage
 
 ### Honcho Client (`client.test.ts`)
+
 - ✅ Constructor with all option variations
 - ✅ Environment variable fallbacks
 - ✅ Peer creation and validation
@@ -38,6 +39,7 @@ Each class has its own dedicated test file with comprehensive coverage:
 - ✅ Edge cases and input validation
 
 ### Peer Class (`peer.test.ts`)
+
 - ✅ Chat functionality with all option combinations
 - ✅ Session management
 - ✅ Message operations (add, get, create)
@@ -48,6 +50,7 @@ Each class has its own dedicated test file with comprehensive coverage:
 - ✅ Error scenarios
 
 ### Session Class (`session.test.ts`)
+
 - ✅ Peer management (add, set, remove, list)
 - ✅ Message operations with filtering
 - ✅ Metadata operations
@@ -59,6 +62,7 @@ Each class has its own dedicated test file with comprehensive coverage:
 - ✅ Error handling
 
 ### SessionContext Class (`session_context.test.ts`)
+
 - ✅ Constructor variations
 - ✅ OpenAI format conversion
 - ✅ Anthropic format conversion
@@ -70,6 +74,7 @@ Each class has its own dedicated test file with comprehensive coverage:
 - ✅ Edge cases and malformed data
 
 ### Page Class (`pagination.test.ts`)
+
 - ✅ Async iteration
 - ✅ Transform functions
 - ✅ Data retrieval methods
@@ -81,6 +86,7 @@ Each class has its own dedicated test file with comprehensive coverage:
 - ✅ Complex nested structures
 
 ### Integration Tests (`integration.test.ts`)
+
 - ✅ Complete chat session workflow
 - ✅ Workspace and peer management
 - ✅ Multi-scope search functionality
@@ -93,14 +99,18 @@ Each class has its own dedicated test file with comprehensive coverage:
 ## Test Patterns
 
 ### Comprehensive Mocking
+
 All tests use comprehensive mocks of the underlying `@honcho-ai/core` API client to ensure:
+
 - Tests run independently of external services
 - Predictable and controllable test scenarios
 - Fast test execution
 - Ability to test error conditions
 
 ### Edge Case Coverage
+
 Each test suite includes extensive edge case testing:
+
 - Empty/null inputs and responses
 - Invalid input types
 - API error conditions
@@ -108,14 +118,18 @@ Each test suite includes extensive edge case testing:
 - Malformed data handling
 
 ### Multiple Input Types
+
 Tests verify that methods handle various input types correctly:
+
 - String vs object parameters
 - Single items vs arrays
 - Optional vs required parameters
 - Different data structures
 
 ### Error Scenarios
+
 Comprehensive error testing including:
+
 - API failures
 - Invalid inputs
 - Network errors
@@ -123,7 +137,9 @@ Comprehensive error testing including:
 - Validation errors
 
 ### Async Operations
+
 Proper testing of all asynchronous operations:
+
 - Promise resolution/rejection
 - Async iteration
 - Concurrent operations
@@ -154,6 +170,7 @@ npm test integration.test.ts
 ## Coverage Goals
 
 This test suite aims for:
+
 - **100% function coverage** - Every function is called
 - **100% branch coverage** - Every code path is tested
 - **100% statement coverage** - Every line is executed
@@ -179,4 +196,4 @@ The test suite uses a sophisticated mocking strategy:
 4. **Isolation**: Each test runs in complete isolation
 5. **Deterministic**: Tests produce consistent, reproducible results
 
-This ensures that the SDK layer is thoroughly tested while remaining independent of the underlying API implementation. 
+This ensures that the SDK layer is thoroughly tested while remaining independent of the underlying API implementation.

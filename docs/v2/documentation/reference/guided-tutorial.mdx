@@ -95,10 +95,10 @@ def start_new_session(session_name=None):
     # Create session with descriptive ID
     session_id = session_name or f"chat-{int(time.time())}"
     session = honcho.session(session_id)
-    
+
     # Add both peers to the session
     session.add_peers([alice, assistant])
-    
+
     print(f"Started new session: {session.id}")
     return session
 
@@ -113,10 +113,10 @@ session = start_new_session("daily-checkin")
 def add_conversation_turn(session, user_message, assistant_response=None):
     """Add a conversation turn to the session"""
     messages_to_add = [alice.message(user_message)]
-    
+
     if assistant_response:
         messages_to_add.append(assistant.message(assistant_response))
-    
+
     session.add_messages(messages_to_add)
     print(f"Added {len(messages_to_add)} messages to session")
 
@@ -124,7 +124,7 @@ def add_conversation_turn(session, user_message, assistant_response=None):
 add_conversation_turn(session, "Hi! I'm working on a Python project today.")
 ```
 
-## Part 4: Fact Learning and Memory
+## Part 4: LLM Integration with Context
 
 ### Store Information in Peer Representations
 
@@ -135,7 +135,7 @@ def teach_assistant_about_user(assistant_peer, user_peer, facts):
     fact_messages = []
     for fact in facts:
         fact_messages.append(assistant_peer.message(f"I learned that {user_peer.id} {fact}"))
-    
+
     # Add these to the assistant's global knowledge
     assistant_peer.add_messages(fact_messages)
     print(f"Taught assistant {len(facts)} facts about {user_peer.id}")
@@ -145,21 +145,21 @@ def extract_facts_from_message(user_message):
     prompt = f"""
     Extract discrete facts about the user from this message:
     "{user_message}"
-    
-    Return only factual statements about the user, no inferences. 
+
+    Return only factual statements about the user, no inferences.
     Format as a simple list of facts starting with action verbs or descriptors.
     If no facts can be extracted, return an empty list.
     Example: "is working on a Python project", "likes morning coffee"
     """
-    
+
     response = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1
     )
-    
+
     facts_text = response.choices[0].message.content.strip()
-    
+
     # Parse facts (simple line-by-line approach)
     facts = [fact.strip("- ").strip() for fact in facts_text.split('\n') if fact.strip()]
     return [fact for fact in facts if fact and len(fact) > 5]
@@ -181,21 +181,21 @@ if facts:
 ```python
 def generate_response_with_context(session, assistant_peer, user_message):
     """Generate AI response using Honcho's built-in context management"""
-    
+
     # Get formatted conversation context - Honcho handles the complexity!
     context = session.get_context(tokens=2000)
     messages = context.to_openai(assistant=assistant_peer)
-    
+
     # Add the current user message
     messages.append({"role": "user", "content": user_message})
-    
+
     # Call your LLM with the properly formatted context
     response = openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=messages,
         temperature=0.7
     )
-    
+
     return response.choices[0].message.content
 
 # Generate response using built-in context
@@ -222,8 +222,8 @@ def get_personalized_insight(assistant_peer, user_peer, query):
 
 # Get personalized insights without manual context building
 insight = get_personalized_insight(
-    assistant, 
-    alice, 
+    assistant,
+    alice,
     "What programming projects has this user worked on?"
 )
 print(f"Programming insights: {insight}")
@@ -236,28 +236,28 @@ print(f"Programming insights: {insight}")
 ```python
 def chat_with_assistant(user_peer, assistant_peer, message_text, session=None):
     """Complete conversation flow with memory and personalization"""
-    
+
     # Use existing session or create new one
     if not session:
         session = start_new_session()
-    
+
     # Extract facts from user message and teach assistant
     facts = extract_facts_from_message(message_text)
     if facts:
         teach_assistant_about_user(assistant_peer, user_peer, facts)
-    
+
     # Generate response using Honcho's built-in context management
     ai_response = generate_response_with_context(session, assistant_peer, message_text)
-    
+
     # Add the conversation turn to session
     add_conversation_turn(session, message_text, ai_response)
-    
+
     return ai_response
 
 # Test the complete flow
 response = chat_with_assistant(
-    alice, 
-    assistant, 
+    alice,
+    assistant,
     "I finished the authentication module for my Python project!"
 )
 print(f"Assistant: {response}")
@@ -287,8 +287,8 @@ def query_user_history(assistant_peer, user_peer, query):
 
 # Query across all conversations
 history_query = query_user_history(
-    assistant, 
-    alice, 
+    assistant,
+    alice,
     "what programming languages and technologies has this user mentioned?"
 )
 print(f"User's programming history: {history_query}")
@@ -320,11 +320,11 @@ print(f"Session summary: {session_summary}")
 def create_group_session(user_peers, assistant_peer):
     """Create a session with multiple users and an assistant"""
     group_session = honcho.session("group-discussion")
-    
+
     # Add all peers to the session
     all_peers = user_peers + [assistant_peer]
     group_session.add_peers(all_peers)
-    
+
     return group_session
 
 # Create multiple user peers
@@ -362,7 +362,7 @@ print(f"Alice's language preferences: {response}")
 
 # Query session-specific knowledge
 session_insights = assistant.chat(
-    "What was the main topic of discussion in this session?", 
+    "What was the main topic of discussion in this session?",
     session_id=session.id
 )
 print(f"Session insights: {session_insights}")
@@ -376,10 +376,10 @@ def use_anthropic_format(session, assistant_peer, user_message):
     """Example using Anthropic's message format"""
     context = session.get_context(tokens=1500)
     messages = context.to_anthropic(assistant=assistant_peer)
-    
+
     # Now you can use these messages with Anthropic's API
     # anthropic_response = anthropic.messages.create(...)
-    
+
     return messages
 
 # Get Anthropic-formatted messages
@@ -422,4 +422,4 @@ Congratulations! You've built a complete personal AI assistant with Honcho that 
 - [SDK Reference](/v2/documentation/platform/sdk)
 - [API Reference](/v2/api-reference/introduction)
 - [More Examples](/v2/guides/overview)
-- [Discord Community](http://discord.gg/plasticlabs) 
+- [Discord Community](http://discord.gg/plasticlabs)

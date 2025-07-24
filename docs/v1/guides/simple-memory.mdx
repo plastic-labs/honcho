@@ -5,7 +5,7 @@ description: "A simple example of how to store and derive facts about individual
 ---
 
 This guide shows how to implement a simple user memory system that derives and stores facts about users that
-are then referenced later on. 
+are then referenced later on.
 
 A fully working example can be found on [GitHub](https://github.com/plastic-labs/honcho-python/tree/main/examples/discord/fact-memory).
 It's setup as a discord bot so view our [Discord guide](./discord)
@@ -50,7 +50,7 @@ For this part we will be leveraging LangChain and GPT-4 to derivce facts on the 
 ```python
 def derive_facts(user_input):
   # Derive facts about the user
-  
+
   fact_derivation = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate(prompt=prompt)
   ])
@@ -91,7 +91,7 @@ advantage of one of LangChain's built in output parsers for this.
 This is where Honcho comes into play. With Honcho we can initialize
 `Collections` for each user and can store facts as vector embeddings. You can
 use multiple collections if you want to segment different types of facts or
-data, but for now we just need one. 
+data, but for now we just need one.
 
 ```python
 def store_facts(app_id, user_id, facts):
@@ -102,7 +102,7 @@ def store_facts(app_id, user_id, facts):
   except NotFoundError as e:
     collection = honcho.apps.users.collections.create(app_id=app.id, user_id=user.id, name="discord")
   collection: Collection
- 
+
   for fact in facts: # store each fact in the collection
     honcho.apps.users.collections.documents.create(
       app_id=app_id, user_id=user_id, collection_id=collection.id, content=fact
@@ -120,7 +120,7 @@ The trick we use below is to have the LLM determine the query and then use it in
 
 ```python
 def introspect(chat_history, input):
-  
+
   introspection_prompt = ChatPromptTemplate.from_messages([
     system_introspection
   ])
@@ -166,11 +166,11 @@ _type: prompt
 input_variables:
     ["chat_history", "user_input"]
 template: >
-    Given the conversation history and user input, use your theory of mind skills to list out questions you'd like to know about the user in order to best respond to them. 
-    
+    Given the conversation history and user input, use your theory of mind skills to list out questions you'd like to know about the user in order to best respond to them.
+
     Chat history: ```{chat_history}```
     User input: ```{user_input}```
-    
+
     Output the questions as a numbered list.
 ```
 
@@ -189,5 +189,5 @@ template: >
 ```
 ---
 
-This is a very simple method of using Honcho to hold user context. For further reading on the limits read about 
+This is a very simple method of using Honcho to hold user context. For further reading on the limits read about
 [violation of expectation](https://arxiv.org/abs/2310.06983).

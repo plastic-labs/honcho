@@ -1,7 +1,12 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, Field, validate_call
 
-from .peer import Peer
+if TYPE_CHECKING:
+    from .peer import Peer
 
 
 class SessionContext(BaseModel):
@@ -72,11 +77,9 @@ class SessionContext(BaseModel):
         Returns:
             A list of dictionaries in OpenAI format, where each dictionary contains
             "role" and "content" keys suitable for the OpenAI API
-
-        Raises:
-            ValidationError: If assistant parameter is invalid
         """
-        assistant_id = assistant.id if isinstance(assistant, Peer) else assistant
+
+        assistant_id = assistant if isinstance(assistant, str) else assistant.id
         return [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",
@@ -107,14 +110,12 @@ class SessionContext(BaseModel):
             A list of dictionaries in Anthropic format, where each dictionary contains
             "role" and "content" keys suitable for the Anthropic API
 
-        Raises:
-            ValidationError: If assistant parameter is invalid
-
         Note:
             Future versions may implement role alternation requirements for
             Anthropic's API compatibility
         """
-        assistant_id = assistant.id if isinstance(assistant, Peer) else assistant
+
+        assistant_id = assistant if isinstance(assistant, str) else assistant.id
         return [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",

@@ -17,4 +17,4 @@ export default {
     '^@honcho-ai/core$': '<rootDir>/__tests__/__mocks__/@honcho-ai/core.ts',
   },
   testTimeout: 10000,
-}; 
+};

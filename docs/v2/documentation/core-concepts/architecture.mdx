@@ -7,7 +7,7 @@ sidebarTitle: "Architecture"
 
 <Note> The goal of this page is to build an intuition for the primitives in Honcho and how they fit together </Note>
 
-Honcho has 3 main components that work together to manage agent identity and context. 
+Honcho has 3 main components that work together to manage agent identity and context.
 
 - **The Storage API**: The Memory layer for storing interaction history for your agents
 - **The Deriver**: The background processing layer that builds representations of users and agents
@@ -20,7 +20,7 @@ how to use them.
 
 ## Data Model
 
-Honcho has a hierarchical data model centered around the entities below. 
+Honcho has a hierarchical data model centered around the entities below.
 
 ```mermaid
  graph TD
@@ -42,15 +42,17 @@ Honcho has a hierarchical data model centered around the entities below.
 
 There are `Workspaces` at the top that contain `Peers` and `Sessions`. A `Peer`
 can be part of many `Sessions` and a `Session` can have many `Peers`. Both
-`Sessions` and `Peers` can have `Messages` 
+`Sessions` and `Peers` can have `Messages`
 
 ### <Icon icon="building" /> Workspaces
 
-Workspaces are the top-level containers that provide complete isolation between different applications or environments; they essentially as a namespace to isolate different workloads or environments
+Workspaces are the top-level containers that provide complete isolation between
+different applications or environments; they essentially serve as a namespace
+to isolate different workloads or environments
 
 **Key Features:**
 - **Isolation**: Complete data separation between workspaces
-- **Multi-tenancy**: Support multiple applications or environments  
+- **Multi-tenancy**: Support multiple applications or environments
 - **Configuration**: Workspace-level settings and metadata
 - **Access Control**: Authentication scoped to workspace level
 
@@ -110,7 +112,7 @@ Messages are the fundamental units of interaction within sessions. They may
 also be used at the peer level to ingest information of any kind that is not related to a specific interaction, but provides
 important context for a peer (emails, docs, files, etc.).
 
-**Key Features:** 
+**Key Features:**
 - **Rich Content**: Support for text, metadata, and structured data
 - **Attribution**: Clear association with sending peer
 - **Ordering**: Chronological sequence within sessions
@@ -122,6 +124,7 @@ important context for a peer (emails, docs, files, etc.).
 - System notifications
 - Rich media content
 - User actions (clicked, reacted, etc.)
+- File uploads (PDFs, text files, JSON documents)
 
 
 ## Deriver
@@ -136,7 +139,7 @@ differently and update different representations.
 Facts derived here are used in the Dialectic chat endpoint to generate
 context-aware responses that can correctly reference both concrete facts
 extracted from messages and social insights deduced from facts, tone, and
-opinion.  
+opinion.
 
 <Info>
 Deriver tasks are processed in parallel, but tasks affecting the same peer representation will always be processed serially in order of message creation, so as to properly understand their cumulative effect.
@@ -151,11 +154,11 @@ There are two types of tasks that the deriver currently does:
 
 Peer representations are more of an abstract concept, as they are made up of
 various pieces of data stored throughout Honcho. There are however
-multiple types of representations that Honcho can produce. 
+multiple types of representations that Honcho can produce.
 
 Honcho handles both **local** and **global** representations of Peers, where
 **local** representations are specific to a single Peer's view of another Peer,
-while Global Representations are based on any message ever produced by a Peer. 
+while Global Representations are based on any message ever produced by a Peer.
 
 <img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
 
@@ -164,7 +167,7 @@ representation, but she also maintains a local representation of Bob based on wh
 observes and similarly Bob has a global representation of himself and local
 representation of Alice. So in the example above, when Alice sends a message to
 Bob it triggers an update to both Alice's global representation of herself and Bob's local
-representation of Alice. 
+representation of Alice.
 
 If Alice were to have another conversation with a different Peer, Nico, and
 sent them a message, this action would trigger an update to Alice's Global

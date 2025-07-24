@@ -7,7 +7,7 @@ info:
     name: Plastic Labs
     url: https://honcho.dev/
     email: hello@plasticlabs.ai
-  version: 2.0.4
+  version: 2.1.1
 servers:
   - url: http://localhost:8000
     description: Local Development Server
@@ -56,7 +56,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const workspace = await client.workspaces.getOrCreate({ id: 'id' });
@@ -64,11 +64,10 @@ paths:
             console.log(workspace.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             workspace = client.workspaces.get_or_create(
                 id="id",
@@ -134,7 +133,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -143,11 +142,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.list()
             page = page.items[0]
@@ -197,7 +195,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const workspace = await client.workspaces.update('workspace_id');
@@ -205,11 +203,10 @@ paths:
             console.log(workspace.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             workspace = client.workspaces.update(
                 workspace_id="workspace_id",
@@ -282,7 +279,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -291,11 +288,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.search(
                 workspace_id="workspace_id",
@@ -308,7 +304,7 @@ paths:
       tags:
         - workspaces
       summary: Get Deriver Status
-      description: Get the deriver processing status, optionally scoped to a peer and/or session
+      description: Get the deriver processing status, optionally scoped to an observer, sender, and/or session
       operationId: get_deriver_status_v2_workspaces__workspace_id__deriver_status_get
       security:
         - HTTPBearer: []
@@ -322,16 +318,26 @@ paths:
             description: ID of the workspace
             title: Workspace Id
           description: ID of the workspace
-        - name: peer_id
+        - name: observer_id
           in: query
           required: false
           schema:
             anyOf:
               - type: string
               - type: 'null'
-            description: Optional peer ID to filter by
-            title: Peer Id
-          description: Optional peer ID to filter by
+            description: Optional observer ID to filter by
+            title: Observer Id
+          description: Optional observer ID to filter by
+        - name: sender_id
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+              - type: 'null'
+            description: Optional sender ID to filter by
+            title: Sender Id
+          description: Optional sender ID to filter by
         - name: session_id
           in: query
           required: false
@@ -342,15 +348,6 @@ paths:
             description: Optional session ID to filter by
             title: Session Id
           description: Optional session ID to filter by
-        - name: include_sender
-          in: query
-          required: false
-          schema:
-            type: boolean
-            description: Include work units triggered by this peer
-            default: false
-            title: Include Sender
-          description: Include work units triggered by this peer
       responses:
         '200':
           description: Successful Response
@@ -370,24 +367,23 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const deriverStatus = await client.workspaces.deriverStatus('workspace_id');
 
-            console.log(deriverStatus.peer_id);
+            console.log(deriverStatus.completed_work_units);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             deriver_status = client.workspaces.deriver_status(
                 workspace_id="workspace_id",
             )
-            print(deriver_status.peer_id)
+            print(deriver_status.completed_work_units)
   /v2/workspaces/{workspace_id}/peers/list:
     post:
       tags:
@@ -456,7 +452,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -465,11 +461,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.peers.list(
                 workspace_id="workspace_id",
@@ -525,7 +520,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const peer = await client.workspaces.peers.getOrCreate('workspace_id', { id: 'id' });
@@ -533,11 +528,10 @@ paths:
             console.log(peer.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             peer = client.workspaces.peers.get_or_create(
                 workspace_id="workspace_id",
@@ -597,7 +591,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const peer = await client.workspaces.peers.update('workspace_id', 'peer_id');
@@ -605,11 +599,10 @@ paths:
             console.log(peer.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             peer = client.workspaces.peers.update(
                 peer_id="peer_id",
@@ -692,7 +685,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -701,11 +694,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.peers.sessions.list(
                 peer_id="peer_id",
@@ -762,223 +754,29 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
+          source: |-
             import Honcho from '@honcho-ai/core';
 
-
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
-
-            const response = await client.workspaces.peers.chat('workspace_id', 'peer_id', { queries: 'string'
-            });
-
+            const response = await client.workspaces.peers.chat('workspace_id', 'peer_id', { query: 'x' });
 
             console.log(response.content);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             response = client.workspaces.peers.chat(
                 peer_id="peer_id",
                 workspace_id="workspace_id",
-                queries="string",
+                query="x",
             )
             print(response.content)
-  /v2/workspaces/{workspace_id}/peers/{peer_id}/messages:
-    post:
-      tags:
-        - peers
-      summary: Create Messages For Peer
-      description: Create messages for a peer
-      operationId: create_messages_for_peer_v2_workspaces__workspace_id__peers__peer_id__messages_post
-      security:
-        - HTTPBearer: []
-        - {}
-      parameters:
-        - name: workspace_id
-          in: path
-          required: true
-          schema:
-            type: string
-            description: ID of the workspace
-            title: Workspace Id
-          description: ID of the workspace
-        - name: peer_id
-          in: path
-          required: true
-          schema:
-            type: string
-            description: ID of the peer
-            title: Peer Id
-          description: ID of the peer
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MessageBatchCreate'
-              description: Batch of messages to create
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Message'
-                title: Response Create Messages For Peer V2 Workspaces  Workspace Id  Peers  Peer Id  Messages Post
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      x-codeSamples:
-        - lang: JavaScript
-          source: |-
-            import Honcho from '@honcho-ai/core';
-
-            const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
-            });
-
-            const messages = await client.workspaces.peers.messages.create('workspace_id', 'peer_id', {
-              messages: [{ content: 'content', peer_id: 'peer_id' }],
-            });
-
-            console.log(messages);
-        - lang: Python
-          source: |-
-            import os
-            from honcho_core import Honcho
-
-            client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
-            )
-            messages = client.workspaces.peers.messages.create(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-                messages=[{
-                    "content": "content",
-                    "peer_id": "peer_id",
-                }],
-            )
-            print(messages)
-  /v2/workspaces/{workspace_id}/peers/{peer_id}/messages/list:
-    post:
-      tags:
-        - peers
-      summary: Get Messages For Peer
-      description: Get all messages for a peer
-      operationId: get_messages_for_peer_v2_workspaces__workspace_id__peers__peer_id__messages_list_post
-      security:
-        - HTTPBearer: []
-        - {}
-      parameters:
-        - name: workspace_id
-          in: path
-          required: true
-          schema:
-            type: string
-            description: ID of the workspace
-            title: Workspace Id
-          description: ID of the workspace
-        - name: peer_id
-          in: path
-          required: true
-          schema:
-            type: string
-            description: ID of the peer
-            title: Peer Id
-          description: ID of the peer
-        - name: reverse
-          in: query
-          required: false
-          schema:
-            anyOf:
-              - type: boolean
-              - type: 'null'
-            description: Whether to reverse the order of results
-            default: false
-            title: Reverse
-          description: Whether to reverse the order of results
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            description: Page number
-            default: 1
-            title: Page
-          description: Page number
-        - name: size
-          in: query
-          required: false
-          schema:
-            type: integer
-            maximum: 100
-            minimum: 1
-            description: Page size
-            default: 50
-            title: Size
-          description: Page size
-      requestBody:
-        content:
-          application/json:
-            schema:
-              anyOf:
-                - $ref: '#/components/schemas/MessageGet'
-                - type: 'null'
-              description: Filtering options for the messages list
-              title: Options
-      responses:
-        '200':
-          description: Successful Response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Page_Message_'
-        '422':
-          description: Validation Error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/HTTPValidationError'
-      x-codeSamples:
-        - lang: JavaScript
-          source: |-
-            import Honcho from '@honcho-ai/core';
-
-            const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
-            });
-
-            // Automatically fetches more pages as needed.
-            for await (const message of client.workspaces.peers.messages.list('workspace_id', 'peer_id')) {
-              console.log(message.id);
-            }
-        - lang: Python
-          source: |-
-            import os
-            from honcho_core import Honcho
-
-            client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
-            )
-            page = client.workspaces.peers.messages.list(
-                peer_id="peer_id",
-                workspace_id="workspace_id",
-            )
-            page = page.items[0]
-            print(page.id)
   /v2/workspaces/{workspace_id}/peers/{peer_id}/representation:
     post:
       tags:
@@ -991,11 +789,9 @@ paths:
         If a session_id is provided in the body, we get the working representation of the peer in that
         session.
 
+        If a target is provided, we get the representation of the target from the perspective of the peer.
 
-        In the current implementation, we don't offer representations of `target` so that parameter is
-        ignored.
-
-        Future releases will allow for this.
+        If no target is provided, we get the global representation of the peer.
       operationId: get_working_representation_v2_workspaces__workspace_id__peers__peer_id__representation_post
       security:
         - HTTPBearer: []
@@ -1033,7 +829,7 @@ paths:
                 type: object
                 additionalProperties: true
                 title: >-
-                  Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id 
+                  Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id
                   Representation Post
         '422':
           description: Validation Error
@@ -1047,7 +843,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const response = await client.workspaces.peers.workingRepresentation('workspace_id', 'peer_id', {
@@ -1057,11 +853,10 @@ paths:
             console.log(response);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             response = client.workspaces.peers.working_representation(
                 peer_id="peer_id",
@@ -1144,7 +939,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -1156,11 +951,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.peers.search(
                 peer_id="peer_id",
@@ -1218,7 +1012,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const session = await client.workspaces.sessions.getOrCreate('workspace_id', { id: 'id' });
@@ -1226,11 +1020,10 @@ paths:
             console.log(session.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.get_or_create(
                 workspace_id="workspace_id",
@@ -1305,7 +1098,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -1314,11 +1107,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.sessions.list(
                 workspace_id="workspace_id",
@@ -1378,7 +1170,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const session = await client.workspaces.sessions.update('workspace_id', 'session_id');
@@ -1386,11 +1178,10 @@ paths:
             console.log(session.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.update(
                 session_id="session_id",
@@ -1441,7 +1232,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const session = await client.workspaces.sessions.delete('workspace_id', 'session_id');
@@ -1449,11 +1240,10 @@ paths:
             console.log(session);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.delete(
                 session_id="session_id",
@@ -1516,7 +1306,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const session = await client.workspaces.sessions.clone('workspace_id', 'session_id');
@@ -1524,11 +1314,10 @@ paths:
             console.log(session.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.clone(
                 session_id="session_id",
@@ -1592,7 +1381,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -1603,11 +1392,10 @@ paths:
             console.log(session.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.peers.add(
                 session_id="session_id",
@@ -1673,7 +1461,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -1684,11 +1472,10 @@ paths:
             console.log(session.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.peers.set(
                 session_id="session_id",
@@ -1754,7 +1541,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -1765,11 +1552,10 @@ paths:
             console.log(session.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             session = client.workspaces.sessions.peers.remove(
                 session_id="session_id",
@@ -1843,7 +1629,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -1852,11 +1638,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.sessions.peers.list(
                 session_id="session_id",
@@ -1919,7 +1704,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -1930,11 +1715,10 @@ paths:
             console.log(response.observe_me);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             response = client.workspaces.sessions.peers.get_config(
                 peer_id="peer_id",
@@ -2002,7 +1786,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -2013,11 +1797,10 @@ paths:
             console.log(response);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             response = client.workspaces.sessions.peers.set_config(
                 peer_id="peer_id",
@@ -2099,7 +1882,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const response = await client.workspaces.sessions.getContext('workspace_id', 'session_id');
@@ -2107,11 +1890,10 @@ paths:
             console.log(response.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             response = client.workspaces.sessions.get_context(
                 session_id="session_id",
@@ -2192,7 +1974,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             // Automatically fetches more pages as needed.
@@ -2203,11 +1985,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.sessions.search(
                 session_id="session_id",
@@ -2221,6 +2002,7 @@ paths:
       tags:
         - messages
       summary: Create Messages For Session
+      description: Create messages for a session with JSON data (original functionality).
       operationId: create_messages_for_session_v2_workspaces__workspace_id__sessions__session_id__messages__post
       security:
         - HTTPBearer: []
@@ -2231,24 +2013,19 @@ paths:
           required: true
           schema:
             type: string
-            description: ID of the workspace
             title: Workspace Id
-          description: ID of the workspace
         - name: session_id
           in: path
           required: true
           schema:
             type: string
-            description: ID of the session
             title: Session Id
-          description: ID of the session
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/MessageBatchCreate'
-              description: Batch of messages to create
       responses:
         '200':
           description: Successful Response
@@ -2259,7 +2036,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/Message'
                 title: >-
-                  Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id 
+                  Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id
                   Messages  Post
         '422':
           description: Validation Error
@@ -2273,7 +2050,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const messages = await client.workspaces.sessions.messages.create('workspace_id', 'session_id', {
@@ -2283,11 +2060,10 @@ paths:
             console.log(messages);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             messages = client.workspaces.sessions.messages.create(
                 session_id="session_id",
@@ -2296,6 +2072,83 @@ paths:
                     "content": "content",
                     "peer_id": "peer_id",
                 }],
+            )
+            print(messages)
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/upload:
+    post:
+      tags:
+        - messages
+      summary: Create Messages With File
+      description: Create messages from uploaded files. Files are converted to text and split into multiple messages.
+      operationId: create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Workspace Id
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            title: Session Id
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: >-
+                #/components/schemas/Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+                title: >-
+                  Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id 
+                  Messages Upload Post
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+            const messages = await client.workspaces.sessions.messages.upload('workspace_id', 'session_id', {
+              file: fs.createReadStream('path/to/file'),
+              peer_id: 'peer_id',
+            });
+
+            console.log(messages);
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            messages = client.workspaces.sessions.messages.upload(
+                session_id="session_id",
+                workspace_id="workspace_id",
+                file=b"raw file contents",
+                peer_id="peer_id",
             )
             print(messages)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/list:
@@ -2386,7 +2239,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -2398,11 +2251,10 @@ paths:
             }
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             page = client.workspaces.sessions.messages.list(
                 session_id="session_id",
@@ -2464,7 +2316,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const message = await client.workspaces.sessions.messages.retrieve(
@@ -2476,11 +2328,10 @@ paths:
             console.log(message.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             message = client.workspaces.sessions.messages.retrieve(
                 message_id="message_id",
@@ -2549,7 +2400,7 @@ paths:
 
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
 
@@ -2560,11 +2411,10 @@ paths:
             console.log(message.id);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             message = client.workspaces.sessions.messages.update(
                 message_id="message_id",
@@ -2640,7 +2490,7 @@ paths:
             import Honcho from '@honcho-ai/core';
 
             const client = new Honcho({
-              apiKey: process.env['HONCHO_API_KEY'], // This is the default and can be omitted
+              apiKey: 'My API Key',
             });
 
             const key = await client.keys.create();
@@ -2648,30 +2498,31 @@ paths:
             console.log(key);
         - lang: Python
           source: |-
-            import os
             from honcho_core import Honcho
 
             client = Honcho(
-                api_key=os.environ.get("HONCHO_API_KEY"),  # This is the default and can be omitted
+                api_key="My API Key",
             )
             key = client.keys.create()
             print(key)
 components:
   schemas:
+    Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post:
+      properties:
+        file:
+          type: string
+          format: binary
+          title: File
+        peer_id:
+          type: string
+          title: Peer Id
+      type: object
+      required:
+        - file
+        - peer_id
+      title: Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post
     DeriverStatus:
       properties:
-        peer_id:
-          anyOf:
-            - type: string
-            - type: 'null'
-          title: Peer Id
-          description: ID of the peer (optional when filtering by session only)
-        session_id:
-          anyOf:
-            - type: string
-            - type: 'null'
-          title: Session Id
-          description: Session ID if filtered by session
         total_work_units:
           type: integer
           title: Total Work Units
@@ -2717,20 +2568,19 @@ components:
             - type: 'null'
           title: Target
           description: Optional peer to get the representation for, from the perspective of this peer
-        queries:
-          anyOf:
-            - type: string
-            - items:
-                type: string
-              type: array
-          title: Queries
+        query:
+          type: string
+          maxLength: 10000
+          minLength: 1
+          title: Query
+          description: Dialectic API Prompt
         stream:
           type: boolean
           title: Stream
           default: false
       type: object
       required:
-        - queries
+        - query
       title: DialecticOptions
     DialecticResponse:
       properties:
@@ -3151,12 +3001,6 @@ components:
       title: SessionCreate
     SessionDeriverStatus:
       properties:
-        peer_id:
-          anyOf:
-            - type: string
-            - type: 'null'
-          title: Peer Id
-          description: ID of the peer (optional when filtering by session only)
         session_id:
           anyOf:
             - type: string

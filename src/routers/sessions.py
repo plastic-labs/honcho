@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
@@ -5,15 +6,15 @@ from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
-from src.dependencies import db
+from src import config, crud, schemas
+from src.dependencies import db, tracked_db
 from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
     ValidationException,
 )
 from src.security import JWTParams, require_auth
-from src.utils import history
+from src.utils import summarizer
 
 logger = logging.getLogger(__name__)
 
@@ -373,22 +374,72 @@ async def get_session_context(
         description="Number of tokens to use for the context. Includes summary if set to true",
     ),
     summary: bool = Query(
+        True,
+        description="Whether or not to include a summary *if* one is available for the session",
+    ),
+    force_new: bool = Query(
         False,
-        description="Whether to summarize the session history prior to the cutoff message",
-    ),  # default to false
+        description="Whether or not the included summary should be generated on-the-fly in order to exhaustively cover the session history. The summary flag must be true for this to take effect.",
+    ),
     db: AsyncSession = db,
 ):
     """
     Produce a context object from the session. The caller provides a token limit which the entire context must fit into.
     To do this, we allocate 40% of the token limit to the summary, and 60% to recent messages -- as many as can fit.
     If the caller does not want a summary, we allocate all the tokens to recent messages.
-    The default token limit if not provided is 2048. (TODO: make this configurable)
+    The default token limit if not provided is 2048.
     """
-    token_limit = tokens or 2048
-    summary_tokens = int(token_limit * 0.4) if summary else 0
-    messages_tokens = token_limit - summary_tokens
+    token_limit = tokens or config.settings.GET_CONTEXT_DEFAULT_MAX_TOKENS
 
-    # Get the messages to return verbatim
+    summary_content = ""
+    messages_tokens = token_limit
+
+    if summary:
+        if force_new:
+            logger.warning("Exhaustive summary requested -- not currently available")
+
+        summary_tokens_limit = token_limit * 0.4
+
+        # Use separate database sessions for concurrent operations
+        async def get_long_summary():
+            async with tracked_db("get_long_summary") as db_session:
+                return await summarizer.get_summary(
+                    db_session,
+                    workspace_name=workspace_id,
+                    session_name=session_id,
+                    summary_type=summarizer.SummaryType.LONG,
+                )
+
+        async def get_short_summary():
+            async with tracked_db("get_short_summary") as db_session:
+                return await summarizer.get_summary(
+                    db_session,
+                    workspace_name=workspace_id,
+                    session_name=session_id,
+                    summary_type=summarizer.SummaryType.SHORT,
+                )
+
+        latest_long_summary, latest_short_summary = await asyncio.gather(
+            get_long_summary(),
+            get_short_summary(),
+        )
+
+        if (
+            latest_long_summary
+            and latest_long_summary["token_count"] <= summary_tokens_limit
+        ):
+            summary_content = latest_long_summary["content"]
+            messages_tokens = token_limit - latest_long_summary["token_count"]
+        elif (
+            latest_short_summary
+            and latest_short_summary["token_count"] <= summary_tokens_limit
+        ):
+            summary_content = latest_short_summary["content"]
+            messages_tokens = token_limit - latest_short_summary["token_count"]
+        else:
+            summary_content = ""
+
+    # Get the recent messages to return verbatim
     messages_stmt = await crud.get_messages(
         workspace_name=workspace_id,
         session_name=session_id,
@@ -397,46 +448,11 @@ async def get_session_context(
     result = await db.execute(messages_stmt)
     messages = list(result.scalars().all())
 
-    # Get the most recently created summary for the session
-    last_summary = await history.get_summary(
-        db,
-        workspace_name=workspace_id,
-        session_name=session_id,
-    )
-
-    # Get messages between the last summary and the first message we'll return verbatim, if any
-    messages_before = await crud.get_messages_id_range(
-        db,
-        workspace_name=workspace_id,
-        session_name=session_id,
-        peer_name=None,
-        start_id=last_summary["message_id"] if last_summary else 0,
-        end_id=messages[0].id if messages else None,
-    )
-
-    # Make a summary if the user wants one
-    if summary_tokens > 0:
-        # Make a *new* summary if there are unsummarized messages between the last summary and the ones
-        # we'll return verbatim, or if the last summary is too many tokens -- otherwise, just use the last summary
-        if (
-            not last_summary
-            or len(messages_before) > 0
-            or last_summary["token_count"] > summary_tokens
-        ):
-            new_summary = await history.create_summary(
-                messages=messages_before,
-                max_tokens=summary_tokens,
-            )
-            summary_content = new_summary["content"]
-        else:
-            summary_content = last_summary["content"]
-            summary_tokens = last_summary["token_count"]
-    else:
-        summary_content = ""
+    logger.info(f"Retrieved {len(messages)} recent messages for verbatim return")
 
     return schemas.SessionContext(
         name=session_id,
-        messages=messages,  # pyright: ignore
+        messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
         summary=summary_content,
     )
 

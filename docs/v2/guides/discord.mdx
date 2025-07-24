@@ -11,7 +11,7 @@ Any application interface that defines logic based on events and supports
 special commands can work easily with Honcho. Here's how to use Honcho with
 **Discord** as an interface. If you're not familiar with Discord bot
 application logic, the [py-cord](https://pycord.dev/) docs would be a good
-place to start. 
+place to start.
 
 ## Events
 
@@ -89,7 +89,7 @@ def validate_message(message) -> bool:
 
 This function centralizes all the logic for determining whether the bot should respond to a message. It checks that:
 - The message isn't from the bot itself
-- The message isn't in a DM channel  
+- The message isn't in a DM channel
 - The bot is mentioned in the message
 
 ### Message Sanitization
@@ -251,4 +251,4 @@ The new Honcho peer/session API makes Discord bot integration much simpler and m
 - **Dialectic Queries**: `peer.chat()` enables querying conversation history
 - **Helper Functions**: Clean code organization with focused helper functions
 
-This approach provides a clean, maintainable structure for building Discord bots with conversational memory and context management. 
+This approach provides a clean, maintainable structure for building Discord bots with conversational memory and context management.

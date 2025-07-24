@@ -126,7 +126,7 @@ results = honcho.search("customer feedback")
 for result in results:
     # Each result contains the matched content and context
     print(f"Match: {result}")
-    
+
 # Check if there are any results
 results = honcho.search("nonexistent topic")
 result_list = list(results)
@@ -166,7 +166,7 @@ count = 0
 for result in results:
     count += 1
     print(f"Result {count}: {result}")
-    
+
     # Stop after first 10 results
     if count >= 10:
         break
@@ -179,11 +179,11 @@ let currentPage = await honcho.search("project updates");
 while (currentPage) {
   const data = await currentPage.data();
   console.log(`Processing ${data.length} results`);
-  
+
   for (const result of data) {
     console.log(`Result: ${result}`);
   }
-  
+
   // Get next page
   currentPage = await currentPage.nextPage();
 }
@@ -197,23 +197,23 @@ while (currentPage) {
 # Use search results to build context for LLM interactions
 def build_context_from_search(query: str, session_id: str):
     session = honcho.session(session_id)
-    
+
     # Search for relevant past discussions
     search_results = list(session.search(query))
-    
+
     if search_results:
         # Use search results to inform context
         context_summary = f"Found {len(search_results)} relevant past discussions about '{query}'"
-        
+
         # Get normal session context
         session_context = session.get_context(tokens=1500)
-        
+
         return {
             "search_summary": context_summary,
             "session_context": session_context,
             "search_results": search_results[:3]  # Top 3 results
         }
-    
+
     return {"message": "No relevant past discussions found"}
 
 # Build context for a new question
@@ -225,25 +225,25 @@ print(f"Context: {context_data.get('search_summary', 'No context')}")
 // Use search results to build context for LLM interactions
 async function buildContextFromSearch(query: string, sessionId: string) {
   const session = honcho.session(sessionId);
-  
+
   // Search for relevant past discussions
   const searchResults = await session.search(query);
   const searchData = await searchResults.data();
-  
+
   if (searchData.length > 0) {
     // Use search results to inform context
     const contextSummary = `Found ${searchData.length} relevant past discussions about '${query}'`;
-    
+
     // Get normal session context
     const sessionContext = await session.getContext({ tokens: 1500 });
-    
+
     return {
       searchSummary: contextSummary,
       sessionContext: sessionContext,
       searchResults: searchData.slice(0, 3)  // Top 3 results
     };
   }
-  
+
   return { message: "No relevant past discussions found" };
 }
 

@@ -27,6 +27,9 @@ Usage:
         bob.message("Hi Alice, how are you?")
     ])
 
+    # Wait for deriver to process all messages (only necessary if very recent messages are critical to query)
+    client.poll_deriver_status()
+
     # Query conversation context
     response = alice.chat("What did Bob say to me?")
 """

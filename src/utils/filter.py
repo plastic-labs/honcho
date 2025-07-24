@@ -191,6 +191,9 @@ def _build_field_condition(
     """
     if model_class.__name__ == "Message":
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING_MESSAGES.get(key)
+    elif model_class.__name__ == "Document":
+        # documents are fully internal so we can use any column name directly
+        column_name = key
     else:
         column_name = ALLOWED_EXTERNAL_TO_INTERNAL_COLUMN_MAPPING.get(key)
 
@@ -219,12 +222,12 @@ def _build_field_condition(
         else:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
-            if column_name in ("h_metadata", "configuration"):
+            if column_name in ("h_metadata", "configuration", "internal_metadata"):
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
             else:
                 return column == value
     else:
-        if column_name in ("h_metadata", "configuration"):
+        if column_name in ("h_metadata", "configuration", "internal_metadata"):
             return column.contains(value)
         else:
             return column == value

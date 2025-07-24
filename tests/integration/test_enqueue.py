@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -7,8 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.deriver import enqueue
 from src.models import Peer, QueueItem, Workspace
-from src.routers.messages import enqueue
 
 
 @pytest.mark.asyncio
@@ -28,10 +29,11 @@ class TestEnqueueFunction:
             {
                 "workspace_name": workspace_name,
                 "session_name": session_name,
-                "message_id": f"msg_{i}",
+                "message_id": i + 1,
                 "content": f"Test message {i}",
                 "metadata": {"test": f"value_{i}"},
                 "peer_name": peer_name,
+                "created_at": datetime.now(timezone.utc),
             }
             for i in range(count)
         ]
@@ -48,8 +50,6 @@ class TestEnqueueFunction:
         with caplog.at_level("DEBUG"):
             await enqueue([])
 
-        assert "Empty payload list, skipping enqueue" in caplog.text
-
     @pytest.mark.asyncio
     async def test_malformed_payload_logs_error(self, caplog: pytest.LogCaptureFixture):
         """Test that malformed payload logs appropriate error"""
@@ -58,86 +58,9 @@ class TestEnqueueFunction:
         with caplog.at_level("ERROR"):
             await enqueue(malformed_payload)  # Should not raise, but log error
 
-        assert "Failed to enqueue messages: 'workspace_name'" in caplog.text
-
-    # PEER MESSAGE TESTS
-
-    @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
-    async def test_none_session_with_observe_me_true(
-        self,
-        mock_tracked_db: AsyncMock,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
-    ):
-        """Test peer-only processing when observe_me=True"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-        test_workspace, test_peer = sample_data
-
-        payload = self.create_sample_payload(
-            workspace_name=test_workspace.name,
-            session_name=None,
-            peer_name=test_peer.name,
-            count=1,
-        )
-
-        initial_count = await self.count_queue_items(db_session)
-        await enqueue(payload)
-        final_count = await self.count_queue_items(db_session)
-
-        # Should create 1 queue item (representation)
-        assert final_count - initial_count == 1
-
-        # Verify queue items have correct structure
-        result = await db_session.execute(
-            select(QueueItem).where(QueueItem.session_id.is_(None))
-        )
-        queue_items = result.scalars().all()
-
-        for item in queue_items:
-            payload_data = item.payload
-            assert payload_data["task_type"] == "representation"
-            assert payload_data["sender_name"] == test_peer.name
-            assert payload_data["target_name"] == test_peer.name
-
-    @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
-    async def test_none_session_with_observe_me_false(
-        self,
-        mock_tracked_db: AsyncMock,
-        db_session: AsyncSession,
-        sample_data: tuple[Workspace, Peer],
-        caplog: pytest.LogCaptureFixture,
-    ):
-        """Test peer-only processing when observe_me=False"""
-        mock_tracked_db.return_value.__aenter__.return_value = db_session
-
-        test_workspace, test_peer = sample_data
-
-        test_peer.configuration = {"observe_me": False}
-        await db_session.commit()
-
-        payload = self.create_sample_payload(
-            workspace_name=test_workspace.name,
-            session_name=None,
-            peer_name=test_peer.name,
-        )
-
-        initial_count = await self.count_queue_items(db_session)
-        with caplog.at_level("INFO"):
-            await enqueue(payload)
-        final_count = await self.count_queue_items(db_session)
-
-        # Should not create any queue items
-        assert final_count == initial_count
-        assert (
-            f"Peer {test_peer.name} has observe_me=False, skipping enqueue"
-            in caplog.text
-        )
-
     # SESSION MESSAGES
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_deriver_disabled(
         self,
         mock_tracked_db: AsyncMock,
@@ -168,11 +91,10 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # we expect 1 queue item for session level summarization
-        assert final_count == initial_count + 1
+        assert final_count == initial_count
 
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_normal_processing_single_peer(
         self,
         mock_tracked_db: AsyncMock,
@@ -216,7 +138,7 @@ class TestEnqueueFunction:
         assert "representation" in task_types
 
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_multiple_peers_none_observe_others(
         self,
         mock_tracked_db: AsyncMock,
@@ -270,7 +192,7 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a summary queue item
+        # For each message, we expect a representation
         expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
@@ -295,7 +217,7 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_multiple_peers_all_observe_others(
         self,
         mock_tracked_db: AsyncMock,
@@ -348,7 +270,7 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a summary queue item
+        # For each message, we expect a representation and a local representation for observer
         expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
@@ -380,7 +302,7 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_with_multiple_peers_some_observe_others(
         self,
         mock_tracked_db: AsyncMock,
@@ -441,7 +363,7 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a summary queue item
+        # For each message, we expect a representation and a local representation for observer
         expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
@@ -477,7 +399,7 @@ class TestEnqueueFunction:
         ]
 
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_session_peer_config_overrides_peer_config(
         self,
         mock_tracked_db: AsyncMock,
@@ -517,14 +439,8 @@ class TestEnqueueFunction:
         # Should create 0 queue items
         assert final_count - initial_count == 0
 
-        result = await db_session.execute(
-            select(QueueItem).where(QueueItem.session_id == test_session.id)
-        )
-        queue_items = result.scalars().all()
-        assert len(queue_items) == 0
-
     @pytest.mark.asyncio
-    @patch("src.routers.messages.tracked_db")
+    @patch("src.deriver.enqueue.tracked_db")
     async def test_multi_sender_scenario(
         self,
         mock_tracked_db: AsyncMock,

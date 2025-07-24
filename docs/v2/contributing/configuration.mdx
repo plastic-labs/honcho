@@ -46,14 +46,14 @@ cp config.toml.example config.toml
 
 Then modify the values as needed. The TOML file is organized into sections:
 
-- `[app]` - Application-level settings (log level, host, port)
+- `[app]` - Application-level settings (log level, host, port, embedding settings)
 - `[db]` - Database connection and pool settings
 - `[auth]` - Authentication configuration
-- `[llm]` - LLM provider and model settings
-- `[agent]` - Agent behavior settings
-- `[deriver]` - Background worker settings
-- `[history]` - Message history settings
-- `[sentry]` - Error tracking settings
+- `[llm]` - LLM provider API keys and general settings
+- `[dialectic]` - Dialectic API configuration (provider, model, search settings)
+- `[deriver]` - Background worker settings and theory of mind configuration
+- `[summary]` - Session summarization settings
+- `[sentry]` - Error tracking and monitoring settings
 
 ### Using Environment Variables
 
@@ -67,7 +67,7 @@ Examples:
 - `DB_CONNECTION_URI` → `[db].CONNECTION_URI`
 - `DB_POOL_SIZE`      → `[db].POOL_SIZE`
 - `AUTH_JWT_SECRET`   → `[auth].JWT_SECRET`
-- `LLM_DIALECTIC_MODEL` → `[llm].DIALECTIC_MODEL`
+- `DIALECTIC_MODEL` → `[dialectic].MODEL`
 - `LOG_LEVEL` (no section) → `[app].LOG_LEVEL`
 
 ### Configuration Priority
@@ -113,6 +113,13 @@ The application will use the production connection URI while keeping the pool si
 LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
 FASTAPI_HOST=0.0.0.0
 FASTAPI_PORT=8000
+SESSION_PEERS_LIMIT=10
+GET_CONTEXT_DEFAULT_MAX_TOKENS=2048
+
+# Embedding settings (optional)
+EMBED_MESSAGES=false
+MAX_EMBEDDING_TOKENS=8192
+MAX_EMBEDDING_TOKENS_PER_REQUEST=300000
 ```
 
 **Environment-specific settings:**
@@ -193,105 +200,92 @@ python scripts/generate_jwt_secret.py
 
 ## LLM Provider Configuration
 
-### Anthropic (Claude)
+Honcho supports multiple LLM providers for different tasks. API keys are configured in the `[llm]` section, while specific features use their own configuration sections.
 
-**Required Settings:**
+### API Keys
+
+All provider API keys use the `LLM_` prefix:
+
 ```bash
-# API key for Anthropic
-ANTHROPIC_API_KEY=your-anthropic-api-key
+# Provider API Keys
+LLM_ANTHROPIC_API_KEY=your-anthropic-api-key
+LLM_OPENAI_API_KEY=your-openai-api-key
+LLM_GEMINI_API_KEY=your-gemini-api-key
+LLM_GROQ_API_KEY=your-groq-api-key
 
-# Model for dialectic reasoning
-LLM_DIALECTIC_PROVIDER=anthropic
-LLM_DIALECTIC_MODEL=claude-3-7-sonnet-20250219
+# OpenAI-compatible endpoints
+LLM_OPENAI_COMPATIBLE_API_KEY=your-api-key
+LLM_OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
 ```
 
-### OpenAI
+### General LLM Settings
 
-**Required Settings:**
 ```bash
-# API key for OpenAI
-OPENAI_API_KEY=your-openai-api-key
-
-# Alternative OpenAI-compatible API
-OPENAI_COMPATIBLE_API_KEY=your-api-key
-OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint.com
+# Default settings for all LLM calls
+LLM_DEFAULT_MAX_TOKENS=2500
 ```
 
-### Google (Gemini)
+### Feature-Specific Model Configuration
 
-**Required Settings:**
+Different features can use different providers and models:
+
+**Dialectic API:**
 ```bash
-# API key for Google Gemini
-GEMINI_API_KEY=your-gemini-api-key
+# Main dialectic model (default: Anthropic)
+DIALECTIC_PROVIDER=anthropic
+DIALECTIC_MODEL=claude-sonnet-4-20250514
+DIALECTIC_MAX_OUTPUT_TOKENS=2500
+DIALECTIC_THINKING_BUDGET_TOKENS=1024
 
-# Model for summarization
-LLM_SUMMARY_PROVIDER=gemini
-LLM_SUMMARY_MODEL=gemini-2.0-flash-lite
-LLM_SUMMARY_MAX_TOKENS_SHORT=1000
-LLM_SUMMARY_MAX_TOKENS_LONG=2000
+# Query generation for dialectic (default: Groq)
+DIALECTIC_QUERY_GENERATION_PROVIDER=groq
+DIALECTIC_QUERY_GENERATION_MODEL=llama-3.1-8b-instant
+
+# Semantic search settings
+DIALECTIC_SEMANTIC_SEARCH_TOP_K=10
+DIALECTIC_SEMANTIC_SEARCH_MAX_DISTANCE=0.85
 ```
 
-### Groq
-
-**Required Settings:**
+**Deriver:**
 ```bash
-# API key for Groq
-GROQ_API_KEY=your-groq-api-key
+# Deriver model (default: Google)
+DERIVER_PROVIDER=google
+DERIVER_MODEL=gemini-2.0-flash-lite
 
-# Model for query generation
-LLM_QUERY_GENERATION_PROVIDER=groq
-LLM_QUERY_GENERATION_MODEL=llama-3.1-8b-instant
-```
-
-### LLM General Settings
-
-**Default Configuration:**
-```bash
-# Default token and temperature settings
-LLM_DEFAULT_MAX_TOKENS=1000
-LLM_DEFAULT_TEMPERATURE=0.0
-```
-
-## Agent Configuration
-
-**Semantic Search Settings:**
-```bash
-# Search configuration
-AGENT_SEMANTIC_SEARCH_TOP_K=10
-AGENT_SEMANTIC_SEARCH_MAX_DISTANCE=0.85
-```
-
-**Theory of Mind Settings:**
-```bash
-# TOM inference method
-AGENT_TOM_INFERENCE_METHOD=single_prompt
-```
-
-## Deriver Configuration
-
-**Background Processing:**
-```bash
-# Worker configuration
+# Worker settings
 DERIVER_WORKERS=1
 DERIVER_STALE_SESSION_TIMEOUT_MINUTES=5
 DERIVER_POLLING_SLEEP_INTERVAL_SECONDS=1.0
+
+# Observation retrieval counts
+DERIVER_DEDUCTIVE_OBSERVATIONS_COUNT=6
+DERIVER_EXPLICIT_OBSERVATIONS_COUNT=10
 ```
 
-**Processing Methods:**
+**Summary Generation:**
 ```bash
-# TOM and user representation methods
-DERIVER_TOM_METHOD=single_prompt
-DERIVER_USER_REPRESENTATION_METHOD=long_term
+# Summary model (default: Google)
+SUMMARY_PROVIDER=google
+SUMMARY_MODEL=gemini-1.5-flash-latest
+SUMMARY_MAX_TOKENS_SHORT=1000
+SUMMARY_MAX_TOKENS_LONG=2000
+SUMMARY_THINKING_BUDGET_TOKENS=512
+
+# Summary frequency
+SUMMARY_MESSAGES_PER_SHORT_SUMMARY=20
+SUMMARY_MESSAGES_PER_LONG_SUMMARY=60
 ```
 
-## History Configuration
+### Default Provider Usage
 
-**Message Summarization:**
-```bash
-# Summary thresholds
-HISTORY_MESSAGES_PER_SHORT_SUMMARY=20
-HISTORY_MESSAGES_PER_LONG_SUMMARY=60
-```
+By default, Honcho uses:
+- **Anthropic** for dialectic API responses
+- **Groq** for query generation
+- **Google** for deriving theory of mind and summarization
+- **OpenAI** for embeddings (if `EMBED_MESSAGES=true`)
+
+You only need to set the API keys for the providers you plan to use.
+
 
 ## Monitoring Configuration
 
@@ -318,6 +312,8 @@ SENTRY_PROFILES_SAMPLE_RATE=0.1
 LOG_LEVEL = "DEBUG"
 FASTAPI_HOST = "127.0.0.1"
 FASTAPI_PORT = 8000
+SESSION_PEERS_LIMIT = 10
+EMBED_MESSAGES = false
 
 [db]
 CONNECTION_URI = "postgresql+psycopg://postgres:postgres@localhost:5432/honcho_dev"
@@ -326,9 +322,18 @@ POOL_SIZE = 5
 [auth]
 USE_AUTH = false
 
-[llm]
-DIALECTIC_PROVIDER = "anthropic"
-DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
+[dialectic]
+PROVIDER = "anthropic"
+MODEL = "claude-sonnet-4-20250514"
+QUERY_GENERATION_PROVIDER = "groq"
+QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
+MAX_OUTPUT_TOKENS = 2500
+
+[summary]
+PROVIDER = "google"
+MODEL = "gemini-1.5-flash-latest"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 2000
 
 [deriver]
 WORKERS = 1
@@ -354,6 +359,8 @@ ANTHROPIC_API_KEY=your-dev-anthropic-key
 LOG_LEVEL = "WARNING"
 FASTAPI_HOST = "0.0.0.0"
 FASTAPI_PORT = 8000
+SESSION_PEERS_LIMIT = 10
+EMBED_MESSAGES = true
 
 [db]
 CONNECTION_URI = "postgresql+psycopg://honcho_user:secure_password@prod-db:5432/honcho_prod"
@@ -363,14 +370,23 @@ MAX_OVERFLOW = 40
 [auth]
 USE_AUTH = true
 
-[llm]
-DIALECTIC_PROVIDER = "anthropic"
-DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
-SUMMARY_PROVIDER = "gemini"
-SUMMARY_MODEL = "gemini-2.0-flash-lite"
+[dialectic]
+PROVIDER = "anthropic"
+MODEL = "claude-sonnet-4-20250514"
+QUERY_GENERATION_PROVIDER = "groq"
+QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
+MAX_OUTPUT_TOKENS = 2500
+
+[summary]
+PROVIDER = "google"
+MODEL = "gemini-1.5-flash-latest"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 2000
 
 [deriver]
 WORKERS = 4
+PROVIDER = "google"
+MODEL = "gemini-2.0-flash-lite"
 
 [sentry]
 ENABLED = true
