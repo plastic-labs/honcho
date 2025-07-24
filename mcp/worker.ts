@@ -92,7 +92,7 @@ async function formatMessages(messagesPage: any): Promise<any[]> {
             peer_id: message.peer_id,
             session_id: message.session_id,
             metadata: message.metadata,
-            created_at: message.created_at?.toISOString(),
+            created_at: message.created_at,
         });
     }
     return messages;
@@ -136,7 +136,8 @@ class HonchoWorker {
         const session = this.honcho.session(sessionId);
 
         // Add the user and assistant peers to the session
-        await session.addPeers([this.config.userName, [assistant, { observe_me: false, observe_others: true }]]);
+        // @ts-expect-error - API accepts null for observe_me despite type definition
+        await session.addPeers([this.config.userName, [assistant, { observe_me: null, observe_others: false }]]);
 
         return sessionId;
     }
@@ -460,7 +461,7 @@ class HonchoWorker {
                 content: msg.content,
                 peer_id: msg.peer_id,
                 metadata: msg.metadata,
-                created_at: msg.created_at?.toISOString(),
+                created_at: msg.created_at,
             })),
         };
     }

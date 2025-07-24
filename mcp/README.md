@@ -5,14 +5,14 @@
 
 Go to https://app.honcho.dev and get an API key. Then go to Claude Desktop and navigate to custom MCP servers.
 
-If you don't have node/npm/npx install you will need to do that. Claude Desktop or Claude Code can help!
+If you don't have node/bun installed you will need to do that. You can also use npm if you already have that installed. If not, Claude Desktop or Claude Code can help!
 
 Add or integrate this into your Claude desktop config. You must provide a username for Honcho to refer to you as -- preferably what you want Claude to actually call you.
 ```json
 {
   "mcpServers": {
     "honcho": {
-      "command": "npx",
+      "command": "bunx",
       "args": [
         "mcp-remote",
         "https://mcp.honcho.dev",
@@ -36,7 +36,7 @@ You may customize your assistant name and/or workspace ID. Both are optional.
 {
   "mcpServers": {
     "honcho": {
-      "command": "npx",
+      "command": "bunx",
       "args": [
         "mcp-remote",
         "https://mcp.honcho.dev",
@@ -68,12 +68,12 @@ A Cloudflare Worker that implements the Model Context Protocol (MCP) to provide 
 
 1. **Install dependencies:**
    ```bash
-   npm install
+   bun i
    ```
 
 2. **Login to Cloudflare (if not already done):**
    ```bash
-   npx wrangler login
+   bun wrangler login
    ```
 
 3. **Configure your worker name in `wrangler.toml`:**
@@ -82,12 +82,12 @@ A Cloudflare Worker that implements the Model Context Protocol (MCP) to provide 
 
 4. **Test locally:**
    ```bash
-   npm run dev
+   bun dev
    ```
 
 5. **Deploy to production:**
    ```bash
-   npm run deploy
+   bun run deploy
    ```
 
 ## Using with Claude Desktop
@@ -98,12 +98,12 @@ After deployment, add this MCP server to your Claude Desktop configuration:
 2. Go to the "Model Context Protocol" section
 3. Add a new server with the command:
    ```bash
-   npx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev --header "Authorization:Bearer YOUR_HONCHO_API_KEY"
+   bunx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev --header "Authorization:Bearer YOUR_HONCHO_API_KEY"
    ```
 
    Or with optional configuration using custom headers:
    ```bash
-   npx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev \
+   bunx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev \
      --header "Authorization:Bearer YOUR_HONCHO_API_KEY" \
      --header "X-Honcho-Workspace-ID:my-workspace" \
      --header "X-Honcho-User-Name:john" \
@@ -128,7 +128,7 @@ You can customize the behavior using HTTP headers:
 Pass configuration via custom headers:
 
 ```bash
-npx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev \
+bunx mcp-remote https://YOUR_WORKER_NAME.YOUR_SUBDOMAIN.workers.dev \
   --header "Authorization:Bearer YOUR_HONCHO_API_KEY" \
   --header "X-Honcho-Workspace-ID:my-workspace" \
   --header "X-Honcho-User-Name:john" \
@@ -192,7 +192,7 @@ Get personalization insights from Honcho based on conversation history. This que
 The MCP server requires a valid Honcho API key provided via the Authorization header:
 
 ```bash
-npx mcp-remote https://your-worker.workers.dev --header "Authorization:Bearer YOUR_HONCHO_API_KEY"
+bunx mcp-remote https://your-worker.workers.dev --header "Authorization:Bearer YOUR_HONCHO_API_KEY"
 ```
 
 All configuration options are passed via custom headers - see the Configuration Options section above for full details.
@@ -211,8 +211,8 @@ All communication follows the JSON-RPC 2.0 format with proper error handling and
 
 ### Local Development
 
-1. Install dependencies: `npm install`
-2. Start the development server: `npm run dev`
+1. Install dependencies: `bun install`
+2. Start the development server: `bun run dev`
 3. The worker will be available at `http://localhost:8787`
 
 ### Testing with MCP
@@ -220,7 +220,7 @@ All communication follows the JSON-RPC 2.0 format with proper error handling and
 You can test the MCP server using `mcp-remote` with the local URL:
 
 ```bash
-npx mcp-remote http://localhost:8787 --header "Authorization:Bearer your-api-key"
+bunx mcp-remote http://localhost:8787 --header "Authorization:Bearer your-api-key"
 ```
 
 ## Error Handling
