@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.1.0"
+version = "2.1.1"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -32,6 +32,7 @@ dependencies = [
 [tool.uv]
 dev-dependencies = [
     "honcho-core>=1.2.0",
+    "honcho-ai>=1.2.1",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",

@@ -91,8 +91,7 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        # we expect 1 queue item for session level summarization
-        assert final_count == initial_count + 1
+        assert final_count == initial_count
 
     @pytest.mark.asyncio
     @patch("src.deriver.enqueue.tracked_db")
@@ -193,7 +192,7 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a summary queue item
+        # For each message, we expect a representation
         expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
@@ -271,7 +270,7 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a summary queue item
+        # For each message, we expect a representation and a local representation for observer
         expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
@@ -364,7 +363,7 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Explicitly match up payloads by sender/target/task_type
-        # For each message, we expect a representation and a summary queue item
+        # For each message, we expect a representation and a local representation for observer
         expected_payloads: list[dict[str, Any]] = []
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
@@ -439,12 +438,6 @@ class TestEnqueueFunction:
 
         # Should create 0 queue items
         assert final_count - initial_count == 0
-
-        result = await db_session.execute(
-            select(QueueItem).where(QueueItem.session_id == test_session.id)
-        )
-        queue_items = result.scalars().all()
-        assert len(queue_items) == 0
 
     @pytest.mark.asyncio
     @patch("src.deriver.enqueue.tracked_db")

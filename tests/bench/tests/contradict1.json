@@ -1,0 +1,54 @@
+{
+    "sessions": {
+        "session1": {
+            "messages": [
+                {
+                    "peer": "alice",
+                    "content": "I had a great breakfast today!"
+                },
+                {
+                    "peer": "bob",
+                    "content": "What did you eat?"
+                },
+                {
+                    "peer": "alice",
+                    "content": "I had pancakes and eggs and bacon."
+                }
+            ]
+        },
+        "session2": {
+            "messages": [
+                {
+                    "peer": "alice",
+                    "content": "Hey remember when I told you I had a great breakfast today? I lied. I actually skipped breakfast."
+                },
+                {
+                    "peer": "bob",
+                    "content": "WTF is wrong with you??"
+                }
+            ]
+        }
+    },
+    "queries": [
+        {
+            "observer": "bob",
+            "query": "Based on only the information in this session, what does bob think alice had for breakfast today?",
+            "session": "session1",
+            "target": "alice",
+            "expected_response": "pancakes and eggs and bacon"
+        },
+        {
+            "observer": "bob",
+            "query": "what did alice have for breakfast today?",
+            "session": "session2",
+            "target": "alice",
+            "expected_response": "lied previously, skipped breakfast"
+        },
+        {
+            "observer": "bob",
+            "query": "what did alice have for breakfast today?",
+            "target": "alice",
+            "expected_response": "conflicting information, ultimately skipped breakfast"
+        }
+    ]
+}

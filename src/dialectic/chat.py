@@ -8,7 +8,9 @@ historical observations.
 
 import asyncio
 import logging
+import uuid
 
+import tiktoken
 from dotenv import load_dotenv
 from langfuse.decorators import langfuse_context
 from mirascope.llm import Stream
@@ -16,8 +18,13 @@ from mirascope.llm import Stream
 from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
+from src.routers.sessions import get_session_context
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
+from src.utils.logging import (
+    accumulate_metric,
+    log_performance_metrics,
+)
 
 from .prompts import dialectic_prompt
 from .utils import get_observations
@@ -42,9 +49,11 @@ load_dotenv()
 )
 async def dialectic_call(
     query: str,
-    working_representation: str,
+    working_representation: str | None,
+    recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
+    target_name: str | None = None,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -60,7 +69,12 @@ async def dialectic_call(
     """
     # Generate the prompt and log it
     prompt_result = dialectic_prompt(
-        query, working_representation, additional_context, peer_name
+        query,
+        working_representation,
+        recent_conversation_history,
+        additional_context,
+        peer_name,
+        target_name,
     )
 
     # Pretty print the prompt content
@@ -91,9 +105,11 @@ async def dialectic_call(
 )
 async def dialectic_stream(
     query: str,
-    working_representation: str,
+    working_representation: str | None,
+    recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
+    target_name: str | None = None,
 ):
     """
     Make a streaming call to the dialectic model for context synthesis.
@@ -109,7 +125,12 @@ async def dialectic_stream(
     """
     # Generate the prompt and log it
     prompt_result = dialectic_prompt(
-        query, working_representation, additional_context, peer_name
+        query,
+        working_representation,
+        recent_conversation_history,
+        additional_context,
+        peer_name,
+        target_name,
     )
 
     # Pretty print the prompt content
@@ -156,91 +177,160 @@ async def chat(
         Dialectic response (streaming or complete)
     """
 
-    langfuse_context.update_current_trace(
-        metadata={
-            "query_generation_model": settings.DIALECTIC.QUERY_GENERATION_MODEL,
-            "query_generation_provider": settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
-            "dialectic_model": settings.DIALECTIC.MODEL,
-        }
+    dialectic_chat_uuid = str(uuid.uuid4())
+
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+
+    context_window_size = (
+        settings.DIALECTIC.CONTEXT_WINDOW_SIZE - 750
+    )  # this is a hardcoded (accurate, slightly conservative) estimate of system prompt
+
+    context_window_size -= len(tokenizer.encode(query))
+
+    if settings.LANGFUSE_PUBLIC_KEY:
+        langfuse_context.update_current_trace(
+            metadata={
+                "query_generation_model": settings.DIALECTIC.QUERY_GENERATION_MODEL,
+                "query_generation_provider": settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
+                "dialectic_model": settings.DIALECTIC.MODEL,
+            }
+        )
+    logger.info(
+        "Received query:\n'%s'\nobserver: %s%s%s\n",
+        query,
+        peer_name,
+        f", target: {target_name}" if target_name else "",
+        f", session: {session_name}" if session_name else "",
     )
-    logger.debug(f"Received query: {query} for session {session_name}")
     start_time = asyncio.get_event_loop().time()
 
     # 1. Working representation (short-term) -----------------------------------
     # Only useful for session-scoped queries, not global queries
     if session_name:
+        working_rep_start_time = asyncio.get_event_loop().time()
         async with tracked_db("chat.get_working_representation") as db:
             # If no target specified, get global representation (peer observing themselves)
             target_peer = target_name if target_name is not None else peer_name
-
             working_representation = await crud.get_working_representation(
                 db, workspace_name, peer_name, target_peer, session_name
             )
+        working_rep_duration = asyncio.get_event_loop().time() - working_rep_start_time
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "retrieve_working_rep",
+            working_rep_duration,
+            "s",
+        )
+        logger.info("Retrieved working representation:\n%s\n", working_representation)
+        context_window_size -= len(tokenizer.encode(working_representation))
     else:
         # For global queries, working representation isn't useful - use historical context instead
-        working_representation = ""
-
-    logger.debug(f"Working representation length: {len(working_representation)}")
+        working_representation = None
+        logger.info("Query is not session-scoped, skipping working representation")
 
     # 2. Additional context (long-term semantic search) ------------------------
-    # If the query is globally-scoped but not targeted, get global_representation facts from other sessions
-    # If the query is globally-scoped and targeted, get facts from other sessions for our target
-    # If the query is session-scoped but not targeted, skip this step
-    # If the query is session-scoped and targeted, get facts from *only* this session for our target
-    if not session_name:
-        async with tracked_db("chat.get_additional_context") as db:
-            embedding_store = EmbeddingStore(
-                workspace_name=workspace_name,
-                peer_name=target_name if target_name else peer_name,
-                collection_name="global_representation"
-                if not target_name
-                else crud.construct_collection_name(
-                    observer=peer_name, observed=target_name
-                ),
-            )
-            additional_context = await get_observations(
-                query,
-                embedding_store,
-                include_premises=True,
-                exclude_session_name=session_name if not target_name else None,
-                peer_name=peer_name,
-            )
-            logger.debug(
-                f"Retrieved additional context: {len(additional_context)} characters"
-            )
-    else:
-        if not target_name:
-            additional_context = None
-        else:
-            async with tracked_db("chat.get_additional_context") as db:
-                embedding_store = EmbeddingStore(
-                    workspace_name=workspace_name,
-                    peer_name=target_name,
-                    collection_name=crud.construct_collection_name(
-                        observer=peer_name, observed=target_name
-                    ),
-                )
-                additional_context = await get_observations(
-                    query,
-                    embedding_store,
-                    include_premises=True,
-                    include_session_name=session_name,
-                    peer_name=peer_name,
-                )
-                logger.debug(
-                    f"Retrieved additional context: {len(additional_context)} characters"
-                )
+    # If the query is not targeted, get global_representation facts from other sessions
+    # If the query is targeted, get facts from other sessions for our target
+    additional_context_start_time = asyncio.get_event_loop().time()
+    embedding_store = EmbeddingStore(
+        workspace_name=workspace_name,
+        peer_name=target_name if target_name else peer_name,
+        collection_name="global_representation"
+        if not target_name
+        else crud.construct_collection_name(observer=peer_name, observed=target_name),
+    )
+    additional_context: str = await get_observations(
+        query,
+        target_name if target_name else peer_name,
+        embedding_store,
+        include_premises=True,
+    )
+    additional_context_duration = (
+        asyncio.get_event_loop().time() - additional_context_start_time
+    )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "retrieve_additional_context",
+        additional_context_duration,
+        "s",
+    )
 
-    # 3. Dialectic call --------------------------------------------------------
+    logger.info("Retrieved additional context:\n%s", additional_context)
+    context_window_size -= len(tokenizer.encode(additional_context))
+
+    # 3. Recent conversation history --------------------------------------------
+    # If query is session-scoped, get recent conversation history from that session
+    if session_name:
+        async with tracked_db("chat.get_session_context") as db:
+            session_context = await get_session_context(
+                workspace_id=workspace_name,
+                session_id=session_name,
+                tokens=context_window_size,
+                summary=True,
+                force_new=False,
+                db=db,
+            )
+        logger.info(
+            "Retrieved recent conversation history with %s messages",
+            len(session_context.messages),
+        )
+        recent_conversation_history = f"""
+        <summary>
+        {session_context.summary}
+        </summary>
+        <recent_messages>
+        {session_context.messages}
+        </recent_messages>
+        """
+    else:
+        recent_conversation_history = None
+        logger.info("Query is not session-scoped, skipping recent conversation history")
+
+    context_window_size -= len(tokenizer.encode(recent_conversation_history or ""))
+
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "tokens_used_estimate",
+        settings.DIALECTIC.CONTEXT_WINDOW_SIZE - context_window_size,
+        "tokens",
+    )
+
+    # 4. Dialectic call --------------------------------------------------------
+    dialectic_call_start_time = asyncio.get_event_loop().time()
     if stream:
         return await dialectic_stream(
-            query, working_representation, additional_context, peer_name
+            query,
+            working_representation,
+            recent_conversation_history,
+            additional_context,
+            peer_name,
+            target_name,
         )
 
     response = await dialectic_call(
-        query, working_representation, additional_context, peer_name
+        query,
+        working_representation,
+        recent_conversation_history,
+        additional_context,
+        peer_name,
+        target_name,
     )
+    dialectic_call_duration = (
+        asyncio.get_event_loop().time() - dialectic_call_start_time
+    )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "dialectic_call",
+        dialectic_call_duration,
+        "s",
+    )
+
     elapsed = asyncio.get_event_loop().time() - start_time
-    logger.debug(f"Dialectic answered in {elapsed:.2f}s")
+
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}", "total_duration", elapsed, "s"
+    )
+
+    log_performance_metrics(f"dialectic_chat_{dialectic_chat_uuid}")
     # Convert AnthropicCallResponse to string for compatibility
     return str(response)

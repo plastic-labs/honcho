@@ -52,21 +52,21 @@ class VersionUpdater:
 # Enter new version numbers below. Leave blank to skip updating that component.
 #
 # MAIN API
-# Current version: {current_versions['api']}
+# Current version: {current_versions["api"]}
 API_VERSION=
 
 # API Changelog (use ### for section headers: Added, Changed, Fixed, etc.)
 
 
 # PYTHON SDK
-# Current version: {current_versions['python_sdk']}
+# Current version: {current_versions["python_sdk"]}
 PYTHON_VERSION=
 
 # Python SDK Changelog
 
 
 # TYPESCRIPT SDK
-# Current version: {current_versions['typescript_sdk']}
+# Current version: {current_versions["typescript_sdk"]}
 TYPESCRIPT_VERSION=
 
 # TypeScript SDK Changelog
@@ -162,7 +162,6 @@ TYPESCRIPT_VERSION=
         current_section = None
         section_has_content = False
         section_start_idx = -1
-
         for i, line in enumerate(lines):
             # Check if this is a section header
             is_section_header = False
@@ -173,7 +172,6 @@ TYPESCRIPT_VERSION=
                         if section_has_content:
                             # Keep the section
                             cleaned_lines.extend(lines[section_start_idx:i])
-
                     # Start tracking new section
                     current_section = section
                     section_start_idx = i

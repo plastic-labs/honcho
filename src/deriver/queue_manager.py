@@ -33,11 +33,14 @@ class WorkUnit:
     A work unit is uniquely identified by the combination of session_id,
     sender_name, target_name, and task_type. This allows multiple workers
     to process different work units from the same session in parallel.
+
+    For summary tasks, sender_name and target_name are None since summary
+    tasks don't have these fields and should be processed sequentially per session.
     """
 
     session_id: str
-    sender_name: str
-    target_name: str
+    sender_name: str | None
+    target_name: str | None
     task_type: str
 
     def __str__(self) -> str:
@@ -174,8 +177,20 @@ class QueueManager:
             .outerjoin(
                 models.ActiveQueueSession,
                 (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
-                & (sender_name_expr == models.ActiveQueueSession.sender_name)
-                & (target_name_expr == models.ActiveQueueSession.target_name)
+                & (
+                    (sender_name_expr == models.ActiveQueueSession.sender_name)
+                    | (
+                        sender_name_expr.is_(None)
+                        & models.ActiveQueueSession.sender_name.is_(None)
+                    )
+                )
+                & (
+                    (target_name_expr == models.ActiveQueueSession.target_name)
+                    | (
+                        target_name_expr.is_(None)
+                        & models.ActiveQueueSession.target_name.is_(None)
+                    )
+                )
                 & (task_type_expr == models.ActiveQueueSession.task_type),
             )
             .where(~models.QueueItem.processed)
@@ -293,14 +308,11 @@ class QueueManager:
                         break
 
                     message_count += 1
-                    logger.debug(
-                        f"Processing message {message.id} for work unit {work_unit} (message {message_count})"
-                    )
                     try:
                         logger.info(
-                            f"Processing message {message.id} from work unit {work_unit}"
+                            f"Processing message {message.payload['message_id']} from work unit {work_unit}"
                         )
-                        await process_item(db, payload=message.payload)
+                        await process_item(message.payload)
                         logger.debug(f"Successfully processed message {message.id}")
                     except Exception as e:
                         logger.error(
@@ -357,21 +369,26 @@ class QueueManager:
     @sentry_sdk.trace
     async def get_next_message(self, db: AsyncSession, work_unit: WorkUnit):
         """Get the next unprocessed message for a specific work unit"""
-        result = await db.execute(
+        query = (
             select(models.QueueItem)
             .where(models.QueueItem.session_id == work_unit.session_id)
-            .where(
-                models.QueueItem.payload["sender_name"].astext == work_unit.sender_name
-            )
-            .where(
-                models.QueueItem.payload["target_name"].astext == work_unit.target_name
-            )
             .where(models.QueueItem.payload["task_type"].astext == work_unit.task_type)
             .where(~models.QueueItem.processed)
             .order_by(models.QueueItem.id)
             .with_for_update(skip_locked=True)
             .limit(1)
         )
+
+        # For summary tasks, sender_name and target_name don't exist in payload
+        # For other tasks, filter by sender_name and target_name
+        if work_unit.task_type != "summary":
+            query = query.where(
+                models.QueueItem.payload["sender_name"].astext == work_unit.sender_name
+            ).where(
+                models.QueueItem.payload["target_name"].astext == work_unit.target_name
+            )
+
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
 

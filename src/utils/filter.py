@@ -222,12 +222,12 @@ def _build_field_condition(
         else:
             # This is a regular value that happens to be a dict
             # For JSONB fields (metadata, configuration), check if it contains nested comparison operators
-            if column_name in ("h_metadata", "configuration"):
+            if column_name in ("h_metadata", "configuration", "internal_metadata"):
                 return _build_nested_metadata_conditions(column, value)  # pyright: ignore
             else:
                 return column == value
     else:
-        if column_name in ("h_metadata", "configuration"):
+        if column_name in ("h_metadata", "configuration", "internal_metadata"):
             return column.contains(value)
         else:
             return column == value

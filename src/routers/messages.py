@@ -49,36 +49,33 @@ async def create_messages_for_session(
     db: AsyncSession = db,
 ):
     """Create messages for a session with JSON data (original functionality)."""
+    try:
+        created_messages = await crud.create_messages(
+            db,
+            messages=messages.messages,
+            workspace_name=workspace_id,
+            session_name=session_id,
+        )
 
-    created_messages = await crud.create_messages(
-        db,
-        messages=messages.messages,
-        workspace_name=workspace_id,
-        session_name=session_id,
-    )
+        # Enqueue for processing (existing logic)
+        payloads = [
+            {
+                "workspace_name": workspace_id,
+                "session_name": session_id,
+                "message_id": message.id,
+                "content": message.content,
+                "peer_name": message.peer_name,
+                "created_at": message.created_at,
+            }
+            for message in created_messages
+        ]
 
-    # Enqueue for processing (existing logic)
-    payloads = [
-        {
-            "workspace_name": workspace_id,
-            "session_name": session_id,
-            "message_id": message.id,
-            "content": message.content,
-            "peer_name": message.peer_name,
-            "created_at": message.created_at.isoformat()
-            if message.created_at
-            else None,
-        }
-        for message in created_messages
-    ]
-
-    # Enqueue all messages in one call
-    background_tasks.add_task(enqueue, payloads)
-    logger.info(
-        f"Batch of {len(created_messages)} messages created and queued for processing"
-    )
-
-    return created_messages
+        # Enqueue all messages in one call
+        background_tasks.add_task(enqueue, payloads)
+        return created_messages
+    except ValueError as e:
+        logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
+        raise
 
 
 @router.post("/upload", response_model=list[schemas.Message])
@@ -129,9 +126,7 @@ async def create_messages_with_file(
             "message_id": message.id,
             "content": message.content,
             "peer_name": message.peer_name,
-            "created_at": message.created_at.isoformat()
-            if message.created_at
-            else None,
+            "created_at": message.created_at,
         }
         for message in created_messages
     ]

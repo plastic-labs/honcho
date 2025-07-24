@@ -1,0 +1,23 @@
+{
+    "sessions": {
+        "session1": {
+            "messages": [
+                {
+                    "peer": "alice",
+                    "content": "Hello, how are you?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "I'm good, thank you!"
+                }
+            ]
+        }
+    },
+    "queries": [
+        {
+            "observer": "bob",
+            "query": "How is Bob doing?",
+            "expected_response": "Good"
+        }
+    ]
+}

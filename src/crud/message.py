@@ -38,10 +38,7 @@ async def create_messages(
     peers = {message.peer_name: schemas.SessionPeerConfig() for message in messages}
     await get_or_create_session(
         db,
-        session=schemas.SessionCreate(
-            name=session_name,
-            peers=peers,
-        ),
+        session=schemas.SessionCreate(name=session_name, peers=peers),
         workspace_name=workspace_name,
     )
 
@@ -186,50 +183,71 @@ async def get_messages(
 async def get_messages_id_range(
     db: AsyncSession,
     workspace_name: str,
-    session_name: str | None,
-    peer_name: str | None,
+    session_name: str,
     start_id: int = 0,
     end_id: int | None = None,
 ) -> list[models.Message]:
     """
-    Get messages from a session or peer by primary key ID range.
+    Get messages from a session by primary key ID range.
     If end_id is not provided, all messages after and including start_id will be returned.
     If start_id is not provided, start will be beginning of session.
 
-    Note: list is exclusive of the end_id message.
+    Note: list is *inclusive* of the end_id message.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
         session_name: Name of the session
-        peer_name: Name of the peer
         start_id: Primary key ID of the first message to return
         end_id: Primary key ID of the last message (exclusive)
 
     Returns:
         List of messages
-
-    Raises:
-        ValueError: If both session_name and peer_name are not provided
     """
-    if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 1)):
+    if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 0)):
         return []
-    stmt = select(models.Message).where(
-        models.Message.workspace_name == workspace_name,
+    stmt = (
+        select(models.Message)
+        .where(
+            models.Message.workspace_name == workspace_name,
+        )
+        .where(models.Message.session_name == session_name)
     )
     if end_id:
-        stmt = stmt.where(models.Message.id.between(start_id, end_id - 1))
+        stmt = stmt.where(models.Message.id.between(start_id, end_id))
     else:
         stmt = stmt.where(models.Message.id >= start_id)
 
-    if session_name:
-        stmt = stmt.where(models.Message.session_name == session_name)
-    elif peer_name:
-        stmt = stmt.where(models.Message.peer_name == peer_name)
-    else:
-        raise ValueError("Either session_name or peer_name must be provided")
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_message_seq_in_session(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    message_id: int,
+) -> int:
+    """
+    Get the sequence number of a message within a session.
+
+    Args:
+        db: Database session
+        session_name: Name of the session
+        message_id: Primary key ID of the message
+
+    Returns:
+        The sequence number of the message (1-indexed)
+    """
+    stmt = (
+        select(func.count(models.Message.id))
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.session_name == session_name)
+        .where(models.Message.id < message_id)
+    )
+    result = await db.execute(stmt)
+    count = result.scalar() or 0
+    return count + 1
 
 
 async def get_message(

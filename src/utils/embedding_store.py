@@ -4,14 +4,22 @@ import datetime
 import logging
 from typing import Any, Literal, overload
 
-from langfuse.decorators import langfuse_context, observe  # pyright: ignore
+from langfuse.decorators import langfuse_context
+from openai.types import CreateEmbeddingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
-from src.utils.shared_models import ObservationContext
-from src.utils.summarizer import SummaryType
+from src.embedding_client import embedding_client
+from src.utils.logging import conditional_observe
+from src.utils.shared_models import (
+    Observation,
+    ObservationContext,
+    ObservationMetadata,
+    ReasoningLevel,
+    UnifiedObservation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +57,10 @@ class EmbeddingStore:
         if deductive is not None:
             self.deductive_observations_count = deductive
 
-    @observe()
+    @conditional_observe
     async def save_unified_observations(
         self,
-        observations: list[str] | list[Any],
+        observations: list[UnifiedObservation],
         similarity_threshold: float = 0.85,
         message_id: str | None = None,
         level: str | None = None,
@@ -66,7 +74,6 @@ class EmbeddingStore:
         2. Storing premises in metadata for reference
 
         Args:
-            db: Database session (not used in this implementation as we use tracked_db)
             observations: List of UnifiedObservation objects or strings
             similarity_threshold: Threshold for considering observations similar
             message_id: Message ID to link with observations
@@ -74,142 +81,83 @@ class EmbeddingStore:
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
         """
-        from src.utils.shared_models import UnifiedObservation
-
         async with tracked_db("ed_embedding_store.save_unified_observations") as db:
-            try:
-                # Convert mixed input to UnifiedObservation objects
-                unified_observations: list[Any] = []
-                for obs in observations:
-                    if isinstance(obs, str):
-                        unified_observations.append(
-                            UnifiedObservation.from_string(obs, level=level)
-                        )
-                    elif isinstance(obs, UnifiedObservation):
-                        unified_observations.append(obs)
-                    else:
-                        # Try to extract content and treat as string
-                        content = getattr(obs, "content", str(obs))
-                        unified_observations.append(
-                            UnifiedObservation.from_string(content, level=level)
-                        )
+            # Extract conclusions for deduplication and embedding
+            conclusions: list[str] = [obs.conclusion for obs in observations]
 
-                # Get latest short summary for context linking if session_name provided
-                summary_id: str | None = None
-                summary_content: str | None = None
-                if session_name:
-                    try:
-                        from src.utils.summarizer import get_summary
-
-                        latest_summary = await get_summary(
-                            db, self.workspace_name, session_name, SummaryType.SHORT
-                        )
-                        if latest_summary:
-                            summary_id = (
-                                str(latest_summary.get("message_id"))
-                                if latest_summary.get("message_id")
-                                else None
-                            )
-                            summary_content = latest_summary.get("content")
-                    except Exception as e:
-                        logger.warning(
-                            f"Could not retrieve latest summary for session {session_name}: {e}"
-                        )
-
-                # Extract conclusions for deduplication and embedding
-                conclusions: list[str] = [
-                    obs.conclusion for obs in unified_observations
-                ]
-
-                # Remove duplicates before saving
-                unique_conclusions: list[str] = await self.remove_duplicates(
-                    conclusions, similarity_threshold=similarity_threshold
-                )
+            # Remove duplicates before saving
+            unique_conclusions: list[str] = await self.remove_duplicates(
+                conclusions, similarity_threshold=similarity_threshold
+            )
+            if settings.LANGFUSE_PUBLIC_KEY:
                 langfuse_context.update_current_observation(
-                    input={
-                        "observations": [
-                            obs.model_dump() for obs in unified_observations
-                        ]
-                    },
+                    input={"observations": [obs.model_dump() for obs in observations]},
                     output={"unique_conclusions": unique_conclusions},
                 )
 
-                if not unique_conclusions:
-                    logger.debug("No unique observations to save after deduplication")
-                    return
+            if not unique_conclusions:
+                logger.debug("No unique observations to save after deduplication")
+                return
 
-                # Create mapping from conclusion back to original observation
-                conclusion_to_observation: dict[str, Any] = {
-                    obs.conclusion: obs for obs in unified_observations
+            # Create mapping from conclusion back to original observation
+            conclusion_to_observation: dict[str, UnifiedObservation] = {
+                obs.conclusion: obs for obs in observations
+            }
+
+            # Filter unified observations to only unique ones
+            unique_observations: list[UnifiedObservation] = [
+                conclusion_to_observation[conclusion]
+                for conclusion in unique_conclusions
+            ]
+
+            # Batch embed all unique conclusions (not premises)
+            embeddings: list[list[float]] = []
+            batch_size: int = 2048  # OpenAI batch limit
+
+            for i in range(0, len(unique_conclusions), batch_size):
+                batch = unique_conclusions[i : i + batch_size]
+                response: CreateEmbeddingResponse = (
+                    await embedding_client.client.embeddings.create(
+                        input=batch, model="text-embedding-3-small"
+                    )
+                )
+                embeddings.extend([data.embedding for data in response.data])
+
+            # Batch create document objects
+            document_objects: list[models.Document] = []
+            for obs, embedding in zip(unique_observations, embeddings, strict=True):
+                # Use the observation's own level, fall back to parameter level,
+                # or infer from premises
+                obs_level = obs.level or level
+                if obs_level is None:
+                    obs_level = "deductive" if obs.has_premises else "explicit"
+
+                # Build metadata including premises
+                metadata: dict[str, Any] = {
+                    "level": obs_level,
+                    "message_id": message_id,
+                    "session_name": session_name,
+                    "premises": obs.premises,  # Store premises in metadata
+                    "created_at": message_created_at.isoformat()
+                    if message_created_at
+                    else None,
                 }
 
-                # Filter unified observations to only unique ones
-                unique_observations: list[Any] = [
-                    conclusion_to_observation[conclusion]
-                    for conclusion in unique_conclusions
-                ]
-
-                # Batch embed all unique conclusions (not premises)
-                from openai.types import CreateEmbeddingResponse
-
-                from src.embedding_client import embedding_client
-
-                embeddings: list[list[float]] = []
-                batch_size: int = 2048  # OpenAI batch limit
-
-                for i in range(0, len(unique_conclusions), batch_size):
-                    batch = unique_conclusions[i : i + batch_size]
-                    response: CreateEmbeddingResponse = (
-                        await embedding_client.client.embeddings.create(
-                            input=batch, model="text-embedding-3-small"
-                        )
-                    )
-                    embeddings.extend([data.embedding for data in response.data])
-
-                # Batch create document objects
-                document_objects: list[models.Document] = []
-                for obs, embedding in zip(unique_observations, embeddings, strict=True):
-                    # Use the observation's own level, fall back to parameter level,
-                    # or infer from premises
-                    obs_level = obs.level or level
-                    if obs_level is None:
-                        obs_level = "deductive" if obs.has_premises else "explicit"
-
-                    # Build metadata including premises
-                    metadata: dict[str, Any] = {
-                        "level": obs_level,
-                        "message_id": message_id,
-                        "session_name": session_name,
-                        "premises": obs.premises,  # Store premises in metadata
-                        "created_at": message_created_at.isoformat()
-                        if message_created_at
-                        else None,
-                    }
-                    if summary_id:
-                        metadata["summary_id"] = str(summary_id)
-                    if summary_content:
-                        metadata["session_context"] = summary_content[:500]
-
-                    doc = models.Document(
-                        workspace_name=self.workspace_name,
-                        peer_name=self.peer_name,
-                        collection_name=self.collection_name,
-                        content=obs.conclusion,  # Store only conclusion as content
-                        internal_metadata=metadata,
-                        embedding=embedding,  # Embedding generated from conclusion only
-                        created_at=message_created_at,
-                    )
-                    document_objects.append(doc)
-
-                # Batch insert all documents
-                db.add_all(document_objects)
-                await db.commit()
-                logger.debug(
-                    f"Batch created {len(document_objects)} unified observations"
+                doc = models.Document(
+                    workspace_name=self.workspace_name,
+                    peer_name=self.peer_name,
+                    collection_name=self.collection_name,
+                    content=obs.conclusion,  # Store only conclusion as content
+                    internal_metadata=metadata,
+                    embedding=embedding,  # Embedding generated from conclusion only
+                    created_at=message_created_at,
                 )
+                document_objects.append(doc)
 
-            except Exception as e:
-                logger.error(f"Error saving unified observations: {e}")
+            # Batch insert all documents
+            db.add_all(document_objects)
+            await db.commit()
+            logger.debug("Batch created %s unified observations", len(document_objects))
 
     @overload
     async def get_relevant_observations(
@@ -245,7 +193,8 @@ class EmbeddingStore:
         conversation_context: str = "",
         for_reasoning: bool = False,
     ) -> list[models.Document] | ObservationContext:
-        """Unified method to get relevant observations with flexible options.
+        """
+        Unified method to get relevant observations with flexible options.
 
         Args:
             query: The search query
@@ -269,6 +218,21 @@ class EmbeddingStore:
                 for_reasoning,
             )
 
+    def _build_filter_conditions(
+        self,
+        level: str | None = None,
+    ) -> dict[str, Any]:
+        """Build complete filter conditions for document queries."""
+        conditions: list[dict[str, Any]] = []
+
+        if level:
+            conditions.append({"internal_metadata": {"level": level}})
+
+        if not conditions:
+            return {}
+
+        return conditions[0] if len(conditions) == 1 else {"AND": conditions}
+
     async def _get_observations_internal(
         self,
         db: AsyncSession,
@@ -282,41 +246,22 @@ class EmbeddingStore:
         """Internal method that does the actual observation retrieval."""
         try:
             if for_reasoning:
-                # Return ObservationContext for ed reasoning
-                from src.utils.shared_models import (
-                    Observation,
-                    ObservationContext,
-                    ReasoningLevel,
+                return await self._get_observations_for_reasoning(
+                    db,
+                    query,
+                    max_distance,
+                    conversation_context,
                 )
-
-                context = ObservationContext()
-                for level_name in ["explicit", "deductive"]:
-                    count: int = getattr(self, f"{level_name}_observations_count", 5)
-                    level_enum = ReasoningLevel(level_name)
-
-                    docs = await self._query_documents_for_level(
-                        db, query, level_name, conversation_context, max_distance, count
-                    )
-
-                    seen_observations: set[str] = set()
-                    for doc in docs:
-                        normalized_content: str = doc.content.strip().lower()
-                        if normalized_content not in seen_observations:
-                            metadata = self._extract_observation_metadata(doc)
-                            observation = Observation(
-                                content=doc.content,
-                                metadata=metadata,
-                                created_at=doc.created_at,
-                            )
-                            context.add_observation(observation, level_enum)
-                            seen_observations.add(normalized_content)
-
-                return context
             else:
                 # Regular document list return
                 if level:
                     return await self._query_documents_for_level(
-                        db, query, level, conversation_context, max_distance, top_k
+                        db,
+                        query,
+                        level,
+                        conversation_context,
+                        max_distance,
+                        top_k,
                     )
                 else:
                     documents = await crud.query_documents(
@@ -334,10 +279,46 @@ class EmbeddingStore:
         except Exception as e:
             logger.error(f"Error getting relevant observations: {e}")
             if for_reasoning:
-                from src.utils.shared_models import ObservationContext
-
                 return ObservationContext()
             return []
+
+    async def _get_observations_for_reasoning(
+        self,
+        db: AsyncSession,
+        query: str,
+        max_distance: float,
+        conversation_context: str,
+    ) -> ObservationContext:
+        """Get observations formatted for reasoning with ObservationContext."""
+        context = ObservationContext()
+
+        for level_name in ["explicit", "deductive"]:
+            count: int = getattr(self, f"{level_name}_observations_count", 5)
+            level_enum = ReasoningLevel(level_name)
+
+            docs = await self._query_documents_for_level(
+                db,
+                query,
+                level_name,
+                conversation_context,
+                max_distance,
+                count,
+            )
+
+            seen_observations: set[str] = set()
+            for doc in docs:
+                normalized_content: str = doc.content.strip().lower()
+                if normalized_content not in seen_observations:
+                    metadata = self._extract_observation_metadata(doc)
+                    observation = Observation(
+                        content=doc.content,
+                        metadata=metadata,
+                        created_at=doc.created_at,
+                    )
+                    context.add_observation(observation, level_enum)
+                    seen_observations.add(normalized_content)
+
+        return context
 
     async def _query_documents_for_level(
         self,
@@ -363,19 +344,17 @@ class EmbeddingStore:
             query=combined_query,
             max_distance=max_distance,
             top_k=count * 3,
-            filters={"internal_metadata": {"level": level}},
+            filters=self._build_filter_conditions(level),
         )
 
-        docs_list: list[models.Document] = list(documents)
+        # Sort by creation time and return top count
         docs_sorted: list[models.Document] = sorted(
-            docs_list, key=lambda x: x.created_at, reverse=True
+            list(documents), key=lambda x: x.created_at, reverse=True
         )
         return docs_sorted[:count]
 
     def _extract_observation_metadata(self, doc: models.Document) -> Any:
         """Extract metadata from a document for ObservationMetadata."""
-        from src.utils.shared_models import ObservationMetadata
-
         metadata = ObservationMetadata()
         if doc.internal_metadata:
             metadata.session_context = doc.internal_metadata.get("session_context", "")
@@ -401,25 +380,46 @@ class EmbeddingStore:
         Returns:
             List of unique observations
         """
+        if not facts:
+            return []
+
+        # Batch generate embeddings for all facts at once
+        embeddings: list[list[float]] = []
+        batch_size: int = 2048  # OpenAI batch limit
+
+        for i in range(0, len(facts), batch_size):
+            batch = facts[i : i + batch_size]
+            response: CreateEmbeddingResponse = (
+                await embedding_client.client.embeddings.create(
+                    input=batch, model="text-embedding-3-small"
+                )
+            )
+            embeddings.extend([data.embedding for data in response.data])
+
+        # Now check each fact for duplicates using query_documents with pre-computed embeddings
         unique_observations: list[str] = []
+
         async with tracked_db("embedding_store.remove_duplicates") as db:
-            for observation in facts:
-                # Check for similar existing observations
+            for fact, embedding in zip(facts, embeddings, strict=True):
                 documents = await crud.query_documents(
                     db,
                     workspace_name=self.workspace_name,
                     peer_name=self.peer_name,
                     collection_name=self.collection_name,
-                    query=observation,
+                    query=fact,
                     max_distance=1.0 - similarity_threshold,
                     top_k=1,
+                    embedding=embedding,  # Pass pre-computed embedding
                 )
 
                 docs_list: list[models.Document] = list(documents)
                 if not docs_list:
-                    unique_observations.append(observation)
-                else:
-                    logger.debug(
-                        f"Skipping duplicate observation: {observation[:50]}..."
-                    )
+                    unique_observations.append(fact)
+
+        logger.debug(
+            "Batch remove duplicates: %s input facts, %s unique after deduplication",
+            len(facts),
+            len(unique_observations),
+        )
+
         return unique_observations

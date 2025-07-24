@@ -5,7 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [2.1.0] - 2025-7-17
+## [2.1.1] - 2025-07-23
+
+### Added
+
+- Test harness for custom Honcho evaluations
+- Better support for session and peer aware dialectic queries
+- Langfuse settings
+- Added recent history to dialectic prompt, dynamic based on new context window size setting
+
+### Fixed
+
+- Summary queue logic
+- Formatting of logs
+- Filtering by session
+- Peer targeting in queries
+
+### Changed
+
+- Made query expansion in dialectic off by default
+- Overhauled logging
+- Refactor summarization for performance and code clarity
+- Refactor queue payloads for clarity
+
+## [2.1.0] - 2025-07-17
 
 ### Added
 
