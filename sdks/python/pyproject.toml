@@ -30,8 +30,8 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/plastic-labs/honcho-sdks"
-Repository = "https://github.com/plastic-labs/honcho-sdks"
+Homepage = "https://github.com/plastic-labs/honcho"
+Repository = "https://github.com/plastic-labs/honcho"
 
 [dependency-groups]
 dev = [
