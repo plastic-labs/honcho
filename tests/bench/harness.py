@@ -424,12 +424,12 @@ try:
     def print_settings(obj, prefix="", max_depth=3, current_depth=0):
         if current_depth >= max_depth:
             return
-
+            
         if hasattr(obj, '__dict__'):
             for key, value in obj.__dict__.items():
                 if not key.startswith('_'):
                     full_key = f"{{prefix}}.{{key}}" if prefix else key
-
+                    
                     # Handle nested settings objects
                     if hasattr(value, '__dict__') and not isinstance(value, (str, int, float, bool, type(None))):
                         print(f"\\n📋 {{full_key}}:")
@@ -444,10 +444,10 @@ try:
                         else:
                             masked_value = value
                         print(f"  {{key}}: {{masked_value}}")
-
+    
     # Print all settings
     print_settings(settings)
-
+    
 except Exception as e:
     print(f"❌ Error importing settings: {{e}}")
     import traceback

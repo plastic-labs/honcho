@@ -56,8 +56,8 @@ python tests/bench/harness.py --project-root /path/to/honcho
 When you run the harness, it will start:
 
 1. **PostgreSQL Database**: Running in Docker on the specified port
-2. **FastAPI Server**: Available at <http://localhost:8000>
-3. **API Documentation**: Available at <http://localhost:8000/docs>
+2. **FastAPI Server**: Available at http://localhost:8000
+3. **API Documentation**: Available at http://localhost:8000/docs
 4. **Deriver Process**: Background worker for processing messages
 
 ## Configuration
@@ -111,17 +111,15 @@ The `run_tests.py` script executes JSON-formatted tests against a running Honcho
 ### Running Tests
 
 1. **Start Honcho using the harness**:
-
    ```bash
    python tests/bench/harness.py
    ```
 
 2. **In another terminal, run the tests**:
-
    ```bash
    # Run all tests
    python tests/bench/run_tests.py
-
+   
    # Run a specific test
    # Test judge uses claude 3.5 sonnet
    python tests/bench/run_tests.py --test 1.json
@@ -151,7 +149,7 @@ Tests are defined in JSON files with this structure:
                     "content": "Hello, how are you?"
                 },
                 {
-                    "peer": "bob",
+                    "peer": "bob", 
                     "content": "I'm good, thank you!"
                 }
             ]
@@ -172,6 +170,6 @@ Tests are defined in JSON files with this structure:
 
 - `--tests-dir`: Directory containing JSON test files (default: tests/bench/tests)
 - `--test`: Run a specific test file
-- `--honcho-url`: URL of running Honcho instance (default: <http://localhost:8000>)
+- `--honcho-url`: URL of running Honcho instance (default: http://localhost:8000)
 - `--anthropic-api-key`: Anthropic API key for response judging, uses LLM_ANTHROPIC_API_KEY if not given
 - `--timeout`: Timeout for deriver queue to empty (default: 60 seconds)
