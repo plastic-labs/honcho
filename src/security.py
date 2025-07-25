@@ -1,12 +1,9 @@
-import base64
 import datetime
 import logging
-import os
 from typing import Annotated
 
 import jwt
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.fernet import Fernet
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -22,49 +19,35 @@ security = HTTPBearer(
 )
 
 
-def _get_encryption_key() -> bytes:
-    key_b64 = settings.WEBHOOK_ENCRYPTION_KEY
+def _get_encryption_key() -> Fernet:
+    key_b64 = settings.WEBHOOKS.WEBHOOK_ENCRYPTION_KEY
     if not key_b64:
         raise ValueError("WEBHOOK_ENCRYPTION_KEY is not set in settings.")
     try:
-        key = base64.b64decode(key_b64)
-        if len(key) != 32:  # AES-256 requires a 32-byte key
-            raise ValueError(
-                "WEBHOOK_ENCRYPTION_KEY must be a 32-byte key (base64 encoded)."
-            )
-        return key
+        # Fernet keys are base64-encoded 32-byte keys.
+        # Fernet.generate_key() produces such a key.
+        # We don't need to decode it here, Fernet expects the base64 string.
+        f = Fernet(key_b64)
+        return f
     except Exception as e:
-        raise ValueError(f"Invalid WEBHOOK_ENCRYPTION_KEY: {e}")
+        raise ValueError("Invalid WEBHOOK_ENCRYPTION_KEY for Fernet") from e
 
 
 def encrypt(plaintext: str) -> str:
-    key = _get_encryption_key()
-    iv = os.urandom(12)  # GCM recommended IV size is 12 bytes
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-
-    ciphertext = encryptor.update(plaintext.encode("utf-8")) + encryptor.finalize()
-    return base64.b64encode(iv + ciphertext + encryptor.tag).decode("utf-8")
+    f = _get_encryption_key()
+    token = f.encrypt(plaintext.encode("utf-8"))
+    return token.decode("utf-8")
 
 
 def decrypt(encrypted_text: str) -> str:
-    key = _get_encryption_key()
-    encrypted_data = base64.b64decode(encrypted_text)
-
-    iv = encrypted_data[:12]
-    ciphertext = encrypted_data[12:-16]
-    tag = encrypted_data[-16:]
-
-    cipher = Cipher(algorithms.AES(key), modes.GCM(iv, tag), backend=default_backend())
-    decryptor = cipher.decryptor()
-
-    plaintext = decryptor.update(padded_plaintext) + decryptor.finalize()
+    f = _get_encryption_key()
+    plaintext = f.decrypt(encrypted_text.encode("utf-8"))
     return plaintext.decode("utf-8")
 
 
 def generate_encryption_key() -> str:
-    """Generates a new 32-byte (256-bit) AES key and returns it base64 encoded."""
-    return base64.b64encode(os.urandom(32)).decode("utf-8")
+    """Generates a new Fernet key and returns it base64 encoded."""
+    return Fernet.generate_key().decode("utf-8")
 
 
 #

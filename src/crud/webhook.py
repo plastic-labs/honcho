@@ -129,7 +129,7 @@ async def update_webhook(
     honcho_webhook = await get_webhook(db, workspace_name, webhook_id)
 
     if webhook.url is not None:
-        honcho_webhook.url = webhook.url
+        honcho_webhook.url = str(webhook.url)
     if webhook.event is not None:
         honcho_webhook.event = webhook.event
     if webhook.secret is not None:

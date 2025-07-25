@@ -28,7 +28,7 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.webhook_delivery import webhook_delivery_service
+from src.webhooks.webhook_delivery import webhook_delivery_service
 
 
 def get_log_level() -> int:

@@ -15,6 +15,7 @@ from src.schemas import WebhookEvent
 from .events import (
     QueueEmptyPayload,
     WebhookEventType,
+    WebhookPayload,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ class WebhookEventEmitter:
                 Webhook.event == event_type,
             )
             result = await db.execute(stmt)
-            webhooks = result.scalars().all()
+            webhooks = list(result.scalars().all())
 
             # Update cache
             self._webhook_cache[cache_key] = webhooks
@@ -93,6 +94,10 @@ class WebhookEventEmitter:
         self, workspace_name: str, payload: QueueEmptyPayload
     ) -> None:
         await self.emit_event(workspace_name, WebhookEventType.QUEUE_EMPTY, payload)
+
+    async def get_event(self, timeout: float = 1.0) -> WebhookEvent:
+        """Get an event from the queue with timeout."""
+        return await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
 
 
 # Global event emitter instance

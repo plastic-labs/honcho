@@ -40,7 +40,7 @@ class WebhookDeliveryService:
 
     def __init__(self) -> None:
         self.client: httpx.AsyncClient | None = None
-        self.shutdown_event = asyncio.Event()
+        self.shutdown_event: asyncio.Event = asyncio.Event()
         self._webhook_cache: dict[str, WebhookCacheEntry] = {}
 
     async def start(self) -> None:
@@ -77,9 +77,7 @@ class WebhookDeliveryService:
         while not self.shutdown_event.is_set():
             try:
                 try:
-                    event = await asyncio.wait_for(
-                        webhook_emitter._event_queue.get(), timeout=1.0
-                    )
+                    event = await webhook_emitter.get_event(timeout=1.0)
                 except asyncio.TimeoutError:
                     continue
 

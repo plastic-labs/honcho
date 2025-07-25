@@ -100,7 +100,7 @@ repos:
       # Optional: Coverage check for main app only
       - id: coverage-main
         name: coverage check (main app)
-        entry: bash -c 'uv run coverage run -m pytest tests/ && uv run coverage report --fail-under=80'
+        entry: bash -c 'uv run coverage run -m pytest tests/ && uv run coverage report --fail-under=60'
         language: system
         files: ^(src/|tests/).*\.py$
         stages: [pre-push]

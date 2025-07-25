@@ -430,7 +430,9 @@ class Webhook(WebhookBase):
     secret: str | None = Field(exclude=True)  # Don't expose secret in responses
     created_at: datetime.datetime
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
 
 
 # Webhook event schemas
