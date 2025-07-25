@@ -117,7 +117,7 @@ For subsequent messages in the same conversation:
    session_id: "session_abc123"
    messages: [
      {
-       "role": "user",
+       "role": "user", 
        "content": "Thanks for listening. Can you help me prioritize my tasks?"
      },
      {
