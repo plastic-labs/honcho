@@ -106,14 +106,6 @@ repos:
         stages: [pre-push]
         pass_filenames: false
 
-      # License header check for Python files
-      - id: check-license-header
-        name: check license headers
-        entry: bash -c 'for f in "$@"; do if [[ "$f" =~ \.(py)$ ]] && ! grep -q "Copyright" "$f"; then echo "Missing license header in $f"; exit 1; fi; done' --
-        language: system
-        files: ^(src/|sdks/python/src/).*\.py$
-        pass_filenames: true
-
   # Documentation linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.37.0

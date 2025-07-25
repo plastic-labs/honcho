@@ -24,9 +24,11 @@ from src.routers import (
     messages,
     peers,
     sessions,
+    webhooks,
     workspaces,
 )
 from src.security import create_admin_jwt
+from src.webhook_delivery import webhook_delivery_service
 
 
 def get_log_level() -> int:
@@ -101,8 +103,14 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await engine.dispose()
+    # Start webhook delivery service
+    await webhook_delivery_service.start()
+    try:
+        yield
+    finally:
+        # Stop webhook delivery service
+        await webhook_delivery_service.stop()
+        await engine.dispose()
 
 
 app = FastAPI(
@@ -150,6 +158,7 @@ app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
+app.include_router(webhooks.router, prefix="/v2")
 
 
 # Global exception handlers

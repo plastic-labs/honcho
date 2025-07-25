@@ -346,3 +346,42 @@ class DeriverStatus(BaseModel):
     sessions: dict[str, SessionDeriverStatus] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )
+
+
+class WebhookBase(BaseModel):
+    pass
+
+
+class WebhookCreate(WebhookBase):
+    url: Annotated[str, Field(min_length=1, max_length=2048)]
+    event: str = Field(description="The event to subscribe to")
+    secret: str | None = Field(
+        default=None, description="Secret for HMAC signature verification"
+    )
+
+
+class WebhookUpdate(WebhookBase):
+    url: Annotated[str, Field(min_length=1, max_length=2048)] | None = None
+    event: str | None = None
+    secret: str | None = None
+    active: bool | None = None
+
+
+class Webhook(WebhookBase):
+    id: str
+    workspace_name: str = Field(serialization_alias="workspace_id")
+    url: str
+    event: str
+    active: bool
+    secret: str | None = Field(exclude=True)  # Don't expose secret in responses
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+# Webhook event schemas
+class WebhookEvent(BaseModel):
+    event: str
+    data: dict[str, Any]
+    webhook_id: str
+    timestamp: datetime.datetime = Field(default_factory=datetime.datetime.now)

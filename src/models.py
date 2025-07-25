@@ -398,6 +398,37 @@ class ActiveQueueSession(Base):
 
 
 @final
+class Webhook(Base):
+    __tablename__: str = "webhooks"
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True
+    )
+    url: Mapped[str] = mapped_column(TEXT)
+    event: Mapped[str] = mapped_column(TEXT, index=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Configuration
+    secret: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), index=True, default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_name", "event", name="unique_webhook_event_per_workspace"
+        ),
+        CheckConstraint("length(id) = 21", name="webhook_id_length"),
+        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="webhook_id_format"),
+        CheckConstraint("length(url) <= 2048", name="webhook_url_length"),
+    )
+
+    def __repr__(self) -> str:
+        return f"Webhook(id={self.id}, workspace_name={self.workspace_name}, url={self.url}, event={self.event}, active={self.active})"
+
+
+@final
 class SessionPeer(Base):
     __table__: Table = session_peers_table
 
