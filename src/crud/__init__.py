@@ -37,6 +37,14 @@ from .session import (
     set_peers_for_session,
     update_session,
 )
+from .webhook import (
+    create_webhook,
+    delete_webhook,
+    get_all_webhooks,
+    get_webhook,
+    get_webhook_by_id,
+    update_webhook,
+)
 from .workspace import get_all_workspaces, get_or_create_workspace, update_workspace
 
 __all__ = [
@@ -82,6 +90,13 @@ __all__ = [
     "set_peers_for_session",
     "get_peer_config",
     "set_peer_config",
+    # Webhook
+    "create_webhook",
+    "get_webhook",
+    "get_webhook_by_id",
+    "get_all_webhooks",
+    "update_webhook",
+    "delete_webhook",
     # Workspace
     "get_or_create_workspace",
     "get_all_workspaces",
