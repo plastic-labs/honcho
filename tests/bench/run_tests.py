@@ -18,13 +18,14 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from honcho import Honcho
 from honcho.session import SessionPeerConfig
+from typing_extensions import TypedDict
 
 load_dotenv()
 

@@ -4,7 +4,9 @@ This module defines the event types and payload structures for webhooks.
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any
+
+from typing_extensions import TypedDict
 
 
 class WebhookEventType(str, Enum):

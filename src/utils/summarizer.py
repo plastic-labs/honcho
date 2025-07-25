@@ -3,11 +3,11 @@ import datetime
 import logging
 import time
 from enum import Enum
-from typing import TypedDict
 
 from mirascope import llm
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing_extensions import TypedDict
 
 from src.config import settings
 from src.exceptions import ResourceNotFoundException
