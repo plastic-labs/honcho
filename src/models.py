@@ -26,6 +26,8 @@ from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
 from typing_extensions import override
 
+from src.webhooks.events import WebhookEventType
+
 from .db import Base
 
 load_dotenv(override=True)
@@ -405,7 +407,7 @@ class Webhook(Base):
         ForeignKey("workspaces.name"), index=True
     )
     url: Mapped[str] = mapped_column(TEXT)
-    event: Mapped[str] = mapped_column(TEXT, index=True)
+    event: Mapped[WebhookEventType] = mapped_column(TEXT, index=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Configuration
@@ -417,7 +419,10 @@ class Webhook(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "workspace_name", "event", name="unique_webhook_event_per_workspace"
+            "workspace_name",
+            "url",
+            "event",
+            name="unique_webhook_url_event_per_workspace",
         ),
         CheckConstraint("length(id) = 21", name="webhook_id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="webhook_id_format"),

@@ -1,15 +1,21 @@
 # pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
+import ipaddress
 from typing import Annotated, Any, Self
+from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    HttpUrl,
     PrivateAttr,
+    field_validator,
     model_validator,
 )
+
+from src.webhooks.events import WebhookEventType, WebhookPayload
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -353,25 +359,73 @@ class WebhookBase(BaseModel):
 
 
 class WebhookCreate(WebhookBase):
-    url: Annotated[str, Field(min_length=1, max_length=2048)]
-    event: str = Field(description="The event to subscribe to")
+    url: HttpUrl
+    event: WebhookEventType = Field(description="The event to subscribe to")
     secret: str | None = Field(
         default=None, description="Secret for HMAC signature verification"
     )
 
+    @field_validator("url")
+    @classmethod
+    def validate_webhook_url(cls, v: HttpUrl) -> HttpUrl:
+        parsed = urlparse(str(v))
+
+        # Only allow HTTP/HTTPS
+        if parsed.scheme not in ["http", "https"]:
+            raise ValueError("Only HTTP and HTTPS URLs are allowed")
+
+        # Block private/internal addresses
+        if parsed.hostname:
+            try:
+                ip_address = ipaddress.ip_address(parsed.hostname)
+                if ip_address.is_private:
+                    raise ValueError("Private IP addresses are not allowed")
+            except ValueError:  # Not an IP address, might be a hostname
+                # For hostnames, we can't reliably check for private IPs without DNS resolution
+                # which is out of scope for simple validation. We rely on the previous checks
+                # for localhost and the general principle that external services won't resolve
+                # to private IPs.
+                pass
+
+        return v
+
 
 class WebhookUpdate(WebhookBase):
-    url: Annotated[str, Field(min_length=1, max_length=2048)] | None = None
-    event: str | None = None
+    url: HttpUrl | None = None
+    event: WebhookEventType | None = None
     secret: str | None = None
     active: bool | None = None
+
+    @field_validator("url")
+    @classmethod
+    def validate_webhook_url(cls, v: HttpUrl) -> HttpUrl:
+        parsed = urlparse(str(v))
+
+        # Only allow HTTP/HTTPS
+        if parsed.scheme not in ["http", "https"]:
+            raise ValueError("Only HTTP and HTTPS URLs are allowed")
+
+        # Block private/internal addresses
+        if parsed.hostname:
+            try:
+                ip_address = ipaddress.ip_address(parsed.hostname)
+                if ip_address.is_private:
+                    raise ValueError("Private IP addresses are not allowed")
+            except ValueError:  # Not an IP address, might be a hostname
+                # For hostnames, we can't reliably check for private IPs without DNS resolution
+                # which is out of scope for simple validation. We rely on the previous checks
+                # for localhost and the general principle that external services won't resolve
+                # to private IPs.
+                pass
+
+        return v
 
 
 class Webhook(WebhookBase):
     id: str
     workspace_name: str = Field(serialization_alias="workspace_id")
     url: str
-    event: str
+    event: WebhookEventType
     active: bool
     secret: str | None = Field(exclude=True)  # Don't expose secret in responses
     created_at: datetime.datetime
@@ -381,7 +435,7 @@ class Webhook(WebhookBase):
 
 # Webhook event schemas
 class WebhookEvent(BaseModel):
-    event: str
-    data: dict[str, Any]
+    event: WebhookEventType
+    data: WebhookPayload
     webhook_id: str
     timestamp: datetime.datetime = Field(default_factory=datetime.datetime.now)

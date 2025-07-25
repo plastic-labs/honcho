@@ -240,6 +240,7 @@ class WebhookSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
 
     PROXY_URL: str | None = None
+    WEBHOOK_ENCRYPTION_KEY: str | None = None
 
 
 class AppSettings(HonchoSettings):

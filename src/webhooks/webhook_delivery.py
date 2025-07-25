@@ -14,7 +14,8 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.models import Webhook
 from src.schemas import WebhookEvent
-from src.webhook_events import webhook_emitter
+
+from .event_emitter import webhook_emitter
 
 logger = logging.getLogger(__name__)
 
@@ -148,6 +149,7 @@ class WebhookDeliveryService:
 
         async with tracked_db() as db:
             webhook = await crud.get_webhook_by_id(db, webhook_id)
+
             if webhook:
                 self._webhook_cache[webhook_id] = WebhookCacheEntry(webhook=webhook)
             return webhook

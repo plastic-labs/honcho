@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.exceptions import ResourceNotFoundException
+from src.security import encrypt
 
 logger = getLogger(__name__)
 
@@ -23,11 +24,12 @@ async def create_webhook(
     Returns:
         The created webhook
     """
+    encrypted_secret = encrypt(webhook.secret) if webhook.secret else None
     honcho_webhook = models.Webhook(
         workspace_name=workspace_name,
         url=webhook.url,
         event=webhook.event,
-        secret=webhook.secret,
+        secret=encrypted_secret,
         active=True,
     )
     db.add(honcho_webhook)
@@ -131,7 +133,7 @@ async def update_webhook(
     if webhook.event is not None:
         honcho_webhook.event = webhook.event
     if webhook.secret is not None:
-        honcho_webhook.secret = webhook.secret
+        honcho_webhook.secret = encrypt(webhook.secret)
     if webhook.active is not None:
         honcho_webhook.active = webhook.active
 
