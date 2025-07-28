@@ -13,6 +13,7 @@ from anthropic import AsyncAnthropic
 from google import genai
 from groq import AsyncGroq
 from mirascope import llm
+from mirascope.core import ResponseModelConfigDict
 from mirascope.integrations.langfuse import with_langfuse
 from mirascope.llm import Stream
 from openai import AsyncOpenAI
@@ -318,6 +319,9 @@ def honcho_llm_call(
         if model:
             llm_kwargs["model"] = model
         if response_model:
+            # https://mirascope.com/docs/mirascope/learn/provider-specific/openai#response-models
+            if resolved_provider == "openai":
+                response_model.model_config = ResponseModelConfigDict(strict=True)
             llm_kwargs["response_model"] = response_model
         if json_mode:
             llm_kwargs["json_mode"] = json_mode

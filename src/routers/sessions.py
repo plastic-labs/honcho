@@ -1,4 +1,3 @@
-import asyncio
 import logging
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
@@ -7,7 +6,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import config, crud, schemas
-from src.dependencies import db, tracked_db
+from src.dependencies import db
 from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
@@ -400,43 +399,39 @@ async def get_session_context(
 
         summary_tokens_limit = token_limit * 0.4
 
-        # Use separate database sessions for concurrent operations
-        async def get_long_summary():
-            async with tracked_db("get_long_summary") as db_session:
-                return await summarizer.get_summary(
-                    db_session,
-                    workspace_name=workspace_id,
-                    session_name=session_id,
-                    summary_type=summarizer.SummaryType.LONG,
-                )
-
-        async def get_short_summary():
-            async with tracked_db("get_short_summary") as db_session:
-                return await summarizer.get_summary(
-                    db_session,
-                    workspace_name=workspace_id,
-                    session_name=session_id,
-                    summary_type=summarizer.SummaryType.SHORT,
-                )
-
-        latest_long_summary, latest_short_summary = await asyncio.gather(
-            get_long_summary(),
-            get_short_summary(),
+        latest_long_summary, latest_short_summary = await summarizer.get_both_summaries(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
         )
+
+        long_len = latest_long_summary["token_count"] if latest_long_summary else 0
+        short_len = latest_short_summary["token_count"] if latest_short_summary else 0
+
+        # The goal is to return the longest summary that fits within the token limit
+        # Sometimes (rarely) the short summary can be longer than the long summary,
+        # so we need to check for that and return the longer one.
 
         if (
             latest_long_summary
             and latest_long_summary["token_count"] <= summary_tokens_limit
+            and long_len > short_len
         ):
             summary_content = latest_long_summary["content"]
             messages_tokens = token_limit - latest_long_summary["token_count"]
         elif (
             latest_short_summary
             and latest_short_summary["token_count"] <= summary_tokens_limit
+            and short_len > 0
         ):
             summary_content = latest_short_summary["content"]
             messages_tokens = token_limit - latest_short_summary["token_count"]
         else:
+            logger.warning(
+                "No summary available for get_context, returning empty string. long_summary_len: %s, short_summary_len: %s",
+                long_len,
+                short_len,
+            )
             summary_content = ""
 
     # Get the recent messages to return verbatim
