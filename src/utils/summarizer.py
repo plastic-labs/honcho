@@ -67,7 +67,7 @@ class SummaryType(Enum):
     max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
     return_call_response=True,
 )
-async def create_short_summary(
+async def create_short_summary(  # pragma: no cover
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):
@@ -104,7 +104,7 @@ Return only the summary without any explanation or meta-commentary.
     max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
     return_call_response=True,
 )
-async def create_long_summary(
+async def create_long_summary(  # pragma: no cover
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):

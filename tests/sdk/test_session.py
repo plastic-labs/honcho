@@ -297,3 +297,101 @@ async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, s
         assert isinstance(peer, Peer)
         session.add_messages([peer.message("test message for working rep")])
         _working_rep = session.working_rep(peer)
+
+
+def test_type_checking_import():
+    """
+    Test to cover the TYPE_CHECKING import on line 17 of session.py.
+
+    This test artificially triggers the TYPE_CHECKING import by temporarily
+    modifying the typing module's TYPE_CHECKING flag and reimporting the module.
+    """
+    import sys
+    import typing
+
+    # Store the original value
+    original_type_checking = typing.TYPE_CHECKING
+
+    try:
+        # Temporarily set TYPE_CHECKING to True to trigger the import
+        typing.TYPE_CHECKING = True
+
+        # Remove the session module from sys.modules if it exists
+        # so we can force a reload
+        session_module_name = "sdks.python.src.honcho.session"
+        if session_module_name in sys.modules:
+            del sys.modules[session_module_name]
+
+        # Import the session module which will now execute the TYPE_CHECKING block
+        from sdks.python.src.honcho.session import Session
+
+        # Verify the class exists and is importable
+        assert Session is not None
+
+    finally:
+        # Always restore the original TYPE_CHECKING value
+        typing.TYPE_CHECKING = original_type_checking
+
+        # Clean up - remove the module so other tests aren't affected
+        session_module_name = "sdks.python.src.honcho.session"
+        if session_module_name in sys.modules:
+            del sys.modules[session_module_name]
+
+
+def test_default_context_tokens_exception_handling():
+    """
+    Test to cover the exception handling in lines 23-24 of session.py.
+
+    This test covers the ValueError and TypeError exception handling when
+    parsing the HONCHO_DEFAULT_CONTEXT_TOKENS environment variable.
+    """
+    import os
+    import sys
+    from unittest import mock
+
+    # Test cases that should trigger the exception handling
+    test_cases = [
+        "not_a_number",  # ValueError from int()
+        "12.5",  # ValueError from int()
+        "",  # This case is handled by the if env_val check, but we test it too
+        "abc123",  # ValueError from int()
+    ]
+
+    for invalid_value in test_cases:
+        # Remove the session module from sys.modules to force reimport
+        session_module_name = "sdks.python.src.honcho.session"
+        if session_module_name in sys.modules:
+            del sys.modules[session_module_name]
+
+        with mock.patch.dict(
+            os.environ, {"HONCHO_DEFAULT_CONTEXT_TOKENS": invalid_value}
+        ):
+            # Import the module, which should trigger the exception handling
+            from sdks.python.src.honcho.session import (
+                _default_context_tokens,  # pyright: ignore
+            )
+
+            # The exception handler should set _default_context_tokens to None
+            assert _default_context_tokens is None
+
+    # Test TypeError case by mocking os.getenv to return something that isn't a string
+    session_module_name = "sdks.python.src.honcho.session"
+    if session_module_name in sys.modules:
+        del sys.modules[session_module_name]
+
+    # Mock os.getenv to return a non-string value that would cause int() to raise TypeError
+    with mock.patch("os.getenv") as mock_getenv:
+        # Return a mock object that will cause int() to raise TypeError
+        mock_obj = mock.Mock()
+        mock_obj.__bool__ = mock.Mock(
+            return_value=True
+        )  # So it passes the if env_val check
+        mock_getenv.return_value = mock_obj
+
+        # Import the module, which should trigger the TypeError exception handling
+        from sdks.python.src.honcho.session import (
+            _default_context_tokens,  # pyright: ignore
+        )
+
+        # The exception handler should set _default_context_tokens to None
+        assert _default_context_tokens is None

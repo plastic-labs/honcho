@@ -73,6 +73,16 @@ addopts = "--strict-markers --cov=src/ --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.coverage.run]
+source = [
+    "src",
+    "sdks",
+]
+omit = [
+    "tests/*",
+    "scripts/*",
+    ".venv/*",
+]
 
 [tool.basedpyright]
 # BasedPyright currently seems like the best type checker option, much faster
