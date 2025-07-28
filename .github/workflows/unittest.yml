@@ -30,6 +30,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
   # Determine which tests to run based on changed files

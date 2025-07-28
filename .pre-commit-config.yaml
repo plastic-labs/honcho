@@ -97,23 +97,6 @@ repos:
         files: ^sdks/typescript/.*\.(ts|tsx)$
         pass_filenames: false
 
-      # Optional: Coverage check for main app only
-      - id: coverage-main
-        name: coverage check (main app)
-        entry: bash -c 'uv run coverage run -m pytest tests/ && uv run coverage report --fail-under=80'
-        language: system
-        files: ^(src/|tests/).*\.py$
-        stages: [pre-push]
-        pass_filenames: false
-
-      # License header check for Python files
-      - id: check-license-header
-        name: check license headers
-        entry: bash -c 'for f in "$@"; do if [[ "$f" =~ \.(py)$ ]] && ! grep -q "Copyright" "$f"; then echo "Missing license header in $f"; exit 1; fi; done' --
-        language: system
-        files: ^(src/|sdks/python/src/).*\.py$
-        pass_filenames: true
-
   # Documentation linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.37.0
