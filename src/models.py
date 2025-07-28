@@ -1,4 +1,5 @@
 import datetime
+from enum import Enum
 from logging import getLogger
 from typing import Any, final
 
@@ -29,6 +30,12 @@ from typing_extensions import override
 from src.webhooks.events import WebhookEventType
 
 from .db import Base
+
+
+class WebhookStatus(str, Enum):
+    ENABLED = "enabled"
+    DISABLED = "disabled"
+
 
 load_dotenv(override=True)
 
@@ -93,6 +100,7 @@ class Workspace(Base):
         "internal_metadata", JSONB, default=dict
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    webhook_url: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -402,35 +410,26 @@ class ActiveQueueSession(Base):
 @final
 class Webhook(Base):
     __tablename__: str = "webhooks"
-    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+        ForeignKey("workspaces.name"), primary_key=True
     )
-    url: Mapped[str] = mapped_column(TEXT)
-    event: Mapped[WebhookEventType] = mapped_column(TEXT, index=True)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    # Configuration
-    secret: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-
+    event: Mapped[WebhookEventType] = mapped_column(TEXT, primary_key=True)
+    status: Mapped[WebhookStatus] = mapped_column(TEXT, default=WebhookStatus.ENABLED)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
+    disabled_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     __table_args__ = (
-        UniqueConstraint(
-            "workspace_name",
-            "url",
-            "event",
-            name="unique_webhook_url_event_per_workspace",
+        CheckConstraint(
+            "length(workspace_name) <= 512", name="webhook_workspace_name_length"
         ),
-        CheckConstraint("length(id) = 21", name="webhook_id_length"),
-        CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="webhook_id_format"),
-        CheckConstraint("length(url) <= 2048", name="webhook_url_length"),
     )
 
     def __repr__(self) -> str:
-        return f"Webhook(id={self.id}, workspace_name={self.workspace_name}, url={self.url}, event={self.event}, active={self.active})"
+        return f"Webhook(workspace_name={self.workspace_name}, event={self.event}, status={self.status})"
 
 
 @final

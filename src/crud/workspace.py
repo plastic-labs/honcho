@@ -5,6 +5,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.exceptions import ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
@@ -62,6 +63,34 @@ async def get_all_workspaces(
     stmt = apply_filter(stmt, models.Workspace, filters)
     stmt: Select[tuple[models.Workspace]] = stmt.order_by(models.Workspace.created_at)
     return stmt
+
+
+async def get_workspace(
+    db: AsyncSession,
+    workspace_name: str,
+) -> models.Workspace:
+    """
+    Get an existing workspace.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+
+    Returns:
+        The workspace if found or created
+
+    Raises:
+        ResourceNotFoundException: If the workspace does not exist
+    """
+    # Try to get the existing peer
+    stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
+    result = await db.execute(stmt)
+    existing_workspace = result.scalar_one_or_none()
+
+    if existing_workspace is not None:
+        return existing_workspace
+
+    raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
 
 
 async def update_workspace(

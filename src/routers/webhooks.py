@@ -1,9 +1,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Body, Depends, Path, Query
-from fastapi_pagination import Page
-from fastapi_pagination.ext.sqlalchemy import apaginate
+from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
@@ -19,91 +17,104 @@ router = APIRouter(
 )
 
 
-@router.post("", response_model=schemas.Webhook)
-async def create_webhook(
+@router.post("", response_model=schemas.WebhookEndpoint)
+async def create_webhook_endpoint(
     workspace_id: Annotated[str, Path(description="Workspace ID")],
-    webhook: schemas.WebhookCreate = Body(
-        ..., description="Webhook creation parameters"
+    webhook: schemas.WebhookEndpointCreate = Body(
+        ..., description="Webhook endpoint parameters"
     ),
     jwt_params: JWTParams = Depends(require_auth()),
     db: AsyncSession = db,
 ):
     """
-    Create a new webhook for the workspace.
+    Set the webhook endpoint URL and enable specified events.
     """
-    # Check workspace access
+    print(jwt_params)
     if not jwt_params.ad and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
+    print("after auth")
+    return await crud.create_webhook_endpoint(db, workspace_id, webhook)
 
-    return await crud.create_webhook(db, workspace_id, webhook)
 
-
-@router.get("", response_model=Page[schemas.Webhook])
-async def get_webhooks(
+@router.put("", response_model=schemas.WebhookEndpoint)
+async def update_webhook_endpoint(
     workspace_id: Annotated[str, Path(description="Workspace ID")],
-    active_only: bool = Query(False, description="Only return active webhooks"),
+    webhook_update: schemas.WebhookEndpointUpdate = Body(
+        ..., description="New webhook URL"
+    ),
     jwt_params: JWTParams = Depends(require_auth()),
     db: AsyncSession = db,
 ):
     """
-    Get all webhooks for the workspace.
+    Update the webhook endpoint URL.
     """
-    # Check workspace access
     if not jwt_params.ad and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
-    stmt = await crud.get_all_webhooks(workspace_id, active_only=active_only)
-    return await apaginate(db, stmt)
+    return await crud.update_webhook_endpoint(db, workspace_id, webhook_update.url)
 
 
-@router.get("/{webhook_id}", response_model=schemas.Webhook)
-async def get_webhook(
+@router.get("", response_model=schemas.WebhookEndpoint)
+async def get_webhook_configuration(
     workspace_id: Annotated[str, Path(description="Workspace ID")],
-    webhook_id: Annotated[str, Path(description="Webhook ID")],
     jwt_params: JWTParams = Depends(require_auth()),
     db: AsyncSession = db,
 ):
     """
-    Get a specific webhook by ID.
+    Get the webhook configuration for the workspace.
     """
-    # Check workspace access
     if not jwt_params.ad and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
-    return await crud.get_webhook(db, workspace_id, webhook_id)
+    return await crud.get_webhook_configuration(db, workspace_id)
 
 
-@router.patch("/{webhook_id}", response_model=schemas.Webhook)
-async def update_webhook(
-    workspace_id: Annotated[str, Path(description="Workspace ID")],
-    webhook_id: Annotated[str, Path(description="Webhook ID")],
-    webhook: schemas.WebhookUpdate = Body(..., description="Webhook update parameters"),
-    jwt_params: JWTParams = Depends(require_auth()),
-    db: AsyncSession = db,
-):
-    """
-    Update an existing webhook.
-    """
-    # Check workspace access
-    if not jwt_params.ad and jwt_params.w != workspace_id:
-        raise AuthenticationException("Unauthorized access to resource")
-
-    return await crud.update_webhook(db, workspace_id, webhook_id, webhook)
-
-
-@router.delete("/{webhook_id}")
+@router.delete("", response_model=None)
 async def delete_webhook(
     workspace_id: Annotated[str, Path(description="Workspace ID")],
-    webhook_id: Annotated[str, Path(description="Webhook ID")],
     jwt_params: JWTParams = Depends(require_auth()),
     db: AsyncSession = db,
 ):
     """
-    Delete a webhook.
+    Delete the webhook endpoint and disable all events.
     """
-    # Check workspace access
     if not jwt_params.ad and jwt_params.w != workspace_id:
         raise AuthenticationException("Unauthorized access to resource")
 
-    await crud.delete_webhook(db, workspace_id, webhook_id)
-    return {"message": "Webhook deleted successfully"}
+    await crud.delete_webhook_endpoint(db, workspace_id)
+
+
+@router.post("/events", response_model=schemas.Webhook)
+async def add_webhook_event(
+    workspace_id: Annotated[str, Path(description="Workspace ID")],
+    webhook: schemas.WebhookCreate = Body(
+        ..., description="Webhook event subscription"
+    ),
+    jwt_params: JWTParams = Depends(require_auth()),
+    db: AsyncSession = db,
+):
+    """
+    Subscribe to a webhook event.
+    """
+    if not jwt_params.ad and jwt_params.w != workspace_id:
+        raise AuthenticationException("Unauthorized access to resource")
+
+    return await crud.add_webhook_event(db, workspace_id, webhook)
+
+
+@router.put("/events", response_model=schemas.Webhook)
+async def update_event_status(
+    workspace_id: Annotated[str, Path(description="Workspace ID")],
+    webhook_update: schemas.WebhookUpdate = Body(
+        ..., description="Webhook event subscription"
+    ),
+    jwt_params: JWTParams = Depends(require_auth()),
+    db: AsyncSession = db,
+) -> schemas.Webhook:
+    """
+    Enable or disable a specific webhook event subscription.
+    """
+    if not jwt_params.ad and jwt_params.w != workspace_id:
+        raise AuthenticationException("Unauthorized access to resource")
+
+    return await crud.update_webhook_status(db, workspace_id, webhook_update)
