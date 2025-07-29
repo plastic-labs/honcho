@@ -116,21 +116,19 @@ class WebhookDeliveryService:
 
             # Generate HMAC signature
             try:
-                webhook_signature = self._generate_webhook_signature(event_json)
+                signature = self._generate_webhook_signature(event_json)
             except ValueError as e:
                 logger.error(f"Failed to generate webhook signature: {e}")
                 return
 
-            proxy_payload = {
-                "secret": webhook_signature,
-                "event_payload": event_json,
-            }
-
             for url in webhook_urls:
                 response = await self.client.post(
                     url=url,
-                    json=proxy_payload,
-                    headers={"Content-Type": "application/json"},
+                    content=event_json,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Honcho-Signature": signature,
+                    },
                 )
 
                 if 200 <= response.status_code < 300:
