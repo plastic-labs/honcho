@@ -27,8 +27,6 @@ from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
 from typing_extensions import override
 
-from src.webhooks.events import WebhookEventType
-
 from .db import Base
 
 
@@ -92,6 +90,7 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     peers = relationship("Peer", back_populates="workspace")
+    webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -100,7 +99,6 @@ class Workspace(Base):
         "internal_metadata", JSONB, default=dict
     )
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
-    webhook_url: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     __table_args__ = (
         CheckConstraint("length(id) = 21", name="id_length"),
@@ -408,28 +406,26 @@ class ActiveQueueSession(Base):
 
 
 @final
-class Webhook(Base):
-    __tablename__: str = "webhooks"
+class WebhookEndpoint(Base):
+    __tablename__: str = "webhook_endpoints"
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), primary_key=True
+        ForeignKey("workspaces.name"), index=True
     )
-    event: Mapped[WebhookEventType] = mapped_column(TEXT, primary_key=True)
-    status: Mapped[WebhookStatus] = mapped_column(TEXT, default=WebhookStatus.ENABLED)
+    url: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), index=True, default=func.now()
-    )
-    disabled_at: Mapped[datetime.datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        DateTime(timezone=True), default=func.now()
     )
 
+    workspace = relationship("Workspace", back_populates="webhook_endpoints")
+
     __table_args__ = (
-        CheckConstraint(
-            "length(workspace_name) <= 512", name="webhook_workspace_name_length"
-        ),
+        CheckConstraint("length(url) <= 2048", name="webhook_endpoint_url_length"),
+        Index("idx_webhook_endpoints_workspace_lookup", "workspace_name"),
     )
 
     def __repr__(self) -> str:
-        return f"Webhook(workspace_name={self.workspace_name}, event={self.event}, status={self.status})"
+        return f"WebhookEndpoint(id={self.id}, workspace_name={self.workspace_name}, url={self.url})"
 
 
 @final

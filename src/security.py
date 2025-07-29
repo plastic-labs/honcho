@@ -3,7 +3,6 @@ import logging
 from typing import Annotated
 
 import jwt
-from cryptography.fernet import Fernet
 from fastapi import Depends, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -17,37 +16,6 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(
     auto_error=False,
 )
-
-
-def _get_encryption_key() -> Fernet:
-    key_b64 = settings.WEBHOOKS.WEBHOOK_ENCRYPTION_KEY
-    if not key_b64:
-        raise ValueError("WEBHOOK_ENCRYPTION_KEY is not set in settings.")
-    try:
-        # Fernet keys are base64-encoded 32-byte keys.
-        # Fernet.generate_key() produces such a key.
-        # We don't need to decode it here, Fernet expects the base64 string.
-        f = Fernet(key_b64)
-        return f
-    except Exception as e:
-        raise ValueError("Invalid WEBHOOK_ENCRYPTION_KEY for Fernet") from e
-
-
-def encrypt(plaintext: str) -> str:
-    f = _get_encryption_key()
-    token = f.encrypt(plaintext.encode("utf-8"))
-    return token.decode("utf-8")
-
-
-def decrypt(encrypted_text: str) -> str:
-    f = _get_encryption_key()
-    plaintext = f.decrypt(encrypted_text.encode("utf-8"))
-    return plaintext.decode("utf-8")
-
-
-def generate_encryption_key() -> str:
-    """Generates a new Fernet key and returns it base64 encoded."""
-    return Fernet.generate_key().decode("utf-8")
 
 
 #

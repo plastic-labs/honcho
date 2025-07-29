@@ -3,36 +3,21 @@ Webhook delivery service that processes and delivers webhook events via a proxy.
 """
 
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+import os
+from datetime import datetime
 
 import httpx
 
-from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
-from src.models import Webhook
-from src.schemas import WebhookEvent
-
-from .event_emitter import webhook_emitter
+from src.webhooks.event_emitter import webhook_emitter
+from src.webhooks.events import WebhookEvent
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class WebhookCacheEntry:
-    """An entry in the webhook cache."""
-
-    webhook: Webhook
-    expires_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc) + timedelta(seconds=60)
-    )
-
-    @property
-    def is_expired(self) -> bool:
-        """Check if the cache entry has expired."""
-        return datetime.now(timezone.utc) > self.expires_at
 
 
 class WebhookDeliveryService:
@@ -41,19 +26,12 @@ class WebhookDeliveryService:
     def __init__(self) -> None:
         self.client: httpx.AsyncClient | None = None
         self.shutdown_event: asyncio.Event = asyncio.Event()
-        self._webhook_cache: dict[str, WebhookCacheEntry] = {}
 
     async def start(self) -> None:
         """Start the webhook delivery service."""
-        if not settings.WEBHOOKS.PROXY_URL:
-            logger.warning(
-                "Webhook proxy URL not configured. Webhook delivery is disabled."
-            )
-            return
 
         self.client = httpx.AsyncClient(
-            timeout=30.0,
-            headers={"User-Agent": "Honcho-Webhook-Service/1.0"},
+            headers={"User-Agent": "Honcho-Webhook-Service/1.0"}, timeout=30.0
         )
 
         logger.info(
@@ -81,77 +59,119 @@ class WebhookDeliveryService:
                 except asyncio.TimeoutError:
                     continue
 
-                await self.deliver_webhook_to_proxy(event)
+                await self.deliver_webhook(event)
 
             except Exception as e:
                 logger.error(f"Error in webhook delivery loop: {e}")
                 await asyncio.sleep(1)
 
-    async def deliver_webhook_to_proxy(self, event: WebhookEvent) -> None:
+    def _generate_webhook_signature(self, payload: str) -> str:
+        """
+        Generate HMAC-SHA256 signature for webhook payload using AUTH_JWT_SECRET.
+
+        Args:
+            payload: JSON string of the webhook payload
+
+        Returns:
+            HMAC-SHA256 signature as hex string
+        """
+        auth_secret = os.getenv("AUTH_JWT_SECRET")
+        if not auth_secret:
+            raise ValueError("AUTH_JWT_SECRET not found - cannot sign webhook")
+
+        signature = hmac.new(
+            auth_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+
+        return signature
+
+    async def deliver_webhook(self, event: WebhookEvent) -> None:
         """
         Deliver a webhook event to the configured proxy service.
 
         Args:
             event: The webhook event to deliver.
         """
-        if not self.client or not settings.WEBHOOKS.PROXY_URL:
-            logger.error("Webhook proxy service is not initialized or configured.")
+        if not self.client:
+            logger.error("Webhook proxy service is not initialized.")
             return
 
         try:
-            webhook = await self._get_webhook_details(event.webhook_id)
-            if not webhook or not webhook.active:
-                logger.warning(
-                    f"Webhook {event.webhook_id} not found or inactive, skipping delivery."
+            webhook_urls = await self._get_workspace_endpoints(event.workspace_name)
+            if not webhook_urls:
+                logger.info(
+                    f"No webhook endpoints found for workspace {event.workspace_name}, skipping delivery."
                 )
                 return
 
-            proxy_payload = {
-                "target_url": webhook.url,
-                "secret": webhook.secret,
-                "event_payload": {
-                    "event": event.event,
-                    "data": event.data,
-                    "webhook_id": event.webhook_id,
-                    "timestamp": event.timestamp.isoformat(),
-                },
+            event_payload = {
+                "type": event.type,
+                "data": event.data.model_dump(),
+                "timestamp": datetime.now().isoformat(),
             }
 
-            response = await self.client.post(
-                url=settings.WEBHOOKS.PROXY_URL,
-                json=proxy_payload,
-                headers={"Content-Type": "application/json"},
+            event_json = json.dumps(
+                event_payload, separators=(",", ":"), sort_keys=True
             )
 
-            if 200 <= response.status_code < 300:
-                logger.info(
-                    f"Successfully proxied webhook {event.webhook_id} for event {event.event}"
+            # Generate HMAC signature
+            try:
+                webhook_signature = self._generate_webhook_signature(event_json)
+            except ValueError as e:
+                logger.error(f"Failed to generate webhook signature: {e}")
+                return
+
+            proxy_payload = {
+                "secret": webhook_signature,
+                "event_payload": event_json,
+            }
+
+            for url in webhook_urls:
+                response = await self.client.post(
+                    url=url,
+                    json=proxy_payload,
+                    headers={"Content-Type": "application/json"},
                 )
-            else:
-                logger.error(
-                    f"Failed to proxy webhook {event.webhook_id}. Proxy returned status {response.status_code}: {response.text}"
-                )
+
+                if 200 <= response.status_code < 300:
+                    logger.info(
+                        f"Successfully proxied webhook for workspace {event.workspace_name}, event {event.type} to {len(webhook_urls)} endpoints"
+                    )
+                else:
+                    logger.error(
+                        f"Failed to proxy webhook for workspace {event.workspace_name} to {len(webhook_urls)} endpoints. Proxy returned status {response.status_code}: {response.text}"
+                    )
 
         except httpx.RequestError as e:
-            logger.error(f"Error sending webhook {event.webhook_id} to proxy: {e}")
+            logger.error(
+                f"Error sending webhook for workspace {event.workspace_name} to proxy: {e}"
+            )
         except Exception as e:
             logger.error(
-                f"An unexpected error occurred while delivering webhook {event.webhook_id} to proxy: {e}"
+                f"An unexpected error occurred while delivering webhook for workspace {event.workspace_name} to proxy: {e}"
             )
 
-    async def _get_webhook_details(self, webhook_id: str) -> Webhook | None:
-        """Get webhook details from cache or database."""
-        cache_entry = self._webhook_cache.get(webhook_id)
-        if cache_entry and not cache_entry.is_expired:
-            return cache_entry.webhook
+    async def _get_workspace_endpoints(self, workspace_name: str) -> list[str]:
+        """
+        Get all webhook endpoint URLs for a workspace.
 
+        Returns:
+            List of webhook URLs for the workspace
+        """
         async with tracked_db() as db:
-            webhook = await crud.get_webhook_by_id(db, webhook_id)
+            from src.crud.webhook import list_webhook_endpoints
 
-            if webhook:
-                self._webhook_cache[webhook_id] = WebhookCacheEntry(webhook=webhook)
-            return webhook
+            try:
+                endpoints = await list_webhook_endpoints(db, workspace_name)
+                urls = [endpoint.url for endpoint in endpoints]
+
+                return urls
+            except Exception as e:
+                logger.error(
+                    f"Error fetching webhook endpoints for {workspace_name}: {e}"
+                )
+                return []
 
 
-# Global webhook delivery service instance
+# Global instance
 webhook_delivery_service = WebhookDeliveryService()

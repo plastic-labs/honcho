@@ -25,61 +25,50 @@ schema = settings.DB.SCHEMA
 
 def upgrade() -> None:
     op.create_table(
-        "webhooks",
-        sa.Column("id", sa.TEXT(), nullable=False),
-        sa.Column("workspace_name", sa.TEXT(), nullable=False),
-        sa.Column("url", sa.TEXT(), nullable=False),
-        sa.Column("event", sa.TEXT(), nullable=False),
-        sa.Column("active", sa.Boolean(), nullable=False),
-        sa.Column("secret", sa.TEXT(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["workspace_name"],
-            ["workspaces.name"],
+        "webhook_endpoints",
+        sa.Column(
+            "id",
+            sa.TEXT(),
+            primary_key=True,
+            nullable=False,
         ),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
+        sa.Column(
             "workspace_name",
-            "url",
-            "event",
-            name="unique_webhook_url_event_per_workspace",
+            sa.TEXT(),
+            sa.ForeignKey("workspaces.name"),
+            nullable=False,
         ),
-        sa.CheckConstraint("length(id) = 21", name="webhook_id_length"),
-        sa.CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="webhook_id_format"),
-        sa.CheckConstraint("length(url) <= 2048", name="webhook_url_length"),
-    )
-    op.create_index(
-        op.f("ix_webhooks_event"),
-        "webhooks",
-        ["event"],
-        unique=False,
+        sa.Column("url", sa.TEXT(), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
+        sa.CheckConstraint("length(url) <= 2048", name="webhook_endpoint_url_length"),
         schema=schema,
     )
+
     op.create_index(
-        op.f("ix_webhooks_workspace_name"),
-        "webhooks",
+        op.f("idx_webhook_endpoints_workspace_lookup"),
+        "webhook_endpoints",
         ["workspace_name"],
-        unique=False,
-        schema=schema,
-    )
-    op.create_index(
-        op.f("ix_webhooks_created_at"),
-        "webhooks",
-        ["created_at"],
         unique=False,
         schema=schema,
     )
 
 
 def downgrade() -> None:
-    if index_exists("webhooks", "ix_webhooks_created_at", schema):
+    inspector = sa.inspect(op.get_bind())
+
+    if index_exists(
+        "webhook_endpoints", "idx_webhook_endpoints_workspace_lookup", inspector
+    ):
         op.drop_index(
-            op.f("ix_webhooks_created_at"), table_name="webhooks", schema=schema
+            op.f("idx_webhook_endpoints_workspace_lookup"),
+            table_name="webhook_endpoints",
+            schema=schema,
         )
-    if index_exists("webhooks", "ix_webhooks_workspace_name", schema):
-        op.drop_index(
-            op.f("ix_webhooks_workspace_name"), table_name="webhooks", schema=schema
-        )
-    if index_exists("webhooks", "ix_webhooks_event", schema):
-        op.drop_index(op.f("ix_webhooks_event"), table_name="webhooks", schema=schema)
-    op.drop_table("webhooks", schema=schema)
+
+    # Drop webhook_endpoints table
+    op.drop_table("webhook_endpoints", schema=schema)

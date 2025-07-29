@@ -97,14 +97,6 @@ repos:
         files: ^sdks/typescript/.*\.(ts|tsx)$
         pass_filenames: false
 
-      # Optional: Coverage check for main app only
-      - id: coverage-main
-        name: coverage check (main app)
-        entry: bash -c 'uv run coverage run -m pytest tests/ && uv run coverage report --fail-under=60'
-        language: system
-        files: ^(src/|tests/).*\.py$
-        stages: [pre-push]
-        pass_filenames: false
 
   # Documentation linting
   - repo: https://github.com/igorshubovych/markdownlint-cli

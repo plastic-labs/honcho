@@ -38,12 +38,9 @@ from .session import (
     update_session,
 )
 from .webhook import (
-    add_webhook_event,
     create_webhook_endpoint,
     delete_webhook_endpoint,
-    get_webhook_configuration,
-    update_webhook_endpoint,
-    update_webhook_status,
+    list_webhook_endpoints,
 )
 from .workspace import get_all_workspaces, get_or_create_workspace, update_workspace
 
@@ -92,11 +89,8 @@ __all__ = [
     "set_peer_config",
     # Webhook
     "create_webhook_endpoint",
-    "add_webhook_event",
     "delete_webhook_endpoint",
-    "get_webhook_configuration",
-    "update_webhook_endpoint",
-    "update_webhook_status",
+    "list_webhook_endpoints",
     # Workspace
     "get_or_create_workspace",
     "get_all_workspaces",

@@ -14,9 +14,6 @@ from pydantic import (
     model_validator,
 )
 
-from src.models import WebhookStatus
-from src.webhooks.events import WebhookEventType, WebhookPayload
-
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
@@ -361,34 +358,6 @@ class WebhookEndpointBase(BaseModel):
 
 class WebhookEndpointCreate(WebhookEndpointBase):
     url: str
-    events: list[WebhookEventType] = Field(default_factory=list)
-
-    @field_validator("url")
-    @classmethod
-    def validate_webhook_url(cls, v: str) -> str:
-        parsed = urlparse(v)
-
-        if not all([parsed.scheme, parsed.netloc]):
-            raise ValueError("Invalid URL format")
-
-        # Only allow HTTP/HTTPS
-        if parsed.scheme not in ["http", "https"]:
-            raise ValueError("Only HTTP and HTTPS URLs are allowed")
-
-        # Block private/internal addresses
-        if parsed.hostname:
-            try:
-                ip_address = ipaddress.ip_address(parsed.hostname)
-                if ip_address.is_private:
-                    raise ValueError("Private IP addresses are not allowed")
-            except ValueError:  # Not an IP address, might be a hostname
-                pass
-
-        return v
-
-
-class WebhookEndpointUpdate(WebhookEndpointBase):
-    url: str
 
     @field_validator("url")
     @classmethod
@@ -415,41 +384,9 @@ class WebhookEndpointUpdate(WebhookEndpointBase):
 
 
 class WebhookEndpoint(WebhookEndpointBase):
-    url: str | None
-    events: list["Webhook"] = Field(default_factory=list)
+    id: str
+    workspace_name: str = Field(serialization_alias="workspace_id")
+    url: str
+    created_at: datetime.datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
-
-
-# Webhook event subscription schemas
-class WebhookBase(BaseModel):
-    pass
-
-
-class WebhookCreate(WebhookBase):
-    event: WebhookEventType = Field(description="The event to subscribe to")
-
-
-class WebhookUpdate(WebhookBase):
-    event: WebhookEventType
-    status: WebhookStatus
-
-
-class Webhook(WebhookBase):
-    workspace_name: str = Field(serialization_alias="workspace_id")
-    event: WebhookEventType
-    status: WebhookStatus
-    created_at: datetime.datetime
-    disabled_at: datetime.datetime | None = None
-
-    model_config = ConfigDict(  # pyright: ignore
-        from_attributes=True, populate_by_name=True
-    )
-
-
-# Webhook event schemas
-class WebhookEvent(BaseModel):
-    event: WebhookEventType
-    data: WebhookPayload
-    webhook_id: str
-    timestamp: datetime.datetime = Field(default_factory=datetime.datetime.now)
