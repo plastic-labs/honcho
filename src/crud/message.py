@@ -46,13 +46,11 @@ def _apply_token_limit(
     )
 
     # Select Message objects where running sum doesn't exceed token_limit
-    stmt = (
+    return (
         select(models.Message)
         .join(token_subquery, models.Message.id == token_subquery.c.id)
         .where(token_subquery.c.running_token_sum <= token_limit)
     )
-
-    return stmt
 
 
 async def create_messages(

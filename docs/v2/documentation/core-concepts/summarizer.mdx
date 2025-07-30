@@ -30,7 +30,7 @@ It's important to keep in mind that summary tasks run in the background and are 
 Summaries are retrieved from the session by the `get_context` method. This method has two parameters:
 
 * `summary`: A boolean indicating whether to include the summary in the return type. The default is true.
-* `tokens`: An integer indicating the maximum number of tokens to use for the context. **If not provided, `get_context` will retrieve as many tokens as is required to create exhaustive conversation coverage.**
+* `tokens`: An integer indicating the maximum number of tokens to use for the context. **If not provided, `get_context` will retrieve as many tokens as are required to create exhaustive conversation coverage.**
 
 The return type is simply a list of recent messages and a summary if the flag is used. These two components are dynamically sized based on the token limit. Combined, they will always be below the given token limit. Honcho reserves 60% of the context size for recent messages and 40% for the summary.
 
