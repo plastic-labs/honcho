@@ -19,7 +19,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.1.1",
+        "version": "v2.1.2",
         "api": {
           "openapi": [
             "openapi.documented.yml"
@@ -59,11 +59,7 @@
             "groups": [
               {
                 "group": "Getting Started",
-                "pages": [
-                  "v2/guides/overview",
-                  "v2/guides/ai-assisted-setup",
-                  "v2/guides/mcp"
-                ]
+                "pages": ["v2/guides/overview", "v2/guides/mcp"]
               },
               {
                 "group": "Application Interfaces",

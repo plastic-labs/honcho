@@ -42,6 +42,7 @@ class Summary(TypedDict):
 # Export the public functions
 __all__ = [
     "get_summary",
+    "get_both_summaries",
     "get_summarized_history",
     "SummaryType",
     "Summary",
@@ -458,6 +459,32 @@ async def get_summary(
     if not summaries or summary_type.value not in summaries:
         return None
     return summaries[summary_type.value]
+
+
+async def get_both_summaries(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+) -> tuple[Summary | None, Summary | None]:
+    """
+    Get both short and long summaries for a given session.
+
+    Args:
+        db: Database session
+        workspace_name: The workspace name
+        session_name: The session name
+
+    Returns:
+        A tuple of the short and long summaries, or None if no summary exists
+    """
+    try:
+        session = await crud.get_session(db, session_name, workspace_name)
+    except ResourceNotFoundException:
+        # If session doesn't exist, there's no summary to retrieve
+        return None, None
+
+    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
+    return summaries.get(SummaryType.SHORT.value), summaries.get(SummaryType.LONG.value)
 
 
 def _format_messages(messages: list[models.Message]) -> str:
