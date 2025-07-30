@@ -7,7 +7,7 @@ startCommand:
   args:
     - -c
     - |
-      npx wrangler dev --local --persist --port 8000
+      wrangler dev --local --persist --port 8000
   env:
     CF_ACCOUNT_ID: "${config.cfAccountId}"
     CF_API_TOKEN: "${config.cfApiToken}"
