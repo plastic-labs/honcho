@@ -16,19 +16,22 @@
     "env": {
       "HONCHO_URL": "${config.honchoUrl}",
       "HONCHO_API_KEY": "${config.honchoApiKey}"
-    },
-    "configSchema": {
-      "type": "object",
-      "required": ["honchoUrl", "honchoApiKey"],
-      "properties": {
-        "honchoUrl": {
-          "type": "string",
-          "description": "URL of the Honcho API server"
-        },
-        "honchoApiKey": {
-          "type": "string",
-          "description": "API key for authenticating with the Honcho API"
-        }
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "required": [
+      "honchoUrl",
+      "honchoApiKey"
+    ],
+    "properties": {
+      "honchoUrl": {
+        "type": "string",
+        "description": "URL of the Honcho API server"
+      },
+      "honchoApiKey": {
+        "type": "string",
+        "description": "API key for authenticating with the Honcho API"
       }
     }
   }

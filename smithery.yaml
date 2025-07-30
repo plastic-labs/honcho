@@ -7,7 +7,6 @@ startCommand:
   args:
     - -c
     - |
-      npm install
       npx wrangler dev --local --persist --port 8000
   env:
     CF_ACCOUNT_ID: "${config.cfAccountId}"
@@ -24,5 +23,5 @@ configSchema:
       description: Cloudflare account ID
     cfApiToken:
       type: string
-      description: API token for Workers (must allow “Workers:Read” and “Workers:Write”)
+      description: "API token for Workers (must allow \"Workers:Read\" and \"Workers:Write\")"
 
