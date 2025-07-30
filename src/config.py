@@ -54,6 +54,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DERIVER": "deriver",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
+        "WEBHOOKS": "webhooks",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -239,9 +240,7 @@ class SummarySettings(HonchoSettings):
 class WebhookSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
 
-    PROXY_URL: str | None = None
-    # Set this if you want to send webhooks to workspace-specific endpoints only
-    SCOPE_TO_WORKSPACE: bool = False
+    WORKSPACE_LIMIT: int = 10
 
 
 class AppSettings(HonchoSettings):

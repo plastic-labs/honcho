@@ -1,5 +1,5 @@
 """
-Webhook delivery service that processes and delivers webhook events via a proxy.
+Webhook delivery service that processes and delivers webhook events
 """
 
 import asyncio
@@ -12,7 +12,6 @@ from datetime import datetime
 
 import httpx
 
-from src.config import settings
 from src.dependencies import tracked_db
 from src.webhooks.event_emitter import webhook_emitter
 from src.webhooks.events import WebhookEvent
@@ -21,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class WebhookDeliveryService:
-    """Service for delivering webhook events to a proxy."""
+    """Service for delivering webhook events."""
 
     def __init__(self) -> None:
         self.client: httpx.AsyncClient | None = None
@@ -32,10 +31,6 @@ class WebhookDeliveryService:
 
         self.client = httpx.AsyncClient(
             headers={"User-Agent": "Honcho-Webhook-Service/1.0"}, timeout=30.0
-        )
-
-        logger.info(
-            f"Starting webhook delivery service, proxying to {settings.WEBHOOKS.PROXY_URL}"
         )
 
         # Start the delivery loop
@@ -87,13 +82,13 @@ class WebhookDeliveryService:
 
     async def deliver_webhook(self, event: WebhookEvent) -> None:
         """
-        Deliver a webhook event to the configured proxy service.
+        Deliver a webhook event to the configured webhook endpoints.
 
         Args:
             event: The webhook event to deliver.
         """
         if not self.client:
-            logger.error("Webhook proxy service is not initialized.")
+            logger.error("Webhook delivery service is not initialized.")
             return
 
         try:
@@ -133,20 +128,20 @@ class WebhookDeliveryService:
 
                 if 200 <= response.status_code < 300:
                     logger.info(
-                        f"Successfully proxied webhook for workspace {event.workspace_name}, event {event.type} to {len(webhook_urls)} endpoints"
+                        f"Successfully delivered webhook for workspace {event.workspace_name}, event {event.type} to {len(webhook_urls)} endpoints"
                     )
                 else:
                     logger.error(
-                        f"Failed to proxy webhook for workspace {event.workspace_name} to {len(webhook_urls)} endpoints. Proxy returned status {response.status_code}: {response.text}"
+                        f"Failed to deliver webhook for workspace {event.workspace_name} to {len(webhook_urls)} endpoints. Endpoint returned status {response.status_code}: {response.text}"
                     )
 
         except httpx.RequestError as e:
             logger.error(
-                f"Error sending webhook for workspace {event.workspace_name} to proxy: {e}"
+                f"Error sending webhook for workspace {event.workspace_name}: {e}"
             )
         except Exception as e:
             logger.error(
-                f"An unexpected error occurred while delivering webhook for workspace {event.workspace_name} to proxy: {e}"
+                f"An unexpected error occurred while delivering webhook for workspace {event.workspace_name}: {e}"
             )
 
     async def _get_webhook_urls(self, workspace_name: str) -> list[str]:
@@ -160,15 +155,11 @@ class WebhookDeliveryService:
             from src.crud.webhook import list_webhook_endpoints
 
             try:
-                endpoints = (
-                    await list_webhook_endpoints(db, workspace_name)
-                    if settings.WEBHOOKS.SCOPE_TO_WORKSPACE
-                    else await list_webhook_endpoints(db, None)
-                )
+                endpoints = await list_webhook_endpoints(db, workspace_name)
 
-                urls = [endpoint.url for endpoint in endpoints]
-
-                return urls
+                result = await db.execute(endpoints)
+                endpoints = result.scalars().all()
+                return [endpoint.url for endpoint in endpoints]
             except Exception as e:
                 logger.error(
                     f"Error fetching webhook endpoints for {workspace_name}: {e}"

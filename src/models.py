@@ -1,5 +1,4 @@
 import datetime
-from enum import Enum
 from logging import getLogger
 from typing import Any, final
 
@@ -28,12 +27,6 @@ from sqlalchemy.sql import func
 from typing_extensions import override
 
 from .db import Base
-
-
-class WebhookStatus(str, Enum):
-    ENABLED = "enabled"
-    DISABLED = "disabled"
-
 
 load_dotenv(override=True)
 
@@ -410,7 +403,7 @@ class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     workspace_name: Mapped[str | None] = mapped_column(
-        ForeignKey("workspaces.name"), index=True, nullable=True
+        ForeignKey("workspaces.name"), index=True, nullable=False
     )
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(

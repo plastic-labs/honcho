@@ -1,9 +1,10 @@
 from logging import getLogger
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.config import settings
 from src.crud.workspace import get_workspace
 from src.exceptions import ResourceNotFoundException
 
@@ -27,23 +28,25 @@ async def get_or_create_webhook_endpoint(
     Raises:
         ResourceNotFoundException: If the workspace is specified and does not exist
     """
-    # Verify workspace exists if specified
-    if webhook.workspace_name:
-        await get_workspace(db, webhook.workspace_name)
+    # Verify workspace exists
+    await get_workspace(db, workspace_name=webhook.workspace_name)
 
-    # Check if endpoint already exists
     stmt = select(models.WebhookEndpoint).where(
-        models.WebhookEndpoint.url == webhook.url,
+        models.WebhookEndpoint.workspace_name == webhook.workspace_name,
     )
-    if webhook.workspace_name:
-        stmt = stmt.where(
-            models.WebhookEndpoint.workspace_name == webhook.workspace_name
+    result = await db.execute(stmt)
+    endpoints = result.scalars().all()
+
+    # No more than WORKSPACE_LIMIT webhooks per workspace
+    if len(endpoints) >= settings.WEBHOOKS.WORKSPACE_LIMIT:
+        raise ValueError(
+            f"Maximum number of webhook endpoints ({settings.WEBHOOKS.WORKSPACE_LIMIT}) reached for this workspace."
         )
 
-    result = await db.execute(stmt)
-    existing_endpoint = result.scalar_one_or_none()
-    if existing_endpoint:
-        return schemas.WebhookEndpoint.model_validate(existing_endpoint)
+    # Check if webhook already exists for this workspace
+    for endpoint in endpoints:
+        if endpoint.url == webhook.url:
+            return schemas.WebhookEndpoint.model_validate(endpoint)
 
     # Create new webhook endpoint
     webhook_endpoint = models.WebhookEndpoint(
@@ -59,8 +62,8 @@ async def get_or_create_webhook_endpoint(
 
 
 async def list_webhook_endpoints(
-    db: AsyncSession, workspace_name: str | None = None
-) -> list[schemas.WebhookEndpoint]:
+    db: AsyncSession, workspace_name: str
+) -> Select[tuple[models.WebhookEndpoint]]:
     """
     List all webhook endpoints, optionally filtered by workspace.
 
@@ -71,19 +74,14 @@ async def list_webhook_endpoints(
     Returns:
         List of webhook endpoints
     """
-    # Verify workspace exists if specified
-    if workspace_name:
-        await get_workspace(db, workspace_name)
+    # Verify workspace exists
+    await get_workspace(db, workspace_name)
 
-    # Build query
-    stmt = select(models.WebhookEndpoint)
-    if workspace_name:
-        stmt = stmt.where(models.WebhookEndpoint.workspace_name == workspace_name)
+    stmt = select(models.WebhookEndpoint).where(
+        models.WebhookEndpoint.workspace_name == workspace_name
+    )
 
-    result = await db.execute(stmt)
-    endpoints = result.scalars().all()
-
-    return [schemas.WebhookEndpoint.model_validate(endpoint) for endpoint in endpoints]
+    return stmt
 
 
 async def delete_webhook_endpoint(db: AsyncSession, endpoint_id: str) -> None:
