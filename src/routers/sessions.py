@@ -370,33 +370,28 @@ async def get_session_context(
     session_id: str = Path(..., description="ID of the session"),
     tokens: int | None = Query(
         None,
-        description="Number of tokens to use for the context. Includes summary if set to true",
+        le=config.settings.GET_CONTEXT_MAX_TOKENS,
+        description=f"Number of tokens to use for the context. Includes summary if set to true. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
     summary: bool = Query(
         True,
         description="Whether or not to include a summary *if* one is available for the session",
     ),
-    force_new: bool = Query(
-        False,
-        description="Whether or not the included summary should be generated on-the-fly in order to exhaustively cover the session history. The summary flag must be true for this to take effect.",
-    ),
     db: AsyncSession = db,
 ):
     """
-    Produce a context object from the session. The caller provides a token limit which the entire context must fit into.
-    To do this, we allocate 40% of the token limit to the summary, and 60% to recent messages -- as many as can fit.
-    If the caller does not want a summary, we allocate all the tokens to recent messages.
-    The default token limit if not provided is 2048.
+    Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.
+    If not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit
+    to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
+    this. If the caller does not want a summary, we allocate all the tokens to recent messages.
     """
-    token_limit = tokens or config.settings.GET_CONTEXT_DEFAULT_MAX_TOKENS
+    token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
 
     summary_content = ""
     messages_tokens = token_limit
+    messages_start_id = 0
 
     if summary:
-        if force_new:
-            logger.warning("Exhaustive summary requested -- not currently available")
-
         summary_tokens_limit = token_limit * 0.4
 
         latest_long_summary, latest_short_summary = await summarizer.get_both_summaries(
@@ -414,18 +409,18 @@ async def get_session_context(
 
         if (
             latest_long_summary
-            and latest_long_summary["token_count"] <= summary_tokens_limit
+            and long_len <= summary_tokens_limit
             and long_len > short_len
         ):
             summary_content = latest_long_summary["content"]
             messages_tokens = token_limit - latest_long_summary["token_count"]
+            messages_start_id = latest_long_summary["message_id"]
         elif (
-            latest_short_summary
-            and latest_short_summary["token_count"] <= summary_tokens_limit
-            and short_len > 0
+            latest_short_summary and short_len <= summary_tokens_limit and short_len > 0
         ):
             summary_content = latest_short_summary["content"]
             messages_tokens = token_limit - latest_short_summary["token_count"]
+            messages_start_id = latest_short_summary["message_id"]
         else:
             logger.warning(
                 "No summary available for get_context, returning empty string. long_summary_len: %s, short_summary_len: %s",
@@ -434,14 +429,14 @@ async def get_session_context(
             )
             summary_content = ""
 
-    # Get the recent messages to return verbatim
-    messages_stmt = await crud.get_messages(
+    # Get the recent messages after summary to return verbatim
+    messages = await crud.get_messages_id_range(
+        db,
         workspace_name=workspace_id,
         session_name=session_id,
+        start_id=messages_start_id,
         token_limit=messages_tokens,
     )
-    result = await db.execute(messages_stmt)
-    messages = list(result.scalars().all())
 
     logger.info(f"Retrieved {len(messages)} recent messages for verbatim return")
 

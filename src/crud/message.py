@@ -186,13 +186,14 @@ async def get_messages_id_range(
     session_name: str,
     start_id: int = 0,
     end_id: int | None = None,
+    token_limit: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session by primary key ID range.
     If end_id is not provided, all messages after and including start_id will be returned.
     If start_id is not provided, start will be beginning of session.
 
-    Note: list is *inclusive* of the end_id message.
+    Note: list is *inclusive* of the end_id message and start_id message.
 
     Args:
         db: Database session
@@ -213,10 +214,19 @@ async def get_messages_id_range(
         )
         .where(models.Message.session_name == session_name)
     )
+
     if end_id:
         stmt = stmt.where(models.Message.id.between(start_id, end_id))
     else:
         stmt = stmt.where(models.Message.id >= start_id)
+
+    if token_limit:
+        stmt = stmt.where(
+            func.sum(models.Message.token_count)
+            .over(order_by=models.Message.id.desc())
+            .label("running_token_sum")
+            .where(models.Message.id >= start_id)
+        )
 
     result = await db.execute(stmt)
     return list(result.scalars().all())

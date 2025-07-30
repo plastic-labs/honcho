@@ -10,6 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import honcho_llm_call
 from src.utils.logging import accumulate_metric
@@ -53,6 +54,8 @@ __all__ = [
 MESSAGES_PER_SHORT_SUMMARY = settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY
 MESSAGES_PER_LONG_SUMMARY = settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY
 
+SUMMARIES_KEY = "summaries"
+
 
 # The types of summary to store in the session metadata
 class SummaryType(Enum):
@@ -71,30 +74,32 @@ async def create_short_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
     return f"""
-You are a system that summarizes parts of a conversation to create a concise and accurate summary.
-Focus on capturing:
+You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
+
 1. Key facts and information shared
 2. User preferences, opinions, and questions
 3. Important context and requests
 4. Core topics discussed
-5. User's apparent emotional state
 
-It is very important that you clearly distinguish between each member of the conversation, and that only a user's literal words are attributed to them.
+If there is a previous summary, make your new summary inclusive of both it and the new messages, therefore capturing the entire conversation. Prioritize key facts across the entire conversation.
 
-Provide a concise, factual summary that captures the essence of the conversation.
-Your summary should be detailed enough to serve as context for future messages,
-but brief enough to be helpful.
+Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful.
 
 Return only the summary without any explanation or meta-commentary.
+
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
 
 <conversation>
 {_format_messages(messages)}
 </conversation>
-
-<previous_summary>
-{previous_summary or ""}
-</previous_summary>
 """
 
 
@@ -108,9 +113,14 @@ async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
     return f"""
-You are a system that creates comprehensive summaries of conversations.
-Focus on capturing:
+You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
+
 1. Key facts and information shared
 2. User preferences, opinions, and questions
 3. Important context and requests
@@ -118,20 +128,19 @@ Focus on capturing:
 5. User's apparent emotional state and personality traits
 6. Important themes and patterns across the conversation
 
-It is very important that you clearly distinguish between each member of the conversation, and that only a user's literal words are attributed to them.
+If there is a previous summary, make your new summary inclusive of both it and the new messages, therefore capturing the entire conversation. Prioritize key facts across the entire conversation.
 
-Provide a thorough and detailed summary that captures the essence of the conversation.
-Your summary should serve as a comprehensive record of the important information in this conversation.
+Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation.
 
 Return only the summary without any explanation or meta-commentary.
+
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
 
 <conversation>
 {_format_messages(messages)}
 </conversation>
-
-<previous_summary>
-{previous_summary or ""}
-</previous_summary>
 """
 
 
@@ -164,8 +173,6 @@ async def summarize_if_needed(
     if should_create_long and should_create_short:
 
         async def create_long_summary():
-            from src.dependencies import tracked_db
-
             async with tracked_db("create_long_summary") as db_session:
                 await _create_and_save_summary(
                     db_session,
@@ -176,8 +183,6 @@ async def summarize_if_needed(
                 )
 
         async def create_short_summary():
-            from src.dependencies import tracked_db
-
             async with tracked_db("create_short_summary") as db_session:
                 await _create_and_save_summary(
                     db_session,
@@ -349,9 +354,9 @@ async def _save_summary(
     # Use SQLAlchemy update() with PostgreSQL's || operator to properly merge JSONB
     # We need to merge the new summary into the existing summaries structure
     update_data = {}
-    existing_summaries = session.internal_metadata.get("summaries", {})
+    existing_summaries = session.internal_metadata.get(SUMMARIES_KEY, {})
     existing_summaries[label_value] = summary
-    update_data["summaries"] = existing_summaries
+    update_data[SUMMARIES_KEY] = existing_summaries
 
     stmt = (
         update(models.Session)
@@ -455,7 +460,7 @@ async def get_summary(
         # If session doesn't exist, there's no summary to retrieve
         return None
 
-    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
     if not summaries or summary_type.value not in summaries:
         return None
     return summaries[summary_type.value]
@@ -483,7 +488,7 @@ async def get_both_summaries(
         # If session doesn't exist, there's no summary to retrieve
         return None, None
 
-    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
     return summaries.get(SummaryType.SHORT.value), summaries.get(SummaryType.LONG.value)
 
 
