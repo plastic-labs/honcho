@@ -1,0 +1,36 @@
+{
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "startCommand": {
+    "type": "stdio",
+    "command": "uv",
+    "args": [
+      "run",
+      "--with",
+      "mcp[cli]",
+      "mcp",
+      "run",
+      "mcp/main.py"
+    ],
+    "env": {
+      "HONCHO_URL": "${config.honchoUrl}",
+      "HONCHO_API_KEY": "${config.honchoApiKey}"
+    },
+    "configSchema": {
+      "type": "object",
+      "required": ["honchoUrl", "honchoApiKey"],
+      "properties": {
+        "honchoUrl": {
+          "type": "string",
+          "description": "URL of the Honcho API server"
+        },
+        "honchoApiKey": {
+          "type": "string",
+          "description": "API key for authenticating with the Honcho API"
+        }
+      }
+    }
+  }
+}
+
