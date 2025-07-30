@@ -228,8 +228,8 @@ class SummarySettings(HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: Providers = "google"
-    MODEL: str = "gemini-2.5-flash"
+    PROVIDER: Providers = "openai"
+    MODEL: str = "gpt-4o-mini-2024-07-18"
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
