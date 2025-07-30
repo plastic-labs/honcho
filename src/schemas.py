@@ -358,6 +358,7 @@ class WebhookEndpointBase(BaseModel):
 
 class WebhookEndpointCreate(WebhookEndpointBase):
     url: str
+    workspace_name: str | None = None
 
     @field_validator("url")
     @classmethod
@@ -385,7 +386,7 @@ class WebhookEndpointCreate(WebhookEndpointBase):
 
 class WebhookEndpoint(WebhookEndpointBase):
     id: str
-    workspace_name: str = Field(serialization_alias="workspace_id")
+    workspace_name: str | None = Field(serialization_alias="workspace_id")
     url: str
     created_at: datetime.datetime
 

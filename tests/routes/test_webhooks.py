@@ -12,8 +12,11 @@ async def test_create_webhook_endpoint(
 ):
     test_workspace, _ = sample_data
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/webhooks",
-        json={"url": "http://example.com/webhook"},
+        "/v2/webhooks",
+        json={
+            "url": "http://example.com/webhook",
+            "workspace_name": test_workspace.name,
+        },
     )
     assert response.status_code == 200
     response_json = response.json()
@@ -29,8 +32,11 @@ async def test_create_webhook_endpoint_invalid_url(
 ):
     test_workspace, _ = sample_data
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/webhooks",
-        json={"url": "192.168.1.1/webhook"},
+        "/v2/webhooks",
+        json={
+            "url": "192.168.1.1/webhook",
+            "workspace_name": test_workspace.name,
+        },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
@@ -41,21 +47,14 @@ async def test_create_webhook_endpoint_invalid_url(
 @pytest.mark.asyncio
 async def test_create_webhook_endpoint_missing_workspace(client: TestClient):
     response = client.post(
-        "/v2/workspaces/nonexistent-workspace/webhooks",
-        json={"url": "http://example.com/webhook"},
+        "/v2/webhooks",
+        json={
+            "url": "http://example.com/webhook",
+            "workspace_name": "nonexistent-workspace",
+        },
     )
     assert response.status_code == 404
     assert response.json() == {"detail": "Workspace nonexistent-workspace not found"}
-
-
-@pytest.mark.asyncio
-async def test_list_webhook_endpoints_empty(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    test_workspace, _ = sample_data
-    response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
-    assert response.status_code == 200
-    assert response.json() == []
 
 
 @pytest.mark.asyncio
@@ -64,25 +63,34 @@ async def test_list_webhook_endpoints_with_data(
 ):
     test_workspace, _ = sample_data
 
+    list_response = client.get("/v2/webhooks")
+    initial_count = len(list_response.json())
+
     # Create first endpoint
     response1 = client.post(
-        f"/v2/workspaces/{test_workspace.name}/webhooks",
-        json={"url": "http://example1.com/webhook"},
+        "/v2/webhooks",
+        json={
+            "url": "http://example1.com/webhook",
+            "workspace_name": test_workspace.name,
+        },
     )
     assert response1.status_code == 200
 
     # Create second endpoint
     response2 = client.post(
-        f"/v2/workspaces/{test_workspace.name}/webhooks",
-        json={"url": "http://example2.com/webhook"},
+        "/v2/webhooks",
+        json={
+            "url": "http://example2.com/webhook",
+            "workspace_name": test_workspace.name,
+        },
     )
     assert response2.status_code == 200
 
     # List endpoints
-    list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
+    list_response = client.get("/v2/webhooks")
     assert list_response.status_code == 200
     endpoints = list_response.json()
-    assert len(endpoints) == 2
+    assert len(endpoints) == initial_count + 2
 
     # Verify both endpoints are returned
     endpoint_urls = [ep["url"] for ep in endpoints]
@@ -92,7 +100,7 @@ async def test_list_webhook_endpoints_with_data(
 
 @pytest.mark.asyncio
 async def test_list_webhook_endpoints_missing_workspace(client: TestClient):
-    response = client.get("/v2/workspaces/nonexistent-workspace/webhooks")
+    response = client.get("/v2/webhooks?workspace_name=nonexistent-workspace")
     assert response.status_code == 404
     assert response.json() == {"detail": "Workspace nonexistent-workspace not found"}
 
@@ -105,43 +113,31 @@ async def test_delete_webhook_endpoint(
 
     # Create webhook endpoint
     create_response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/webhooks",
-        json={"url": "http://example.com/webhook"},
+        "/v2/webhooks",
+        json={
+            "url": "http://example.com/webhook",
+            "workspace_name": test_workspace.name,
+        },
     )
     assert create_response.status_code == 200
     endpoint = create_response.json()
     endpoint_id = endpoint["id"]
 
     # Delete webhook endpoint
-    delete_response = client.delete(
-        f"/v2/workspaces/{test_workspace.name}/webhooks/{endpoint_id}"
-    )
+    delete_response = client.delete(f"/v2/webhooks/{endpoint_id}")
     assert delete_response.status_code == 200
 
     # Verify endpoint is deleted
-    list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
+    list_response = client.get("/v2/webhooks")
     assert list_response.status_code == 200
     assert list_response.json() == []
 
 
 @pytest.mark.asyncio
-async def test_delete_webhook_endpoint_not_found(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
-):
-    test_workspace, _ = sample_data
-
-    response = client.delete(
-        f"/v2/workspaces/{test_workspace.name}/webhooks/nonexistent-id"
-    )
+async def test_delete_webhook_endpoint_not_found(client: TestClient):
+    response = client.delete("/v2/webhooks/nonexistent-id")
     assert response.status_code == 404
     assert "not found" in response.json()["detail"]
-
-
-@pytest.mark.asyncio
-async def test_delete_webhook_endpoint_missing_workspace(client: TestClient):
-    response = client.delete("/v2/workspaces/nonexistent-workspace/webhooks/some-id")
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Workspace nonexistent-workspace not found"}
 
 
 @pytest.mark.asyncio
@@ -158,20 +154,22 @@ async def test_multiple_endpoints_per_workspace(
         "http://app3.com/webhook",
     ]
 
+    initial_count = len(client.get("/v2/webhooks").json())
+
     created_endpoints: list[Any] = []
     for url in urls:
         response = client.post(
-            f"/v2/workspaces/{test_workspace.name}/webhooks",
-            json={"url": url},
+            "/v2/webhooks",
+            json={"url": url, "workspace_name": test_workspace.name},
         )
         assert response.status_code == 200
         created_endpoints.append(response.json())
 
     # List all endpoints
-    list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
+    list_response = client.get("/v2/webhooks")
     assert list_response.status_code == 200
     endpoints = list_response.json()
-    assert len(endpoints) == 3
+    assert len(endpoints) == initial_count + 3
 
     # Verify all URLs are present
     returned_urls = [ep["url"] for ep in endpoints]
@@ -179,13 +177,11 @@ async def test_multiple_endpoints_per_workspace(
         assert url in returned_urls
 
     # Delete one endpoint
-    delete_response = client.delete(
-        f"/v2/workspaces/{test_workspace.name}/webhooks/{created_endpoints[0]['id']}"
-    )
+    delete_response = client.delete(f"/v2/webhooks/{created_endpoints[0]['id']}")
     assert delete_response.status_code == 200
 
     # Verify only 2 endpoints remain
-    list_response = client.get(f"/v2/workspaces/{test_workspace.name}/webhooks")
+    list_response = client.get("/v2/webhooks")
     assert list_response.status_code == 200
     endpoints = list_response.json()
-    assert len(endpoints) == 2
+    assert len(endpoints) == initial_count + 2

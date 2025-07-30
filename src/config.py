@@ -240,7 +240,8 @@ class WebhookSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
 
     PROXY_URL: str | None = None
-    WEBHOOK_ENCRYPTION_KEY: str | None = None
+    # Set this if you want to send webhooks to workspace-specific endpoints only
+    SCOPE_TO_WORKSPACE: bool = False
 
 
 class AppSettings(HonchoSettings):

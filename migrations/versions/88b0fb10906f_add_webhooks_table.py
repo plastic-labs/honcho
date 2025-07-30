@@ -36,7 +36,7 @@ def upgrade() -> None:
             "workspace_name",
             sa.TEXT(),
             sa.ForeignKey("workspaces.name"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column("url", sa.TEXT(), nullable=False),
         sa.Column(

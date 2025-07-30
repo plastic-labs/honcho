@@ -97,7 +97,7 @@ class WebhookDeliveryService:
             return
 
         try:
-            webhook_urls = await self._get_workspace_endpoints(event.workspace_name)
+            webhook_urls = await self._get_webhook_urls(event.workspace_name)
             if not webhook_urls:
                 logger.info(
                     f"No webhook endpoints found for workspace {event.workspace_name}, skipping delivery."
@@ -149,9 +149,9 @@ class WebhookDeliveryService:
                 f"An unexpected error occurred while delivering webhook for workspace {event.workspace_name} to proxy: {e}"
             )
 
-    async def _get_workspace_endpoints(self, workspace_name: str) -> list[str]:
+    async def _get_webhook_urls(self, workspace_name: str) -> list[str]:
         """
-        Get all webhook endpoint URLs for a workspace.
+        Get all webhook endpoint URLs for a workspace or global endpoints.
 
         Returns:
             List of webhook URLs for the workspace
@@ -160,7 +160,12 @@ class WebhookDeliveryService:
             from src.crud.webhook import list_webhook_endpoints
 
             try:
-                endpoints = await list_webhook_endpoints(db, workspace_name)
+                endpoints = (
+                    await list_webhook_endpoints(db, workspace_name)
+                    if settings.WEBHOOKS.SCOPE_TO_WORKSPACE
+                    else await list_webhook_endpoints(db, None)
+                )
+
                 urls = [endpoint.url for endpoint in endpoints]
 
                 return urls

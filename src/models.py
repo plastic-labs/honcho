@@ -409,8 +409,8 @@ class ActiveQueueSession(Base):
 class WebhookEndpoint(Base):
     __tablename__: str = "webhook_endpoints"
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    workspace_name: Mapped[str] = mapped_column(
-        ForeignKey("workspaces.name"), index=True
+    workspace_name: Mapped[str | None] = mapped_column(
+        ForeignKey("workspaces.name"), index=True, nullable=True
     )
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
     created_at: Mapped[datetime.datetime] = mapped_column(
