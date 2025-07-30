@@ -2,7 +2,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
@@ -17,7 +17,7 @@ logger = getLogger(__name__)
 
 
 def _apply_token_limit(
-    base_conditions: list, token_limit: int
+    base_conditions: list[ColumnElement[Any]], token_limit: int
 ) -> Select[tuple[models.Message]]:
     """
     Helper function to apply token limit logic to a message query.
