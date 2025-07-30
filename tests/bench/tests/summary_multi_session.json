@@ -145,22 +145,94 @@
                 {
                     "peer": "bob",
                     "content": "Nam pellentesque sed elit eget sollicitudin. Proin vestibulum efficitur risus, eget tempus sapien posuere eu. In porta nec nisl sed iaculis. Integer a elementum risus."
+                }
+            ]
+        },
+        "session2": {
+            "messages": [
+                {
+                    "peer": "alice",
+                    "content": "Hello, how are you?"
                 },
                 {
                     "peer": "bob",
-                    "content": "Nam sem ex, dignissim sit amet ante at, posuere tristique velit. Pellentesque facilisis, lorem ut fermentum egestas, arcu libero pellentesque leo, vitae dignissim enim elit sed lacus."
-                },
-                {
-                    "peer": "bob",
-                    "content": "Class aptent taciti sociosqu ad litora torquent per conubia nostra, per inceptos himenaeos. Aenean suscipit orci non convallis vestibulum. Integer placerat molestie lacus, sed hendrerit magna."
-                },
-                {
-                    "peer": "bob",
-                    "content": "Maecenas sit amet finibus augue. Quisque porta ligula non felis efficitur euismod. Integer tempor ornare tempus."
+                    "content": "I'm good, thank you!"
                 },
                 {
                     "peer": "alice",
-                    "content": "I like that Lorem Ipsum too. I'm going to go to the store to buy some groceries now."
+                    "content": "I'm going to share some of my favorite numbers with you now."
+                },
+                {
+                    "peer": "alice",
+                    "content": "7"
+                },
+                {
+                    "peer": "alice",
+                    "content": "74"
+                },
+                {
+                    "peer": "alice",
+                    "content": "12"
+                },
+                {
+                    "peer": "alice",
+                    "content": "8"
+                },
+                {
+                    "peer": "alice",
+                    "content": "2"
+                },
+                {
+                    "peer": "alice",
+                    "content": "3"
+                },
+                {
+                    "peer": "alice",
+                    "content": "14"
+                },
+                {
+                    "peer": "alice",
+                    "content": "24"
+                },
+                {
+                    "peer": "alice",
+                    "content": "37"
+                },
+                {
+                    "peer": "alice",
+                    "content": "What's your favorite number?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "7"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Glad to hear it. Here's a bunch of Lorem Ipsum text I found on the internet: Lorem ipsum dolor sit amet, consectetur adipiscing elit."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Vivamus sodales arcu ut dolor vulputate mollis. Nulla turpis elit, tempus vitae enim in, eleifend dictum dui. Fusce id vulputate augue. Morbi in elit elit. Fusce consectetur at odio lacinia elementum. Donec sed erat ante. Quisque ac massa lacus. Cras at sollicitudin magna. Donec auctor ut magna nec iaculis."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Etiam tincidunt consequat convallis. Nulla metus ligula, semper ac nunc id, porttitor mattis augue. Sed imperdiet nunc vitae mauris fermentum pretium. Quisque quis massa non tortor ultricies rutrum cursus at augue. Ut porta pulvinar enim et pharetra. Etiam tincidunt dolor nisl, eu aliquet odio imperdiet vel."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Suspendisse porttitor leo odio, sed viverra nisl facilisis vitae. Aliquam eleifend mollis porta. Integer pulvinar mollis tempus. Donec consectetur condimentum neque non auctor. Sed nec diam sapien. Suspendisse et pharetra mi. Vivamus venenatis pharetra nisl, vitae luctus lorem fringilla at."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Nullam lobortis nibh eget magna semper, aliquet volutpat purus tempor. Integer aliquet eleifend nisl, in pretium nibh aliquam vitae. In posuere sodales purus, sit amet dapibus tortor sollicitudin ut. Nulla facilisi. Sed ligula nulla, facilisis eu ligula in, sodales hendrerit dui."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Donec laoreet, nisl ut imperdiet tincidunt, magna nulla ultrices lectus, quis pulvinar erat enim vel magna. Aliquam vulputate auctor efficitur. Aenean vitae risus metus. Nulla varius condimentum volutpat. Aenean ligula enim, fermentum vel iaculis in, mollis non massa."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Nulla maximus, nunc suscipit consequat condimentum, dolor ligula rhoncus quam, eu lacinia eros ex id nibh. Nam vitae ligula arcu. Ut a tellus sit amet libero fermentum vehicula. Cras sollicitudin nibh in odio convallis, vitae aliquam tellus dapibus."
                 }
             ]
         }
@@ -169,31 +241,10 @@
     "get_context_calls": [
         {
             "session": "session1",
-            "summary": true,
-            "max_tokens": 50
+            "summary": true
         },
         {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 250
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 500
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 1000
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 2500
-        },
-        {
-            "session": "session1",
+            "session": "session2",
             "summary": true
         }
     ]

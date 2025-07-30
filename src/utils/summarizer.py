@@ -89,7 +89,7 @@ You are a system that summarizes parts of a conversation to create a concise and
 
 If there is a previous summary, make your new summary inclusive of both it and the new messages, therefore capturing the entire conversation. Prioritize key facts across the entire conversation.
 
-Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful.
+Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
 
@@ -130,7 +130,7 @@ You are a system that creates thorough, comprehensive summaries of conversations
 
 If there is a previous summary, make your new summary inclusive of both it and the new messages, therefore capturing the entire conversation. Prioritize key facts across the entire conversation.
 
-Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation.
+Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
 
@@ -181,6 +181,12 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.LONG,
                 )
+                logger.info(
+                    "Saved long summary for session %s covering up to message %s (%s in session)",
+                    session_name,
+                    message_id,
+                    message_seq_in_session,
+                )
 
         async def create_short_summary():
             async with tracked_db("create_short_summary") as db_session:
@@ -191,13 +197,18 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.SHORT,
                 )
+                logger.info(
+                    "Saved short summary for session %s covering up to message %s (%s in session)",
+                    session_name,
+                    message_id,
+                    message_seq_in_session,
+                )
 
         await asyncio.gather(
             create_long_summary(),
             create_short_summary(),
             return_exceptions=True,
         )
-        logger.debug("Both long and short summaries created and saved successfully")
     else:
         # If only one summary needs to be created, run them individually
         if should_create_long:
@@ -208,7 +219,12 @@ async def summarize_if_needed(
                 message_id,
                 SummaryType.LONG,
             )
-            logger.debug("Long summary created and saved successfully")
+            logger.info(
+                "Saved long summary for session %s covering up to message %s (%s in session)",
+                session_name,
+                message_id,
+                message_seq_in_session,
+            )
         elif should_create_short:
             await _create_and_save_summary(
                 db,
@@ -217,7 +233,12 @@ async def summarize_if_needed(
                 message_id,
                 SummaryType.SHORT,
             )
-            logger.debug("Short summary created and saved successfully")
+            logger.info(
+                "Saved short summary for session %s covering up to message %s (%s in session)",
+                session_name,
+                message_id,
+                message_seq_in_session,
+            )
 
 
 async def _create_and_save_summary(
@@ -303,6 +324,8 @@ async def _create_summary(
             if response.usage
             else len(response.content) // 4
         )
+        logger.info("Summary text: %s", summary_text)
+        logger.info("Summary size: %s tokens", summary_tokens)
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
@@ -312,6 +335,15 @@ async def _create_summary(
             else ""
         )
         summary_tokens = 50
+
+    accumulate_metric(
+        f"deriver_message_{messages[-1].id}",
+        f"{summary_type.name}_summary_size",
+        response.usage.output_tokens
+        if response and response.usage
+        else f"{summary_tokens} (est.)",
+        "tokens",
+    )
 
     return Summary(
         content=summary_text,
@@ -369,13 +401,6 @@ async def _save_summary(
 
     await db.execute(stmt)
     await db.commit()
-
-    logger.info(
-        "Saved %s for session %s covering up to message %s",
-        summary["summary_type"],
-        session_name,
-        summary["message_id"],
-    )
 
 
 async def get_summarized_history(

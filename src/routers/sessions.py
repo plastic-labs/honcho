@@ -394,7 +394,7 @@ async def get_session_context(
     if summary:
         summary_tokens_limit = token_limit * 0.4
 
-        latest_long_summary, latest_short_summary = await summarizer.get_both_summaries(
+        latest_short_summary, latest_long_summary = await summarizer.get_both_summaries(
             db,
             workspace_name=workspace_id,
             session_name=session_id,
@@ -422,8 +422,9 @@ async def get_session_context(
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
         else:
-            logger.warning(
-                "No summary available for get_context, returning empty string. long_summary_len: %s, short_summary_len: %s",
+            logger.info(
+                "No summary available for get_context call with token limit %s, returning empty string. long_summary_len: %s, short_summary_len: %s",
+                token_limit,
                 long_len,
                 short_len,
             )
@@ -437,8 +438,6 @@ async def get_session_context(
         start_id=messages_start_id,
         token_limit=messages_tokens,
     )
-
-    logger.info(f"Retrieved {len(messages)} recent messages for verbatim return")
 
     return schemas.SessionContext(
         name=session_id,

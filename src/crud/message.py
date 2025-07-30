@@ -16,6 +16,45 @@ from .session import get_or_create_session
 logger = getLogger(__name__)
 
 
+def _apply_token_limit(
+    base_conditions: list, token_limit: int
+) -> Select[tuple[models.Message]]:
+    """
+    Helper function to apply token limit logic to a message query.
+
+    Creates a subquery that calculates running sum of tokens for most recent messages
+    and returns a select statement that joins with this subquery to limit results
+    based on token count.
+
+    Args:
+        base_conditions: List of conditions to apply to the base query
+        token_limit: Maximum number of tokens to include in the messages
+
+    Returns:
+        Select statement with token limit applied
+    """
+    # Create a subquery that calculates running sum of tokens for most recent messages
+    token_subquery = (
+        select(
+            models.Message.id,
+            func.sum(models.Message.token_count)
+            .over(order_by=models.Message.id.desc())
+            .label("running_token_sum"),
+        )
+        .where(*base_conditions)
+        .subquery()
+    )
+
+    # Select Message objects where running sum doesn't exceed token_limit
+    stmt = (
+        select(models.Message)
+        .join(token_subquery, models.Message.id == token_subquery.c.id)
+        .where(token_subquery.c.running_token_sum <= token_limit)
+    )
+
+    return stmt
+
+
 async def create_messages(
     db: AsyncSession,
     messages: list[schemas.MessageCreate],
@@ -142,25 +181,8 @@ async def get_messages(
         else:
             stmt = stmt.order_by(models.Message.id.asc())
     elif token_limit is not None:
-        # Apply token limit logic
-        # Create a subquery that calculates running sum of tokens for most recent messages
-        token_subquery = (
-            select(
-                models.Message.id,
-                func.sum(models.Message.token_count)
-                .over(order_by=models.Message.id.desc())
-                .label("running_token_sum"),
-            )
-            .where(*base_conditions)
-            .subquery()
-        )
-
-        # Select Message objects where running sum doesn't exceed token_limit
-        stmt = (
-            select(models.Message)
-            .join(token_subquery, models.Message.id == token_subquery.c.id)
-            .where(token_subquery.c.running_token_sum <= token_limit)
-        )
+        # Apply token limit logic using helper function
+        stmt = _apply_token_limit(base_conditions, token_limit)
         stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
@@ -207,26 +229,22 @@ async def get_messages_id_range(
     """
     if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 0)):
         return []
-    stmt = (
-        select(models.Message)
-        .where(
-            models.Message.workspace_name == workspace_name,
-        )
-        .where(models.Message.session_name == session_name)
-    )
 
+    base_conditions = [
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == session_name,
+    ]
     if end_id:
-        stmt = stmt.where(models.Message.id.between(start_id, end_id))
+        base_conditions.append(models.Message.id.between(start_id, end_id))
     else:
-        stmt = stmt.where(models.Message.id >= start_id)
+        base_conditions.append(models.Message.id >= start_id)
 
     if token_limit:
-        stmt = stmt.where(
-            func.sum(models.Message.token_count)
-            .over(order_by=models.Message.id.desc())
-            .label("running_token_sum")
-            .where(models.Message.id >= start_id)
-        )
+        # Apply token limit logic using helper function
+        stmt = _apply_token_limit(base_conditions, token_limit)
+        stmt = stmt.order_by(models.Message.id)
+    else:
+        stmt = select(models.Message).where(*base_conditions)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())
