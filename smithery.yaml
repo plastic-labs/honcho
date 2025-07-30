@@ -1,0 +1,28 @@
+build:
+  dockerfile: Dockerfile
+
+startCommand:
+  type: http
+  command: sh
+  args:
+    - -c
+    - |
+      npm install
+      npx wrangler dev --local --persist --port 8000
+  env:
+    CF_ACCOUNT_ID: "${config.cfAccountId}"
+    CF_API_TOKEN: "${config.cfApiToken}"
+
+configSchema:
+  type: object
+  required:
+    - cfAccountId
+    - cfApiToken
+  properties:
+    cfAccountId:
+      type: string
+      description: Cloudflare account ID
+    cfApiToken:
+      type: string
+      description: API token for Workers (must allow “Workers:Read” and “Workers:Write”)
+
