@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.1.2] - 2025-07-30
+
+### Fixed
+
+- Summarizer module to ignore empty summaries and pass appropriate one to get_context
+- Structured Outputs calls with OpenAI provider to pass strict=True to Pydantic Schema
+
 ## [2.1.1] - 2025-07-23
 
 ### Added
