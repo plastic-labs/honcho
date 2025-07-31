@@ -174,7 +174,7 @@ class LLMSettings(HonchoSettings):
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # General LLM settings
-    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 2500
+    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
 
 class DeriverSettings(HonchoSettings):
@@ -189,7 +189,7 @@ class DeriverSettings(HonchoSettings):
     PROVIDER: Providers = "google"
     MODEL: str = "gemini-2.5-flash"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
@@ -208,7 +208,7 @@ class DialecticSettings(HonchoSettings):
     QUERY_GENERATION_PROVIDER: Providers = "groq"
     QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
 
     SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
     SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
@@ -228,10 +228,10 @@ class SummarySettings(HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: Providers = "google"
-    MODEL: str = "gemini-2.5-flash"
-    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10000)] = 1000
-    MAX_TOKENS_LONG: Annotated[int, Field(default=2000, gt=0, le=20000)] = 2000
+    PROVIDER: Providers = "openai"
+    MODEL: str = "gpt-4o-mini-2024-07-18"
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
+    MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
 
@@ -245,15 +245,17 @@ class AppSettings(HonchoSettings):
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
     FASTAPI_HOST: str = "0.0.0.0"
-    FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
+    FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65_535)] = 8000
     SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
-    GET_CONTEXT_DEFAULT_MAX_TOKENS: Annotated[int, Field(default=2048, gt=0)] = 2048
+    GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
+        100_000
+    )
 
     EMBED_MESSAGES: bool = True
     MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
-    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300000, gt=0)] = (
-        300000
+    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = (
+        300_000
     )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None

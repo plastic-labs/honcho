@@ -267,7 +267,6 @@ async def chat(
                 session_id=session_name,
                 tokens=context_window_size,
                 summary=True,
-                force_new=False,
                 db=db,
             )
         logger.info(

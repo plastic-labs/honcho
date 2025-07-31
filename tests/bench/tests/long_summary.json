@@ -161,37 +161,104 @@
                 {
                     "peer": "alice",
                     "content": "I like that Lorem Ipsum too. I'm going to go to the store to buy some groceries now."
+                },
+                {
+                    "peer": "bob",
+                    "content": "That's cool, I'll join you."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Let's take my station wagon. It carries lots of stuff."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Great. I want to buy a whole ocean's worth of seafood."
+                },
+                {
+                    "peer": "alice",
+                    "content": "We'll tell 'em to bring out the whole ocean!"
+                },
+                {
+                    "peer": "bob",
+                    "content": "I should probably bring a trunkful of ice. To put the seafood on. So it doesn't get hot while we're driving."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Smart thinking. It's going to be hot out there. Weather lady says it's going to be 100 degrees."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Farenheit or Celsius?"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Celsius."
+                },
+                {
+                    "peer": "bob",
+                    "content": "...I don't believe you. That's too hot."
+                },
+                {
+                    "peer": "alice",
+                    "content": "I'm not sure what you mean. We live on Mercury. It gets pretty hot."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Oh yeah.. I forgot. We *do* live on Mercury. I'm still getting used to the heat."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Ha ha, it takes a while. Anyways, get your suit on and let's go."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Fish, shipped straight from Earth's ocean! Yippee!"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Alright, I'll start the air conditioning in the wagon while you grab your thermal suit."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Good idea. The UV protection on this suit is supposed to be top-notch. Still feels weird wearing it every time we go out."
+                },
+                {
+                    "peer": "alice",
+                    "content": "You'll get used to it. Remember when I first moved here from Earth? I couldn't even walk to the mailbox without overheating."
+                },
+                {
+                    "peer": "bob",
+                    "content": "At least the grocery store has that cool underground section. Keeps the produce fresh and us comfortable."
+                },
+                {
+                    "peer": "alice",
+                    "content": "True! And they just got a new shipment of Earth vegetables yesterday. Want to grab some tomatoes for a salad?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Definitely. Do you think they'll have any of those Earth strawberries? They're so much sweeter than the hydroponic ones."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Maybe, but they're probably expensive. The shipping costs from Earth are astronomical these days."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Worth every credit though. Hey, should we grab some ice cream too? The mercury heat makes me crave something cold."
+                },
+                {
+                    "peer": "alice",
+                    "content": "Smart thinking! They have that new Martian vanilla flavor that everyone's been talking about."
+                },
+                {
+                    "peer": "bob",
+                    "content": "Perfect. Okay, I'm suited up and ready. Let's go before the afternoon heat wave hits!"
                 }
             ]
         }
     },
     "queries": [],
     "get_context_calls": [
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 50
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 250
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 500
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 1000
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 2500
-        },
         {
             "session": "session1",
             "summary": true

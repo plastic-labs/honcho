@@ -10,6 +10,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import honcho_llm_call
 from src.utils.logging import accumulate_metric
@@ -53,6 +54,8 @@ __all__ = [
 MESSAGES_PER_SHORT_SUMMARY = settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY
 MESSAGES_PER_LONG_SUMMARY = settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY
 
+SUMMARIES_KEY = "summaries"
+
 
 # The types of summary to store in the session metadata
 class SummaryType(Enum):
@@ -60,7 +63,6 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
-# Mirascope functions for summaries
 @honcho_llm_call(
     provider=settings.SUMMARY.PROVIDER,
     model=settings.SUMMARY.MODEL,
@@ -69,32 +71,44 @@ class SummaryType(Enum):
 )
 async def create_short_summary(
     messages: list[models.Message],
+    input_tokens: int,
     previous_summary: str | None = None,
 ):
+    # input_tokens indicates how many tokens the message list + previous summary take up
+    # we want to optimize short summaries to be smaller than the actual content being summarized
+    # so we ask the agent to produce a word count roughly equal to either the input, or the max
+    # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
+    output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
+
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
     return f"""
-You are a system that summarizes parts of a conversation to create a concise and accurate summary.
-Focus on capturing:
-1. Key facts and information shared
+You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
+
+1. Key facts and information shared (**Capture as many explicit facts as possible**)
 2. User preferences, opinions, and questions
 3. Important context and requests
 4. Core topics discussed
-5. User's apparent emotional state
 
-It is very important that you clearly distinguish between each member of the conversation, and that only a user's literal words are attributed to them.
+If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
 
-Provide a concise, factual summary that captures the essence of the conversation.
-Your summary should be detailed enough to serve as context for future messages,
-but brief enough to be helpful.
+Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
 
 <conversation>
 {_format_messages(messages)}
 </conversation>
 
-<previous_summary>
-{previous_summary or ""}
-</previous_summary>
+Produce as thorough a summary as possible in {output_words} words or less.
 """
 
 
@@ -108,30 +122,40 @@ async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):
+    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
+    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
+
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
     return f"""
-You are a system that creates comprehensive summaries of conversations.
-Focus on capturing:
-1. Key facts and information shared
+You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
+
+1. Key facts and information shared (**Capture as many explicit facts as possible**)
 2. User preferences, opinions, and questions
 3. Important context and requests
 4. Core topics discussed in detail
 5. User's apparent emotional state and personality traits
 6. Important themes and patterns across the conversation
 
-It is very important that you clearly distinguish between each member of the conversation, and that only a user's literal words are attributed to them.
+If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
 
-Provide a thorough and detailed summary that captures the essence of the conversation.
-Your summary should serve as a comprehensive record of the important information in this conversation.
+Provide a thorough and detailed summary that captures the essence of the conversation. Your summary should serve as a comprehensive record of the important information in this conversation. Prefer an exhaustive chronological narrative over a list of bullet points.
 
 Return only the summary without any explanation or meta-commentary.
+
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
 
 <conversation>
 {_format_messages(messages)}
 </conversation>
 
-<previous_summary>
-{previous_summary or ""}
-</previous_summary>
+Produce as thorough a summary as possible in {output_words} words or less.
 """
 
 
@@ -164,8 +188,6 @@ async def summarize_if_needed(
     if should_create_long and should_create_short:
 
         async def create_long_summary():
-            from src.dependencies import tracked_db
-
             async with tracked_db("create_long_summary") as db_session:
                 await _create_and_save_summary(
                     db_session,
@@ -174,10 +196,14 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.LONG,
                 )
+                logger.info(
+                    "Saved long summary for session %s covering up to message %s (%s in session)",
+                    session_name,
+                    message_id,
+                    message_seq_in_session,
+                )
 
         async def create_short_summary():
-            from src.dependencies import tracked_db
-
             async with tracked_db("create_short_summary") as db_session:
                 await _create_and_save_summary(
                     db_session,
@@ -186,13 +212,18 @@ async def summarize_if_needed(
                     message_id,
                     SummaryType.SHORT,
                 )
+                logger.info(
+                    "Saved short summary for session %s covering up to message %s (%s in session)",
+                    session_name,
+                    message_id,
+                    message_seq_in_session,
+                )
 
         await asyncio.gather(
             create_long_summary(),
             create_short_summary(),
             return_exceptions=True,
         )
-        logger.debug("Both long and short summaries created and saved successfully")
     else:
         # If only one summary needs to be created, run them individually
         if should_create_long:
@@ -203,7 +234,12 @@ async def summarize_if_needed(
                 message_id,
                 SummaryType.LONG,
             )
-            logger.debug("Long summary created and saved successfully")
+            logger.info(
+                "Saved long summary for session %s covering up to message %s (%s in session)",
+                session_name,
+                message_id,
+                message_seq_in_session,
+            )
         elif should_create_short:
             await _create_and_save_summary(
                 db,
@@ -212,7 +248,12 @@ async def summarize_if_needed(
                 message_id,
                 SummaryType.SHORT,
             )
-            logger.debug("Short summary created and saved successfully")
+            logger.info(
+                "Saved short summary for session %s covering up to message %s (%s in session)",
+                session_name,
+                message_id,
+                message_seq_in_session,
+            )
 
 
 async def _create_and_save_summary(
@@ -246,10 +287,15 @@ async def _create_and_save_summary(
         end_id=message_id,
     )
 
+    messages_tokens = sum([message.token_count for message in messages])
+    previous_summary_tokens = latest_summary["token_count"] if latest_summary else 0
+    input_tokens = messages_tokens + previous_summary_tokens
+
     new_summary = await _create_summary(
         messages=messages,
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
+        input_tokens=input_tokens,
     )
 
     await _save_summary(
@@ -270,8 +316,9 @@ async def _create_and_save_summary(
 
 async def _create_summary(
     messages: list[models.Message],
-    previous_summary_text: str | None = None,
-    summary_type: SummaryType = SummaryType.SHORT,
+    previous_summary_text: str | None,
+    summary_type: SummaryType,
+    input_tokens: int,
 ) -> Summary:
     """
     Generate a summary of the provided messages using an LLM.
@@ -285,10 +332,12 @@ async def _create_summary(
         A full summary of the conversation up to the last message
     """
 
+    response: llm.CallResponse | None = None
     try:
-        response: llm.CallResponse
         if summary_type == SummaryType.SHORT:
-            response = await create_short_summary(messages, previous_summary_text)
+            response = await create_short_summary(
+                messages, input_tokens, previous_summary_text
+            )
         else:
             response = await create_long_summary(messages, previous_summary_text)
 
@@ -298,6 +347,15 @@ async def _create_summary(
             if response.usage
             else len(response.content) // 4
         )
+
+        # Detect potential issues with the summary
+        if not summary_text.strip():
+            logger.error(
+                "Generated summary is empty! This may indicate a token limit issue."
+            )
+
+        logger.info("Summary text: %s", summary_text)
+        logger.info("Summary size: %s tokens", summary_tokens)
     except Exception:
         logger.exception("Error generating summary!")
         # Fallback to a basic summary in case of error
@@ -307,6 +365,22 @@ async def _create_summary(
             else ""
         )
         summary_tokens = 50
+
+    accumulate_metric(
+        f"deriver_message_{messages[-1].id}",
+        f"{summary_type.name}_summary_input",
+        response.usage.input_tokens if response and response.usage else "unknown",
+        "tokens",
+    )
+
+    accumulate_metric(
+        f"deriver_message_{messages[-1].id}",
+        f"{summary_type.name}_summary_size",
+        response.usage.output_tokens
+        if response and response.usage
+        else f"{summary_tokens} (est.)",
+        "tokens",
+    )
 
     return Summary(
         content=summary_text,
@@ -349,9 +423,9 @@ async def _save_summary(
     # Use SQLAlchemy update() with PostgreSQL's || operator to properly merge JSONB
     # We need to merge the new summary into the existing summaries structure
     update_data = {}
-    existing_summaries = session.internal_metadata.get("summaries", {})
+    existing_summaries = session.internal_metadata.get(SUMMARIES_KEY, {})
     existing_summaries[label_value] = summary
-    update_data["summaries"] = existing_summaries
+    update_data[SUMMARIES_KEY] = existing_summaries
 
     stmt = (
         update(models.Session)
@@ -364,13 +438,6 @@ async def _save_summary(
 
     await db.execute(stmt)
     await db.commit()
-
-    logger.info(
-        "Saved %s for session %s covering up to message %s",
-        summary["summary_type"],
-        session_name,
-        summary["message_id"],
-    )
 
 
 async def get_summarized_history(
@@ -455,7 +522,7 @@ async def get_summary(
         # If session doesn't exist, there's no summary to retrieve
         return None
 
-    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
     if not summaries or summary_type.value not in summaries:
         return None
     return summaries[summary_type.value]
@@ -483,7 +550,7 @@ async def get_both_summaries(
         # If session doesn't exist, there's no summary to retrieve
         return None, None
 
-    summaries: dict[str, Summary] = session.internal_metadata.get("summaries", {})
+    summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
     return summaries.get(SummaryType.SHORT.value), summaries.get(SummaryType.LONG.value)
 
 
