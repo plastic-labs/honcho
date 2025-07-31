@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Any
 
+from httpx import AsyncClient
 from langfuse.decorators import langfuse_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,9 +36,15 @@ from src.utils.shared_models import (
     ReasoningResponseWithThinking,
     UnifiedObservation,
 )
+from src.webhooks.webhook_delivery import webhook_delivery_service
 
 from .prompts import critical_analysis_prompt
-from .queue_payload import DeriverQueuePayload, RepresentationPayload, SummaryPayload
+from .queue_payload import (
+    DeriverQueuePayload,
+    RepresentationPayload,
+    SummaryPayload,
+    WebhookQueuePayload,
+)
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -76,6 +83,14 @@ async def critical_analysis_call(
 class Deriver:
     """Deriver class for processing messages and extracting insights."""
 
+    async def process_webhook(
+        self,
+        client: AsyncClient,
+        payload: WebhookQueuePayload,
+    ) -> None:
+        async with tracked_db() as db:
+            await webhook_delivery_service.deliver_webhook(db, client, payload)
+
     async def process_message(
         self,
         payload: DeriverQueuePayload,
@@ -96,7 +111,7 @@ class Deriver:
         async with tracked_db("deriver") as db:
             if payload.task_type == "summary":
                 await self.process_summary_task(db, payload)
-            else:
+            elif payload.task_type == "representation":
                 await self.process_representation_task(db, payload)
 
     async def process_summary_task(

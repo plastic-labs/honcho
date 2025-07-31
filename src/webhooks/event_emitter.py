@@ -1,51 +1,55 @@
 """
-Webhook event emission system for queue status changes.
+Webhook event emission system that places events onto the database queue.
 """
 
-import asyncio
 import logging
 
-from .events import QueueEmptyPayload, WebhookEvent, WebhookEventType, WebhookPayload
+from sqlalchemy import insert
+
+from src.dependencies import tracked_db
+from src.deriver.queue_payload import create_webhook_payload
+from src.models import QueueItem
+from src.webhooks.events import WebhookEventType, WebhookPayload
 
 logger = logging.getLogger(__name__)
 
 
 class WebhookEventEmitter:
-    """Emits webhook events. This places webhook events on a queue that is processed by the webhook delivery service."""
-
-    def __init__(self):
-        self._event_queue: asyncio.Queue[WebhookEvent] = asyncio.Queue()
+    """Places webhook events onto the database queue."""
 
     async def emit_event(
         self, workspace_name: str, event_type: WebhookEventType, data: WebhookPayload
     ) -> None:
         """
-        Emit a webhook event to all endpoints for the workspace.
+        Create a webhook job and add it to the database queue.
 
         Args:
-            workspace_name: The workspace name
-            event_type: Type of event (e.g. 'queue.empty')
-            data: Event data payload
+            workspace_name: The workspace name.
+            event_type: Type of event (e.g. 'queue.empty').
+            data: Event data payload.
         """
         try:
-            event = WebhookEvent(
-                type=event_type,
-                data=data,
+            payload = create_webhook_payload(
                 workspace_name=workspace_name,
+                event_type=event_type.value,
+                data=data.model_dump(mode="json"),
             )
-            await self._event_queue.put(event)
+
+            async with tracked_db("emit_webhook_event") as db:
+                await db.execute(
+                    insert(QueueItem).values(
+                        payload=payload,
+                        # Webhooks are not session-specific, so session_id is None
+                        session_id=None,
+                    )
+                )
+                await db.commit()
+                logger.debug(
+                    f"Emitted webhook event '{event_type}' for workspace '{workspace_name}'"
+                )
 
         except Exception as e:
             logger.error(f"Failed to emit webhook event {event_type}: {e}")
-
-    async def emit_queue_empty(
-        self, workspace_name: str, payload: QueueEmptyPayload
-    ) -> None:
-        await self.emit_event(workspace_name, WebhookEventType.QUEUE_EMPTY, payload)
-
-    async def get_event(self, timeout: float = 1.0) -> WebhookEvent:
-        """Get an event from the queue with timeout."""
-        return await asyncio.wait_for(self._event_queue.get(), timeout=timeout)
 
 
 # Global event emitter instance

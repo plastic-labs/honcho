@@ -7,17 +7,16 @@ from pydantic import BaseModel, ConfigDict
 class BasePayload(BaseModel):
     """Base payload with common fields."""
 
-    workspace_name: str
-    session_name: str
-    message_id: int
-
-    model_config = ConfigDict(extra="forbid")  # pyright: ignore
+    model_config = ConfigDict(extra="forbid")
 
 
 class RepresentationPayload(BasePayload):
     """Payload for representation tasks."""
 
     task_type: Literal["representation"] = "representation"
+    workspace_name: str
+    session_name: str
+    message_id: int
     content: str
     sender_name: str
     target_name: str
@@ -28,11 +27,34 @@ class SummaryPayload(BasePayload):
     """Payload for summary tasks."""
 
     task_type: Literal["summary"] = "summary"
+    workspace_name: str
+    session_name: str
+    message_id: int
     message_seq_in_session: int
 
 
-# Union type for the actual payload
+class WebhookQueuePayload(BasePayload):
+    """Payload for webhook delivery tasks."""
+
+    task_type: Literal["webhook"] = "webhook"
+    workspace_name: str
+    event_type: str
+    data: dict[str, Any]
+
+
+# Union type for all possible queue payloads
 DeriverQueuePayload = RepresentationPayload | SummaryPayload
+QueuePayload = DeriverQueuePayload | WebhookQueuePayload
+
+
+def create_webhook_payload(
+    workspace_name: str,
+    event_type: str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    return WebhookQueuePayload(
+        workspace_name=workspace_name, event_type=event_type, data=data
+    ).model_dump(mode="json")
 
 
 def create_payload(

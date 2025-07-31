@@ -28,7 +28,6 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
-from src.webhooks.webhook_delivery import webhook_delivery_service
 
 
 def get_log_level() -> int:
@@ -103,14 +102,9 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Start webhook delivery service
-    await webhook_delivery_service.start()
-    try:
-        yield
-    finally:
-        # Stop webhook delivery service
-        await webhook_delivery_service.stop()
-        await engine.dispose()
+    # Lifespan events are now handled by the respective services
+    yield
+    await engine.dispose()
 
 
 app = FastAPI(

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
 
+import httpx
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
@@ -30,20 +31,18 @@ class WorkUnit:
     """
     Represents a unit of work in the queue system.
 
-    A work unit is uniquely identified by the combination of session_id,
-    sender_name, target_name, and task_type. This allows multiple workers
-    to process different work units from the same session in parallel.
-
-    For summary tasks, sender_name and target_name are None since summary
-    tasks don't have these fields and should be processed sequentially per session.
+    A work unit is uniquely identified by its task type and, for session-specific
+    tasks, the session_id, sender_name, and target_name.
     """
 
-    session_id: str
+    task_type: str
+    session_id: str | None
     sender_name: str | None
     target_name: str | None
-    task_type: str
 
     def __str__(self) -> str:
+        if self.task_type == "webhook":
+            return f"(task_type={self.task_type})"
         return f"({self.session_id}, {self.sender_name}, {self.target_name}, {self.task_type})"
 
 
@@ -53,6 +52,9 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.owned_work_units: set[WorkUnit] = set()
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
+        self.client: httpx.AsyncClient = httpx.AsyncClient(
+            headers={"User-Agent": "Honcho-Worker/1.0"}, timeout=30.0
+        )
 
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
@@ -84,7 +86,7 @@ class QueueManager:
         self.owned_work_units.discard(work_unit)
 
     async def initialize(self):
-        """Setup signal handlers and start the main polling loop"""
+        """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
         # Set up signal handlers
@@ -113,6 +115,8 @@ class QueueManager:
                 f"Waiting for {len(self.active_tasks)} active tasks to complete..."
             )
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
+        if self.client:
+            await self.client.aclose()
 
     async def cleanup(self):
         """Clean up owned work units"""
@@ -160,14 +164,17 @@ class QueueManager:
             )
         )
 
-        # Create the JSON path expressions once to ensure they're identical in SELECT and GROUP BY
-        sender_name_expr = models.QueueItem.payload["sender_name"].astext
-        target_name_expr = models.QueueItem.payload["target_name"].astext
+        # This query now needs to handle two types of work units:
+        # 1. Deriver tasks (summary, representation): Grouped by session, sender, target, task
+        # 2. Webhook tasks: Grouped only by task_type ('webhook'), as session_id is NULL
+
+        # JSON path expressions
+        sender_name_expr = models.QueueItem.payload.get("sender_name").astext
+        target_name_expr = models.QueueItem.payload.get("target_name").astext
         task_type_expr = models.QueueItem.payload["task_type"].astext
 
-        # Get available work units by extracting sender_name, target_name, task_type from payload
-        # We need to join with ActiveQueueSession to find units that aren't already being processed
-        result = await db.execute(
+        # Base query to find work that isn't currently active
+        base_query = (
             select(
                 models.QueueItem.session_id,
                 sender_name_expr.label("sender_name"),
@@ -176,7 +183,16 @@ class QueueManager:
             )
             .outerjoin(
                 models.ActiveQueueSession,
-                (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
+                (
+                    (
+                        models.QueueItem.session_id
+                        == models.ActiveQueueSession.session_id
+                    )
+                    | (
+                        models.QueueItem.session_id.is_(None)
+                        & models.ActiveQueueSession.session_id.is_(None)
+                    )
+                )
                 & (
                     (sender_name_expr == models.ActiveQueueSession.sender_name)
                     | (
@@ -194,17 +210,32 @@ class QueueManager:
                 & (task_type_expr == models.ActiveQueueSession.task_type),
             )
             .where(~models.QueueItem.processed)
-            .where(
-                models.ActiveQueueSession.id.is_(None)
-            )  # Only work units not in active_queue_sessions
-            .group_by(
-                models.QueueItem.session_id,
-                sender_name_expr,
-                target_name_expr,
-                task_type_expr,
-            )
-            .limit(self.workers)  # Process multiple work units in parallel
+            .where(models.ActiveQueueSession.id.is_(None))
         )
+
+        # Separate queries for deriver and webhook tasks
+        deriver_tasks_query = base_query.where(
+            task_type_expr.in_(["summary", "representation"])
+        ).group_by(
+            models.QueueItem.session_id,
+            sender_name_expr,
+            target_name_expr,
+            task_type_expr,
+        )
+
+        webhook_tasks_query = base_query.where(task_type_expr == "webhook").group_by(
+            models.QueueItem.session_id,
+            sender_name_expr,
+            target_name_expr,
+            task_type_expr,
+        )
+
+        # Union the results
+        final_query = deriver_tasks_query.union_all(webhook_tasks_query).limit(
+            self.workers
+        )
+
+        result = await db.execute(final_query)
 
         rows = result.fetchall()
         return [
@@ -292,9 +323,8 @@ class QueueManager:
 
     @sentry_sdk.trace
     async def process_work_unit(self, work_unit: WorkUnit):
-        """Process all messages for a specific work unit"""
+        """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit}")
-        # Use the tracked_db dependency for transaction safety
         async with (
             self.semaphore,
             tracked_db("queue_process_work_unit") as db,
@@ -312,7 +342,7 @@ class QueueManager:
                         logger.info(
                             f"Processing message {message.payload['message_id']} from work unit {work_unit}"
                         )
-                        await process_item(message.payload)
+                        await process_item(self.client, message.payload)
                         logger.debug(f"Successfully processed message {message.id}")
                     except Exception as e:
                         logger.error(
@@ -368,10 +398,9 @@ class QueueManager:
 
     @sentry_sdk.trace
     async def get_next_message(self, db: AsyncSession, work_unit: WorkUnit):
-        """Get the next unprocessed message for a specific work unit"""
+        """Get the next unprocessed message for a specific work unit."""
         query = (
             select(models.QueueItem)
-            .where(models.QueueItem.session_id == work_unit.session_id)
             .where(models.QueueItem.payload["task_type"].astext == work_unit.task_type)
             .where(~models.QueueItem.processed)
             .order_by(models.QueueItem.id)
@@ -379,14 +408,19 @@ class QueueManager:
             .limit(1)
         )
 
-        # For summary tasks, sender_name and target_name don't exist in payload
-        # For other tasks, filter by sender_name and target_name
-        if work_unit.task_type != "summary":
-            query = query.where(
-                models.QueueItem.payload["sender_name"].astext == work_unit.sender_name
-            ).where(
-                models.QueueItem.payload["target_name"].astext == work_unit.target_name
-            )
+        if work_unit.task_type == "webhook":
+            query = query.where(models.QueueItem.session_id.is_(None))
+        else:
+            query = query.where(models.QueueItem.session_id == work_unit.session_id)
+            # For summary tasks, sender_name and target_name don't exist in payload
+            if work_unit.task_type != "summary":
+                query = query.where(
+                    models.QueueItem.payload["sender_name"].astext
+                    == work_unit.sender_name
+                ).where(
+                    models.QueueItem.payload["target_name"].astext
+                    == work_unit.target_name
+                )
 
         result = await db.execute(query)
         return result.scalar_one_or_none()
