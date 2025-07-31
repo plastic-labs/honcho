@@ -7,13 +7,12 @@ from pydantic import BaseModel, ConfigDict
 class BasePayload(BaseModel):
     """Base payload with common fields."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
 
 class RepresentationPayload(BasePayload):
     """Payload for representation tasks."""
 
-    task_type: Literal["representation"] = "representation"
     workspace_name: str
     session_name: str
     message_id: int
@@ -26,7 +25,6 @@ class RepresentationPayload(BasePayload):
 class SummaryPayload(BasePayload):
     """Payload for summary tasks."""
 
-    task_type: Literal["summary"] = "summary"
     workspace_name: str
     session_name: str
     message_id: int
@@ -36,7 +34,6 @@ class SummaryPayload(BasePayload):
 class WebhookQueuePayload(BasePayload):
     """Payload for webhook delivery tasks."""
 
-    task_type: Literal["webhook"] = "webhook"
     workspace_name: str
     event_type: str
     data: dict[str, Any]

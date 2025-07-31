@@ -39,8 +39,8 @@ class WebhookEventEmitter:
                 await db.execute(
                     insert(QueueItem).values(
                         payload=payload,
-                        # Webhooks are not session-specific, so session_id is None
                         session_id=None,
+                        task_type="webhook",
                     )
                 )
                 await db.commit()

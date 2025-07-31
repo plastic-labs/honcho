@@ -93,6 +93,7 @@ class Deriver:
 
     async def process_message(
         self,
+        task_type: str,
         payload: DeriverQueuePayload,
     ) -> None:
         """
@@ -109,10 +110,12 @@ class Deriver:
 
         # Open a DB session only for the duration of the processing call
         async with tracked_db("deriver") as db:
-            if payload.task_type == "summary":
+            if task_type == "summary":
                 await self.process_summary_task(db, payload)
-            elif payload.task_type == "representation":
+            elif task_type == "representation":
                 await self.process_representation_task(db, payload)
+            else:
+                raise ValueError(f"Unknown task type: {task_type}")
 
     async def process_summary_task(
         self,

@@ -10,8 +10,9 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
-from migrations.utils import index_exists
+from migrations.utils import column_exists, index_exists
 from src.config import settings
 
 # revision identifiers, used by Alembic.
@@ -24,6 +25,7 @@ schema = settings.DB.SCHEMA
 
 
 def upgrade() -> None:
+    # 1. Add webhook_endpoints table
     op.create_table(
         "webhook_endpoints",
         sa.Column(
@@ -57,6 +59,39 @@ def upgrade() -> None:
         schema=schema,
     )
 
+    # 2. Add task_type column to queue table
+    op.add_column(
+        "queue",
+        sa.Column("task_type", sa.TEXT(), nullable=True),
+        schema=schema,
+    )
+
+    # 3. Alter active queue sessions table
+    op.add_column(
+        "active_queue_sessions",
+        sa.Column("work_unit_key", sa.Text(), unique=True, index=True),
+        schema=schema,
+    )
+
+    op.add_column(
+        "active_queue_sessions",
+        sa.Column(
+            "work_unit_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True
+        ),
+        schema=schema,
+    )
+
+    inspector = sa.inspect(op.get_bind())
+
+    if column_exists("active_queue_sessions", "session_id", inspector):
+        op.drop_column("active_queue_sessions", "session_id", schema=schema)
+
+    if column_exists("active_queue_sessions", "sender_name", inspector):
+        op.drop_column("active_queue_sessions", "sender_name", schema=schema)
+
+    if column_exists("active_queue_sessions", "target_name", inspector):
+        op.drop_column("active_queue_sessions", "target_name", schema=schema)
+
 
 def downgrade() -> None:
     inspector = sa.inspect(op.get_bind())
@@ -72,3 +107,12 @@ def downgrade() -> None:
 
     # Drop webhook_endpoints table
     op.drop_table("webhook_endpoints", schema=schema)
+
+    if column_exists("queue", "task_type", inspector):
+        op.drop_column("queue", "task_type", schema=schema)
+
+    if column_exists("active_queue_sessions", "work_unit_key", inspector):
+        op.drop_column("active_queue_sessions", "work_unit_key", schema=schema)
+
+    if column_exists("active_queue_sessions", "work_unit_data", inspector):
+        op.drop_column("active_queue_sessions", "work_unit_data", schema=schema)

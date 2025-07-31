@@ -16,10 +16,11 @@ console = Console(markup=True)
 deriver = Deriver()
 
 
-async def process_item(client: httpx.AsyncClient, payload: dict[str, Any]) -> None:
+async def process_item(
+    client: httpx.AsyncClient, task_type: str, payload: dict[str, Any]
+) -> None:
     # Validate payload structure and types before processing
     try:
-        task_type = payload.get("task_type")
         if task_type == "representation":
             validated_payload = RepresentationPayload(**payload)
         elif task_type == "summary":
@@ -34,10 +35,10 @@ async def process_item(client: httpx.AsyncClient, payload: dict[str, Any]) -> No
 
     logger.debug(
         "process_item received payload for task type %s ",
-        validated_payload.task_type,
+        task_type,
     )
 
-    if validated_payload.task_type == "webhook":
+    if task_type == "webhook":
         # Type narrowing: at this point we know it's WebhookQueuePayload
         webhook_payload = validated_payload
         assert isinstance(webhook_payload, WebhookQueuePayload)
@@ -57,6 +58,6 @@ async def process_item(client: httpx.AsyncClient, payload: dict[str, Any]) -> No
     else:
         # Type narrowing: at this point we know it's DeriverQueuePayload
         deriver_payload = validated_payload
-        assert isinstance(deriver_payload, (RepresentationPayload, SummaryPayload))
-        await deriver.process_message(deriver_payload)
+        assert isinstance(deriver_payload, RepresentationPayload | SummaryPayload)
+        await deriver.process_message(task_type, deriver_payload)
         logger.debug("Finished processing message %s", deriver_payload.message_id)

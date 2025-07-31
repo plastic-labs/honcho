@@ -2,9 +2,9 @@ import asyncio
 import signal
 from asyncio import Task
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
+from typing import Any
 
 import httpx
 import sentry_sdk
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src.config import settings
+from src.deriver.queue_work_unit import DeriverWorkUnit, WebhookWorkUnit, WorkUnit
 
 from .. import models
 from ..dependencies import tracked_db
@@ -26,24 +27,37 @@ logger = getLogger(__name__)
 load_dotenv(override=True)
 
 
-@dataclass(frozen=True)
-class WorkUnit:
-    """
-    Represents a unit of work in the queue system.
+def create_work_unit(
+    task_type: str,
+    session_id: str | None,
+    sender_name: str | None,
+    target_name: str | None,
+) -> WorkUnit:
+    """Factory function to create the appropriate WorkUnit subclass based on task_type."""
+    if task_type == "webhook":
+        return WebhookWorkUnit(task_type=task_type)
+    elif task_type in ("summary", "representation"):
+        if session_id is None:
+            raise ValueError(f"session_id is required for {task_type} tasks")
+        return DeriverWorkUnit(
+            task_type=task_type,
+            session_id=session_id,
+            sender_name=sender_name,
+            target_name=target_name,
+        )
+    else:
+        raise ValueError(f"Unknown task_type: {task_type}")
 
-    A work unit is uniquely identified by its task type and, for session-specific
-    tasks, the session_id, sender_name, and target_name.
-    """
 
-    task_type: str
-    session_id: str | None
-    sender_name: str | None
-    target_name: str | None
-
-    def __str__(self) -> str:
-        if self.task_type == "webhook":
-            return f"(task_type={self.task_type})"
-        return f"({self.session_id}, {self.sender_name}, {self.target_name}, {self.task_type})"
+def work_unit_from_dict(data: dict[str, Any]) -> WorkUnit:
+    """Factory to deserialize WorkUnit from stored JSON data."""
+    work_unit_type = data.get("type")
+    if work_unit_type == "deriver":
+        return DeriverWorkUnit.from_dict(data)
+    elif work_unit_type == "webhook":
+        return WebhookWorkUnit.from_dict(data)
+    else:
+        raise ValueError(f"Unknown work unit type: {work_unit_type}")
 
 
 class QueueManager:
@@ -128,14 +142,8 @@ class QueueManager:
                     for work_unit in self.owned_work_units:
                         await db.execute(
                             delete(models.ActiveQueueSession).where(
-                                models.ActiveQueueSession.session_id
-                                == work_unit.session_id,
-                                models.ActiveQueueSession.sender_name
-                                == work_unit.sender_name,
-                                models.ActiveQueueSession.target_name
-                                == work_unit.target_name,
-                                models.ActiveQueueSession.task_type
-                                == work_unit.task_type,
+                                models.ActiveQueueSession.work_unit_key
+                                == work_unit.get_unique_key()
                             )
                         )
                     await db.commit()
@@ -164,7 +172,7 @@ class QueueManager:
             )
         )
 
-        # This query now needs to handle two types of work units:
+        # Handle two types of work units:
         # 1. Deriver tasks (summary, representation): Grouped by session, sender, target, task
         # 2. Webhook tasks: Grouped only by task_type ('webhook'), as session_id is NULL
 
@@ -237,16 +245,41 @@ class QueueManager:
 
         result = await db.execute(final_query)
 
-        rows = result.fetchall()
-        return [
-            WorkUnit(
-                session_id=row.session_id,
-                sender_name=row.sender_name,
-                target_name=row.target_name,
-                task_type=row.task_type,
+        # Convert rows to WorkUnit objects and filter out those that are already active
+        available_work_units: list[WorkUnit] = []
+        for row in result.fetchall():
+            try:
+                work_unit = create_work_unit(
+                    task_type=row.task_type,
+                    session_id=row.session_id,
+                    sender_name=row.sender_name,
+                    target_name=row.target_name,
+                )
+
+                # Check if this work unit is already being processed
+                if not await self._is_work_unit_active(db, work_unit):
+                    available_work_units.append(work_unit)
+
+                # Stop once we have enough work units
+                if len(available_work_units) >= self.workers:
+                    break
+
+            except ValueError as e:
+                logger.warning(f"Skipping invalid work unit: {e}")
+                continue
+
+        return available_work_units
+
+    async def _is_work_unit_active(self, db: AsyncSession, work_unit: WorkUnit) -> bool:
+        """Check if a work unit is currently being processed using unique key."""
+        result = await db.execute(
+            select(models.ActiveQueueSession.id)
+            .where(
+                models.ActiveQueueSession.work_unit_key == work_unit.get_unique_key()
             )
-            for row in rows
-        ]
+            .limit(1)
+        )
+        return result.scalar_one_or_none() is not None
 
     async def polling_loop(self):
         """Main polling loop to find and process new work units"""
@@ -273,13 +306,13 @@ class QueueManager:
                         if new_work_units and not self.shutdown_event.is_set():
                             for work_unit in new_work_units:
                                 try:
-                                    # Try to claim the work unit
+                                    # Try to claim the work unit using unique key approach
+                                    work_unit_dict = work_unit.to_dict()
                                     await db.execute(
                                         insert(models.ActiveQueueSession).values(
-                                            session_id=work_unit.session_id,
-                                            sender_name=work_unit.sender_name,
-                                            target_name=work_unit.target_name,
-                                            task_type=work_unit.task_type,
+                                            work_unit_key=work_unit.get_unique_key(),
+                                            work_unit_data=work_unit_dict,
+                                            task_type=work_unit_dict.get("task_type"),
                                         )
                                     )
                                     await db.commit()
@@ -342,7 +375,9 @@ class QueueManager:
                         logger.info(
                             f"Processing message {message.payload['message_id']} from work unit {work_unit}"
                         )
-                        await process_item(self.client, message.payload)
+                        await process_item(
+                            self.client, message.task_type, message.payload
+                        )
                         logger.debug(f"Successfully processed message {message.id}")
                     except Exception as e:
                         logger.error(
@@ -367,13 +402,8 @@ class QueueManager:
                     await db.execute(
                         update(models.ActiveQueueSession)
                         .where(
-                            models.ActiveQueueSession.session_id
-                            == work_unit.session_id,
-                            models.ActiveQueueSession.sender_name
-                            == work_unit.sender_name,
-                            models.ActiveQueueSession.target_name
-                            == work_unit.target_name,
-                            models.ActiveQueueSession.task_type == work_unit.task_type,
+                            models.ActiveQueueSession.work_unit_key
+                            == work_unit.get_unique_key()
                         )
                         .values(last_updated=func.now())
                     )
@@ -387,10 +417,8 @@ class QueueManager:
                 logger.debug(f"Removing work unit {work_unit} from active sessions")
                 await db.execute(
                     delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.session_id == work_unit.session_id,
-                        models.ActiveQueueSession.sender_name == work_unit.sender_name,
-                        models.ActiveQueueSession.target_name == work_unit.target_name,
-                        models.ActiveQueueSession.task_type == work_unit.task_type,
+                        models.ActiveQueueSession.work_unit_key
+                        == work_unit.get_unique_key()
                     )
                 )
                 await db.commit()
@@ -399,28 +427,18 @@ class QueueManager:
     @sentry_sdk.trace
     async def get_next_message(self, db: AsyncSession, work_unit: WorkUnit):
         """Get the next unprocessed message for a specific work unit."""
+        # Build base query
         query = (
             select(models.QueueItem)
-            .where(models.QueueItem.payload["task_type"].astext == work_unit.task_type)
             .where(~models.QueueItem.processed)
             .order_by(models.QueueItem.id)
             .with_for_update(skip_locked=True)
             .limit(1)
         )
 
-        if work_unit.task_type == "webhook":
-            query = query.where(models.QueueItem.session_id.is_(None))
-        else:
-            query = query.where(models.QueueItem.session_id == work_unit.session_id)
-            # For summary tasks, sender_name and target_name don't exist in payload
-            if work_unit.task_type != "summary":
-                query = query.where(
-                    models.QueueItem.payload["sender_name"].astext
-                    == work_unit.sender_name
-                ).where(
-                    models.QueueItem.payload["target_name"].astext
-                    == work_unit.target_name
-                )
+        # Add work unit specific conditions using polymorphic method
+        conditions = work_unit.build_queue_item_conditions(models.QueueItem)
+        query = query.where(*conditions)
 
         result = await db.execute(query)
         return result.scalar_one_or_none()
