@@ -74,6 +74,11 @@ async def create_short_summary(
     input_tokens: int,
     previous_summary: str | None = None,
 ):
+    # input_tokens indicates how many tokens the message list + previous summary take up
+    # we want to optimize short summaries to be smaller than the actual content being summarized
+    # so we ask the agent to produce a word count roughly equal to either the input, or the max
+    # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
 
     if previous_summary:
@@ -117,6 +122,8 @@ async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
 ):
+    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
 
     if previous_summary:
