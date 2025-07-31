@@ -118,7 +118,11 @@ async def get_peers_with_configuration(
     peers_with_configuration_result = await db_session.execute(configuration_query)
     peers_with_configuration_list = peers_with_configuration_result.all()
     return {
-        row.peer_name: [row.peer_configuration, row.session_peer_configuration]
+        row.peer_name: [
+            row.peer_configuration,
+            row.session_peer_configuration,
+            row.is_active,
+        ]
         for row in peers_with_configuration_list
     }
 
@@ -194,7 +198,10 @@ def get_effective_observe_me(
     Returns:
         True if observe_me is enabled, False otherwise
     """
-    configuration = peers_with_configuration[sender_name]
+    # If the sender is not in peers_with_configuration, they left after sending a message.
+    # We'll use the default behavior of observing the sender by instantiating the default
+    # peer-level and session-level configs.
+    configuration: list[Any] = peers_with_configuration.get(sender_name, [{}, {}])
     sender_session_peer_config = (
         schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
     )
@@ -272,6 +279,10 @@ async def generate_queue_records(
 
         for peer_name, configuration in peers_with_configuration.items():
             if peer_name == sender_name:
+                continue
+
+            # If the observer peer has left the session, we don't need to enqueue a representation task for them.
+            if not configuration[2]:
                 continue
 
             session_peer_config = (
