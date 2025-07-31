@@ -74,11 +74,9 @@ class WebhookDeliveryService:
         if not webhook_secret:
             raise ValueError("WEBHOOK_SECRET not found - cannot sign webhook")
 
-        signature = hmac.new(
+        return hmac.new(
             webhook_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
         ).hexdigest()
-
-        return signature
 
     async def deliver_webhook(self, event: WebhookEvent) -> None:
         """
@@ -112,8 +110,8 @@ class WebhookDeliveryService:
             # Generate HMAC signature
             try:
                 signature = self._generate_webhook_signature(event_json)
-            except ValueError as e:
-                logger.error(f"Failed to generate webhook signature: {e}")
+            except ValueError:
+                logger.exception("Failed to generate webhook signature")
                 return
 
             for url in webhook_urls:
@@ -160,9 +158,9 @@ class WebhookDeliveryService:
                 result = await db.execute(endpoints)
                 endpoints = result.scalars().all()
                 return [endpoint.url for endpoint in endpoints]
-            except Exception as e:
-                logger.error(
-                    f"Error fetching webhook endpoints for {workspace_name}: {e}"
+            except Exception:
+                logger.exception(
+                    f"Error fetching webhook endpoints for {workspace_name}"
                 )
                 return []
 

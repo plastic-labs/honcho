@@ -77,11 +77,9 @@ async def list_webhook_endpoints(
     # Verify workspace exists
     await get_workspace(db, workspace_name)
 
-    stmt = select(models.WebhookEndpoint).where(
+    return select(models.WebhookEndpoint).where(
         models.WebhookEndpoint.workspace_name == workspace_name
     )
-
-    return stmt
 
 
 async def delete_webhook_endpoint(db: AsyncSession, endpoint_id: str) -> None:
