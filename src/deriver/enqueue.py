@@ -194,7 +194,10 @@ def get_effective_observe_me(
     Returns:
         True if observe_me is enabled, False otherwise
     """
-    configuration = peers_with_configuration[sender_name]
+    # If the sender is not in peers_with_configuration, they left after sending a message.
+    # We'll use the default behavior of observing the sender by instantiating the default
+    # peer-level and session-level configs.
+    configuration = peers_with_configuration.get(sender_name, [{}, {}])
     sender_session_peer_config = (
         schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
     )
