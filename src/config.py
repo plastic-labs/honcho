@@ -240,6 +240,7 @@ class SummarySettings(HonchoSettings):
 class WebhookSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
 
+    WEBHOOK_SECRET: str | None = None  # Must be set if configuring webhooks
     WORKSPACE_LIMIT: int = 10
 
 
@@ -251,7 +252,7 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
-    FASTAPI_HOST: str = "0.0.0.0"
+    FASTAPI_HOST: str = "0.0.0.0"  # nosec B104
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
     SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB

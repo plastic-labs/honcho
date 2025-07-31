@@ -62,7 +62,7 @@ class WebhookDeliveryService:
 
     def _generate_webhook_signature(self, payload: str) -> str:
         """
-        Generate HMAC-SHA256 signature for webhook payload using AUTH_JWT_SECRET.
+        Generate HMAC-SHA256 signature for webhook payload using WEBHOOK_SECRET.
 
         Args:
             payload: JSON string of the webhook payload
@@ -70,12 +70,12 @@ class WebhookDeliveryService:
         Returns:
             HMAC-SHA256 signature as hex string
         """
-        auth_secret = os.getenv("AUTH_JWT_SECRET")
-        if not auth_secret:
-            raise ValueError("AUTH_JWT_SECRET not found - cannot sign webhook")
+        webhook_secret = os.getenv("WEBHOOK_SECRET")
+        if not webhook_secret:
+            raise ValueError("WEBHOOK_SECRET not found - cannot sign webhook")
 
         signature = hmac.new(
-            auth_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+            webhook_secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
         ).hexdigest()
 
         return signature
