@@ -39,6 +39,7 @@ async def get_or_create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
     workspace_name: str,
+    *,
     _retry: bool = False,
 ) -> models.Session:
     """

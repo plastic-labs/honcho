@@ -13,7 +13,10 @@ logger = getLogger(__name__)
 
 
 async def get_or_create_workspace(
-    db: AsyncSession, workspace: schemas.WorkspaceCreate
+    db: AsyncSession,
+    workspace: schemas.WorkspaceCreate,
+    *,
+    _retry: bool = False,
 ) -> models.Workspace:
     """
     Get an existing workspace or create a new one if it doesn't exist.
@@ -50,19 +53,12 @@ async def get_or_create_workspace(
         logger.info(f"Workspace created successfully: {workspace.name}")
         return honcho_workspace
     except IntegrityError:
-        # Race condition: another process created the workspace
         await db.rollback()
-        logger.debug(
-            f"Race condition detected for workspace: {workspace.name}, retrying get"
-        )
-        result = await db.execute(stmt)
-        existing_workspace = result.scalar_one_or_none()
-        if existing_workspace is not None:
-            return existing_workspace
-        else:
+        if _retry:
             raise ConflictException(
                 f"Unable to create or get workspace: {workspace.name}"
             ) from None
+        return await get_or_create_workspace(db, workspace, _retry=True)
 
 
 async def get_all_workspaces(

@@ -16,6 +16,7 @@ async def get_or_create_peers(
     db: AsyncSession,
     workspace_name: str,
     peers: list[schemas.PeerCreate],
+    *,
     _retry: bool = False,
 ) -> list[models.Peer]:
     """

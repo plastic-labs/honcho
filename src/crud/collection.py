@@ -52,6 +52,8 @@ async def get_or_create_collection(
     workspace_name: str,
     collection_name: str,
     peer_name: str | None = None,
+    *,
+    _retry: bool = False,
 ) -> models.Collection:
     try:
         return await get_collection(db, workspace_name, collection_name, peer_name)
@@ -67,14 +69,10 @@ async def get_or_create_collection(
             return honcho_collection
         except IntegrityError:
             await db.rollback()
-            logger.debug(
-                f"Race condition detected for collection: {collection_name}, retrying get"
-            )
-            try:
-                return await get_collection(
-                    db, workspace_name, collection_name, peer_name
-                )
-            except ResourceNotFoundException:
+            if _retry:
                 raise ConflictException(
                     f"Unable to create or get collection: {collection_name}"
                 ) from None
+            return await get_or_create_collection(
+                db, workspace_name, collection_name, peer_name, _retry=True
+            )
