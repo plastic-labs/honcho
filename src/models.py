@@ -83,6 +83,7 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     peers = relationship("Peer", back_populates="workspace")
+    webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -395,6 +396,29 @@ class ActiveQueueSession(Base):
             name="unique_active_queue_session",
         ),
     )
+
+
+@final
+class WebhookEndpoint(Base):
+    __tablename__: str = "webhook_endpoints"
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    workspace_name: Mapped[str | None] = mapped_column(
+        ForeignKey("workspaces.name"), index=True, nullable=False
+    )
+    url: Mapped[str] = mapped_column(TEXT, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now()
+    )
+
+    workspace = relationship("Workspace", back_populates="webhook_endpoints")
+
+    __table_args__ = (
+        CheckConstraint("length(url) <= 2048", name="webhook_endpoint_url_length"),
+        Index("idx_webhook_endpoints_workspace_lookup", "workspace_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"WebhookEndpoint(id={self.id}, workspace_name={self.workspace_name}, url={self.url})"
 
 
 @final

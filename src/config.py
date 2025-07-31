@@ -54,6 +54,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DERIVER": "deriver",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
+        "WEBHOOKS": "webhooks",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -236,6 +237,13 @@ class SummarySettings(HonchoSettings):
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
 
 
+class WebhookSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
+
+    WEBHOOK_SECRET: str | None = None  # Must be set if configuring webhooks
+    WORKSPACE_LIMIT: int = 10
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -244,7 +252,7 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
-    FASTAPI_HOST: str = "0.0.0.0"
+    FASTAPI_HOST: str = "0.0.0.0"  # nosec B104
     FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
     SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
@@ -266,6 +274,7 @@ class AppSettings(HonchoSettings):
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
+    WEBHOOKS: WebhookSettings = Field(default_factory=WebhookSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
