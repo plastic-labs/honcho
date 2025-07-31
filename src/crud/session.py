@@ -410,28 +410,30 @@ async def get_peers_from_session(
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
-) -> Select[tuple[str, dict[str, Any], dict[str, Any]]]:
+) -> Select[tuple[str, dict[str, Any], dict[str, Any], bool]]:
     """
-    Get configuration from both SessionPeer and Peer tables for active peers in a session.
+    Get configuration from both SessionPeer and Peer tables for all peers in a session.
+    NOTE: does not filter for active peers. Will return peers that have left the session.
 
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session
 
     Returns:
-        Select statement returning peer_name, peer_configuration, and session_peer_configuration
+        Select statement returning peer_name, peer_configuration, session_peer_configuration,
+        and a boolean indicating if the peer is currently in the session
     """
-    stmt: Select[tuple[str, dict[str, Any], dict[str, Any]]] = (
+    stmt: Select[tuple[str, dict[str, Any], dict[str, Any], bool]] = (
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.configuration.label("peer_configuration"),
             models.SessionPeer.configuration.label("session_peer_configuration"),
+            (models.SessionPeer.left_at.is_(None)).label("is_active"),
         )
         .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.workspace_name == workspace_name)
-        .where(models.SessionPeer.left_at.is_(None))  # Only active peers
     )
 
     return stmt
