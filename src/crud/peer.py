@@ -2,10 +2,11 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
@@ -15,6 +16,7 @@ async def get_or_create_peers(
     db: AsyncSession,
     workspace_name: str,
     peers: list[schemas.PeerCreate],
+    _retry: bool = False,
 ) -> list[models.Peer]:
     """
     Get an existing list of peers or create new peers if they don't exist.
@@ -24,9 +26,13 @@ async def get_or_create_peers(
         db: Database session
         workspace_name: Name of the workspace
         peers: List of peer creation schemas
+        _retry: Whether to retry the operation
 
     Returns:
         List of peers if found or created
+
+    Raises:
+        ConflictException: If we fail to get or create the peers
     """
     peer_names = [p.name for p in peers]
     stmt = (
@@ -65,12 +71,18 @@ async def get_or_create_peers(
         )
         for p in peers_to_create
     ]
-    db.add_all(new_peers)
-
-    await db.commit()
-
-    # Return combined list of existing and new peers
-    return existing_peers + new_peers
+    try:
+        db.add_all(new_peers)
+        await db.commit()
+        # Return combined list of existing and new peers
+        return existing_peers + new_peers
+    except IntegrityError:
+        await db.rollback()
+        if _retry:
+            raise ConflictException(
+                f"Unable to create or get peers: {peer_names}"
+            ) from None
+        return await get_or_create_peers(db, workspace_name, peers, _retry=True)
 
 
 async def get_peer(

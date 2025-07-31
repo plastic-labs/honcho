@@ -2,9 +2,11 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.exceptions import ConflictException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
@@ -24,7 +26,7 @@ async def get_or_create_workspace(
         The workspace if found or created
 
     Raises:
-        ConflictException: If there's an integrity error when creating the workspace
+        ConflictException: If we fail to get or create the workspace
     """
     # Try to get the existing workspace
     stmt = select(models.Workspace).where(models.Workspace.name == workspace.name)
@@ -42,10 +44,25 @@ async def get_or_create_workspace(
         h_metadata=workspace.metadata,
         configuration=workspace.configuration,
     )
-    db.add(honcho_workspace)
-    await db.commit()
-    logger.info(f"Workspace created successfully: {workspace.name}")
-    return honcho_workspace
+    try:
+        db.add(honcho_workspace)
+        await db.commit()
+        logger.info(f"Workspace created successfully: {workspace.name}")
+        return honcho_workspace
+    except IntegrityError:
+        # Race condition: another process created the workspace
+        await db.rollback()
+        logger.debug(
+            f"Race condition detected for workspace: {workspace.name}, retrying get"
+        )
+        result = await db.execute(stmt)
+        existing_workspace = result.scalar_one_or_none()
+        if existing_workspace is not None:
+            return existing_workspace
+        else:
+            raise ConflictException(
+                f"Unable to create or get workspace: {workspace.name}"
+            ) from None
 
 
 async def get_all_workspaces(
