@@ -4,12 +4,13 @@ from typing import Any
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, case, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger
 
 from src import models, schemas
 from src.config import settings
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 from .peer import get_or_create_peers, get_peer
@@ -38,6 +39,8 @@ async def get_or_create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
     workspace_name: str,
+    *,
+    _retry: bool = False,
 ) -> models.Session:
     """
     Get or create a session in a workspace with specified peers.
@@ -48,12 +51,13 @@ async def get_or_create_session(
         session: Session creation schema
         workspace_name: Name of the workspace
         peer_names: List of peer names to add to the session
-
+        _retry: Whether to retry the operation
     Returns:
         The created session
 
     Raises:
         ResourceNotFoundException: If the session does not exist and create is false
+        ConflictException: If we fail to get or create the session
     """
 
     stmt = (
@@ -89,9 +93,20 @@ async def get_or_create_session(
             h_metadata=session.metadata or {},
             configuration=session.configuration or {},
         )
-        db.add(honcho_session)
-        # Flush to ensure session exists in DB before adding peers
-        await db.flush()
+        try:
+            db.add(honcho_session)
+            # Flush to ensure session exists in DB before adding peers
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            logger.debug(
+                f"Race condition detected for session: {session.name}, retrying get"
+            )
+            if _retry:
+                raise ConflictException(
+                    f"Unable to create or get session: {session.name}"
+                ) from None
+            return await get_or_create_session(db, session, workspace_name, _retry=True)
     else:
         # Update existing session with metadata and feature flags if provided
         if session.metadata is not None:

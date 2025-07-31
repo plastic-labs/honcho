@@ -1,10 +1,11 @@
 from logging import getLogger
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ConflictException, ResourceNotFoundException
 
 logger = getLogger(__name__)
 
@@ -51,15 +52,27 @@ async def get_or_create_collection(
     workspace_name: str,
     collection_name: str,
     peer_name: str | None = None,
+    *,
+    _retry: bool = False,
 ) -> models.Collection:
     try:
         return await get_collection(db, workspace_name, collection_name, peer_name)
     except ResourceNotFoundException:
-        honcho_collection = models.Collection(
-            workspace_name=workspace_name,
-            peer_name=peer_name,
-            name=collection_name,
-        )
-        db.add(honcho_collection)
-        await db.commit()
-        return honcho_collection
+        try:
+            honcho_collection = models.Collection(
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+                name=collection_name,
+            )
+            db.add(honcho_collection)
+            await db.commit()
+            return honcho_collection
+        except IntegrityError:
+            await db.rollback()
+            if _retry:
+                raise ConflictException(
+                    f"Unable to create or get collection: {collection_name}"
+                ) from None
+            return await get_or_create_collection(
+                db, workspace_name, collection_name, peer_name, _retry=True
+            )
