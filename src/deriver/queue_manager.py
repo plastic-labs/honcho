@@ -266,7 +266,8 @@ class QueueManager:
                                         )
                                         self.add_task(task)
                                 except IntegrityError:
-                                    # Note: rollback is handled by tracked_db dependency
+                                    # Rollback the failed transaction to clear the error state
+                                    await db.rollback()
                                     logger.debug(
                                         f"Failed to claim work unit {work_unit}, already owned"
                                     )
