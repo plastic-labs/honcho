@@ -229,6 +229,22 @@ class AsyncPeer(BaseModel):
             metadata=metadata,
         )
 
+    async def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        Makes an API call to retrieve configuration associated with this peer.
+        Configuration currently includes one optional flag, `observe_me`.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        peer = await self._client.workspaces.peers.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        return peer.configuration or {}
+
     @validate_call
     async def set_peer_config(
         self,

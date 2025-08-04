@@ -1,3 +1,4 @@
+import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import type { Peer } from './peer'
 
 /**
@@ -16,7 +17,7 @@ export class SessionContext {
   /**
    * List of Message objects representing the conversation context.
    */
-  readonly messages: any[]
+  readonly messages: Message[]
 
   /**
    * Summary of the session history prior to the message cutoff.
@@ -30,7 +31,7 @@ export class SessionContext {
    * @param messages List of Message objects to include in the context
    * @param summary Summary of the session history prior to the message cutoff
    */
-  constructor(sessionId: string, messages: any[], summary: string = '') {
+  constructor(sessionId: string, messages: Message[], summary: string = '') {
     this.sessionId = sessionId
     this.messages = messages
     this.summary = summary || ''
@@ -39,8 +40,8 @@ export class SessionContext {
   /**
    * Convert the context to OpenAI-compatible message format.
    *
-   * Transforms the message history into the format expected by OpenAI's
-   * Chat Completions API, with proper role assignments based on the
+   * Transforms the message history and summary into the format expected by
+   * OpenAI's Chat Completions API, with proper role assignments based on the
    * assistant's identity.
    *
    * @param assistant The assistant peer (Peer object or peer ID string) to use
@@ -49,47 +50,69 @@ export class SessionContext {
    * @returns A list of dictionaries in OpenAI format, where each dictionary contains
    *          "role" and "content" keys suitable for the OpenAI API
    */
-  toOpenAI(assistant: string | Peer): Array<{ role: string; content: string }> {
+  toOpenAI(assistant: string | Peer): Array<{ role: string; content: string; name?: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    return this.messages.map((message) => ({
-      role: message.peer_name === assistantId ? 'assistant' : 'user',
+    const summaryMessage = {
+      role: 'system',
+      content: `<summary>${this.summary}</summary>`,
+    }
+    const messages = this.messages.map((message) => ({
+      role: message.peer_id === assistantId ? 'assistant' : 'user',
+      name: message.peer_id,
       content: message.content,
     }))
+    return this.summary ? [summaryMessage, ...messages] : messages
   }
 
   /**
    * Convert the context to Anthropic-compatible message format.
    *
    * Transforms the message history into the format expected by Anthropic's
-   * Claude API.
+   * Claude API, with proper role assignments based on the assistant's identity.
    *
    * @param assistant The assistant peer (Peer object or peer ID string) to use
    *                  for determining message roles. Messages from this peer will
    *                  be marked as "assistant", others as "user"
    * @returns A list of dictionaries in Anthropic format, where each dictionary contains
    *          "role" and "content" keys suitable for the Anthropic API
+   *
+   * Note:
+   *   Future versions may implement role alternation requirements for
+   *   Anthropic's API compatibility
    */
   toAnthropic(
     assistant: string | Peer
   ): Array<{ role: string; content: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    return this.messages.map((message) => ({
-      role: message.peer_name === assistantId ? 'assistant' : 'user',
-      content: message.content,
-    }))
+    const summaryMessage = {
+      role: 'user',
+      content: `<summary>${this.summary}</summary>`,
+    }
+    const messages = this.messages.map((message) =>
+      message.peer_id === assistantId
+        ? {
+          role: 'assistant',
+          content: message.content,
+        }
+        : {
+          role: 'user',
+          content: `${message.peer_id}: ${message.content}`,
+        }
+    )
+    return this.summary ? [summaryMessage, ...messages] : messages
   }
 
   /**
    * Return the number of messages in the context.
    */
   get length(): number {
-    return this.messages.length
+    return this.messages.length + (this.summary.length > 0 ? 1 : 0)
   }
 
   /**
    * Return a string representation of the SessionContext.
    */
   toString(): string {
-    return `SessionContext(messages=${this.messages.length})`
+    return `SessionContext(messages=${this.messages.length}, summary=${this.summary})`
   }
 }
