@@ -241,7 +241,7 @@ class WebhookSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
 
     WEBHOOK_SECRET: str | None = None  # Must be set if configuring webhooks
-    WORKSPACE_LIMIT: int = 10
+    MAX_WORKSPACE_LIMIT: int = 10
 
 
 class AppSettings(HonchoSettings):

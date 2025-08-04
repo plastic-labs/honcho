@@ -41,14 +41,14 @@ async def process_item(
     if task_type == "webhook":
         if not isinstance(validated_payload, WebhookQueuePayload):
             raise ValueError(
-                f"Expected WebhookQueuePayload for webhook task, got {type(validated_payload)}"
+                f"Expected WebhookQueuePayload, got {type(validated_payload)}"
             )
         await deriver.process_webhook(client, validated_payload)
         logger.debug("Finished processing webhook %s", validated_payload.event_type)
     else:
         if not isinstance(validated_payload, RepresentationPayload | SummaryPayload):
             raise ValueError(
-                f"Expected DeriverQueuePayload for task_type '{task_type}', got {type(validated_payload)}"
+                f"Expected DeriverQueuePayload, got {type(validated_payload)}"
             )
         deriver_payload = validated_payload
         await deriver.process_message(task_type, deriver_payload)

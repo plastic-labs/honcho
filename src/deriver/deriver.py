@@ -112,14 +112,12 @@ class Deriver:
         async with tracked_db("deriver") as db:
             if task_type == "summary":
                 if not isinstance(payload, SummaryPayload):
-                    raise ValueError(
-                        f"Expected SummaryPayload for task_type 'summary', got {type(payload)}"
-                    )
+                    raise ValueError(f"Expected SummaryPayload, got {type(payload)}")
                 await self.process_summary_task(db, payload)
             elif task_type == "representation":
                 if not isinstance(payload, RepresentationPayload):
                     raise ValueError(
-                        f"Expected RepresentationPayload for task_type 'representation', got {type(payload)}"
+                        f"Expected RepresentationPayload, got {type(payload)}"
                     )
                 await self.process_representation_task(db, payload)
             else:

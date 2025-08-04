@@ -52,20 +52,20 @@ class QueueManager:
                 integrations=[AsyncioIntegration()],
             )
 
-    def add_task(self, task: asyncio.Task[None]):
+    def add_task(self, task: asyncio.Task[None]) -> None:
         """Track a new task"""
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
 
-    def track_work_unit(self, work_unit_key: str):
+    def track_work_unit(self, work_unit_key: str) -> None:
         """Track a new work unit owned by this process"""
         self.owned_work_units.add(work_unit_key)
 
-    def untrack_work_unit(self, work_unit_key: str):
+    def untrack_work_unit(self, work_unit_key: str) -> None:
         """Remove a work unit from tracking"""
         self.owned_work_units.discard(work_unit_key)
 
-    async def initialize(self):
+    async def initialize(self) -> None:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
@@ -85,7 +85,7 @@ class QueueManager:
         finally:
             await self.cleanup()
 
-    async def shutdown(self, sig: signal.Signals):
+    async def shutdown(self, sig: signal.Signals) -> None:
         """Handle graceful shutdown"""
         logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
@@ -98,7 +98,7 @@ class QueueManager:
         if self.client:
             await self.client.aclose()
 
-    async def cleanup(self):
+    async def cleanup(self) -> None:
         """Clean up owned work units"""
         if self.owned_work_units:
             logger.info(f"Cleaning up {len(self.owned_work_units)} owned work units...")
@@ -153,7 +153,7 @@ class QueueManager:
         result = await db.execute(query)
         return result.scalars().all()
 
-    async def polling_loop(self):
+    async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
         logger.debug("Starting polling loop")
         try:

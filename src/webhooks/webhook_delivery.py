@@ -6,12 +6,12 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 from datetime import datetime
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import settings
 from src.deriver.queue_payload import WebhookQueuePayload
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ class WebhookDeliveryService:
         """
         Generate HMAC-SHA256 signature for webhook payload using WEBHOOK_SECRET.
         """
-        webhook_secret = os.getenv("WEBHOOK_SECRET")
+        webhook_secret = settings.WEBHOOKS.WEBHOOK_SECRET
         if not webhook_secret:
             raise ValueError("WEBHOOK_SECRET not found - cannot sign webhook")
 

@@ -39,11 +39,17 @@ class WebhookQueuePublisher:
                 db.add(queue_item)
                 await db.commit()
                 logger.debug(
-                    f"Published webhook event '{event.type}' for workspace '{event.workspace_name}'"
+                    "Published webhook event '%s' for workspace '%s'",
+                    event.type,
+                    event.workspace_name,
                 )
 
         except Exception as e:
-            logger.error(f"Failed to publish webhook event {event.type}: {e}")
+            logger.exception(
+                "Failed to publish webhook event %s: %s",
+                event.type,
+                e,
+            )
 
 
 # Global event publisher instance

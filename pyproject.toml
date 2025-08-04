@@ -28,6 +28,7 @@ dependencies = [
     "pydantic-settings>=2.10.1",
     "google-generativeai>=0.8.5",
     "pdfplumber>=0.11.7",
+    "typing-extensions>=4.11.0",
 ]
 [tool.uv]
 dev-dependencies = [
