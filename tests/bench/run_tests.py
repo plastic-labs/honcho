@@ -494,7 +494,7 @@ Evaluate whether the actual response contains the core correct information from 
                 print(f"\n  get_context call #{i + 1}")
                 session_name = str(get_context_call["session"])
                 summary = get_context_call["summary"]
-                max_tokens = get_context_call.get("max_tokens")
+                max_tokens: int | None = get_context_call.get("max_tokens")
                 session = honcho_client.session(id=session_name)
 
                 # Wait for deriver queue to be empty for this session
@@ -511,16 +511,16 @@ Evaluate whether the actual response contains the core correct information from 
 
                 tokenizer = tiktoken.get_encoding("cl100k_base")
                 summary_tokens = len(tokenizer.encode(session_context.summary))
+                print(f"    summary: {session_context.summary}")
+
                 got_tokens = summary_tokens
                 for message in session_context.messages:
                     got_tokens += message.token_count
-
-                print(f"    summary: {summary}")
                 print(f"    max tokens: {max_tokens}")
                 print(
                     f"    got token count: {got_tokens} (summary: {summary_tokens}, messages: {got_tokens - summary_tokens} in {len(session_context.messages)} messages)"
                 )
-                if got_tokens > max_tokens:
+                if max_tokens and got_tokens > max_tokens:
                     all_queries_passed = False
 
             # Determine if test passed (all queries and get_context calls must pass)

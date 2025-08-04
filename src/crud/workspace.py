@@ -2,17 +2,21 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import Select, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import ConflictException, ResourceNotFoundException
 from src.utils.filter import apply_filter
 
 logger = getLogger(__name__)
 
 
 async def get_or_create_workspace(
-    db: AsyncSession, workspace: schemas.WorkspaceCreate
+    db: AsyncSession,
+    workspace: schemas.WorkspaceCreate,
+    *,
+    _retry: bool = False,
 ) -> models.Workspace:
     """
     Get an existing workspace or create a new one if it doesn't exist.
@@ -25,7 +29,7 @@ async def get_or_create_workspace(
         The workspace if found or created
 
     Raises:
-        ConflictException: If there's an integrity error when creating the workspace
+        ConflictException: If we fail to get or create the workspace
     """
     # Try to get the existing workspace
     stmt = select(models.Workspace).where(models.Workspace.name == workspace.name)
@@ -43,10 +47,18 @@ async def get_or_create_workspace(
         h_metadata=workspace.metadata,
         configuration=workspace.configuration,
     )
-    db.add(honcho_workspace)
-    await db.commit()
-    logger.info(f"Workspace created successfully: {workspace.name}")
-    return honcho_workspace
+    try:
+        db.add(honcho_workspace)
+        await db.commit()
+        logger.info(f"Workspace created successfully: {workspace.name}")
+        return honcho_workspace
+    except IntegrityError:
+        await db.rollback()
+        if _retry:
+            raise ConflictException(
+                f"Unable to create or get workspace: {workspace.name}"
+            ) from None
+        return await get_or_create_workspace(db, workspace, _retry=True)
 
 
 async def get_all_workspaces(
