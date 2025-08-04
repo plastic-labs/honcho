@@ -39,25 +39,17 @@ async def process_item(
     )
 
     if task_type == "webhook":
-        # Type narrowing: at this point we know it's WebhookQueuePayload
-        webhook_payload = validated_payload
-        assert isinstance(webhook_payload, WebhookQueuePayload)
-        try:
-            await deriver.process_webhook(client, webhook_payload)
-            logger.debug("Finished processing webhook %s", webhook_payload.event_type)
-        except Exception as e:
-            logger.error(
-                "Failed to process webhook %s for workspace %s: %s",
-                webhook_payload.event_type,
-                webhook_payload.workspace_name,
-                str(e),
-                exc_info=True,
+        if not isinstance(validated_payload, WebhookQueuePayload):
+            raise ValueError(
+                f"Expected WebhookQueuePayload for webhook task, got {type(validated_payload)}"
             )
-            # Re-raise to ensure the message gets marked as processed but allows queue manager to handle the error
-            raise
+        await deriver.process_webhook(client, validated_payload)
+        logger.debug("Finished processing webhook %s", validated_payload.event_type)
     else:
-        # Type narrowing: at this point we know it's DeriverQueuePayload
+        if not isinstance(validated_payload, RepresentationPayload | SummaryPayload):
+            raise ValueError(
+                f"Expected DeriverQueuePayload for task_type '{task_type}', got {type(validated_payload)}"
+            )
         deriver_payload = validated_payload
-        assert isinstance(deriver_payload, RepresentationPayload | SummaryPayload)
         await deriver.process_message(task_type, deriver_payload)
         logger.debug("Finished processing message %s", deriver_payload.message_id)

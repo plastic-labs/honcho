@@ -31,6 +31,7 @@ class WebhookQueuePublisher:
 
             async with tracked_db("publish_webhook_event") as db:
                 queue_item = QueueItem(
+                    work_unit_key=f"webhook:{event.workspace_name}",
                     payload=payload,
                     session_id=None,
                     task_type="webhook",
