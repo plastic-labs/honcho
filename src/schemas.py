@@ -246,9 +246,11 @@ class DocumentUpdate(DocumentBase):
 
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
-    semantic: bool | None = Field(
-        default=None,
-        description="Whether to explicitly use semantic search to filter the results",
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of results to return",
     )
 
 

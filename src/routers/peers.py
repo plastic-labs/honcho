@@ -19,6 +19,7 @@ from src.dependencies import db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +240,7 @@ async def get_working_representation(
 
 @router.post(
     "/{peer_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
@@ -247,17 +248,12 @@ async def get_working_representation(
 async def search_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    search: schemas.MessageSearchOptions = Body(
+    body: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters "
     ),
     db: AsyncSession = db,
 ):
     """Search a Peer"""
-    stmt = await crud.search(
-        search.query,
-        workspace_name=workspace_id,
-        peer_name=peer_id,
-        semantic=search.semantic,
+    return await search(
+        db, body.query, workspace_name=workspace_id, peer_name=peer_id, limit=body.limit
     )
-
-    return await apaginate(db, stmt)

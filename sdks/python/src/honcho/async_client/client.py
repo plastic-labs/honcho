@@ -304,7 +304,8 @@ class AsyncHoncho(BaseModel):
     async def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
-    ) -> AsyncPage[Message]:
+        limit: int = Field(default=10, ge=1, le=100, description="Number of results to return"),
+    ) -> list[Message]:
         """
         Search for messages in the current workspace.
 
@@ -312,15 +313,16 @@ class AsyncHoncho(BaseModel):
 
         Args:
             query: The search query to use
+            limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            An AsyncPage of Message objects representing the search results.
-            Returns an empty page if no messages are found.
+            A list of Message objects representing the search results.
+            Returns an empty list if no messages are found.
         """
-        messages_page = await self._client.workspaces.search(
-            self.workspace_id, body=query
+        messages = await self._client.workspaces.search(
+            self.workspace_id, body={"query": query, "limit": limit}
         )
-        return AsyncPage(messages_page)
+        return messages
 
     @validate_call
     async def get_deriver_status(

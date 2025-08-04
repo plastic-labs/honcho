@@ -9,6 +9,7 @@ from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -93,18 +94,18 @@ async def update_workspace(
 
 @router.post(
     "/{workspace_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def search_workspace(
     workspace_id: str = Path(..., description="ID of the workspace to search"),
-    query: str = Body(..., description="Search query"),
+    body: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters "
+    ),
     db: AsyncSession = db,
 ):
     """Search a Workspace"""
-    stmt = await crud.search(query, workspace_name=workspace_id)
-
-    return await apaginate(db, stmt)
+    return await search(db, body.query, workspace_name=workspace_id, limit=body.limit)
 
 
 @router.get(

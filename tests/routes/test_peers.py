@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
@@ -392,17 +391,13 @@ def test_search_peer(client: TestClient, sample_data: tuple[Workspace, Peer]):
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search query"},
+        json={"query": "search query", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_peer_empty_query(
@@ -414,14 +409,13 @@ def test_search_peer_empty_query(
     # Search with empty query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": ""},
+        json={"query": "", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should still have proper pagination structure
-    assert "items" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_peer_nonexistent(
@@ -433,16 +427,18 @@ def test_search_peer_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{nonexistent_peer_id}/search",
-        json={"query": "test query"},
+        json={"query": "test query", "limit": 10},
     )
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 0
 
 
-def test_search_peer_with_semantic_search_false(
+def test_search_peer_with_messages(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test peer search with semantic=false"""
+    """Test peer search with actual messages"""
     test_workspace, test_peer = sample_data
 
     # Add some messages to search through
@@ -456,31 +452,22 @@ def test_search_peer_with_semantic_search_false(
         },
     )
 
-    # Search with semantic=false
+    # Search for content
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search", "semantic": False},
+        json={"query": "search", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
-def test_search_peer_with_semantic_search_true_disabled(
-    client: TestClient,
-    sample_data: tuple[Workspace, Peer],
-    monkeypatch: pytest.MonkeyPatch,
+def test_search_peer_with_limit(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test peer search with semantic=true when EMBED_MESSAGES is disabled"""
-    # Override the EMBED_MESSAGES setting to False for this test
-    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", False)
-
+    """Test peer search with custom limit"""
     test_workspace, test_peer = sample_data
 
     # Add some messages to search through
@@ -490,19 +477,19 @@ def test_search_peer_with_semantic_search_true_disabled(
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},
                 {"content": "Another searchable message", "peer_id": test_peer.name},
+                {"content": "More searchable content", "peer_id": test_peer.name},
             ]
         },
     )
 
-    # Search with semantic=true (should fail if EMBED_MESSAGES is disabled)
+    # Search with custom limit
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/search",
-        json={"query": "search", "semantic": True},
+        json={"query": "search", "limit": 2},
     )
 
-    assert response.status_code == 405
-
+    assert response.status_code == 200
     data = response.json()
-    assert "Semantic search requires EMBED_MESSAGES flag to be enabled" in data.get(
-        "detail", ""
-    )
+    assert isinstance(data, list)
+    # Should not exceed the limit
+    assert len(data) <= 2

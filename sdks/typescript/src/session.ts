@@ -257,19 +257,23 @@ export class Session {
    * Makes an API call to search for messages in this session.
    *
    * @param query The search query to use
-   * @returns A Page of Message objects representing the search results.
-   *          Returns an empty page if no messages are found.
+   * @param limit Number of results to return (1-100, default: 10)
+   * @returns A list of Message objects representing the search results.
+   *          Returns an empty list if no messages are found.
    */
-  async search(query: string): Promise<Page<any>> {
+  async search(query: string, limit: number = 10): Promise<any[]> {
     if (!query || typeof query !== 'string' || query.trim().length === 0) {
       throw new Error('Search query must be a non-empty string')
     }
-    const messagesPage = await (
+    if (limit < 1 || limit > 100) {
+      throw new Error('Limit must be between 1 and 100')
+    }
+    const messages = await (
       this._honcho['_client'] as any
     ).workspaces.sessions.search(this._honcho.workspaceId, this.id, {
-      query: query,
+      body: { query, limit },
     })
-    return new Page(messagesPage)
+    return messages
   }
 
   /**

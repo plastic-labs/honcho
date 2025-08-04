@@ -14,6 +14,7 @@ from src.exceptions import (
 )
 from src.security import JWTParams, require_auth
 from src.utils import summarizer
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -448,7 +449,7 @@ async def get_session_context(
 
 @router.post(
     "/{session_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
@@ -456,19 +457,16 @@ async def get_session_context(
 async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    search: schemas.MessageSearchOptions = Body(
+    body: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters "
     ),
     db: AsyncSession = db,
 ):
     """Search a Session"""
-    query, semantic = search.query, search.semantic
-
-    stmt = await crud.search(
-        query,
+    return await search(
+        db,
+        body.query,
         workspace_name=workspace_id,
         session_name=session_id,
-        semantic=semantic,
+        limit=body.limit,
     )
-
-    return await apaginate(db, stmt)

@@ -222,17 +222,14 @@ def test_search_workspace(client: TestClient, sample_data: tuple[Workspace, Peer
 
     # Test search with a query
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/search", json="test search query"
+        f"/v2/workspaces/{test_workspace.name}/search", 
+        json={"query": "test search query", "limit": 10}
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_workspace_empty_query(
@@ -242,13 +239,15 @@ def test_search_workspace_empty_query(
     test_workspace, _ = sample_data
 
     # Test search with empty query
-    response = client.post(f"/v2/workspaces/{test_workspace.name}/search", json="")
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/search", 
+        json={"query": "", "limit": 10}
+    )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should still have proper pagination structure
-    assert "items" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_workspace_nonexistent(client: TestClient):
@@ -256,6 +255,11 @@ def test_search_workspace_nonexistent(client: TestClient):
     nonexistent_workspace_id = str(generate_nanoid())
 
     response = client.post(
-        f"/v2/workspaces/{nonexistent_workspace_id}/search", json="test query"
+        f"/v2/workspaces/{nonexistent_workspace_id}/search", 
+        json={"query": "test query", "limit": 10}
     )
     assert response.status_code == 200
+    data = response.json()
+    # Should return empty list for nonexistent workspace
+    assert isinstance(data, list)
+    assert len(data) == 0
