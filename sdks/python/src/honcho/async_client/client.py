@@ -138,6 +138,10 @@ class AsyncHoncho(BaseModel):
             ..., min_length=1, description="Unique identifier for the peer"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
@@ -147,14 +151,16 @@ class AsyncHoncho(BaseModel):
         Get or create a peer with the given ID.
 
         Creates an AsyncPeer object that can be used to interact with the specified peer.
-        This method does not make an API call - the peer is created lazily when
-        its methods are first used.
+        This method does not make an API call unless `config` or `metadata` is
+        provided.
 
         Args:
             id: Unique identifier for the peer within the workspace. Should be a
-                stable identifier that can be used consistently across sessions
-            config:
-                Optional configuration to set for this peer. If set, will get/create peer immediately with flags.
+            stable identifier that can be used consistently across sessions
+            metadata: Optional metadata dictionary to associate with this peer.
+            If set, will get/create peer immediately with metadata.
+            config: Optional configuration to set for this peer.
+            If set, will get/create peer immediately with flags.
 
         Returns:
             An AsyncPeer object that can be used to send messages, join sessions, and
@@ -163,9 +169,9 @@ class AsyncHoncho(BaseModel):
         Raises:
             ValidationError: If the peer ID is empty or invalid
         """
-        if config:
+        if config or metadata:
             return await AsyncPeer.create(
-                id, self.workspace_id, self._client, config=config
+                id, self.workspace_id, self._client, config=config, metadata=metadata
             )
         return AsyncPeer(id, self.workspace_id, self._client)
 
@@ -180,8 +186,7 @@ class AsyncHoncho(BaseModel):
         inner client Peer objects to SDK AsyncPeer objects as they are consumed.
 
         Returns:
-            An AsyncPage of AsyncPeer objects representing all peers in the workspace.
-            The page preserves pagination functionality while transforming objects
+            An AsyncPage of AsyncPeer objects representing all peers in the workspace
         """
         peers_page = await self._client.workspaces.peers.list(
             workspace_id=self.workspace_id, filter=filter
@@ -197,6 +202,10 @@ class AsyncHoncho(BaseModel):
             ..., min_length=1, description="Unique identifier for the session"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
@@ -206,15 +215,17 @@ class AsyncHoncho(BaseModel):
         Get or create a session with the given ID.
 
         Creates an AsyncSession object that can be used to manage conversations between
-        multiple peers. This method does not make an API call - the session is
-        created lazily when its methods are first used.
+        multiple peers. This method does not make an API call unless `config` or
+        `metadata` is provided.
 
         Args:
             id: Unique identifier for the session within the workspace. Should be a
-                stable identifier that can be used consistently to reference the
-                same conversation
-            config:
-                Optional configuration to set for this session. If set, will get/create session immediately with flags.
+            stable identifier that can be used consistently to reference the
+            same conversation
+            metadata: Optional metadata dictionary to associate with this session.
+            If set, will get/create session immediately with metadata.
+            config: Optional configuration to set for this session.
+            If set, will get/create session immediately with flags.
         Returns:
             An AsyncSession object that can be used to add peers, send messages, and
             manage conversation context
@@ -222,9 +233,9 @@ class AsyncHoncho(BaseModel):
         Raises:
             ValidationError: If the session ID is empty or invalid
         """
-        if config:
+        if config or metadata:
             return await AsyncSession.create(
-                id, self.workspace_id, self._client, config=config
+                id, self.workspace_id, self._client, config=config, metadata=metadata
             )
         return AsyncSession(id, self.workspace_id, self._client)
 

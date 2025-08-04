@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
+from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -65,6 +66,7 @@ class AsyncPeer(BaseModel):
         workspace_id: str,
         client: AsyncHonchoCore,
         *,
+        metadata: dict[str, object] | None = None,
         config: dict[str, object] | None = None,
     ) -> AsyncPeer:
         """
@@ -74,19 +76,22 @@ class AsyncPeer(BaseModel):
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent AsyncHoncho client instance
+            metadata: Optional metadata dictionary to associate with this peer.
+            If set, will get/create peer immediately with metadata.
             config: Optional configuration to set for this peer.
-                           If set, will get/create peer immediately with flags.
+            If set, will get/create peer immediately with flags.
 
         Returns:
             A new AsyncPeer instance
         """
         peer = cls(peer_id, workspace_id, client)
 
-        if config:
+        if config or metadata:
             await client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
-                configuration=config,
+                configuration=config if config is not None else NOT_GIVEN,
+                metadata=metadata if metadata is not None else NOT_GIVEN,
             )
 
         return peer
@@ -222,6 +227,31 @@ class AsyncPeer(BaseModel):
             peer_id=self.id,
             workspace_id=self.workspace_id,
             metadata=metadata,
+        )
+
+    @validate_call
+    async def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer. Currently the only supported config
+        value is the `observe_me` flag, which controls whether derivation tasks
+        should be created for this peer's global representation. Default is True.
+
+        Makes an API call to update the configuration associated with this peer.
+        This will overwrite any existing configuration with the provided values.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer.
+            Keys must be strings, values can be any JSON-serializable type
+        """
+        await self._client.workspaces.peers.update(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            configuration=config,
         )
 
     @validate_call

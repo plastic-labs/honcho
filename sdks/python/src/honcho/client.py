@@ -126,6 +126,10 @@ class Honcho(BaseModel):
             ..., min_length=1, description="Unique identifier for the peer"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
@@ -135,14 +139,16 @@ class Honcho(BaseModel):
         Get or create a peer with the given ID.
 
         Creates a Peer object that can be used to interact with the specified peer.
-        This method does not make an API call - the peer is created lazily when
-        its methods are first used.
+        This method does not make an API call unless `config` or `metadata` is
+        provided.
 
         Args:
             id: Unique identifier for the peer within the workspace. Should be a
-                stable identifier that can be used consistently across sessions
-            config:
-                Optional configuration to set for this peer. If set, will get/create peer immediately with flags.
+            stable identifier that can be used consistently across sessions.
+            metadata: Optional metadata dictionary to associate with this peer.
+            If set, will get/create peer immediately with metadata.
+            config: Optional configuration to set for this peer.
+            If set, will get/create peer immediately with flags.
 
         Returns:
             A Peer object that can be used to send messages, join sessions, and
@@ -151,7 +157,9 @@ class Honcho(BaseModel):
         Raises:
             ValidationError: If the peer ID is empty or invalid
         """
-        return Peer(id, self.workspace_id, self._client, config=config)
+        return Peer(
+            id, self.workspace_id, self._client, config=config, metadata=metadata
+        )
 
     def get_peers(self, filter: dict[str, object] | None = None) -> SyncPage[Peer]:
         """
@@ -162,8 +170,7 @@ class Honcho(BaseModel):
         inner client Peer objects to SDK Peer objects as they are consumed.
 
         Returns:
-            A SyncPage of Peer objects representing all peers in the workspace.
-            The page preserves pagination functionality while transforming objects
+            A SyncPage of Peer objects representing all peers in the workspace
         """
         peers_page = self._client.workspaces.peers.list(
             workspace_id=self.workspace_id, filter=filter
@@ -179,6 +186,10 @@ class Honcho(BaseModel):
             ..., min_length=1, description="Unique identifier for the session"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
@@ -188,15 +199,17 @@ class Honcho(BaseModel):
         Get or create a session with the given ID.
 
         Creates a Session object that can be used to manage conversations between
-        multiple peers. This method does not make an API call - the session is
-        created lazily when its methods are first used.
+        multiple peers. This method does not make an API call unless `config` or
+        `metadata` is provided.
 
         Args:
             id: Unique identifier for the session within the workspace. Should be a
-                stable identifier that can be used consistently to reference the
-                same conversation
-            config:
-                Optional configuration to set for this session. If set, will get/create session immediately with flags.
+            stable identifier that can be used consistently to reference the
+            same conversation
+            metadata: Optional metadata dictionary to associate with this session.
+            If set, will get/create session immediately with metadata.
+            config: Optional configuration to set for this session.
+            If set, will get/create session immediately with flags.
         Returns:
             A Session object that can be used to add peers, send messages, and
             manage conversation context
@@ -204,7 +217,9 @@ class Honcho(BaseModel):
         Raises:
             ValidationError: If the session ID is empty or invalid
         """
-        return Session(id, self.workspace_id, self._client, config=config)
+        return Session(
+            id, self.workspace_id, self._client, config=config, metadata=metadata
+        )
 
     def get_sessions(
         self, filter: dict[str, object] | None = None
