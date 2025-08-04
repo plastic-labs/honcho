@@ -371,8 +371,9 @@ class QueueItem(Base):
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id"), index=True, nullable=True
     )
+    work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=True)
 
-    task_type: Mapped[TaskType] = mapped_column(TEXT)
+    task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -387,26 +388,8 @@ class ActiveQueueSession(Base):
     work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
     work_unit_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)
 
-    # Legacy columns for migration compatibility (can be removed later)
-    session_id: Mapped[str | None] = mapped_column(
-        ForeignKey("sessions.id"), nullable=True
-    )
-    sender_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    target_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    task_type: Mapped[str] = mapped_column(TEXT)
-
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "session_id",
-            "sender_name",
-            "target_name",
-            "task_type",
-            name="unique_active_queue_session",
-        ),
     )
 
 

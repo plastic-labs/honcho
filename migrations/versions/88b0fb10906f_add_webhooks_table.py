@@ -12,7 +12,12 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-from migrations.utils import column_exists, index_exists
+from migrations.utils import (
+    column_exists,
+    constraint_exists,
+    index_exists,
+    table_exists,
+)
 from src.config import settings
 
 # revision identifiers, used by Alembic.
@@ -59,10 +64,16 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # 2. Add task_type column to queue table
+    # 2. Add columns to queue table
     op.add_column(
         "queue",
         sa.Column("task_type", sa.TEXT(), nullable=True),
+        schema=schema,
+    )
+
+    op.add_column(
+        "queue",
+        sa.Column("work_unit_key", sa.Text(), nullable=True),
         schema=schema,
     )
 
@@ -83,6 +94,13 @@ def upgrade() -> None:
 
     inspector = sa.inspect(op.get_bind())
 
+    if constraint_exists(
+        "active_queue_sessions", "unique_active_queue_session", "unique", inspector
+    ):
+        op.drop_constraint(
+            "unique_active_queue_session", "active_queue_sessions", schema=schema
+        )
+
     if column_exists("active_queue_sessions", "session_id", inspector):
         op.drop_column("active_queue_sessions", "session_id", schema=schema)
 
@@ -92,24 +110,30 @@ def upgrade() -> None:
     if column_exists("active_queue_sessions", "target_name", inspector):
         op.drop_column("active_queue_sessions", "target_name", schema=schema)
 
+    if column_exists("active_queue_sessions", "task_type", inspector):
+        op.drop_column("active_queue_sessions", "task_type", schema=schema)
+
 
 def downgrade() -> None:
     inspector = sa.inspect(op.get_bind())
 
-    if index_exists(
-        "webhook_endpoints", "idx_webhook_endpoints_workspace_lookup", inspector
-    ):
-        op.drop_index(
-            op.f("idx_webhook_endpoints_workspace_lookup"),
-            table_name="webhook_endpoints",
-            schema=schema,
-        )
+    if table_exists("webhook_endpoints", inspector):
+        if index_exists(
+            "webhook_endpoints", "idx_webhook_endpoints_workspace_lookup", inspector
+        ):
+            op.drop_index(
+                op.f("idx_webhook_endpoints_workspace_lookup"),
+                table_name="webhook_endpoints",
+                schema=schema,
+            )
 
-    # Drop webhook_endpoints table
-    op.drop_table("webhook_endpoints", schema=schema)
+        op.drop_table("webhook_endpoints", schema=schema)
 
     if column_exists("queue", "task_type", inspector):
         op.drop_column("queue", "task_type", schema=schema)
+
+    if column_exists("queue", "work_unit_key", inspector):
+        op.drop_column("queue", "work_unit_key", schema=schema)
 
     if column_exists("active_queue_sessions", "work_unit_key", inspector):
         op.drop_column("active_queue_sessions", "work_unit_key", schema=schema)

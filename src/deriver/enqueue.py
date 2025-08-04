@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, schemas
 from src.config import settings
 from src.dependencies import tracked_db
+from src.deriver.utils import get_work_unit_key
 from src.exceptions import ValidationException
 from src.models import QueueItem
 
@@ -148,8 +149,12 @@ def create_representation_record(
         task_type="representation",
     )
     return {
+        "work_unit_key": get_work_unit_key(
+            task_type="representation", payload=processed_payload
+        ),
         "payload": processed_payload,
         "session_id": session_id,
+        "task_type": "representation",
     }
 
 
@@ -176,8 +181,12 @@ def create_summary_record(
         message_seq_in_session=message_seq_in_session,
     )
     return {
+        "work_unit_key": get_work_unit_key(
+            task_type="summary", payload=processed_payload
+        ),
         "payload": processed_payload,
         "session_id": session_id,
+        "task_type": "summary",
     }
 
 

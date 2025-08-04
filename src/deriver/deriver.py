@@ -111,8 +111,16 @@ class Deriver:
         # Open a DB session only for the duration of the processing call
         async with tracked_db("deriver") as db:
             if task_type == "summary":
+                if not isinstance(payload, SummaryPayload):
+                    raise ValueError(
+                        f"Expected SummaryPayload for task_type 'summary', got {type(payload)}"
+                    )
                 await self.process_summary_task(db, payload)
             elif task_type == "representation":
+                if not isinstance(payload, RepresentationPayload):
+                    raise ValueError(
+                        f"Expected RepresentationPayload for task_type 'representation', got {type(payload)}"
+                    )
                 await self.process_representation_task(db, payload)
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
