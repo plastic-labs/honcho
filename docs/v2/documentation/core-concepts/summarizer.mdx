@@ -14,7 +14,7 @@ Almost all agents require, in addition to personalization and memory, a way to q
 
 ### Creating Summaries
 
-Honcho already has an asynchronous task queue for the purpose of deriving facts from messages. This is the ideal place to create summaries where they won't add latency to a message. Currently, Honcho has two configurable summary types: 
+Honcho already has an asynchronous task queue for the purpose of deriving facts from messages. This is the ideal place to create summaries where they won't add latency to a message. Currently, Honcho has two configurable summary types:
 
 * Short summaries: by default, enqueued every 20 messages and given a token limit of 1000
 * Long summaries: by default, enqueued every 60 messages and given a token limit of 4000

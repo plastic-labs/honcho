@@ -10,7 +10,6 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.dialects import postgresql
 
 from migrations.utils import (
     column_exists,
@@ -81,14 +80,6 @@ def upgrade() -> None:
     op.add_column(
         "active_queue_sessions",
         sa.Column("work_unit_key", sa.Text(), unique=True, index=True),
-        schema=schema,
-    )
-
-    op.add_column(
-        "active_queue_sessions",
-        sa.Column(
-            "work_unit_data", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-        ),
         schema=schema,
     )
 

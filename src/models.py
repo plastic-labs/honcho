@@ -384,9 +384,7 @@ class ActiveQueueSession(Base):
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
 
-    # New unique key-based approach
     work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
-    work_unit_data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=True)
 
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()

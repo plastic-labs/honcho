@@ -13,6 +13,7 @@ class BasePayload(BaseModel):
 class RepresentationPayload(BasePayload):
     """Payload for representation tasks."""
 
+    task_type: Literal["representation"] = "representation"
     workspace_name: str
     session_name: str
     message_id: int
@@ -25,6 +26,7 @@ class RepresentationPayload(BasePayload):
 class SummaryPayload(BasePayload):
     """Payload for summary tasks."""
 
+    task_type: Literal["summary"] = "summary"
     workspace_name: str
     session_name: str
     message_id: int
@@ -34,6 +36,7 @@ class SummaryPayload(BasePayload):
 class WebhookQueuePayload(BasePayload):
     """Payload for webhook delivery tasks."""
 
+    task_type: Literal["webhook"] = "webhook"
     workspace_name: str
     event_type: str
     data: dict[str, Any]
@@ -131,6 +134,7 @@ def create_payload(
         # Convert back to dict for compatibility with JSON serialization
         # mode='json' ensures datetime is converted to ISO string
         payload = validated_payload.model_dump(mode="json")
+
     except Exception as e:
         raise ValueError(f"Failed to create valid payload: {str(e)}") from e
 

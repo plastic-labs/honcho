@@ -147,6 +147,7 @@ class TestDeriverStatusEndpoint:
         queue_items = [
             models.QueueItem(
                 session_id=session.id,
+                task_type="derive",
                 payload={
                     "sender_name": peer.name,
                     "target_name": peer.name,
@@ -216,6 +217,7 @@ class TestDeriverStatusEndpoint:
             queue_items = [
                 models.QueueItem(
                     session_id=session.id,
+                    task_type="derive",
                     payload={
                         "sender_name": peer.name,
                         "target_name": peer.name,
@@ -273,6 +275,7 @@ class TestDeriverStatusEndpoint:
         await db_session.refresh(session)
         queue_item = models.QueueItem(
             session_id=session.id,
+            task_type="derive",
             payload={
                 "sender_name": peer.name,
                 "target_name": peer.name,
