@@ -1,6 +1,16 @@
 import HonchoCore from '@honcho-ai/core'
 import { Page } from './pagination'
 import { Session } from './session'
+import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import {
+  SearchQuerySchema,
+  FilterSchema,
+  ChatQuerySchema,
+  MessageContentSchema,
+  MessageMetadataSchema,
+  Filter,
+  MessageCreate as ValidatedMessageCreate,
+} from './validation'
 
 /**
  * Represents a peer in the Honcho system.
@@ -59,18 +69,19 @@ export class Peer {
     target?: string | Peer,
     sessionId?: string,
   ): Promise<string | null> {
+    const chatParams = ChatQuerySchema.parse({ query, stream, target, sessionId })
     const response = await this._client.workspaces.peers.chat(
       this.workspaceId,
       this.id,
       {
-        query,
-        stream: stream,
-        target: target
-          ? typeof target === 'string'
-            ? target
-            : target.id
+        query: chatParams.query,
+        stream: chatParams.stream,
+        target: chatParams.target
+          ? typeof chatParams.target === 'string'
+            ? chatParams.target
+            : chatParams.target.id
           : undefined,
-        session_id: sessionId,
+        session_id: chatParams.sessionId,
       }
     )
     if (!response.content || response.content === 'None') {
@@ -90,13 +101,14 @@ export class Peer {
    *          Returns an empty list if the peer is not a member of any sessions
    */
   async getSessions(
-    filter?: { [key: string]: unknown } | null
+    filter?: Filter | null
   ): Promise<Page<Session>> {
+    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const sessionsPage = await this._client.workspaces.peers.sessions.list(
       this.workspaceId,
       this.id,
       {
-        filter,
+        filter: validatedFilter,
       })
     return new Page(
       sessionsPage,
@@ -114,11 +126,14 @@ export class Peer {
    * @param opts - Optional parameters including metadata dictionary to associate with the message
    * @returns A new message object with this peer's ID and the provided content
    */
-  message(content: string, opts?: { metadata?: Record<string, unknown> }): any {
+  message(content: string, opts?: { metadata?: Record<string, unknown> }): ValidatedMessageCreate {
+    const validatedContent = MessageContentSchema.parse(content)
+    const validatedMetadata = opts?.metadata ? MessageMetadataSchema.parse(opts.metadata) : undefined
+
     return {
-      peerId: this.id,
-      content,
-      metadata: opts?.metadata,
+      peer_id: this.id,
+      content: validatedContent,
+      metadata: validatedMetadata,
     }
   }
 
@@ -149,7 +164,7 @@ export class Peer {
    * @param metadata - A dictionary of metadata to associate with this peer.
    *                   Keys must be strings, values can be any JSON-serializable type
    */
-  async setMetadata(metadata: Record<string, object>): Promise<void> {
+  async setMetadata(metadata: Record<string, unknown>): Promise<void> {
     await this._client.workspaces.peers.update(
       this.workspaceId,
       this.id,
@@ -184,7 +199,7 @@ export class Peer {
    * @param config - A dictionary of configuration to associate with this peer.
    *                 Keys must be strings, values can be any JSON-serializable type
    */
-  async setPeerConfig(config: Record<string, object>): Promise<void> {
+  async setPeerConfig(config: Record<string, unknown>): Promise<void> {
     await this._client.workspaces.peers.update(
       this.workspaceId,
       this.id,
@@ -201,14 +216,12 @@ export class Peer {
    * @returns A Page of Message objects representing the search results.
    *          Returns an empty page if no messages are found.
    */
-  async search(query: string): Promise<Page<any>> {
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      throw new Error('Search query must be a non-empty string')
-    }
+  async search(query: string): Promise<Page<Message>> {
+    const validatedQuery = SearchQuerySchema.parse(query)
     const messagesPage = await this._client.workspaces.peers.search(
       this.workspaceId,
       this.id,
-      { query: query }
+      { query: validatedQuery }
     )
     return new Page(messagesPage)
   }

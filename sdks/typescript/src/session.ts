@@ -2,8 +2,23 @@ import { Page } from './pagination'
 import { Peer } from './peer'
 import { SessionContext } from './session_context'
 import HonchoCore from '@honcho-ai/core'
-import { Message, MessageCreate } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import { Uploadable } from '@honcho-ai/core/src/uploads'
+import {
+  SessionPeerConfigSchema,
+  SearchQuerySchema,
+  FilterSchema,
+  ContextParamsSchema,
+  FileUploadSchema,
+  WorkingRepParamsSchema,
+  PeerAdditionSchema,
+  PeerRemovalSchema,
+  MessageAdditionSchema,
+  Filter,
+  PeerAddition,
+  PeerRemoval,
+  MessageAddition,
+} from './validation'
 
 /**
  * Configuration options for a peer within a specific session.
@@ -34,12 +49,9 @@ export class SessionPeerConfig {
    * @param observe_others - Whether this peer should observe others in the session
    */
   constructor(observe_me?: boolean | null, observe_others?: boolean) {
-    if (observe_me !== undefined) {
-      this.observe_me = observe_me
-    }
-    if (observe_others !== undefined) {
-      this.observe_others = observe_others
-    }
+    const validatedConfig = SessionPeerConfigSchema.parse({ observe_me, observe_others })
+    this.observe_me = validatedConfig.observe_me
+    this.observe_others = validatedConfig.observe_others
   }
 }
 
@@ -140,15 +152,11 @@ export class Session {
    * ```
    */
   async addPeers(
-    peers:
-      | string
-      | Peer
-      | Array<string | Peer>
-      | [string | Peer, SessionPeerConfig]
-      | Array<string | Peer | [string | Peer, SessionPeerConfig]>
+    peers: PeerAddition
   ): Promise<void> {
+    const validatedPeers = PeerAdditionSchema.parse(peers)
     const peerDict: Record<string, SessionPeerConfig> = {}
-    const peersArray = Array.isArray(peers) ? peers : [peers]
+    const peersArray = Array.isArray(validatedPeers) ? validatedPeers : [validatedPeers]
 
     for (const peer of peersArray) {
       if (typeof peer === 'string') {
@@ -190,15 +198,11 @@ export class Session {
    *     of peers and peer+config combinations
    */
   async setPeers(
-    peers:
-      | string
-      | Peer
-      | Array<string | Peer>
-      | [string | Peer, SessionPeerConfig]
-      | Array<string | Peer | [string | Peer, SessionPeerConfig]>
+    peers: PeerAddition
   ): Promise<void> {
+    const validatedPeers = PeerAdditionSchema.parse(peers)
     const peerDict: Record<string, SessionPeerConfig> = {}
-    const peersArray = Array.isArray(peers) ? peers : [peers]
+    const peersArray = Array.isArray(validatedPeers) ? validatedPeers : [validatedPeers]
 
     for (const peer of peersArray) {
       if (typeof peer === 'string') {
@@ -237,11 +241,12 @@ export class Session {
    *   - Array<string | Peer>: List of peer IDs and/or Peer objects
    */
   async removePeers(
-    peers: string | Peer | Array<string | Peer>
+    peers: PeerRemoval
   ): Promise<void> {
-    const peerIds = Array.isArray(peers)
-      ? peers.map((p) => (typeof p === 'string' ? p : p.id))
-      : [typeof peers === 'string' ? peers : peers.id]
+    const validatedPeers = PeerRemovalSchema.parse(peers)
+    const peerIds = Array.isArray(validatedPeers)
+      ? validatedPeers.map((p) => (typeof p === 'string' ? p : p.id))
+      : [typeof validatedPeers === 'string' ? validatedPeers : validatedPeers.id]
     await this._client.workspaces.sessions.peers.remove(
       this.workspaceId,
       this.id,
@@ -297,13 +302,14 @@ export class Session {
     config: SessionPeerConfig
   ): Promise<void> {
     const peerId = typeof peer === 'string' ? peer : peer.id
+    const validatedConfig = SessionPeerConfigSchema.parse(config)
     await this._client.workspaces.sessions.peers.setConfig(
       this.workspaceId,
       this.id,
       peerId,
       {
-        observe_others: config.observe_others,
-        observe_me: config.observe_me,
+        observe_others: validatedConfig.observe_others,
+        observe_me: validatedConfig.observe_me,
       }
     )
   }
@@ -335,8 +341,9 @@ export class Session {
    * ])
    * ```
    */
-  async addMessages(messages: MessageCreate | MessageCreate[]): Promise<void> {
-    const messagesList = Array.isArray(messages) ? messages : [messages]
+  async addMessages(messages: MessageAddition): Promise<void> {
+    const validatedMessages = MessageAdditionSchema.parse(messages)
+    const messagesList = Array.isArray(validatedMessages) ? validatedMessages : [validatedMessages]
     await this._client.workspaces.sessions.messages.create(
       this.workspaceId,
       this.id,
@@ -361,12 +368,13 @@ export class Session {
    * @returns Promise resolving to a Page of Message objects matching the specified criteria
    */
   async getMessages(
-    filter?: Record<string, object>
+    filter?: Filter
   ): Promise<Page<Message>> {
+    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const messagesPage = await this._client.workspaces.sessions.messages.list(
       this.workspaceId,
       this.id,
-      filter
+      validatedFilter
     )
     return new Page(messagesPage)
   }
@@ -397,7 +405,7 @@ export class Session {
    * @param metadata - A dictionary of metadata to associate with this session.
    *                   Keys must be strings, values can be any JSON-serializable type
    */
-  async setMetadata(metadata: Record<string, object>): Promise<void> {
+  async setMetadata(metadata: Record<string, unknown>): Promise<void> {
     await this._client.workspaces.sessions.update(
       this.workspaceId,
       this.id,
@@ -429,9 +437,10 @@ export class Session {
     summary?: boolean,
     tokens?: number
   ): Promise<SessionContext> {
+    const contextParams = ContextParamsSchema.parse({ summary, tokens })
     const context = await this._client.workspaces.sessions.getContext(this.workspaceId, this.id, {
-      tokens: tokens,
-      summary: summary,
+      tokens: contextParams.tokens,
+      summary: contextParams.summary,
     })
     return new SessionContext(this.id, context.messages, context.summary)
   }
@@ -446,11 +455,9 @@ export class Session {
    *          Returns an empty page if no messages are found.
    */
   async search(query: string): Promise<Page<Message>> {
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      throw new Error('Search query must be a non-empty string')
-    }
+    const validatedQuery = SearchQuerySchema.parse(query)
     const messagesPage = await this._client.workspaces.sessions.search(this.workspaceId, this.id, {
-      query: query,
+      query: validatedQuery,
     })
     return new Page(messagesPage)
   }
@@ -485,9 +492,10 @@ export class Session {
     file: Uploadable,
     peerId: string
   ): Promise<Message[]> {
+    const uploadParams = FileUploadSchema.parse({ file, peerId })
     const response = await this._client.workspaces.sessions.messages.upload(this.workspaceId, this.id, {
-      file,
-      peer_id: peerId,
+      file: uploadParams.file,
+      peer_id: uploadParams.peerId,
     })
 
     return response
@@ -519,11 +527,12 @@ export class Session {
     peer: string | Peer,
     target?: string | Peer
   ): Promise<Record<string, unknown>> {
-    const peerId = typeof peer === 'string' ? peer : peer.id
-    const targetId = target
-      ? typeof target === 'string'
-        ? target
-        : target.id
+    const workingRepParams = WorkingRepParamsSchema.parse({ peer, target })
+    const peerId = typeof workingRepParams.peer === 'string' ? workingRepParams.peer : workingRepParams.peer.id
+    const targetId = workingRepParams.target
+      ? typeof workingRepParams.target === 'string'
+        ? workingRepParams.target
+        : workingRepParams.target.id
       : undefined
 
     return await this._client.workspaces.peers.workingRepresentation(this.workspaceId, peerId, {

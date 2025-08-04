@@ -3,6 +3,27 @@ import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
 import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import {
+  HonchoConfigSchema,
+  PeerMetadataSchema,
+  PeerConfigSchema,
+  PeerIdSchema,
+  SessionMetadataSchema,
+  SessionConfigSchema,
+  SessionIdSchema,
+  SearchQuerySchema,
+  FilterSchema,
+  DeriverStatusOptionsSchema,
+  WorkspaceMetadataSchema,
+  HonchoConfig,
+  PeerMetadata,
+  PeerConfig,
+  SessionMetadata,
+  SessionConfig,
+  Filter,
+  DeriverStatusOptions,
+  WorkspaceMetadata,
+} from './validation'
 
 /**
  * Main client for the Honcho TypeScript SDK.
@@ -50,26 +71,18 @@ export class Honcho {
    * @param options.defaultHeaders - Optional custom default headers for the HTTP client
    * @param options.defaultQuery - Optional custom default query parameters for the HTTP client
    */
-  constructor(options: {
-    apiKey?: string
-    environment?: 'local' | 'production' | 'demo'
-    baseURL?: string
-    workspaceId?: string
-    timeout?: number
-    maxRetries?: number
-    defaultHeaders?: Record<string, string>
-    defaultQuery?: Record<string, unknown>
-  }) {
+  constructor(options: HonchoConfig) {
+    const validatedOptions = HonchoConfigSchema.parse(options)
     this.workspaceId =
-      options.workspaceId || process.env.HONCHO_WORKSPACE_ID || 'default'
+      validatedOptions.workspaceId || process.env.HONCHO_WORKSPACE_ID || 'default'
     this._client = new HonchoCore({
-      apiKey: options.apiKey || process.env.HONCHO_API_KEY,
-      environment: options.environment,
-      baseURL: options.baseURL || process.env.HONCHO_URL,
-      timeout: options.timeout,
-      maxRetries: options.maxRetries,
-      defaultHeaders: options.defaultHeaders,
-      defaultQuery: options.defaultQuery as any,
+      apiKey: validatedOptions.apiKey || process.env.HONCHO_API_KEY,
+      environment: validatedOptions.environment,
+      baseURL: validatedOptions.baseURL || process.env.HONCHO_URL,
+      timeout: validatedOptions.timeout,
+      maxRetries: validatedOptions.maxRetries,
+      defaultHeaders: validatedOptions.defaultHeaders,
+      defaultQuery: validatedOptions.defaultQuery as any,
     }) as any
     this._client.workspaces.getOrCreate({ id: this.workspaceId })
   }
@@ -91,16 +104,16 @@ export class Honcho {
    *          join sessions, and query the peer's knowledge representations
    * @throws Error if the peer ID is empty or invalid
    */
-  async peer(id: string, metadata?: Record<string, object>, config?: Record<string, object>): Promise<Peer> {
-    if (!id || typeof id !== 'string') {
-      throw new Error('Peer ID must be a non-empty string')
-    }
-    const peer = new Peer(id, this.workspaceId, this._client)
+  async peer(id: string, metadata?: PeerMetadata, config?: PeerConfig): Promise<Peer> {
+    const validatedId = PeerIdSchema.parse(id)
+    const validatedMetadata = metadata ? PeerMetadataSchema.parse(metadata) : undefined
+    const validatedConfig = config ? PeerConfigSchema.parse(config) : undefined
+    const peer = new Peer(validatedId, this.workspaceId, this._client)
 
-    if (config || metadata) {
+    if (validatedConfig || validatedMetadata) {
       await this._client.workspaces.peers.getOrCreate(
         this.workspaceId,
-        { id: peer.id, configuration: config, metadata: metadata }
+        { id: peer.id, configuration: validatedConfig, metadata: validatedMetadata }
       )
     }
 
@@ -117,11 +130,12 @@ export class Honcho {
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
   async getPeers(
-    filter?: { [key: string]: unknown }
+    filter?: Filter
   ): Promise<Page<Peer>> {
+    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const peersPage = await this._client.workspaces.peers.list(
       this.workspaceId,
-      { filter }
+      { filter: validatedFilter }
     )
     return new Page(peersPage, (peer: any) => new Peer(peer.id, this.workspaceId, this._client))
   }
@@ -144,16 +158,16 @@ export class Honcho {
    *          send messages, and manage conversation context
    * @throws Error if the session ID is empty or invalid
    */
-  async session(id: string, metadata?: Record<string, object>, config?: Record<string, object>): Promise<Session> {
-    if (!id || typeof id !== 'string') {
-      throw new Error('Session ID must be a non-empty string')
-    }
-    const session = new Session(id, this.workspaceId, this._client)
+  async session(id: string, metadata?: SessionMetadata, config?: SessionConfig): Promise<Session> {
+    const validatedId = SessionIdSchema.parse(id)
+    const validatedMetadata = metadata ? SessionMetadataSchema.parse(metadata) : undefined
+    const validatedConfig = config ? SessionConfigSchema.parse(config) : undefined
+    const session = new Session(validatedId, this.workspaceId, this._client)
 
-    if (config || metadata) {
+    if (validatedConfig || validatedMetadata) {
       await this._client.workspaces.sessions.getOrCreate(
         this.workspaceId,
-        { id: session.id, configuration: config, metadata: metadata }
+        { id: session.id, configuration: validatedConfig, metadata: validatedMetadata }
       )
     }
 
@@ -171,11 +185,12 @@ export class Honcho {
    *          in the workspace. Returns an empty page if no sessions exist
    */
   async getSessions(
-    filter?: { [key: string]: unknown }
+    filter?: Filter
   ): Promise<Page<Session>> {
+    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const sessionsPage = await this._client.workspaces.sessions.list(
       this.workspaceId,
-      { filter }
+      { filter: validatedFilter }
     )
     return new Page(
       sessionsPage,
@@ -209,8 +224,9 @@ export class Honcho {
    * @param metadata - A dictionary of metadata to associate with the workspace.
    *                   Keys must be strings, values can be any JSON-serializable type
    */
-  async setMetadata(metadata: Record<string, object>): Promise<void> {
-    await this._client.workspaces.update(this.workspaceId, { metadata })
+  async setMetadata(metadata: WorkspaceMetadata): Promise<void> {
+    const validatedMetadata = WorkspaceMetadataSchema.parse(metadata)
+    await this._client.workspaces.update(this.workspaceId, { metadata: validatedMetadata })
   }
 
   /**
@@ -224,9 +240,10 @@ export class Honcho {
    *          list if no workspaces are accessible or none exist
    */
   async getWorkspaces(
-    filter?: { [key: string]: unknown } | null
+    filter?: Filter
   ): Promise<string[]> {
-    const workspacesPage = await this._client.workspaces.list({ filter })
+    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
+    const workspacesPage = await this._client.workspaces.list({ filter: validatedFilter })
     const ids: string[] = []
     for await (const workspace of workspacesPage) {
       ids.push(workspace.id)
@@ -245,12 +262,10 @@ export class Honcho {
    * @throws Error if the search query is empty or invalid
    */
   async search(query: string): Promise<Page<Message>> {
-    if (!query || typeof query !== 'string' || query.trim().length === 0) {
-      throw new Error('Search query must be a non-empty string')
-    }
+    const validatedQuery = SearchQuerySchema.parse(query)
     const messagesPage = await this._client.workspaces.search(
       this.workspaceId,
-      { body: query }
+      { body: validatedQuery }
     )
     return new Page(messagesPage)
   }
@@ -267,21 +282,18 @@ export class Honcho {
    * @param options.sessionId - Optional session ID to scope the status to
    * @returns Promise resolving to the deriver status information including work unit counts
    */
-  async getDeriverStatus(options?: {
-    observerId?: string
-    senderId?: string
-    sessionId?: string
-  }): Promise<{
+  async getDeriverStatus(options?: DeriverStatusOptions): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
     sessions?: Record<string, any>
   }> {
+    const validatedOptions = options ? DeriverStatusOptionsSchema.parse(options) : undefined
     const queryParams: any = {}
-    if (options?.observerId) queryParams.observer_id = options.observerId
-    if (options?.senderId) queryParams.sender_id = options.senderId
-    if (options?.sessionId) queryParams.session_id = options.sessionId
+    if (validatedOptions?.observerId) queryParams.observer_id = validatedOptions.observerId
+    if (validatedOptions?.senderId) queryParams.sender_id = validatedOptions.senderId
+    if (validatedOptions?.sessionId) queryParams.session_id = validatedOptions.sessionId
 
     const status = await this._client.workspaces.deriverStatus(
       this.workspaceId,
@@ -312,23 +324,19 @@ export class Honcho {
    * @returns Promise resolving to the final deriver status when processing is complete
    * @throws Error if timeout is exceeded before processing completes
    */
-  async pollDeriverStatus(options?: {
-    observerId?: string
-    senderId?: string
-    sessionId?: string
-    timeoutMs?: number
-  }): Promise<{
+  async pollDeriverStatus(options?: DeriverStatusOptions): Promise<{
     totalWorkUnits: number
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
     sessions?: Record<string, any>
   }> {
-    const timeoutMs = options?.timeoutMs ?? 300000 // Default to 5 minutes
+    const validatedOptions = options ? DeriverStatusOptionsSchema.parse(options) : undefined
+    const timeoutMs = validatedOptions?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
     while (true) {
-      const status = await this.getDeriverStatus(options)
+      const status = await this.getDeriverStatus(validatedOptions)
       if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
         return status
       }

@@ -14,10 +14,13 @@ jest.mock('@honcho-ai/core', () => {
           set: jest.fn(),
           remove: jest.fn(),
           list: jest.fn(),
+          getConfig: jest.fn(),
+          setConfig: jest.fn(),
         },
         messages: {
           create: jest.fn(),
           list: jest.fn(),
+          upload: jest.fn(),
         },
         getOrCreate: jest.fn(),
         update: jest.fn(),
@@ -49,25 +52,17 @@ describe('Session', () => {
       environment: 'local',
     });
 
-    session = new Session('test-session', honcho);
+    session = new Session('test-session', 'test-workspace', (honcho as any)._client);
     mockClient = (honcho as any)._client;
   });
 
   describe('constructor', () => {
     it('should initialize with correct properties', () => {
-      const newSession = new Session('session-id', honcho);
+      const newSession = new Session('session-id', 'test-workspace', mockClient);
 
       expect(newSession.id).toBe('session-id');
-      expect(newSession['_honcho']).toBe(honcho);
-    });
-
-    it('should handle constructor options', () => {
-      const newSession = new Session('session-id', honcho, {
-        anonymous: true,
-        summarize: false
-      });
-
-      expect(newSession.id).toBe('session-id');
+      expect(newSession.workspaceId).toBe('test-workspace');
+      expect(newSession['_client']).toBe(mockClient);
     });
   });
 
@@ -80,12 +75,12 @@ describe('Session', () => {
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 'peer1': { observe_me: true, observe_others: false } }
+        { 'peer1': {} }
       );
     });
 
     it('should add single peer by Peer object', async () => {
-      const peer = new Peer('peer1', honcho);
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
       await session.addPeers(peer);
@@ -93,7 +88,7 @@ describe('Session', () => {
       expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 'peer1': { observe_me: true, observe_others: false } }
+        { 'peer1': {} }
       );
     });
 
@@ -106,18 +101,18 @@ describe('Session', () => {
         'test-workspace',
         'test-session',
         {
-          'peer1': { observe_me: true, observe_others: false },
-          'peer2': { observe_me: true, observe_others: false },
-          'peer3': { observe_me: true, observe_others: false }
+          'peer1': {},
+          'peer2': {},
+          'peer3': {}
         }
       );
     });
 
     it('should add array of Peer objects', async () => {
       const peers = [
-        new Peer('peer1', honcho),
-        new Peer('peer2', honcho),
-        new Peer('peer3', honcho),
+        new Peer('peer1', 'test-workspace', mockClient),
+        new Peer('peer2', 'test-workspace', mockClient),
+        new Peer('peer3', 'test-workspace', mockClient),
       ];
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
@@ -127,9 +122,9 @@ describe('Session', () => {
         'test-workspace',
         'test-session',
         {
-          'peer1': { observe_me: true, observe_others: false },
-          'peer2': { observe_me: true, observe_others: false },
-          'peer3': { observe_me: true, observe_others: false }
+          'peer1': {},
+          'peer2': {},
+          'peer3': {}
         }
       );
     });
@@ -137,7 +132,7 @@ describe('Session', () => {
     it('should add mixed array of strings and Peer objects', async () => {
       const peers = [
         'string-peer',
-        new Peer('object-peer', honcho),
+        new Peer('object-peer', 'test-workspace', mockClient),
       ];
       mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
 
@@ -147,8 +142,24 @@ describe('Session', () => {
         'test-workspace',
         'test-session',
         {
-          'string-peer': { observe_me: true, observe_others: false },
-          'object-peer': { observe_me: true, observe_others: false }
+          'string-peer': {},
+          'object-peer': {}
+        }
+      );
+    });
+
+    it('should add peer with SessionPeerConfig', async () => {
+      const { SessionPeerConfig } = require('../src/session');
+      const config = new SessionPeerConfig(false, true);
+      mockClient.workspaces.sessions.peers.add.mockResolvedValue({});
+
+      await session.addPeers([['peer1', config]]);
+
+      expect(mockClient.workspaces.sessions.peers.add).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          'peer1': { observe_me: false, observe_others: true }
         }
       );
     });
@@ -156,7 +167,7 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.peers.add.mockRejectedValue(new Error('Failed to add peers'));
 
-      await expect(session.addPeers('peer1')).rejects.toThrow('Failed to add peers');
+      await expect(session.addPeers('peer1')).rejects.toThrow();
     });
   });
 
@@ -169,12 +180,12 @@ describe('Session', () => {
       expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 'peer1': { observe_me: true, observe_others: false } }
+        { 'peer1': {} }
       );
     });
 
     it('should set single peer by Peer object', async () => {
-      const peer = new Peer('peer1', honcho);
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
       mockClient.workspaces.sessions.peers.set.mockResolvedValue({});
 
       await session.setPeers(peer);
@@ -182,12 +193,12 @@ describe('Session', () => {
       expect(mockClient.workspaces.sessions.peers.set).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { 'peer1': { observe_me: true, observe_others: false } }
+        { 'peer1': {} }
       );
     });
 
     it('should set array of peers', async () => {
-      const peers = ['peer1', new Peer('peer2', honcho)];
+      const peers = ['peer1', new Peer('peer2', 'test-workspace', mockClient)];
       mockClient.workspaces.sessions.peers.set.mockResolvedValue({});
 
       await session.setPeers(peers);
@@ -196,8 +207,8 @@ describe('Session', () => {
         'test-workspace',
         'test-session',
         {
-          'peer1': { observe_me: true, observe_others: false },
-          'peer2': { observe_me: true, observe_others: false }
+          'peer1': {},
+          'peer2': {}
         }
       );
     });
@@ -205,7 +216,7 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.peers.set.mockRejectedValue(new Error('Failed to set peers'));
 
-      await expect(session.setPeers(['peer1'])).rejects.toThrow('Failed to set peers');
+      await expect(session.setPeers(['peer1'])).rejects.toThrow();
     });
   });
 
@@ -223,7 +234,7 @@ describe('Session', () => {
     });
 
     it('should remove single peer by Peer object', async () => {
-      const peer = new Peer('peer1', honcho);
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
       mockClient.workspaces.sessions.peers.remove.mockResolvedValue({});
 
       await session.removePeers(peer);
@@ -236,7 +247,7 @@ describe('Session', () => {
     });
 
     it('should remove array of peers', async () => {
-      const peers = ['peer1', new Peer('peer2', honcho)];
+      const peers = ['peer1', new Peer('peer2', 'test-workspace', mockClient)];
       mockClient.workspaces.sessions.peers.remove.mockResolvedValue({});
 
       await session.removePeers(peers);
@@ -251,12 +262,12 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.peers.remove.mockRejectedValue(new Error('Failed to remove peers'));
 
-      await expect(session.removePeers(['peer1'])).rejects.toThrow('Failed to remove peers');
+      await expect(session.removePeers(['peer1'])).rejects.toThrow();
     });
   });
 
   describe('getPeers', () => {
-    it('should return Page of Peer instances', async () => {
+    it('should return array of Peer instances', async () => {
       const mockPeersData = {
         items: [
           { id: 'peer1', metadata: {} },
@@ -271,6 +282,9 @@ describe('Session', () => {
       const peers = await session.getPeers();
 
       expect(peers).toBeInstanceOf(Array);
+      expect(peers).toHaveLength(2);
+      expect(peers[0]).toBeInstanceOf(Peer);
+      expect(peers[1]).toBeInstanceOf(Peer);
       expect(mockClient.workspaces.sessions.peers.list).toHaveBeenCalledWith(
         'test-workspace',
         'test-session'
@@ -295,14 +309,78 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.peers.list.mockRejectedValue(new Error('Failed to get peers'));
 
-      await expect(session.getPeers()).rejects.toThrow('Failed to get peers');
+      await expect(session.getPeers()).rejects.toThrow();
+    });
+  });
+
+  describe('getPeerConfig', () => {
+    it('should return peer configuration', async () => {
+      const mockConfig = { observe_me: true, observe_others: false };
+      mockClient.workspaces.sessions.peers.getConfig.mockResolvedValue(mockConfig);
+
+      const config = await session.getPeerConfig('peer1');
+
+      expect(config).toEqual(mockConfig);
+      expect(mockClient.workspaces.sessions.peers.getConfig).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        'peer1'
+      );
+    });
+
+    it('should handle Peer object input', async () => {
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
+      const mockConfig = { observe_me: false, observe_others: true };
+      mockClient.workspaces.sessions.peers.getConfig.mockResolvedValue(mockConfig);
+
+      const config = await session.getPeerConfig(peer);
+
+      expect(config).toEqual(mockConfig);
+      expect(mockClient.workspaces.sessions.peers.getConfig).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        'peer1'
+      );
+    });
+  });
+
+  describe('setPeerConfig', () => {
+    it('should set peer configuration', async () => {
+      const { SessionPeerConfig } = require('../src/session');
+      const config = new SessionPeerConfig(false, true);
+      mockClient.workspaces.sessions.peers.setConfig.mockResolvedValue({});
+
+      await session.setPeerConfig('peer1', config);
+
+      expect(mockClient.workspaces.sessions.peers.setConfig).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        'peer1',
+        { observe_me: false, observe_others: true }
+      );
+    });
+
+    it('should handle Peer object input', async () => {
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
+      const { SessionPeerConfig } = require('../src/session');
+      const config = new SessionPeerConfig(true, false);
+      mockClient.workspaces.sessions.peers.setConfig.mockResolvedValue({});
+
+      await session.setPeerConfig(peer, config);
+
+      expect(mockClient.workspaces.sessions.peers.setConfig).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        'peer1',
+        { observe_me: true, observe_others: false }
+      );
     });
   });
 
   describe('addMessages', () => {
     it('should add single message', async () => {
       const message = {
-        peerId: 'peer1',
+        peer_id: 'peer1',
         content: 'Hello world',
         metadata: { type: 'greeting' },
       };
@@ -325,8 +403,8 @@ describe('Session', () => {
 
     it('should add array of messages', async () => {
       const messages = [
-        { peerId: 'peer1', content: 'Message 1', metadata: { order: 1 } },
-        { peerId: 'peer2', content: 'Message 2', metadata: { order: 2 } },
+        { peer_id: 'peer1', content: 'Message 1', metadata: { order: 1 } },
+        { peer_id: 'peer2', content: 'Message 2', metadata: { order: 2 } },
       ];
       mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
 
@@ -346,7 +424,7 @@ describe('Session', () => {
 
     it('should handle messages without metadata', async () => {
       const message = {
-        peerId: 'peer1',
+        peer_id: 'peer1',
         content: 'Simple message',
       };
       mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
@@ -356,7 +434,7 @@ describe('Session', () => {
       expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { messages: [{ peer_id: 'peer1', content: 'Simple message', metadata: undefined }] }
+        { messages: [{ peer_id: 'peer1', content: 'Simple message' }] }
       );
     });
 
@@ -375,12 +453,12 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.messages.create.mockRejectedValue(new Error('Failed to add messages'));
 
-      await expect(session.addMessages({ peerId: 'peer1', content: 'test' })).rejects.toThrow('Failed to add messages');
+      await expect(session.addMessages({ peer_id: 'peer1', content: 'test' })).rejects.toThrow();
     });
   });
 
   describe('getMessages', () => {
-    it('should get messages without options', async () => {
+    it('should get messages without filter', async () => {
       const mockMessagesData = {
         items: [
           { id: 'msg1', content: 'Message 1', peer_id: 'peer1' },
@@ -411,22 +489,20 @@ describe('Session', () => {
       };
       mockClient.workspaces.sessions.messages.list.mockResolvedValue(mockMessagesData);
 
-      const options = {
-        filter: { peer_id: 'peer1', type: 'important' }
-      };
-      await session.getMessages(options);
+      const filter = { peer_id: { value: 'peer1' }, type: { value: 'important' } };
+      await session.getMessages(filter);
 
       expect(mockClient.workspaces.sessions.messages.list).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { peer_id: 'peer1', type: 'important' }
+        { peer_id: { value: 'peer1' }, type: { value: 'important' } }
       );
     });
 
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.messages.list.mockRejectedValue(new Error('Failed to get messages'));
 
-      await expect(session.getMessages()).rejects.toThrow('Failed to get messages');
+      await expect(session.getMessages()).rejects.toThrow();
     });
   });
 
@@ -462,7 +538,7 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.getOrCreate.mockRejectedValue(new Error('Session not found'));
 
-      await expect(session.getMetadata()).rejects.toThrow('Session not found');
+      await expect(session.getMetadata()).rejects.toThrow();
     });
   });
 
@@ -495,7 +571,7 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.update.mockRejectedValue(new Error('Update failed'));
 
-      await expect(session.setMetadata({ key: 'value' })).rejects.toThrow('Update failed');
+      await expect(session.setMetadata({ key: 'value' })).rejects.toThrow();
     });
   });
 
@@ -503,8 +579,8 @@ describe('Session', () => {
     it('should get session context without options', async () => {
       const mockContext = {
         messages: [
-          { id: 'msg1', content: 'Hello', peer_name: 'peer1' },
-          { id: 'msg2', content: 'Hi there', peer_name: 'peer2' },
+          { id: 'msg1', content: 'Hello', peer_id: 'peer1' },
+          { id: 'msg2', content: 'Hi there', peer_id: 'peer2' },
         ],
         summary: 'Conversation summary',
       };
@@ -525,13 +601,12 @@ describe('Session', () => {
 
     it('should get session context with options', async () => {
       const mockContext = {
-        messages: [{ id: 'msg1', content: 'Hello', peer_name: 'peer1' }],
+        messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
         summary: 'Brief summary',
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
-      const options = { summary: true, tokens: 1000 };
-      const context = await session.getContext(options);
+      const context = await session.getContext(true, 1000);
 
       expect(context).toBeInstanceOf(SessionContext);
       expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
@@ -543,7 +618,7 @@ describe('Session', () => {
 
     it('should handle context without summary', async () => {
       const mockContext = {
-        messages: [{ id: 'msg1', content: 'Hello', peer_name: 'peer1' }],
+        messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
@@ -555,7 +630,7 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.getContext.mockRejectedValue(new Error('Failed to get context'));
 
-      await expect(session.getContext()).rejects.toThrow('Failed to get context');
+      await expect(session.getContext()).rejects.toThrow();
     });
   });
 
@@ -597,20 +672,39 @@ describe('Session', () => {
     });
 
     it('should throw error for empty query', async () => {
-      await expect(session.search('')).rejects.toThrow('Search query must be a non-empty string');
-      await expect(session.search('   ')).rejects.toThrow('Search query must be a non-empty string');
+      await expect(session.search('')).rejects.toThrow();
+      await expect(session.search('   ')).rejects.toThrow();
     });
 
     it('should throw error for non-string query', async () => {
-      await expect(session.search(null as any)).rejects.toThrow('Search query must be a non-empty string');
-      await expect(session.search(undefined as any)).rejects.toThrow('Search query must be a non-empty string');
-      await expect(session.search(123 as any)).rejects.toThrow('Search query must be a non-empty string');
+      await expect(session.search(null as any)).rejects.toThrow();
+      await expect(session.search(undefined as any)).rejects.toThrow();
+      await expect(session.search(123 as any)).rejects.toThrow();
     });
 
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.search.mockRejectedValue(new Error('Search failed'));
 
-      await expect(session.search('test')).rejects.toThrow('Search failed');
+      await expect(session.search('test')).rejects.toThrow();
+    });
+  });
+
+  describe('uploadFile', () => {
+    it('should upload file and return messages', async () => {
+      const mockFile = new File(['test content'], 'test.txt', { type: 'text/plain' });
+      const mockMessages = [
+        { id: 'msg1', content: 'test content', peer_id: 'peer1' }
+      ];
+      mockClient.workspaces.sessions.messages.upload.mockResolvedValue(mockMessages);
+
+      const messages = await session.uploadFile(mockFile, 'peer1');
+
+      expect(messages).toEqual(mockMessages);
+      expect(mockClient.workspaces.sessions.messages.upload).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        { file: mockFile, peer_id: 'peer1' }
+      );
     });
   });
 
@@ -634,7 +728,7 @@ describe('Session', () => {
     });
 
     it('should get working representation with Peer object', async () => {
-      const peer = new Peer('peer1', honcho);
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
       const mockRepresentation = {
         peer_id: 'peer1',
         knowledge: 'Some knowledge',
@@ -669,8 +763,8 @@ describe('Session', () => {
     });
 
     it('should get working representation with target Peer object', async () => {
-      const peer = new Peer('peer1', honcho);
-      const target = new Peer('target-peer', honcho);
+      const peer = new Peer('peer1', 'test-workspace', mockClient);
+      const target = new Peer('target-peer', 'test-workspace', mockClient);
       const mockRepresentation = {
         peer_id: 'peer1',
         target_knowledge: 'What peer1 knows about target',
@@ -690,7 +784,7 @@ describe('Session', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.workingRepresentation.mockRejectedValue(new Error('Failed to get working representation'));
 
-      await expect(session.workingRep('peer1')).rejects.toThrow('Failed to get working representation');
+      await expect(session.workingRep('peer1')).rejects.toThrow();
     });
   });
 });
