@@ -165,9 +165,6 @@ class Peer(BaseModel):
         This is a convenience method for creating MessageCreateParam objects with this peer's ID.
         The created MessageCreateParam can then be added to sessions or used in other operations.
 
-        Provided metadata and configuration will overwrite any existing data in those
-        locations if given.
-
         Args:
             content: The text content for the message
             metadata: Optional metadata dictionary to associate with the message
