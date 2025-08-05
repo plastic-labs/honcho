@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models  # Import your SQLAlchemy models
+from src import models
 from src.models import Peer, Workspace
 
 

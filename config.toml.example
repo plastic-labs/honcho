@@ -8,6 +8,14 @@
 LOG_LEVEL = "INFO"
 FASTAPI_HOST = "0.0.0.0"
 FASTAPI_PORT = 8000
+SESSION_PEERS_LIMIT = 10
+GET_CONTEXT_MAX_TOKENS = 100000
+EMBED_MESSAGES = true
+MAX_EMBEDDING_TOKENS = 8192
+MAX_EMBEDDING_TOKENS_PER_REQUEST = 300000
+# LANGFUSE_HOST = "https://api.langfuse.com"
+# LANGFUSE_PUBLIC_KEY = "your-public-key-here"
+
 
 # Database settings
 [db]
@@ -32,51 +40,53 @@ JWT_SECRET = "your-secret-key-here"  # Must be set if USE_AUTH is true
 [sentry]
 ENABLED = false
 DSN = ""
+RELEASE = ""
+ENVIRONMENT = "development"
 TRACES_SAMPLE_RATE = 0.1
 PROFILES_SAMPLE_RATE = 0.1
 
 # LLM settings
 [llm]
-DEFAULT_MAX_TOKENS = 1000
-DEFAULT_TEMPERATURE = 0.0
+DEFAULT_MAX_TOKENS = 2500
 
-# Dialectic specific
-DIALECTIC_PROVIDER = "anthropic"
-DIALECTIC_MODEL = "claude-3-7-sonnet-20250219"
-
-# Query Generation specific
-QUERY_GENERATION_PROVIDER = "groq"
-QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
-
-# Summarization specific
-SUMMARY_PROVIDER = "google"
-SUMMARY_MODEL = "gemini-2.0-flash-lite"
-SUMMARY_MAX_TOKENS_SHORT = 1000
-SUMMARY_MAX_TOKENS_LONG = 2000
-
-# API Keys for LLM providers 
+# API Keys for LLM providers
 # ANTHROPIC_API_KEY = "your-api-key"
 # OPENAI_API_KEY = "your-api-key"
 # OPENAI_COMPATIBLE_API_KEY = "your-api-key"
 # GEMINI_API_KEY = "your-api-key"
 # GROQ_API_KEY = "your-api-key"
-# OPENAI_COMPATIBLE_BASE_URL = "your-api-key"
-
-# Agent settings
-[agent]
-SEMANTIC_SEARCH_TOP_K = 10
-SEMANTIC_SEARCH_MAX_DISTANCE = 0.85
-TOM_INFERENCE_METHOD = "single_prompt"
+# OPENAI_COMPATIBLE_BASE_URL = "your-base-url"
 
 # Deriver settings
 [deriver]
 WORKERS = 1
-STALE_SESSION_TIMEOUT_MINUTES = 5
 POLLING_SLEEP_INTERVAL_SECONDS = 1.0
-TOM_METHOD = "single_prompt"
-USER_REPRESENTATION_METHOD = "long_term"
+STALE_SESSION_TIMEOUT_MINUTES = 5
+PROVIDER = "google"
+MODEL = "gemini-2.0-flash-lite"
+MAX_OUTPUT_TOKENS = 2500
+THINKING_BUDGET_TOKENS = 1024 # only applied when using Anthropic
+DEDUCTIVE_OBSERVATIONS_COUNT = 6
+EXPLICIT_OBSERVATIONS_COUNT = 10
 
-# History settings
-[history]
+# Dialectic settings
+[dialectic]
+PROVIDER = "anthropic"
+MODEL = "claude-sonnet-4-20250514"
+PERFORM_QUERY_GENERATION = false
+QUERY_GENERATION_PROVIDER = "groq"
+QUERY_GENERATION_MODEL = "llama-3.1-8b-instant"
+MAX_OUTPUT_TOKENS = 2500
+SEMANTIC_SEARCH_TOP_K = 10
+SEMANTIC_SEARCH_MAX_DISTANCE = 0.85
+THINKING_BUDGET_TOKENS = 1024
+
+# Summary settings
+[summary]
 MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
+PROVIDER = "google"
+MODEL = "gemini-1.5-flash-latest"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 2000
+THINKING_BUDGET_TOKENS = 512

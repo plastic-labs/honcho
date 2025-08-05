@@ -16,4 +16,4 @@ afterAll(() => {
 });
 
 // Mock environment variables for tests
-process.env.NODE_ENV = 'test'; 
+process.env.NODE_ENV = 'test';

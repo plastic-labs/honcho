@@ -1,46 +1,76 @@
 ---
-title: "Overview"
-description: "Honcho solves context for AI agents by going beyond memory."
+title: "Honcho"
+description: "Go beyond memory to agents with actual social intelligence"
 icon: "brain"
+sidebarTitle: "Overview"
 ---
 
-Most agents today are stateless - they forget everything between conversations or hit token limits mid-conversation. But even agents with perfect memory still treat every user the same, missing individual psychology and preferences.
+When building agents developers often run into the same walls:
 
-Honcho gives agents [social cognition](../core-concepts/glossary#cognitive-science-terms) - the ability to understand users as individuals, not just conversation histories.
+> "My agent forgets everything between chats"
 
-**Context that scales:** Auto-summarized conversations and context-window management so agents never lose track, regardless of conversation length.
+You need memory: session management, message storage, context handling. It's table stakes, but surprisingly complex to get right.
 
-**User understanding:** Rich psychological profiles built through [theory of mind](../core-concepts/glossary#cognitive-science-terms) "How should I deliver feedback to this user?" or "What's their communication style?"
+> "My agent treats everyone exactly the same"
 
-**Adaptive interactions:** Instead of generic responses, agents dynamically adjust based on individual user models, creating truly personalized experiences.
+You need personalization: user modeling, preference learning, behavioral adaptation. Now you're building a [social cognition](../core-concepts/glossary#cognitive-science-terms) engine
 
-Your agents move from remembering what users said to understanding how they think. The result: AI that feels less like a chatbot, more like someone who actually gets you.
+> "I'm writing infrastructure instead of features"
 
-This is the [dialectic endpoint](glossary#dialectic-endpoint) in action - agents that don't just have context, but have insight.
+You need Honcho
+
+<img src="/images/agent_hierarchy.png" alt="Honcho's Hiearchy of Agents" />
+
+Honcho delivers production-ready memory infrastructure from day one. Store
+conversations, manage sessions, get perfectly formatted context for any LLM.
+But here's the magic: while your agents are chatting, Honcho is learning. It
+builds Theory of Mind models automatically, transforming raw conversations into
+rich psychological understanding.
+
+```python
+# Start simple - just add messages
+session.add_messages([alice.message("I learn best with examples")])
+
+# Get powerful - query user psychology
+insight = peer.chat("How should I explain this concept?")
+# > "This user learns best through concrete examples..."
+```
+
+Your agents evolve from goldfish to counselor, on the same infrastructure. That's Honcho.
+
+Designed for developers and agents alike:
+- **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/glossary#storage-%26-processing) and let agents backchannel
+- **Automatic Context Management**: Smart summarization that respects token limits
+- **Native multi-agent support**: Break out of User/Assistant Paradigms and build complex multi-agent systems
+- **Agent-first interfaces**: MCP connections and APIs designed for agents to consume and use as tools
+- **Provider Agnostic**: Works with any LLM or Agent Framework
 
 ## How It Works
 
 Honcho operates through two integrated layers:
 
-**Storage Layer**: Captures all user interactions - messages, preferences, and behavioral patterns - in a user-centric data model that scales from individual conversations to complex multi-agent scenarios.
+<img src="/images/basic_honcho_flowchart.png" alt="Basic Honcho Flowchart" />
 
-**Insights Layer**: Continuously analyzes stored interactions to build psychological profiles using [theory of mind](glossary#theory-of-mind) inference, extracting patterns about communication style, decision-making preferences, and mental models.
+**Memory Layer**: Captures all user interactions - messages, preferences, and
+behavioral patterns - in a user-centric data model that scales from individual
+conversations to complex multi-agent scenarios. This also queues up messages for the insights layer to process.
 
-Agents access this understanding through the [dialectic endpoint](glossary#dialectic-endpoint) - a natural language API where they can ask specific questions about users and receive actionable insights.
+**Insights Layer**: Continuously analyzes stored interactions to build
+psychological profiles using [theory of mind](glossary#theory-of-mind)
+inference, extracting patterns about communication style, decision-making
+preferences, and mental models.
 
-## Key Capabilities
+Agents access this understanding through the [dialectic
+endpoint](../core-concepts/architecture#dialectic-api) - a natural language API
+where they can ask specific questions about users and receive actionable
+insights.
 
-### 🗣️ Natural Language User Queries
-Ask Honcho about users in plain English: "How should I approach this topic?" or "What's their preferred communication style?"
-
-### 🔄 Automatic Context Optimization
-Smart conversation summarization that respects context windows while preserving psychological continuity.
-
-### 🏗️ Agent-First Design
-Built for AI consumption through MCP connectors and interfaces designed for autonomous agent workflows.
-
-### 🧠 Theory of Mind Inference
-Goes beyond pattern matching to understand user psychology, motivations, and mental models.
+Example Queries
+- "What's the best way to explain technical concepts to this user?"
+- "Is this user more task-oriented or relationship-oriented?"
+- "What time of day is this user most engaged?"
+- "How does this user prefer to receive feedback?"
+- "What are this user's core values based on our conversations?"
 
 ## Ideal For
 
@@ -50,18 +80,17 @@ Goes beyond pattern matching to understand user psychology, motivations, and men
 
 **Multi-agent systems** where AI needs to understand human collaborators' working styles and decision-making patterns.
 
+**NPCs** where you want autonomous agents with a rich and deep personality that isn't the average sycophantic llm
+
 ## Getting Started
 
 Ready to integrate Honcho into your application?
 
-<CardGroup cols={2}>
-  <Card title="Quick Start Guide" icon="rocket" href="/v2/documentation/introduction/quickstart">
-    Get up and running with Honcho in minutes
-  </Card>
-  <Card title="Core Concepts" icon="brain" href="/v2/documentation/core-concepts/glossary">
-    Understand Honcho's fundamental concepts
-  </Card>
-</CardGroup>
+<CardGroup cols={2}> <Card title="Quick Start Guide" icon="rocket"
+href="/v2/documentation/introduction/quickstart"> Get up and running with
+Honcho in minutes </Card> <Card title="Core Concepts" icon="brain"
+href="/v2/documentation/core-concepts/glossary"> Understand Honcho's
+fundamental concepts </Card> </CardGroup>
 
 ## Community & Support
 

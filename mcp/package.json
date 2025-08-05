@@ -1,0 +1,25 @@
+{
+  "name": "honcho-mcp-proxy",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker proxy for Honcho MCP Server",
+  "main": "worker.ts",
+  "packageManager": "bun@1.2.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "preinstall": "node -e \"if(process.env.npm_config_user_agent?.includes('npm')){console.error('❌ Please use bun instead of npm!\\n📦 Run: bun install\\n🌐 Install bun: https://bun.sh/');process.exit(1)}\"",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging"
+  },
+  "dependencies": {
+    "@honcho-ai/sdk": "^1.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241002.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^4.24.3"
+  }
+}

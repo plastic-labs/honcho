@@ -2,7 +2,7 @@ import { Honcho } from '../src';
 
 /**
  * Example demonstrating how to get peer representations.
- * 
+ *
  * This creates a session with random messages and retrieves both
  * global and local representations for a peer.
  */
@@ -56,4 +56,4 @@ async function main() {
 
 main().catch((err) => {
   console.error('Error running get_representation example:', err);
-}); 
+});

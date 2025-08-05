@@ -13,7 +13,7 @@ jest.mock('@honcho-ai/core', () => {
       sessions: {
         list: jest.fn(),
       },
-      getOrCreate: jest.fn(),
+      getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
       update: jest.fn(),
       list: jest.fn(),
       search: jest.fn(),
@@ -28,13 +28,13 @@ describe('Honcho Client', () => {
   beforeEach(() => {
     // Clear all mocks before each test
     jest.clearAllMocks();
-    
+
     honcho = new Honcho({
       workspaceId: 'test-workspace',
       apiKey: 'test-key',
       environment: 'local',
     });
-    
+
     mockClient = (honcho as any)._client;
   });
 
@@ -48,7 +48,7 @@ describe('Honcho Client', () => {
         timeout: 5000,
         maxRetries: 3,
       });
-      
+
       expect(client.workspaceId).toBe('custom-workspace');
     });
 
@@ -56,11 +56,11 @@ describe('Honcho Client', () => {
       process.env.HONCHO_WORKSPACE_ID = 'env-workspace';
       process.env.HONCHO_API_KEY = 'env-key';
       process.env.HONCHO_URL = 'https://env-url.com';
-      
+
       const client = new Honcho({});
-      
+
       expect(client.workspaceId).toBe('env-workspace');
-      
+
       // Clean up environment variables
       delete process.env.HONCHO_WORKSPACE_ID;
       delete process.env.HONCHO_API_KEY;
@@ -83,7 +83,7 @@ describe('Honcho Client', () => {
         defaultHeaders: { 'X-Custom': 'header' },
         defaultQuery: { param: 'value' },
       });
-      
+
       expect(client.workspaceId).toBe('test');
     });
   });
@@ -91,7 +91,7 @@ describe('Honcho Client', () => {
   describe('peer', () => {
     it('should create a new Peer instance', () => {
       const peer = honcho.peer('test-peer');
-      
+
       expect(peer).toBeInstanceOf(Peer);
       expect(peer.id).toBe('test-peer');
     });
@@ -121,9 +121,9 @@ describe('Honcho Client', () => {
       mockClient.workspaces.peers.list.mockResolvedValue(mockPeersData);
 
       const peersPage = await honcho.getPeers();
-      
+
       expect(peersPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace');
+      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filter: undefined });
     });
 
     it('should handle empty peers list', async () => {
@@ -136,9 +136,9 @@ describe('Honcho Client', () => {
       mockClient.workspaces.peers.list.mockResolvedValue(mockPeersData);
 
       const peersPage = await honcho.getPeers();
-      
+
       expect(peersPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace');
+      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filter: undefined });
     });
 
     it('should handle API errors', async () => {
@@ -151,7 +151,7 @@ describe('Honcho Client', () => {
   describe('session', () => {
     it('should create a new Session instance', () => {
       const session = honcho.session('test-session');
-      
+
       expect(session).toBeInstanceOf(Session);
       expect(session.id).toBe('test-session');
     });
@@ -181,9 +181,9 @@ describe('Honcho Client', () => {
       mockClient.workspaces.sessions.list.mockResolvedValue(mockSessionsData);
 
       const sessionsPage = await honcho.getSessions();
-      
+
       expect(sessionsPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.sessions.list).toHaveBeenCalledWith('test-workspace');
+      expect(mockClient.workspaces.sessions.list).toHaveBeenCalledWith('test-workspace', { filter: undefined });
     });
 
     it('should handle empty sessions list', async () => {
@@ -196,7 +196,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.sessions.list.mockResolvedValue(mockSessionsData);
 
       const sessionsPage = await honcho.getSessions();
-      
+
       expect(sessionsPage).toBeInstanceOf(Page);
     });
 
@@ -216,7 +216,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.getOrCreate.mockResolvedValue(mockWorkspace);
 
       const metadata = await honcho.getMetadata();
-      
+
       expect(metadata).toEqual({ key: 'value', setting: 'config' });
       expect(mockClient.workspaces.getOrCreate).toHaveBeenCalledWith({ id: 'test-workspace' });
     });
@@ -229,7 +229,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.getOrCreate.mockResolvedValue(mockWorkspace);
 
       const metadata = await honcho.getMetadata();
-      
+
       expect(metadata).toEqual({});
     });
 
@@ -246,7 +246,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.update.mockResolvedValue({});
 
       await honcho.setMetadata(metadata);
-      
+
       expect(mockClient.workspaces.update).toHaveBeenCalledWith('test-workspace', { metadata });
     });
 
@@ -254,7 +254,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.update.mockResolvedValue({});
 
       await honcho.setMetadata({});
-      
+
       expect(mockClient.workspaces.update).toHaveBeenCalledWith('test-workspace', { metadata: {} });
     });
 
@@ -269,7 +269,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.update.mockResolvedValue({});
 
       await honcho.setMetadata(complexMetadata);
-      
+
       expect(mockClient.workspaces.update).toHaveBeenCalledWith('test-workspace', { metadata: complexMetadata });
     });
 
@@ -292,7 +292,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.list.mockResolvedValue(mockWorkspacesPage);
 
       const workspaces = await honcho.getWorkspaces();
-      
+
       expect(workspaces).toEqual(['workspace1', 'workspace2', 'workspace3']);
       expect(mockClient.workspaces.list).toHaveBeenCalled();
     });
@@ -306,7 +306,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.list.mockResolvedValue(mockWorkspacesPage);
 
       const workspaces = await honcho.getWorkspaces();
-      
+
       expect(workspaces).toEqual([]);
     });
 
@@ -331,9 +331,9 @@ describe('Honcho Client', () => {
       mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
 
       const results = await honcho.search('hello');
-      
+
       expect(results).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', 'hello');
+      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { body: 'hello' });
     });
 
     it('should handle empty search results', async () => {
@@ -346,7 +346,7 @@ describe('Honcho Client', () => {
       mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
 
       const results = await honcho.search('nonexistent');
-      
+
       expect(results).toBeInstanceOf(Page);
     });
 
@@ -372,8 +372,8 @@ describe('Honcho Client', () => {
 
       const complexQuery = 'complex query with "quotes" and special characters!@#$%';
       await honcho.search(complexQuery);
-      
-      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', complexQuery);
+
+      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { body: complexQuery });
     });
 
     it('should handle API errors', async () => {
@@ -382,4 +382,4 @@ describe('Honcho Client', () => {
       await expect(honcho.search('test')).rejects.toThrow('Search failed');
     });
   });
-}); 
+});

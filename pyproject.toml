@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.0.2"
+version = "2.1.2"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -26,10 +26,13 @@ dependencies = [
     "openai>=1.91.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
+    "google-generativeai>=0.8.5",
+    "pdfplumber>=0.11.7",
 ]
 [tool.uv]
 dev-dependencies = [
-    "honcho-core>=1.1.0",
+    "honcho-core>=1.2.0",
+    "honcho-ai>=1.2.1",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
@@ -38,6 +41,8 @@ dev-dependencies = [
     "py-spy>=0.3.14",
     "ruff>=0.11.2",
     "basedpyright>=1.29.4",
+    "pre-commit>=4.2.0",
+    "pytest-cov>=6.2.1",
 ]
 
 [tool.ruff.lint]
@@ -56,7 +61,7 @@ select = [
     # isort
     "I",
 ]
-ignore = ["E501", "B008"]
+ignore = ["E501", "B008", "COM812"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends"]
@@ -64,23 +69,17 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+addopts = "--strict-markers --cov=src/ --cov-report=term-missing"
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 
 [tool.basedpyright]
 # BasedPyright currently seems like the best type checker option, much faster
-# than mypy and with a good extension for VSCode/Cursor.
-# https://marketplace.visualstudio.com/items?itemName=detachhead.basedpyright
 # https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
 include = ["src", "tests", "sdks/python/src"]
 exclude = ["tests/**/disabled*.py"]
-# By default BasedPyright is very strict, so you almost certainly want to disable
-# some of the rules.
-# First, these turn off warnings about (yes) how you ignore warnings:
 reportIgnoreCommentWithoutRule = false
-# reportUnnecessaryTypeIgnoreComment = false
-# A few typically noisy warnings are next.
-# How many you enable is up to you. The first few are off by default, but you can
-# comment/uncomment these as desired:
 reportMissingTypeStubs = false
 reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
@@ -88,14 +87,4 @@ reportAny = false
 reportExplicitAny = false
 allowedUntypedLibraries = ["langfuse", "langfuse.decorators", "mirascope"]
 reportImplicitOverride = false
-# reportImplicitStringConcatenation = false
-# reportUnreachable = false
-# reportPrivateImportUsage = false
-# reportPrivateLocalImportUsage = false
-# reportMissingImports = false
-# reportUnnecessaryIsInstance = false
-# reportUnknownVariableType = false
-# reportUnknownArgumentType = false
-# reportUnknownParameterType = false
-# reportUnknownMemberType = false
 reportImportCycles = false

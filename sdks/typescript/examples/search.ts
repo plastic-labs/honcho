@@ -2,7 +2,7 @@ import { Honcho } from '../src';
 
 /**
  * Example demonstrating search functionality across different scopes.
- * 
+ *
  * This creates sessions with special keywords and demonstrates
  * searching at session, workspace, and peer levels.
  */
@@ -20,6 +20,8 @@ async function main() {
     honcho.peer('charlie'),
   ];
 
+  const alice = peers[0];
+
   // Create a new session
   const sessionId = `search_test_${crypto.randomUUID()}`;
   const session = honcho.session(sessionId);
@@ -28,7 +30,7 @@ async function main() {
   // Create a message with our special keyword
   const keyword = `~special-${crypto.randomUUID()}~`;
   console.log(`Using keyword: ${keyword}`);
-  await session.addMessages(peers[0].message(`I am a ${keyword} message`));
+  await session.addMessages(alice.message(`I am a ${keyword} message`));
 
   console.log('Generating random messages...');
   // Generate some random messages from alice, bob, and charlie and add them to the session
@@ -51,13 +53,6 @@ async function main() {
     console.log(`  - ${message.content} (from ${message.peer_id})`);
   }
 
-  const alice = peers[0];
-
-  // Add a different message to alice's global representation
-  const differentKeyword = `~different-${crypto.randomUUID()}~`;
-  console.log(`Using different keyword: ${differentKeyword}`);
-  await alice.addMessages(alice.message(`I am a ${differentKeyword} message`));
-
   console.log('Searching the workspace...');
   // Search the workspace for the special keyword
   const workspaceSearchResults = await honcho.search(keyword);
@@ -66,9 +61,9 @@ async function main() {
     console.log(`  - ${message.content} (from ${message.peer_id})`);
   }
 
-  console.log('Searching alice\'s global representation...');
-  // Search alice's global representation for the different message
-  const aliceSearchResults = await alice.search(differentKeyword);
+  console.log('Searching alice\'s messages...');
+  // Search alice's messages for the special keyword
+  const aliceSearchResults = await alice.search(keyword);
   console.log(`Alice search returned ${aliceSearchResults.total} results:`);
   for await (const message of aliceSearchResults) {
     console.log(`  - ${message.content} (from ${message.peer_id})`);
@@ -79,4 +74,4 @@ async function main() {
 
 main().catch((err) => {
   console.error('Error running search example:', err);
-}); 
+});

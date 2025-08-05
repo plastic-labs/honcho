@@ -1,0 +1,113 @@
+# .pre-commit-config.yaml
+repos:
+  # Basic file checks (run on all files)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: debug-statements
+        files: \.(py|js|ts)$
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+      # Additional checks from suggestions
+      - id: check-docstring-first
+        files: \.py$
+      - id: check-executables-have-shebangs
+      - id: check-case-conflict
+
+  # Python code formatting and linting with ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      # Linter - only on Python directories
+      - id: ruff
+        args: [--fix]
+        files: ^(src/|tests/|scripts/|migrations/|sdks/python/).*\.py$
+      # Formatter - only on Python directories
+      - id: ruff-format
+        files: ^(src/|tests/|scripts/|migrations/|sdks/python/).*\.py$
+
+  # Security checks - only on main src code (not tests/scripts)
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ['-r']
+        files: ^(src/|sdks/python/src/).*\.py$
+
+  # Local hooks using your uv environment
+  - repo: local
+    hooks:
+      # TypeScript linting with biome
+      - id: biome-check
+        name: biome check and format
+        entry: bash -c 'cd sdks/typescript && bun run lint:fix'
+        language: system
+        files: ^sdks/typescript/.*\.(js|ts|jsx|tsx|json|jsonc)$
+        pass_filenames: false
+
+      # Type checking with basedpyright - only on main Python code
+      - id: basedpyright
+        name: basedpyright
+        entry: uv run basedpyright
+        language: system
+        files: ^(src/|tests/|sdks/python/|scripts/).*\.py$
+        require_serial: true
+        pass_filenames: false
+
+      # Run main application tests
+      - id: pytest-main
+        name: pytest (main app)
+        entry: uv run pytest tests/
+        language: system
+        files: ^(src/|tests/).*\.py$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # Run Python SDK tests (if they exist)
+      - id: pytest-python-sdk
+        name: pytest (Python SDK)
+        entry: bash -c 'if [ -d "sdks/python/tests" ]; then cd sdks/python && uv run pytest; fi'
+        language: system
+        files: ^sdks/python/.*\.py$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # TypeScript build/test with bun
+      - id: typescript-check
+        name: TypeScript build and test
+        entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run build && bun run test; fi'
+        language: system
+        files: ^sdks/typescript/.*\.(js|ts|jsx|tsx|json)$
+        stages: [pre-push]
+        pass_filenames: false
+
+      # TypeScript type checking with bun
+      - id: typescript-typecheck
+        name: TypeScript type check
+        entry: bash -c 'if [ -f "sdks/typescript/package.json" ]; then cd sdks/typescript && bun run typecheck; fi'
+        language: system
+        files: ^sdks/typescript/.*\.(ts|tsx)$
+        pass_filenames: false
+
+  # Documentation linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        args: ['--fix']
+        files: \.(md|mdx)$
+
+  # Commit message linting
+  - repo: https://github.com/commitizen-tools/commitizen
+    rev: v3.13.0
+    hooks:
+      - id: commitizen
+        stages: [commit-msg]

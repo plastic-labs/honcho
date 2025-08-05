@@ -8,7 +8,6 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
-    field_validator,
     model_validator,
 )
 
@@ -143,7 +142,7 @@ class Message(MessageBase):
     public_id: str = Field(serialization_alias="id")
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
-    session_name: str | None = Field(serialization_alias="session_id")
+    session_name: str = Field(serialization_alias="session_id")
     h_metadata: dict[str, Any] = Field(
         default_factory=dict, serialization_alias="metadata"
     )
@@ -160,6 +159,14 @@ class MessageBatchCreate(BaseModel):
     """Schema for batch message creation with a max of 100 messages"""
 
     messages: list[MessageCreate] = Field(..., min_length=1, max_length=100)
+
+
+class MessageUploadCreate(BaseModel):
+    """Schema for message creation from file uploads"""
+
+    peer_id: str = Field(..., description="ID of the peer creating the message")
+
+    model_config = ConfigDict(populate_by_name=True)  # pyright: ignore
 
 
 class SessionBase(BaseModel):
@@ -253,22 +260,10 @@ class DialecticOptions(BaseModel):
         None,
         description="Optional peer to get the representation for, from the perspective of this peer",
     )
-    queries: str | list[str]
+    query: Annotated[
+        str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
+    ]
     stream: bool = False
-
-    @field_validator("queries")
-    def validate_queries(cls, v: str | list[str]) -> str | list[str]:
-        MAX_STRING_LENGTH = 10000
-        MAX_LIST_LENGTH = 25
-        if isinstance(v, str):
-            if len(v) > MAX_STRING_LENGTH:
-                raise ValueError("Query too long")
-        else:
-            if len(v) > MAX_LIST_LENGTH:
-                raise ValueError("Too many queries")
-            if any(len(q) > MAX_STRING_LENGTH for q in v):
-                raise ValueError("One or more queries too long")
-        return v
 
 
 class DialecticResponse(BaseModel):
@@ -330,10 +325,6 @@ class MessageBulkData(BaseModel):
 
 
 class SessionDeriverStatus(BaseModel):
-    peer_id: str | None = Field(
-        default=None,
-        description="ID of the peer (optional when filtering by session only)",
-    )
     session_id: str | None = Field(
         default=None, description="Session ID if filtered by session"
     )
@@ -346,13 +337,6 @@ class SessionDeriverStatus(BaseModel):
 
 
 class DeriverStatus(BaseModel):
-    peer_id: str | None = Field(
-        default=None,
-        description="ID of the peer (optional when filtering by session only)",
-    )
-    session_id: str | None = Field(
-        default=None, description="Session ID if filtered by session"
-    )
     total_work_units: int = Field(description="Total work units")
     completed_work_units: int = Field(description="Completed work units")
     in_progress_work_units: int = Field(

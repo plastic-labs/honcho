@@ -138,6 +138,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env.backup*
 
 # Spyder project settings
 .spyderproject
@@ -179,3 +180,4 @@ docs/node_modules
 timing_logs.csv
 
 config.toml
+.aider*

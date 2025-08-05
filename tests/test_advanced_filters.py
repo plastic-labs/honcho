@@ -105,21 +105,21 @@ async def test_logical_operators_and_filters(
     found_names = [item["id"] for item in data["items"]]
     expected_names = [peer_names[i] for i in expected_peer_indices]
 
-    assert len(found_names) == len(expected_names), (
-        f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
-    )
+    assert len(found_names) == len(
+        expected_names
+    ), f"Expected {len(expected_names)} peers for {description}, got {len(found_names)}"
 
     for expected_name in expected_names:
-        assert expected_name in found_names, (
-            f"Expected peer {expected_name} in results for {description}"
-        )
+        assert (
+            expected_name in found_names
+        ), f"Expected peer {expected_name} in results for {description}"
 
     # Verify unexpected peers are not included
     for i, peer_name in enumerate(peer_names):
         if i not in expected_peer_indices:
-            assert peer_name not in found_names, (
-                f"Unexpected peer {peer_name} found in results for {description}"
-            )
+            assert (
+                peer_name not in found_names
+            ), f"Unexpected peer {peer_name} found in results for {description}"
 
 
 @pytest.mark.parametrize(
@@ -218,21 +218,21 @@ async def test_comparison_operators_filters(
     ]
     found_contents = [item["content"] for item in data["items"]]
 
-    assert len(found_contents) == len(expected_contents), (
-        f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
-    )
+    assert (
+        len(found_contents) == len(expected_contents)
+    ), f"Expected {len(expected_contents)} messages for {description}, got {len(found_contents)}"
 
     for expected_content in expected_contents:
-        assert expected_content in found_contents, (
-            f"Expected message '{expected_content}' in results for {description}"
-        )
+        assert (
+            expected_content in found_contents
+        ), f"Expected message '{expected_content}' in results for {description}"
 
     # Verify unexpected messages are not included
     for i, message_config in enumerate(message_configs):
         if i not in expected_message_indices:
-            assert message_config["content"] not in found_contents, (
-                f"Unexpected message '{message_config['content']}' found in results for {description}"
-            )
+            assert (
+                message_config["content"] not in found_contents
+            ), f"Unexpected message '{message_config['content']}' found in results for {description}"
 
 
 @pytest.mark.asyncio
@@ -2098,9 +2098,9 @@ async def test_float_precision_edge_cases(client: TestClient):
     )
     assert response.status_code == 200
 
-    # Create messages with problematic floating point values using peer endpoint
+    # Create messages with problematic floating point values using correct endpoint
     messages_response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages",
         json={
             "messages": [
                 {
@@ -2164,7 +2164,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test exact equality - this may or may not work due to floating point precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filter": {"metadata": {"value": 0.3}}},
     )
     assert response.status_code == 200
@@ -2177,7 +2177,7 @@ async def test_float_precision_edge_cases(client: TestClient):
     # Test near-equality using range queries (proper way to handle float precision)
     epsilon = 1e-10
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={
             "filter": {
                 "AND": [
@@ -2196,7 +2196,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test greater than with floating point precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filter": {"metadata": {"value": {"gt": 0.3}}}},
     )
     assert response.status_code == 200
@@ -2207,7 +2207,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test very small numbers and scientific notation
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filter": {"metadata": {"value": {"lt": 1e-9}}}},
     )
     assert response.status_code == 200
@@ -2217,7 +2217,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test large number precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filter": {"metadata": {"value": {"gte": 999999.0}}}},
     )
     assert response.status_code == 200
@@ -2227,7 +2227,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test repeating decimal precision
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filter": {"metadata": {"value": {"gte": 0.333}}}},
     )
     assert response.status_code == 200
@@ -2237,7 +2237,7 @@ async def test_float_precision_edge_cases(client: TestClient):
 
     # Test floating point comparison with string representation
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/ilovefloatingpoints/messages/list",
         json={"filter": {"metadata": {"calculation": "0.1 + 0.2"}}},
     )
     assert response.status_code == 200
@@ -2265,7 +2265,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Create messages with mixed data types for the same logical field
     messages_response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages",
         json={
             "messages": [
                 {
@@ -2335,7 +2335,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test string vs numeric equality
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"priority": 5}}},
     )
     assert response.status_code == 200
@@ -2347,7 +2347,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test string number comparison with numeric operator
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"priority": {"gte": 5}}}},
     )
     assert response.status_code == 200
@@ -2358,7 +2358,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test string boolean vs actual boolean
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"active": True}}},
     )
     assert response.status_code == 200
@@ -2369,7 +2369,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test explicit string matching
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"priority": "5"}}},
     )
     assert response.status_code == 200
@@ -2379,7 +2379,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test numeric comparison with string numbers
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"score": {"gt": 10}}}},
     )
     assert response.status_code == 200
@@ -2389,7 +2389,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test zero comparisons (string "0" vs integer 0)
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"count": 0}}},
     )
     assert response.status_code == 200
@@ -2399,7 +2399,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test null vs string "null"
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"count": None}}},
     )
     assert response.status_code == 200
@@ -2409,7 +2409,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test leading zeros handling
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"priority": "05"}}},
     )
     assert response.status_code == 200
@@ -2419,7 +2419,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test case sensitivity for string booleans
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"active": "TRUE"}}},
     )
     assert response.status_code == 200
@@ -2429,7 +2429,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test empty string vs other falsy values
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"priority": ""}}},
     )
     assert response.status_code == 200
@@ -2439,7 +2439,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test special string values
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"score": "NaN"}}},
     )
     assert response.status_code == 200
@@ -2449,7 +2449,7 @@ async def test_mixed_type_comparisons(client: TestClient):
 
     # Test mixed type in operator
     response = client.post(
-        f"/v2/workspaces/{workspace_name}/peers/{peer_name}/messages/list",
+        f"/v2/workspaces/{workspace_name}/sessions/mixedtypes/messages/list",
         json={"filter": {"metadata": {"priority": {"in": [5, "5", 5.0]}}}},
     )
     assert response.status_code == 200

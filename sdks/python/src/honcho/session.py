@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
 from .session_context import SessionContext
+from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
     from .peer import Peer
@@ -444,6 +445,54 @@ class Session(BaseModel):
             self.id, workspace_id=self.workspace_id, query=query
         )
         return SyncPage(messages_page)
+
+    @validate_call
+    def upload_file(
+        self,
+        file: tuple[str, bytes, str] | tuple[str, Any, str] | Any = Field(
+            ...,
+            description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
+        ),
+        peer_id: str = Field(..., description="ID of the peer creating the messages"),
+    ) -> list[Message]:
+        """
+        Upload file to create message(s) in this session.
+
+        Accepts a flexible payload:
+        - File objects (opened in binary mode)
+        - (filename, bytes, content_type) tuples
+        - (filename, fileobj, content_type) tuples
+
+        Files are normalized to (filename, fileobj, content_type) tuples for the Stainless client.
+
+        Args:
+            file: File to upload. Can be:
+                - a file object (must have .name and .read())
+                - a tuple (filename, bytes, content_type)
+                - a tuple (filename, fileobj, content_type)
+            peer_id: ID of the peer who will be attributed as the creator of the messages
+
+        Returns:
+            A list of Message objects representing the created messages
+
+        Note:
+            Supported file types include PDFs, text files, and JSON documents.
+            Large files will be automatically split into multiple messages to fit
+            within message size limits.
+        """
+
+        # Prepare file for upload using shared utility
+        filename, content_bytes, content_type = prepare_file_for_upload(file)
+
+        # Call the upload endpoint
+        response = self._client.workspaces.sessions.messages.upload(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            file=(filename, content_bytes, content_type),
+            peer_id=peer_id,
+        )
+
+        return [Message.model_validate(msg) for msg in response]
 
     def working_rep(
         self,

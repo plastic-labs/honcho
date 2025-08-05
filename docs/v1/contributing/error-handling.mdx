@@ -18,23 +18,23 @@ Honcho defines custom exception types in `src/exceptions.py`:
 class HonchoException(Exception):
     status_code = 500  # Default status code
     detail = "An unexpected error occurred"  # Default message
-    
+
 class ResourceNotFoundException(HonchoException):
     status_code = 404
     detail = "Resource not found"
-    
+
 class ValidationException(HonchoException):
     status_code = 422
     detail = "Validation error"
-    
+
 class ConflictException(HonchoException):
-    status_code = 409 
+    status_code = 409
     detail = "Resource conflict"
-    
+
 class AuthenticationException(HonchoException):
     status_code = 401
     detail = "Authentication failed"
-    
+
 class AuthorizationException(HonchoException):
     status_code = 403
     detail = "Not authorized to access this resource"
@@ -107,7 +107,7 @@ try:
     logger.info(f"Successfully processed message {message_id}")
 except Exception as e:
     logger.error(
-        f"Error processing message {message_id}: {str(e)}", 
+        f"Error processing message {message_id}: {str(e)}",
         exc_info=True
     )
     if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
@@ -124,7 +124,7 @@ except Exception as e:
 2. **Include context in logs**:
    ```python
    logger.error(
-       f"Failed to process message for app {app_id}, user {user_id}", 
+       f"Failed to process message for app {app_id}, user {user_id}",
        exc_info=True
    )
    ```
@@ -155,16 +155,16 @@ if os.getenv("SENTRY_ENABLED", "False").lower() == "true":
 async def update_document(db, collection_id, document_id, document):
     """
     Update a document.
-    
+
     Args:
         db: Database session
         collection_id: ID of the collection
         document_id: ID of the document
         document: Document update schema
-        
+
     Returns:
         The updated document
-        
+
     Raises:
         ResourceNotFoundException: If the document or collection does not exist
         ValidationException: If the document data is invalid
@@ -172,13 +172,13 @@ async def update_document(db, collection_id, document_id, document):
     try:
         # Get document (raises ResourceNotFoundException if not found)
         honcho_document = await get_document(db, collection_id, document_id)
-        
+
         # Update document data
         if document.content is not None:
             honcho_document.content = document.content
         if document.metadata is not None:
             honcho_document.h_metadata = document.metadata
-            
+
         await db.commit()
         logger.info(f"Document {document_id} updated successfully")
         return honcho_document
@@ -194,9 +194,9 @@ async def update_document(db, collection_id, document_id, document):
 @router.get("/{document_id}")
 async def get_document(
     app_id: str,
-    user_id: str, 
-    collection_id: str, 
-    document_id: str, 
+    user_id: str,
+    collection_id: str,
+    document_id: str,
     db: AsyncSession = db
 ):
     """Get a document by ID"""
@@ -216,7 +216,7 @@ async def process_item(db, payload):
             if field not in payload:
                 logger.error(f"Missing required field in payload: {field}")
                 raise ValidationException(f"Missing field: {field}")
-        
+
         # Process the item
         await do_processing(db, payload)
         logger.info(f"Processed message {payload['message_id']}")

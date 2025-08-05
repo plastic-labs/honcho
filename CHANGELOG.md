@@ -1,17 +1,90 @@
-# Change Log
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [2.0.2]
+## [2.1.2] - 2025-07-30
+
+### Fixed
+
+- Summarizer module to ignore empty summaries and pass appropriate one to get_context
+- Structured Outputs calls with OpenAI provider to pass strict=True to Pydantic Schema
+
+## [2.1.1] - 2025-07-23
+
+### Added
+
+- Test harness for custom Honcho evaluations
+- Better support for session and peer aware dialectic queries
+- Langfuse settings
+- Added recent history to dialectic prompt, dynamic based on new context window size setting
+
+### Fixed
+
+- Summary queue logic
+- Formatting of logs
+- Filtering by session
+- Peer targeting in queries
+
+### Changed
+
+- Made query expansion in dialectic off by default
+- Overhauled logging
+- Refactor summarization for performance and code clarity
+- Refactor queue payloads for clarity
+
+## [2.1.0] - 2025-07-17
+
+### Added
+
+- File uploads
+- Brand new "ROTE" deriver system
+- Updated dialectic system
+- Local working representations
+- Better logging for deriver/dialectic
+- Endpoint for deriver queue status
+
+### Fixed
+
+- Document insertion
+- Session-scoped and peer-targeted dialectic queries work now
+
+### Removed
+
+- Peer-level messages
+
+### Changed
+
+- Dialectic chat endpoint takes a single query
+- Rearranged configuration values (LLM, Deriver, Dialectic, History->Summary)
+
+## [2.0.5] - 2025-07-11
+
+### Fixed
+
+- Groq API client to use the Async library
+
+## [2.0.4] - 2025-07-02
+
+### Fixed
+
+- Migration/provision scripts did not have correct database connection arguments, causing timeouts
+
+## [2.0.3] - 2025-07-01
+
+### Fixed
+
+- Bug that causes runtime error when Sentry flags are enabled
+
+## [2.0.2] - 2025-06-27
 
 ### Fixed
 
 - Database initialization was misconfigured and led to provision_db script failing: switch to consistent working configuration with transaction pooler
 
-## [2.0.1]
+## [2.0.1] - 2025-06-26
 
 ### Added
 
@@ -32,7 +105,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Use new config arrangement everywhere
 - Remove hardcoded responses
 
-## [2.0.0]
+## [2.0.0] - 2025-06-24
 
 ### Added
 
@@ -75,7 +148,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Collections and Documents no longer exposed in the API, solely internal
 - Obsolete tests for apps, users, collections, documents, and metamessages
 
-## [1.1.0]
+## [1.1.0] - 2025-05-15
 
 ### Added
 
@@ -95,7 +168,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Alembic Migrations to include initial database migrations
 - Sentry Middleware to not report Honcho Exceptions
 
-## [1.0.0]
+## [1.0.0] - 2025-04-10
 
 ### Added
 
@@ -111,7 +184,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Database provisioning is a separate script instead of happening on startup
 - Consolidated `session/chat` and `session/chat/stream` endpoints
 
-## [0.0.16]
+## [0.0.16] - 2025-03-05
 
 ### Added
 
@@ -132,7 +205,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Self-hosting documentation and README to mention `uv` instead of `poetry`
 
-## [0.0.15]
+## [0.0.15] - 2025-01-06
 
 ### Added
 

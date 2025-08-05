@@ -1,4 +1,4 @@
-import { Peer } from './peer';
+import type { Peer } from './peer'
 
 /**
  * Represents the context of a session containing a curated list of messages.
@@ -11,17 +11,17 @@ export class SessionContext {
   /**
    * ID of the session this context belongs to.
    */
-  readonly sessionId: string;
+  readonly sessionId: string
 
   /**
    * List of Message objects representing the conversation context.
    */
-  readonly messages: any[];
+  readonly messages: any[]
 
   /**
    * Summary of the session history prior to the message cutoff.
    */
-  readonly summary: string;
+  readonly summary: string
 
   /**
    * Initialize a new SessionContext.
@@ -31,9 +31,9 @@ export class SessionContext {
    * @param summary Summary of the session history prior to the message cutoff
    */
   constructor(sessionId: string, messages: any[], summary: string = '') {
-    this.sessionId = sessionId;
-    this.messages = messages;
-    this.summary = summary || '';
+    this.sessionId = sessionId
+    this.messages = messages
+    this.summary = summary || ''
   }
 
   /**
@@ -50,11 +50,11 @@ export class SessionContext {
    *          "role" and "content" keys suitable for the OpenAI API
    */
   toOpenAI(assistant: string | Peer): Array<{ role: string; content: string }> {
-    const assistantId = typeof assistant === 'string' ? assistant : assistant.id;
+    const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     return this.messages.map((message) => ({
       role: message.peer_name === assistantId ? 'assistant' : 'user',
       content: message.content,
-    }));
+    }))
   }
 
   /**
@@ -69,25 +69,27 @@ export class SessionContext {
    * @returns A list of dictionaries in Anthropic format, where each dictionary contains
    *          "role" and "content" keys suitable for the Anthropic API
    */
-  toAnthropic(assistant: string | Peer): Array<{ role: string; content: string }> {
-    const assistantId = typeof assistant === 'string' ? assistant : assistant.id;
+  toAnthropic(
+    assistant: string | Peer
+  ): Array<{ role: string; content: string }> {
+    const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     return this.messages.map((message) => ({
       role: message.peer_name === assistantId ? 'assistant' : 'user',
       content: message.content,
-    }));
+    }))
   }
 
   /**
    * Return the number of messages in the context.
    */
   get length(): number {
-    return this.messages.length;
+    return this.messages.length
   }
 
   /**
    * Return a string representation of the SessionContext.
    */
   toString(): string {
-    return `SessionContext(messages=${this.messages.length})`;
+    return `SessionContext(messages=${this.messages.length})`
   }
-} 
+}

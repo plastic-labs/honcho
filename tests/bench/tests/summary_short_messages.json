@@ -1,0 +1,307 @@
+{
+    "sessions": {
+        "session1": {
+            "messages": [
+                {
+                    "peer": "alice",
+                    "content": "Good morning everyone! Ready for another Monday?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Ugh, barely. Need more coffee ☕"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "I'm excited! Starting a new project today"
+                },
+                {
+                    "peer": "dan",
+                    "content": "What's the project about?"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "Website redesign for a local bakery"
+                },
+                {
+                    "peer": "erin",
+                    "content": "That sounds fun! I love bakeries"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Morning all. Traffic was terrible today"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Same here. Construction on Main St"
+                },
+                {
+                    "peer": "bob",
+                    "content": "That's why I bike to work"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Lucky you. I have client meetings all day"
+                },
+                {
+                    "peer": "erin",
+                    "content": "In person or zoom?"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Mix of both. 3 in person, 2 virtual"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Busy day! I have a presentation at 2pm"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "What's the presentation about?"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Q3 sales numbers. Hoping for good news"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Fingers crossed! 🤞"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Anyone else working late today?"
+                },
+                {
+                    "peer": "erin",
+                    "content": "I might be. Deadline on Thursday"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "What are you working on?"
+                },
+                {
+                    "peer": "erin",
+                    "content": "Marketing campaign for a tech startup"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Cool! What kind of tech?"
+                },
+                {
+                    "peer": "erin",
+                    "content": "AI chatbots for customer service"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Very relevant these days"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Speaking of AI, anyone seen the latest ChatGPT updates?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Yeah! The voice mode is crazy good"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "I use it for coding help sometimes"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Same. Great for debugging"
+                },
+                {
+                    "peer": "erin",
+                    "content": "Lunch plans anyone?"
+                },
+                {
+                    "peer": "alice",
+                    "content": "I brought leftover pasta"
+                },
+                {
+                    "peer": "bob",
+                    "content": "There's a new sushi place downtown"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Ooh, what's it called?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Sakura Kitchen. Just opened last week"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "I'm in! Anyone else want to join?"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Can't, have a lunch meeting 😞"
+                },
+                {
+                    "peer": "erin",
+                    "content": "I'll come! Love trying new places"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Count me in too"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Have fun! I'll stick with my pasta today"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Meet at the lobby at 12:30?"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "Perfect timing"
+                },
+                {
+                    "peer": "erin",
+                    "content": "See you there!"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Looking forward to it"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Back from lunch meeting. How was the sushi?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Amazing! The salmon was so fresh"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "Best spicy tuna roll I've had in ages"
+                },
+                {
+                    "peer": "erin",
+                    "content": "And the service was super fast"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Definitely going back soon"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Sounds great! Maybe next time"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Evening plans anyone?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Gym, then Netflix probably"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "Working on some personal coding projects"
+                },
+                {
+                    "peer": "erin",
+                    "content": "Date night with my partner 💕"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Nice! Anywhere special?"
+                },
+                {
+                    "peer": "erin",
+                    "content": "That new Italian place on 5th street"
+                },
+                {
+                    "peer": "alice",
+                    "content": "I heard great things about their tiramisu"
+                },
+                {
+                    "peer": "dan",
+                    "content": "I'm planning to catch up on reading"
+                },
+                {
+                    "peer": "bob",
+                    "content": "What book?"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Atomic Habits. Finally getting around to it"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "Great book! Really helped me with morning routines"
+                },
+                {
+                    "peer": "frank",
+                    "content": "I should read that too"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Anyone watching anything good lately?"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Just started The Bear. So good!"
+                },
+                {
+                    "peer": "erin",
+                    "content": "Love that show! Season 3 was intense"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "I'm rewatching The Office for the 100th time"
+                },
+                {
+                    "peer": "frank",
+                    "content": "Classic choice 😂"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Has anyone tried that new board game cafe?"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Which one?"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Game Night downtown. They have hundreds of games"
+                },
+                {
+                    "peer": "bob",
+                    "content": "Sounds fun! Weekend group activity?"
+                },
+                {
+                    "peer": "charlie",
+                    "content": "I'm free Saturday afternoon"
+                },
+                {
+                    "peer": "erin",
+                    "content": "Me too! What time?"
+                },
+                {
+                    "peer": "frank",
+                    "content": "How about 2pm Saturday?"
+                },
+                {
+                    "peer": "alice",
+                    "content": "Works for me!"
+                },
+                {
+                    "peer": "dan",
+                    "content": "Perfect! I'll make a reservation"
+                }
+            ]
+        }
+    },
+    "queries": [],
+    "get_context_calls": [
+        {
+            "session": "session1",
+            "summary": true
+        }
+    ]
+}

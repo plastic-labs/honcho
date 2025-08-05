@@ -80,9 +80,9 @@ context = session.get_context(summary=False, tokens=2000)
 const context = await session.getContext({ summary: true });
 
 // Combine summary=False with token limits to get more messages
-const context = await session.getContext({ 
-  summary: false, 
-  tokens: 2000 
+const context = await session.getContext({
+  summary: false,
+  tokens: 2000
 });
 ```
 </CodeGroup>
@@ -197,7 +197,7 @@ messages = session.get_context(tokens=2000).to_openai(assistant=assistant)
 
 # Add new user message and get AI response
 messages.append({
-    "role": "user", 
+    "role": "user",
     "content": "Can you reset my password?"
 })
 
@@ -259,33 +259,33 @@ await session.addMessages([
 ```python Python
 def chat_loop():
     """Example of a continuous chat loop using get_context()"""
-    
+
     session = honcho.session("chat-session")
     user = honcho.peer("user")
     assistant = honcho.peer("ai-assistant")
-    
+
     while True:
         # Get user input
         user_input = input("You: ")
         if user_input.lower() in ['quit', 'exit']:
             break
-            
+
         # Add user message to session
         session.add_messages([user.message(user_input)])
-        
+
         # Get conversation context
         context = session.get_context(tokens=2000)
         messages = context.to_openai(assistant=assistant)
-        
+
         # Get AI response
         response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=messages
         )
-        
+
         ai_response = response.choices[0].message.content
         print(f"Assistant: {ai_response}")
-        
+
         # Add AI response to session
         session.add_messages([assistant.message(ai_response)])
 
@@ -298,33 +298,33 @@ async function chatLoop() {
   const session = honcho.session("chat-session");
   const user = honcho.peer("user");
   const assistant = honcho.peer("ai-assistant");
-  
+
   // This would be replaced with actual user input handling in a real app
   const userInputs = [
     "Hello, how are you?",
     "What's the weather like?",
     "Tell me a joke"
   ];
-  
+
   for (const userInput of userInputs) {
     console.log(`You: ${userInput}`);
-    
+
     // Add user message to session
     await session.addMessages([user.message(userInput)]);
-    
+
     // Get conversation context
     const context = await session.getContext({ tokens: 2000 });
     const messages = context.toOpenAI(assistant);
-    
+
     // Get AI response
     const response = await openai.chat.completions.create({
       model: "gpt-4",
       messages: messages
     });
-    
+
     const aiResponse = response.choices[0].message.content;
     console.log(`Assistant: ${aiResponse}`);
-    
+
     // Add AI response to session
     await session.addMessages([assistant.message(aiResponse)]);
   }
@@ -359,9 +359,9 @@ print(f"Context contains {len(messages)} formatted messages")
 const longSession = honcho.session("long-conversation");
 
 // Get summarized context to fit within token limits
-const context = await longSession.getContext({ 
-  summary: true, 
-  tokens: 1500 
+const context = await longSession.getContext({
+  summary: true,
+  tokens: 1500
 });
 const messages = context.toOpenAI(assistant);
 
@@ -464,13 +464,13 @@ Always handle potential errors when working with context:
 try:
     context = session.get_context(tokens=2000)
     messages = context.to_openai(assistant=assistant)
-    
+
     # Use messages with LLM API
     response = openai_client.chat.completions.create(
         model="gpt-4",
         messages=messages
     )
-    
+
 except Exception as e:
     print(f"Error getting context: {e}")
     # Handle error appropriately
@@ -480,13 +480,13 @@ except Exception as e:
 try {
   const context = await session.getContext({ tokens: 2000 });
   const messages = context.toOpenAI(assistant);
-  
+
   // Use messages with LLM API
   const response = await openai.chat.completions.create({
     model: "gpt-4",
     messages: messages
   });
-  
+
 } catch (error) {
   console.error(`Error getting context: ${error}`);
   // Handle error appropriately

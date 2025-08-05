@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.crud import create_messages, create_messages_for_peer, search
+from src.crud import create_messages, search
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
 
@@ -25,7 +25,7 @@ async def test_message_embedding_created_when_setting_enabled(
 ):
     """Test that MessageEmbedding is created when EMBED_MESSAGES setting is True"""
     # Monkeypatch the setting to enable message embeddings
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", True)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
 
     test_workspace, test_peer = sample_data
 
@@ -83,7 +83,7 @@ async def test_message_embedding_not_created_when_setting_disabled(
 ):
     """Test that MessageEmbedding is NOT created when EMBED_MESSAGES setting is False"""
     # Monkeypatch the setting to disable message embeddings
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", False)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", False)
 
     test_workspace, test_peer = sample_data
 
@@ -133,7 +133,7 @@ async def test_multiple_message_embeddings_created_when_setting_enabled(
 ):
     """Test that multiple MessageEmbeddings are created for batch message creation"""
     # Monkeypatch the setting to enable message embeddings
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", True)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
 
     test_workspace, test_peer = sample_data
 
@@ -187,62 +187,6 @@ async def test_multiple_message_embeddings_created_when_setting_enabled(
 
 
 @pytest.mark.asyncio
-async def test_message_embedding_with_peer_only_messages(
-    db_session: AsyncSession,
-    sample_data: tuple[Workspace, Peer],
-    monkeypatch: pytest.MonkeyPatch,
-):
-    """Test that MessageEmbedding is created for peer-only messages (no session)"""
-    # Monkeypatch the setting to enable message embeddings
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", True)
-
-    test_workspace, test_peer = sample_data
-
-    # Create a message for peer only (no session)
-    test_message_content = "This is a peer-only message with embedding"
-    messages = [
-        MessageCreate(
-            content=test_message_content,
-            peer_id=test_peer.name,  # This will be overridden by the function
-            metadata={"test": "peer_only"},
-        )
-    ]
-
-    created_messages = await create_messages_for_peer(
-        db=db_session,
-        messages=messages,
-        workspace_name=test_workspace.name,
-        peer_name=test_peer.name,
-    )
-
-    assert len(created_messages) == 1
-    created_message = created_messages[0]
-
-    # Verify the message was created with peer but no session
-    assert created_message.peer_name == test_peer.name
-    assert created_message.session_name is None
-
-    # Query the MessageEmbedding table to verify an embedding was created
-    stmt = select(models.MessageEmbedding).where(
-        models.MessageEmbedding.message_id == created_message.public_id
-    )
-    result = await db_session.execute(stmt)
-    embedding_record = result.scalar_one_or_none()
-
-    # Verify the embedding was created
-    assert embedding_record is not None
-    assert embedding_record.message_id == created_message.public_id
-    assert embedding_record.content == test_message_content
-    assert embedding_record.workspace_name == test_workspace.name
-    assert (
-        embedding_record.session_name is None
-    )  # Should be None for peer-only messages
-    assert embedding_record.peer_name == test_peer.name
-    assert embedding_record.embedding is not None
-    assert len(embedding_record.embedding) > 0
-
-
-@pytest.mark.asyncio
 async def test_semantic_search_when_embeddings_enabled(
     db_session: AsyncSession,
     sample_data: tuple[Workspace, Peer],
@@ -251,7 +195,7 @@ async def test_semantic_search_when_embeddings_enabled(
 ):
     """Test that search uses semantic search by default when EMBED_MESSAGES is True"""
     # Monkeypatch the setting to enable message embeddings
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", True)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
 
     test_workspace, test_peer = sample_data
 
@@ -326,10 +270,10 @@ async def test_message_chunking_creates_multiple_embeddings(
 ):
     """Test that messages exceeding token limits are chunked and create multiple embeddings"""
     # Monkeypatch the setting to enable message embeddings
-    monkeypatch.setattr("src.config.settings.LLM.EMBED_MESSAGES", True)
+    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", True)
 
     # Mock a low token limit to force chunking
-    monkeypatch.setattr("src.config.settings.LLM.MAX_EMBEDDING_TOKENS", 10)
+    monkeypatch.setattr("src.config.settings.MAX_EMBEDDING_TOKENS", 10)
 
     test_workspace, test_peer = sample_data
 

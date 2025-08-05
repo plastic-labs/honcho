@@ -3,11 +3,61 @@ name: FastAPI Tests with PostgreSQL and uv
 on:
   push:
     branches: [main]
+    paths:
+      - '**.py'
+      - '**.ts'
+      - '**.js'
+      - '**.tsx'
+      - '**.jsx'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'sdks/typescript/package.json'
+      - 'sdks/typescript/bun.lock'
+      - '.github/workflows/unittest.yml'
   pull_request:
     branches: [main]
+    paths:
+      - '**.py'
+      - '**.ts'
+      - '**.js'
+      - '**.tsx'
+      - '**.jsx'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'sdks/typescript/package.json'
+      - 'sdks/typescript/bun.lock'
+      - '.github/workflows/unittest.yml'
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
-  test:
+  # Determine which tests to run based on changed files
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      typescript: ${{ steps.filter.outputs.typescript }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - '**.py'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'migrations/**'
+              - '.github/workflows/unittest.yml'
+            typescript:
+              - 'sdks/typescript/**'
+              - '.github/workflows/unittest.yml'
+
+  test-python:
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }}
     runs-on: ubuntu-latest
 
     services:
@@ -51,11 +101,56 @@ jobs:
           SENTRY_ENABLED: false
           LLM_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          LLM_DIALECTIC_PROVIDER: openai
-          LLM_DIALECTIC_MODEL: test
-          LLM_QUERY_GENERATION_PROVIDER: openai
-          LLM_QUERY_GENERATION_MODEL: test
-          LLM_TOM_INFERENCE_PROVIDER: openai
-          LLM_TOM_INFERENCE_MODEL: test
-          LLM_SUMMARY_PROVIDER: openai
-          LLM_SUMMARY_MODEL: test
+          DERIVER_PROVIDER: openai
+          DERIVER_MODEL: test
+          DIALECTIC_PROVIDER: openai
+          DIALECTIC_MODEL: test
+          DIALECTIC_QUERY_GENERATION_PROVIDER: openai
+          DIALECTIC_QUERY_GENERATION_MODEL: test
+          SUMMARY_PROVIDER: openai
+          SUMMARY_MODEL: test
+
+  test-typescript:
+    needs: changes
+    if: ${{ needs.changes.outputs.typescript == 'true' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install TypeScript SDK dependencies
+        run: |
+          cd sdks/typescript
+          bun install
+
+      - name: Run TypeScript SDK tests
+        run: |
+          cd sdks/typescript
+          bun run test
+        env:
+          HONCHO_API_KEY: test-key
+          HONCHO_BASE_URL: http://localhost:8000
+
+  # Status check for branch protection rules
+  # This job always runs and reports success only if all required jobs pass
+  test-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-python, test-typescript]
+    if: always()
+    steps:
+      - name: Check test results
+        run: |
+          if [[ "${{ needs.changes.outputs.python }}" == "true" && "${{ needs.test-python.result }}" != "success" && "${{ needs.test-python.result }}" != "skipped" ]]; then
+            echo "Python tests failed or were cancelled"
+            exit 1
+          fi
+          if [[ "${{ needs.changes.outputs.typescript }}" == "true" && "${{ needs.test-typescript.result }}" != "success" && "${{ needs.test-typescript.result }}" != "skipped" ]]; then
+            echo "TypeScript tests failed or were cancelled"
+            exit 1
+          fi
+          echo "All required tests passed!"
