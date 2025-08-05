@@ -76,6 +76,32 @@ def upgrade() -> None:
         schema=schema,
     )
 
+    # 2.5 Backfill work_unit_key for unprocessed queue items
+    op.execute(
+        sa.text(
+            f"""
+            UPDATE {schema}.queue q
+            SET work_unit_key =
+                CASE
+                    WHEN q.payload->>'task_type' IN ('representation', 'summary') THEN
+                        (q.payload->>'task_type') || ':' ||
+                        COALESCE(s.workspace_name, q.payload->>'workspace_name', 'None') || ':' ||
+                        COALESCE(q.payload->>'session_name', 'None') || ':' ||
+                        COALESCE(q.payload->>'sender_name', 'None') || ':' ||
+                        COALESCE(q.payload->>'target_name', 'None')
+                    ELSE
+                        'representation:' ||
+                        COALESCE(s.workspace_name, q.payload->>'workspace_name', 'None') || ':' ||
+                        COALESCE(q.payload->>'session_name', 'None') || ':' ||
+                        COALESCE(q.payload->>'sender_name', 'None') || ':' ||
+                        COALESCE(q.payload->>'target_name', 'None')
+                END
+            FROM {schema}.sessions s
+            WHERE s.id = q.session_id AND q.processed = false AND q.work_unit_key IS NULL
+            """
+        )
+    )
+
     # 3. Alter active queue sessions table
     op.add_column(
         "active_queue_sessions",

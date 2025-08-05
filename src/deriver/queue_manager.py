@@ -235,6 +235,29 @@ class QueueManager:
                     message = await self.get_next_message(db, work_unit_key)
                     if not message:
                         logger.debug(f"No more messages for work unit {work_unit_key}")
+
+                        # Trigger the queue_empty webhook event
+                        try:
+                            from src.deriver.utils import parse_work_unit_key
+                            from src.webhooks.events import (
+                                QueueEmptyEvent,
+                                publish_webhook_event,
+                            )
+
+                            parsed_key = parse_work_unit_key(work_unit_key)
+                            if parsed_key["task_type"] in ["representation", "summary"]:
+                                await publish_webhook_event(
+                                    QueueEmptyEvent(
+                                        workspace_id=parsed_key["workspace_name"],
+                                        queue_type=parsed_key["task_type"],
+                                        session_id=parsed_key["session_name"],
+                                        sender_name=parsed_key["sender_name"],
+                                        observer_name=parsed_key["target_name"],
+                                    )
+                                )
+                        except Exception:
+                            logger.exception("Error triggering queue_empty webhook")
+
                         break
 
                     message_count += 1
