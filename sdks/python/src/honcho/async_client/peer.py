@@ -72,6 +72,9 @@ class AsyncPeer(BaseModel):
         """
         Create a new AsyncPeer with optional configuration.
 
+        Provided metadata and configuration will overwrite any existing data in those
+        locations if given.
+
         Args:
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations

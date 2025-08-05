@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Moved parameters out of random `opts` dictionaries in many places
 - Peer and Session objects now use inner client like python SDK
+- `SessionContext.length` now counts the summary in its total as +1 messages if it exists
 
 ### Fixed
 

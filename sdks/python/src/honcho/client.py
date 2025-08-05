@@ -142,6 +142,9 @@ class Honcho(BaseModel):
         This method does not make an API call unless `config` or `metadata` is
         provided.
 
+        Provided metadata and configuration will overwrite any existing data in those
+        locations if given.
+
         Args:
             id: Unique identifier for the peer within the workspace. Should be a
             stable identifier that can be used consistently across sessions.
@@ -201,6 +204,9 @@ class Honcho(BaseModel):
         Creates a Session object that can be used to manage conversations between
         multiple peers. This method does not make an API call unless `config` or
         `metadata` is provided.
+
+        Provided metadata and configuration will overwrite any existing data in those
+        locations if given.
 
         Args:
             id: Unique identifier for the session within the workspace. Should be a

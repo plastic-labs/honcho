@@ -14,12 +14,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 
 - Summaries are now included in `toOpenAI` and `toAnthropic` functions
-- `SessionContext.__len__` now counts the summary in its total
+- `SessionContext.__len__` now counts the summary in its total as +1 messages if it exists
 
 ### Fixed
 
 - Added missing metadata inputs in many places
-- Better documentation all over
+- Improved documentation throughout the codebase
 
 ## [1.2.2] - 2025-07-21
 
