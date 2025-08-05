@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
@@ -15,13 +14,6 @@ from .pagination import AsyncPage
 
 if TYPE_CHECKING:
     from .peer import AsyncPeer
-
-
-try:
-    env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
-    _default_context_tokens = int(env_val) if env_val else None
-except (ValueError, TypeError):
-    _default_context_tokens = None
 
 
 class SessionPeerConfig(BaseModel):
@@ -90,6 +82,7 @@ class AsyncSession(BaseModel):
         workspace_id: str,
         client: AsyncHonchoCore,
         *,
+        metadata: dict[str, object] | None = None,
         config: dict[str, object] | None = None,
     ) -> AsyncSession:
         """
@@ -99,19 +92,22 @@ class AsyncSession(BaseModel):
             session_id: Unique identifier for this session within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent AsyncHoncho client instance
-            config:
-                Optional configuration to set for this session. If set, will get/create session immediately with flags.
+            metadata: Optional metadata dictionary to associate with this session.
+            If set, will get/create session immediately with metadata.
+            config: Optional configuration to set for this session.
+            If set, will get/create session immediately with flags.
 
         Returns:
             A new AsyncSession instance
         """
         session = cls(session_id, workspace_id, client)
 
-        if config:
+        if config or metadata:
             await client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
-                configuration=config,
+                configuration=config if config is not None else NOT_GIVEN,
+                metadata=metadata if metadata is not None else NOT_GIVEN,
             )
 
         return session
@@ -137,13 +133,13 @@ class AsyncSession(BaseModel):
 
         Args:
             peers: Peers to add to the session. Can be:
-                   - str: Single peer ID
-                   - AsyncPeer: Single AsyncPeer object
-                   - List[Union[AsyncPeer, str]]: List of AsyncPeer objects and/or peer IDs
-                   - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
-                   - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
-                   - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
-                   - Mixed lists with peers and tuples/lists containing peer+config combinations
+                - str: Single peer ID
+                - AsyncPeer: Single AsyncPeer object
+                - List[Union[AsyncPeer, str]]: List of AsyncPeer objects and/or peer IDs
+                - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
+                - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
+                - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
+                - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
         if not isinstance(peers, list):
             peers = [peers]
@@ -186,13 +182,13 @@ class AsyncSession(BaseModel):
 
         Args:
             peers: Peers to set for the session. Can be:
-                  - str: Single peer ID
-                  - AsyncPeer: Single AsyncPeer object
-                  - List[Union[AsyncPeer, str]]: List of AsyncPeer objects and/or peer IDs
-                  - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
-                  - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
-                  - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
-                  - Mixed lists with peers and tuples/lists containing peer+config combinations
+                - str: Single peer ID
+                - AsyncPeer: Single AsyncPeer object
+                - List[Union[AsyncPeer, str]]: List of AsyncPeer objects and/or peer IDs
+                - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
+                - tuple[AsyncPeer, SessionPeerConfig]: Single AsyncPeer object and SessionPeerConfig
+                - List[tuple[Union[AsyncPeer, str], SessionPeerConfig]]: List of AsyncPeer objects and/or peer IDs and SessionPeerConfig
+                - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
         if not isinstance(peers, list):
             peers = [peers]
@@ -422,24 +418,22 @@ class AsyncSession(BaseModel):
 
         Args:
             summary: Whether to include summary information
-            tokens: Maximum number of tokens to include in the context.
-                    Defaults to HONCHO_default_context_tokens environment
-                    variable if it exists.
+            tokens: Maximum number of tokens to include in the context. Will default
+            to Honcho server configuration if not provided.
 
         Returns:
-            A SessionContext object containing the optimized message history
-            that maximizes conversational context while respecting the token limit
+            A SessionContext object containing the optimized message history and
+            summary, if available, that maximizes conversational context while
+            respecting the token limit
 
         Note:
             Token counting is performed using tiktoken. For models using different
             tokenizers, you may need to adjust the token limit accordingly.
         """
-        if not tokens:
-            tokens = _default_context_tokens
         context = await self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            tokens=tokens,
+            tokens=tokens if tokens is not None else NOT_GIVEN,
             summary=summary,
         )
 
@@ -532,7 +526,7 @@ class AsyncSession(BaseModel):
         Args:
             peer: Peer to get the working representation of.
             target: Optional target peer to get the representation of. If provided,
-                    queries what `peer` knows about the `target`.
+            queries what `peer` knows about the `target`.
 
         Returns:
             A dictionary containing information about the peer.

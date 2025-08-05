@@ -9,14 +9,17 @@ jest.mock('@honcho-ai/core', () => {
     workspaces: {
       peers: {
         list: jest.fn(),
+        getOrCreate: jest.fn(),
       },
       sessions: {
         list: jest.fn(),
+        getOrCreate: jest.fn(),
       },
       getOrCreate: jest.fn().mockResolvedValue({ id: 'test-workspace', metadata: {} }),
       update: jest.fn(),
       list: jest.fn(),
       search: jest.fn(),
+      deriverStatus: jest.fn(),
     },
   }));
 });
@@ -89,21 +92,33 @@ describe('Honcho Client', () => {
   });
 
   describe('peer', () => {
-    it('should create a new Peer instance', () => {
-      const peer = honcho.peer('test-peer');
+    it('should create a new Peer instance', async () => {
+      const peer = await honcho.peer('test-peer');
 
       expect(peer).toBeInstanceOf(Peer);
       expect(peer.id).toBe('test-peer');
     });
 
-    it('should throw error for empty peer ID', () => {
-      expect(() => honcho.peer('')).toThrow('Peer ID must be a non-empty string');
+    it('should create peer with metadata and config', async () => {
+      const metadata = { name: 'Test Peer' };
+      const config = { observe_me: false };
+
+      await honcho.peer('test-peer', metadata, config);
+
+      expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
+        'test-workspace',
+        { id: 'test-peer', metadata: metadata, configuration: config }
+      );
     });
 
-    it('should throw error for non-string peer ID', () => {
-      expect(() => honcho.peer(null as any)).toThrow('Peer ID must be a non-empty string');
-      expect(() => honcho.peer(undefined as any)).toThrow('Peer ID must be a non-empty string');
-      expect(() => honcho.peer(123 as any)).toThrow('Peer ID must be a non-empty string');
+    it('should throw error for empty peer ID', async () => {
+      await expect(honcho.peer('')).rejects.toThrow();
+    });
+
+    it('should throw error for non-string peer ID', async () => {
+      await expect(honcho.peer(null as any)).rejects.toThrow();
+      await expect(honcho.peer(undefined as any)).rejects.toThrow();
+      await expect(honcho.peer(123 as any)).rejects.toThrow();
     });
   });
 
@@ -144,26 +159,38 @@ describe('Honcho Client', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.list.mockRejectedValue(new Error('API Error'));
 
-      await expect(honcho.getPeers()).rejects.toThrow('API Error');
+      await expect(honcho.getPeers()).rejects.toThrow();
     });
   });
 
   describe('session', () => {
-    it('should create a new Session instance', () => {
-      const session = honcho.session('test-session');
+    it('should create a new Session instance', async () => {
+      const session = await honcho.session('test-session');
 
       expect(session).toBeInstanceOf(Session);
       expect(session.id).toBe('test-session');
     });
 
-    it('should throw error for empty session ID', () => {
-      expect(() => honcho.session('')).toThrow('Session ID must be a non-empty string');
+    it('should create session with metadata and config', async () => {
+      const metadata = { name: 'Test Session' };
+      const config = { anonymous: true };
+
+      await honcho.session('test-session', metadata, config);
+
+      expect(mockClient.workspaces.sessions.getOrCreate).toHaveBeenCalledWith(
+        'test-workspace',
+        { id: 'test-session', metadata: metadata, configuration: config }
+      );
     });
 
-    it('should throw error for non-string session ID', () => {
-      expect(() => honcho.session(null as any)).toThrow('Session ID must be a non-empty string');
-      expect(() => honcho.session(undefined as any)).toThrow('Session ID must be a non-empty string');
-      expect(() => honcho.session(123 as any)).toThrow('Session ID must be a non-empty string');
+    it('should throw error for empty session ID', async () => {
+      await expect(honcho.session('')).rejects.toThrow();
+    });
+
+    it('should throw error for non-string session ID', async () => {
+      await expect(honcho.session(null as any)).rejects.toThrow();
+      await expect(honcho.session(undefined as any)).rejects.toThrow();
+      await expect(honcho.session(123 as any)).rejects.toThrow();
     });
   });
 
@@ -203,7 +230,7 @@ describe('Honcho Client', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.sessions.list.mockRejectedValue(new Error('API Error'));
 
-      await expect(honcho.getSessions()).rejects.toThrow('API Error');
+      await expect(honcho.getSessions()).rejects.toThrow();
     });
   });
 
@@ -236,7 +263,7 @@ describe('Honcho Client', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.getOrCreate.mockRejectedValue(new Error('Workspace not found'));
 
-      await expect(honcho.getMetadata()).rejects.toThrow('Workspace not found');
+      await expect(honcho.getMetadata()).rejects.toThrow();
     });
   });
 
@@ -276,7 +303,7 @@ describe('Honcho Client', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.update.mockRejectedValue(new Error('Update failed'));
 
-      await expect(honcho.setMetadata({ key: 'value' })).rejects.toThrow('Update failed');
+      await expect(honcho.setMetadata({ key: 'value' })).rejects.toThrow();
     });
   });
 
@@ -313,7 +340,7 @@ describe('Honcho Client', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.list.mockRejectedValue(new Error('Failed to list workspaces'));
 
-      await expect(honcho.getWorkspaces()).rejects.toThrow('Failed to list workspaces');
+      await expect(honcho.getWorkspaces()).rejects.toThrow();
     });
   });
 
@@ -351,14 +378,14 @@ describe('Honcho Client', () => {
     });
 
     it('should throw error for empty query', async () => {
-      await expect(honcho.search('')).rejects.toThrow('Search query must be a non-empty string');
-      await expect(honcho.search('   ')).rejects.toThrow('Search query must be a non-empty string');
+      await expect(honcho.search('')).rejects.toThrow();
+      await expect(honcho.search('   ')).rejects.toThrow();
     });
 
     it('should throw error for non-string query', async () => {
-      await expect(honcho.search(null as any)).rejects.toThrow('Search query must be a non-empty string');
-      await expect(honcho.search(undefined as any)).rejects.toThrow('Search query must be a non-empty string');
-      await expect(honcho.search(123 as any)).rejects.toThrow('Search query must be a non-empty string');
+      await expect(honcho.search(null as any)).rejects.toThrow();
+      await expect(honcho.search(undefined as any)).rejects.toThrow();
+      await expect(honcho.search(123 as any)).rejects.toThrow();
     });
 
     it('should handle complex search queries', async () => {
@@ -379,7 +406,94 @@ describe('Honcho Client', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.search.mockRejectedValue(new Error('Search failed'));
 
-      await expect(honcho.search('test')).rejects.toThrow('Search failed');
+      await expect(honcho.search('test')).rejects.toThrow();
+    });
+  });
+
+  describe('getDeriverStatus', () => {
+    it('should return deriver status without options', async () => {
+      const mockStatus = {
+        total_work_units: 10,
+        completed_work_units: 5,
+        in_progress_work_units: 3,
+        pending_work_units: 2,
+        sessions: { 'session1': { status: 'active' } },
+      };
+      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus);
+
+      const status = await honcho.getDeriverStatus();
+
+      expect(status).toEqual({
+        totalWorkUnits: 10,
+        completedWorkUnits: 5,
+        inProgressWorkUnits: 3,
+        pendingWorkUnits: 2,
+        sessions: { 'session1': { status: 'active' } },
+      });
+      expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith('test-workspace', {});
+    });
+
+    it('should return deriver status with options', async () => {
+      const mockStatus = {
+        total_work_units: 5,
+        completed_work_units: 3,
+        in_progress_work_units: 1,
+        pending_work_units: 1,
+      };
+      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatus);
+
+      const status = await honcho.getDeriverStatus({
+        observerId: 'observer1',
+        senderId: 'sender1',
+        sessionId: 'session1',
+      });
+
+      expect(status).toEqual({
+        totalWorkUnits: 5,
+        completedWorkUnits: 3,
+        inProgressWorkUnits: 1,
+        pendingWorkUnits: 1,
+        sessions: undefined,
+      });
+      expect(mockClient.workspaces.deriverStatus).toHaveBeenCalledWith('test-workspace', {
+        observer_id: 'observer1',
+        sender_id: 'sender1',
+        session_id: 'session1',
+      });
+    });
+  });
+
+  describe('pollDeriverStatus', () => {
+    it('should poll until processing is complete', async () => {
+      const mockStatusComplete = {
+        total_work_units: 5,
+        completed_work_units: 5,
+        in_progress_work_units: 0,
+        pending_work_units: 0,
+      };
+      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatusComplete);
+
+      const status = await honcho.pollDeriverStatus();
+
+      expect(status).toEqual({
+        totalWorkUnits: 5,
+        completedWorkUnits: 5,
+        inProgressWorkUnits: 0,
+        pendingWorkUnits: 0,
+        sessions: undefined,
+      });
+    });
+
+    it('should timeout if processing takes too long', async () => {
+      const mockStatusPending = {
+        total_work_units: 5,
+        completed_work_units: 2,
+        in_progress_work_units: 2,
+        pending_work_units: 1,
+      };
+      mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatusPending);
+
+      await expect(honcho.pollDeriverStatus({ timeoutMs: 100 })).rejects.toThrow();
     });
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/sdk",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Official DX Optimized TypeScript SDK for Honcho",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "Apache-2.0",
@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@types/node": "^24.0.1",
-    "@honcho-ai/core": "file:/Users/ben/plastic-labs/dist.tar.gz"
+    "@honcho-ai/core": "1.2.0",
+    "zod": "4.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",

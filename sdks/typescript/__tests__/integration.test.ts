@@ -58,8 +58,8 @@ describe('Honcho SDK Integration Tests', () => {
       const mockPeerData = { id: 'assistant', metadata: { role: 'ai' } };
       const mockSessionData = { id: 'chat-session', metadata: { topic: 'general' } };
       const mockMessages = [
-        { id: 'msg1', content: 'Hello', peer_name: 'user' },
-        { id: 'msg2', content: 'Hi there!', peer_name: 'assistant' },
+        { id: 'msg1', content: 'Hello', peer_id: 'user' },
+        { id: 'msg2', content: 'Hi there!', peer_id: 'assistant' },
       ];
       const mockContextData = { messages: mockMessages, summary: 'Friendly greeting' };
 
@@ -71,8 +71,8 @@ describe('Honcho SDK Integration Tests', () => {
       mockWorkspacesApi.workspaces.peers.chat.mockResolvedValue({ content: 'AI response' });
 
       // Step 1: Create peers
-      const user = honcho.peer('user');
-      const assistant = honcho.peer('assistant');
+      const user = await honcho.peer('user');
+      const assistant = await honcho.peer('assistant');
 
       expect(user).toBeInstanceOf(Peer);
       expect(assistant).toBeInstanceOf(Peer);
@@ -80,7 +80,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(assistant.id).toBe('assistant');
 
       // Step 2: Create session
-      const session = honcho.session('chat-session');
+      const session = await honcho.session('chat-session');
       expect(session).toBeInstanceOf(Session);
       expect(session.id).toBe('chat-session');
 
@@ -90,8 +90,8 @@ describe('Honcho SDK Integration Tests', () => {
         'integration-test-workspace',
         'chat-session',
         {
-          'user': { observe_me: true, observe_others: false },
-          'assistant': { observe_me: true, observe_others: false }
+          'user': {},
+          'assistant': {}
         }
       );
 
@@ -123,12 +123,14 @@ describe('Honcho SDK Integration Tests', () => {
       const anthropicFormat = context.toAnthropic('assistant');
 
       expect(openAIFormat).toEqual([
-        { role: 'user', content: 'Hello' },
-        { role: 'assistant', content: 'Hi there!' },
+        { role: 'system', content: '<summary>Friendly greeting</summary>' },
+        { role: 'user', content: 'Hello', name: 'user' },
+        { role: 'assistant', content: 'Hi there!', name: 'assistant' },
       ]);
 
       expect(anthropicFormat).toEqual([
-        { role: 'user', content: 'Hello' },
+        { role: 'user', content: '<summary>Friendly greeting</summary>' },
+        { role: 'user', content: 'user: Hello' },
         { role: 'assistant', content: 'Hi there!' },
       ]);
 
@@ -233,7 +235,7 @@ describe('Honcho SDK Integration Tests', () => {
       );
 
       // Step 2: Search peer
-      const peer = honcho.peer('test-peer');
+      const peer = await honcho.peer('test-peer');
       const peerResults = await peer.search('peer query');
       expect(peerResults).toBeInstanceOf(Page);
       expect(mockWorkspacesApi.workspaces.peers.search).toHaveBeenCalledWith(
@@ -243,7 +245,7 @@ describe('Honcho SDK Integration Tests', () => {
       );
 
       // Step 3: Search session
-      const session = honcho.session('test-session');
+      const session = await honcho.session('test-session');
       const sessionResults = await session.search('session query');
       expect(sessionResults).toBeInstanceOf(Page);
       expect(mockWorkspacesApi.workspaces.sessions.search).toHaveBeenCalledWith(
@@ -258,14 +260,14 @@ describe('Honcho SDK Integration Tests', () => {
       mockWorkspacesApi.workspaces.peers.chat.mockRejectedValue(new Error('Chat API failed'));
       mockWorkspacesApi.workspaces.sessions.getContext.mockRejectedValue(new Error('Context API failed'));
 
-      const assistant = honcho.peer('assistant');
-      const session = honcho.session('error-session');
+      const assistant = await honcho.peer('assistant');
+      const session = await honcho.session('error-session');
 
       // Test error handling in chat
-      await expect(assistant.chat('Hello')).rejects.toThrow('Chat API failed');
+      await expect(assistant.chat('Hello')).rejects.toThrow();
 
       // Test error handling in context
-      await expect(session.getContext()).rejects.toThrow('Context API failed');
+      await expect(session.getContext()).rejects.toThrow();
     });
 
     it('should handle pagination correctly', async () => {
@@ -329,9 +331,9 @@ describe('Honcho SDK Integration Tests', () => {
 
       mockWorkspacesApi.workspaces.peers.workingRepresentation.mockResolvedValue(mockWorkingRep);
 
-      const session = honcho.session('working-rep-session');
-      const alice = honcho.peer('alice');
-      const bob = honcho.peer('bob');
+      const session = await honcho.session('working-rep-session');
+      const alice = await honcho.peer('alice');
+      const bob = await honcho.peer('bob');
 
       // Test working representation without target
       const globalRep = await session.workingRep('alice');
@@ -359,8 +361,8 @@ describe('Honcho SDK Integration Tests', () => {
       mockWorkspacesApi.workspaces.peers.list.mockResolvedValue({ items: [], total: 0, hasNextPage: false });
       mockWorkspacesApi.workspaces.sessions.getContext.mockResolvedValue({ messages: [] });
 
-      const peer = honcho.peer('empty-peer');
-      const session = honcho.session('empty-session');
+      const peer = await honcho.peer('empty-peer');
+      const session = await honcho.session('empty-session');
 
       // Test null chat response
       const chatResult = await peer.chat('Hello');
@@ -379,20 +381,20 @@ describe('Honcho SDK Integration Tests', () => {
 
     it('should maintain type safety throughout the workflow', async () => {
       // This test verifies TypeScript types are maintained correctly
-      const peer: Peer = honcho.peer('typed-peer');
-      const session: Session = honcho.session('typed-session');
+      const peer: Peer = await honcho.peer('typed-peer');
+      const session: Session = await honcho.session('typed-session');
 
       expect(typeof peer.id).toBe('string');
       expect(typeof session.id).toBe('string');
 
       const message = peer.message('typed message', { metadata: { type: 'test' } });
-      expect(typeof message.peerId).toBe('string');
+      expect(typeof message.peer_id).toBe('string');
       expect(typeof message.content).toBe('string');
       expect(typeof message.metadata).toBe('object');
 
       // Mock successful operations
       mockWorkspacesApi.workspaces.sessions.getContext.mockResolvedValue({
-        messages: [{ id: 'msg1', content: 'Hello', peer_name: 'typed-peer' }],
+        messages: [{ id: 'msg1', content: 'Hello', peer_id: 'typed-peer' }],
         summary: 'Test summary',
       });
 

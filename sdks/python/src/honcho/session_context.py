@@ -61,18 +61,18 @@ class SessionContext(BaseModel):
         self,
         *,
         assistant: str | Peer,
-    ) -> list[dict[str, object]]:
+    ) -> list[dict[str, str]]:
         """
         Convert the context to OpenAI-compatible message format.
 
-        Transforms the message history into the format expected by OpenAI's
-        Chat Completions API, with proper role assignments based on the
+        Transforms the message history and summary into the format expected by
+        OpenAI's Chat Completions API, with proper role assignments based on the
         assistant's identity.
 
         Args:
             assistant: The assistant peer (Peer object or peer ID string) to use
-                       for determining message roles. Messages from this peer will
-                       be marked as "assistant", others as "user"
+            for determining message roles. Messages from this peer will be marked
+            as "assistant", others as "user"
 
         Returns:
             A list of dictionaries in OpenAI format, where each dictionary contains
@@ -80,26 +80,30 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        return [
+        summary_message = {
+            "role": "system",
+            "content": f"<summary>{self.summary}</summary>",
+        }
+        messages = [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",
+                "name": message.peer_id,
                 "content": message.content,
             }
             for message in self.messages
         ]
+        return [summary_message, *messages] if self.summary else messages
 
     def to_anthropic(
         self,
         *,
         assistant: str | Peer,
-    ) -> list[dict[str, object]]:
+    ) -> list[dict[str, str]]:
         """
         Convert the context to Anthropic-compatible message format.
 
         Transforms the message history into the format expected by Anthropic's
-        Claude API. TODO: Anthropic requires messages to alternate between
-        user and assistant roles, so this method may need to handle role
-        consolidation or filtering in the future.
+        Claude API, with proper role assignments based on the assistant's identity.
 
         Args:
             assistant: The assistant peer (Peer object or peer ID string) to use
@@ -116,13 +120,23 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        return [
+        summary_message = {
+            "role": "user",
+            "content": f"<summary>{self.summary}</summary>",
+        }
+        messages = [
             {
-                "role": "assistant" if message.peer_id == assistant_id else "user",
+                "role": "assistant",
                 "content": message.content,
+            }
+            if message.peer_id == assistant_id
+            else {
+                "role": "user",
+                "content": f"{message.peer_id}: {message.content}",
             }
             for message in self.messages
         ]
+        return [summary_message, *messages] if self.summary else messages
 
     def __len__(self) -> int:
         """
@@ -131,7 +145,7 @@ class SessionContext(BaseModel):
         Returns:
             The number of messages in this context
         """
-        return len(self.messages)
+        return len(self.messages) + (1 if self.summary else 0)
 
     def __repr__(self) -> str:
         """
@@ -140,4 +154,4 @@ class SessionContext(BaseModel):
         Returns:
             A string representation suitable for debugging
         """
-        return f"SessionContext(messages={len(self.messages)})"
+        return f"SessionContext(messages={len(self.messages)}, summary={self.summary})"

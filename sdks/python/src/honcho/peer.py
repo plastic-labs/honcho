@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
+from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -47,6 +48,10 @@ class Peer(BaseModel):
             ..., description="Reference to the parent Honcho client instance"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
@@ -59,17 +64,20 @@ class Peer(BaseModel):
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent Honcho client instance
+            metadata: Optional metadata dictionary to associate with this peer.
+            If set, will get/create peer immediately with metadata.
             config: Optional configuration to set for this peer.
-                           If set, will get/create peer immediately with flags.
+            If set, will get/create peer immediately with flags.
         """
         super().__init__(id=peer_id, workspace_id=workspace_id)
         self._client = client
 
-        if config:
+        if config or metadata:
             self._client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
-                configuration=config,
+                configuration=config if config is not None else NOT_GIVEN,
+                metadata=metadata if metadata is not None else NOT_GIVEN,
             )
 
     def chat(
@@ -196,12 +204,53 @@ class Peer(BaseModel):
 
         Args:
             metadata: A dictionary of metadata to associate with this peer.
-                      Keys must be strings, values can be any JSON-serializable type
+            Keys must be strings, values can be any JSON-serializable type
         """
         self._client.workspaces.peers.update(
             peer_id=self.id,
             workspace_id=self.workspace_id,
             metadata=metadata,
+        )
+
+    def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        Makes an API call to retrieve configuration associated with this peer.
+        Configuration currently includes one optional flag, `observe_me`.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        peer = self._client.workspaces.peers.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        return peer.configuration or {}
+
+    @validate_call
+    def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer. Currently the only supported config
+        value is the `observe_me` flag, which controls whether derivation tasks
+        should be created for this peer's global representation. Default is True.
+
+        Makes an API call to update the configuration associated with this peer.
+        This will overwrite any existing configuration with the provided values.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer.
+            Keys must be strings, values can be any JSON-serializable type
+        """
+        self._client.workspaces.peers.update(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            configuration=config,
         )
 
     @validate_call

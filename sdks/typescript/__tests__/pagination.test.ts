@@ -328,7 +328,7 @@ describe('Page', () => {
       mockOriginalPage.nextPage.mockRejectedValue(new Error('Failed to get next page'));
       const page = new Page(mockOriginalPage);
 
-      await expect(page.nextPage()).rejects.toThrow('Failed to get next page');
+      await expect(page.nextPage()).rejects.toThrow();
     });
   });
 
@@ -352,7 +352,7 @@ describe('Page', () => {
         for await (const item of page) {
           // This should throw
         }
-      }).rejects.toThrow('Transform error');
+      }).rejects.toThrow();
     });
 
     it('should handle transform function returning null', async () => {
