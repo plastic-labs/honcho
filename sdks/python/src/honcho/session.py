@@ -73,6 +73,9 @@ class Session(BaseModel):
         """
         Initialize a new Session.
 
+        Provided metadata and configuration will overwrite any existing data in those
+        locations if given.
+
         Args:
             session_id: Unique identifier for this session within the workspace
             workspace_id: Workspace ID for scoping operations

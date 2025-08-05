@@ -102,6 +102,9 @@ export class Honcho {
    * If metadata or config is provided, makes an API call to get/create the peer
    * immediately with those values.
    *
+   * Provided metadata and configuration will overwrite existing data for this peer
+   * if it already exists.
+   *
    * @param id - Unique identifier for the peer within the workspace. Should be a
    *             stable identifier that can be used consistently across sessions.
    * @param metadata - Optional metadata dictionary to associate with this peer.
@@ -162,6 +165,9 @@ export class Honcho {
    * Creates a Session object that can be used to manage conversations between
    * multiple peers. If metadata or config is provided, makes an API call to
    * get/create the session immediately with those values.
+   *
+   * Provided metadata and configuration will overwrite existing data for this session
+   * if it already exists.
    *
    * @param id - Unique identifier for the session within the workspace. Should be a
    *             stable identifier that can be used consistently to reference the
