@@ -232,7 +232,7 @@ async def test_max_webhook_endpoints_per_workspace(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
     test_workspace, _ = sample_data
-    limit: int = settings.WEBHOOKS.MAX_WORKSPACE_LIMIT
+    limit: int = settings.WEBHOOK.MAX_WORKSPACE_LIMIT
 
     # Create endpoints up to the limit
     for i in range(limit):
@@ -262,7 +262,6 @@ async def test_same_endpoint_in_different_workspaces(
     ws2_response = client.post("/v2/workspaces", json={"name": "workspace-2"})
     assert ws2_response.status_code == 200
     ws2 = ws2_response.json()
-    print(ws2)
 
     url = "http://example.com/shared"
 

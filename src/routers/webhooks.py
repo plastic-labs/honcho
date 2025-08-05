@@ -45,7 +45,7 @@ async def get_or_create_webhook_endpoint(
         )
     except ValueError as e:
         raise ConflictException(
-            f"Maximum number of webhook endpoints ({settings.WEBHOOKS.MAX_WORKSPACE_LIMIT}) reached for this workspace."
+            f"Maximum number of webhook endpoints ({settings.WEBHOOK.MAX_WORKSPACE_LIMIT}) reached for this workspace."
         ) from e
 
 
@@ -83,7 +83,7 @@ async def delete_webhook_endpoint(
 
 
 @router.get("/test")
-async def test_webhook(
+async def test_emit(
     workspace_id: str = Path(..., description="Workspace ID"),
     jwt_params: JWTParams = Depends(require_auth()),
 ) -> None:
@@ -93,5 +93,5 @@ async def test_webhook(
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
         raise AuthenticationException("Unable to publish test webhook")
 
-    event = TestEvent(workspace_name=workspace_id)
+    event = TestEvent(workspace_id=workspace_id)
     await publish_webhook_event(event)

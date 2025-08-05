@@ -18,4 +18,4 @@ The webhooks system consists of several key components:
 4. When a new event is found, it is passed to the `deliver_webhook` function.
 5. `deliver_webhook` fetches all subscriber URLs for the event's workspace, signs the payload with a secret key, and sends an HTTP POST request to each URL.
 
-Note that the webhooks require the *deriver* process to be running to faciliate the delivery of the webhook.
+Note that the webhooks require the *deriver* process to be running to facilitate the delivery of the webhook.

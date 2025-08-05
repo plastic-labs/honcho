@@ -39,9 +39,9 @@ async def get_or_create_webhook_endpoint(
     endpoints = result.scalars().all()
 
     # No more than WORKSPACE_LIMIT webhooks per workspace
-    if len(endpoints) >= settings.WEBHOOKS.MAX_WORKSPACE_LIMIT:
+    if len(endpoints) >= settings.WEBHOOK.MAX_WORKSPACE_LIMIT:
         raise ValueError(
-            f"Maximum number of webhook endpoints ({settings.WEBHOOKS.MAX_WORKSPACE_LIMIT}) reached for this workspace."
+            f"Maximum number of webhook endpoints ({settings.WEBHOOK.MAX_WORKSPACE_LIMIT}) reached for this workspace."
         )
 
     # Check if webhook already exists for this workspace

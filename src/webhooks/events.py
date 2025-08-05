@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 
 class WebhookEventType(str, Enum):
     QUEUE_EMPTY = "queue.empty"
-    TEST = "test"
+    TEST = "test.event"
 
 
 class BaseWebhookEvent(BaseModel):
     """Base class for all webhook events."""
 
-    workspace_name: str
+    workspace_id: str
 
 
 class QueueEmptyEvent(BaseWebhookEvent):
@@ -48,14 +48,14 @@ async def publish_webhook_event(event: WebhookEvent) -> None:
     """
     try:
         payload = create_webhook_payload(
-            workspace_name=event.workspace_name,
+            workspace_name=event.workspace_id,
             event_type=event.type.value,
-            data=event.model_dump(mode="json"),
+            data=event.model_dump(mode="json", exclude={"type"}),
         )
 
         async with tracked_db("publish_webhook_event") as db:
             queue_item = QueueItem(
-                work_unit_key=f"webhook:{event.workspace_name}",
+                work_unit_key=f"webhook:{event.workspace_id}",
                 payload=payload,
                 session_id=None,
                 task_type="webhook",
@@ -65,12 +65,11 @@ async def publish_webhook_event(event: WebhookEvent) -> None:
             logger.debug(
                 "Published webhook event '%s' for workspace '%s'",
                 event.type,
-                event.workspace_name,
+                event.workspace_id,
             )
 
-    except Exception as e:
+    except Exception:
         logger.exception(
-            "Failed to publish webhook event %s: %s",
+            "Failed to publish webhook event %s",
             event.type,
-            e,
         )

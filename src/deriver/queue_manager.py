@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src.config import settings
+from src.models import QueueItem
 
 from .. import models
 from ..dependencies import tracked_db
@@ -287,7 +288,9 @@ class QueueManager:
                 self.untrack_work_unit(work_unit_key)
 
     @sentry_sdk.trace
-    async def get_next_message(self, db: AsyncSession, work_unit_key: str):
+    async def get_next_message(
+        self, db: AsyncSession, work_unit_key: str
+    ) -> QueueItem | None:
         """Get the next unprocessed message for a specific work unit."""
         # Build base query - need to add quotes to match database format
         query = (

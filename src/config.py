@@ -54,7 +54,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DERIVER": "deriver",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
-        "WEBHOOKS": "webhooks",
+        "WEBHOOK": "webhook",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -238,9 +238,9 @@ class SummarySettings(HonchoSettings):
 
 
 class WebhookSettings(HonchoSettings):
-    model_config = SettingsConfigDict(env_prefix="WEBHOOKS_", extra="ignore")  # pyright: ignore
+    model_config = SettingsConfigDict(env_prefix="WEBHOOK_", extra="ignore")  # pyright: ignore
 
-    WEBHOOK_SECRET: str | None = None  # Must be set if configuring webhooks
+    SECRET: str | None = None  # Must be set if configuring webhooks
     MAX_WORKSPACE_LIMIT: int = 10
 
 
@@ -276,7 +276,7 @@ class AppSettings(HonchoSettings):
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
-    WEBHOOKS: WebhookSettings = Field(default_factory=WebhookSettings)
+    WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:
