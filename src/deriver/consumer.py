@@ -1,12 +1,11 @@
 import logging
 from typing import Any
 
-import httpx
 from pydantic import ValidationError
 from rich.console import Console
 
 from .deriver import Deriver
-from .queue_payload import RepresentationPayload, SummaryPayload, WebhookQueuePayload
+from .queue_payload import RepresentationPayload, SummaryPayload, WebhookPayload
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -16,9 +15,7 @@ console = Console(markup=True)
 deriver = Deriver()
 
 
-async def process_item(
-    client: httpx.AsyncClient, task_type: str, payload: dict[str, Any]
-) -> None:
+async def process_item(task_type: str, payload: dict[str, Any]) -> None:
     # Validate payload structure and types before processing
     try:
         if task_type == "representation":
@@ -26,7 +23,7 @@ async def process_item(
         elif task_type == "summary":
             validated_payload = SummaryPayload(**payload)
         elif task_type == "webhook":
-            validated_payload = WebhookQueuePayload(**payload)
+            validated_payload = WebhookPayload(**payload)
         else:
             raise ValueError(f"Invalid task_type: {task_type}")
     except ValidationError as e:
@@ -39,11 +36,9 @@ async def process_item(
     )
 
     if task_type == "webhook":
-        if not isinstance(validated_payload, WebhookQueuePayload):
-            raise ValueError(
-                f"Expected WebhookQueuePayload, got {type(validated_payload)}"
-            )
-        await deriver.process_webhook(client, validated_payload)
+        if not isinstance(validated_payload, WebhookPayload):
+            raise ValueError(f"Expected WebhookPayload, got {type(validated_payload)}")
+        await deriver.process_webhook(validated_payload)
         logger.debug("Finished processing webhook %s", validated_payload.event_type)
     else:
         if not isinstance(validated_payload, RepresentationPayload | SummaryPayload):

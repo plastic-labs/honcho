@@ -358,7 +358,6 @@ class WebhookEndpointBase(BaseModel):
 
 class WebhookEndpointCreate(WebhookEndpointBase):
     url: str
-    workspace_name: str = Field(alias="workspace_id")
 
     @field_validator("url")
     @classmethod

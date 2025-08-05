@@ -3,7 +3,6 @@ import logging
 import time
 from typing import Any
 
-from httpx import AsyncClient
 from langfuse.decorators import langfuse_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,14 +35,14 @@ from src.utils.shared_models import (
     ReasoningResponseWithThinking,
     UnifiedObservation,
 )
-from src.webhooks.webhook_delivery import webhook_delivery_service
+from src.webhooks import webhook_delivery
 
 from .prompts import critical_analysis_prompt
 from .queue_payload import (
     DeriverQueuePayload,
     RepresentationPayload,
     SummaryPayload,
-    WebhookQueuePayload,
+    WebhookPayload,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,11 +84,10 @@ class Deriver:
 
     async def process_webhook(
         self,
-        client: AsyncClient,
-        payload: WebhookQueuePayload,
+        payload: WebhookPayload,
     ) -> None:
         async with tracked_db() as db:
-            await webhook_delivery_service.deliver_webhook(db, client, payload)
+            await webhook_delivery.deliver_webhook(db, payload)
 
     async def process_message(
         self,

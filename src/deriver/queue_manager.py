@@ -4,14 +4,13 @@ from asyncio import Task
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
-from sqlite3 import IntegrityError
 
-import httpx
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -32,9 +31,6 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.owned_work_units: set[str] = set()
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
-        self.client: httpx.AsyncClient = httpx.AsyncClient(
-            headers={"User-Agent": "Honcho-Worker/1.0"}, timeout=30.0
-        )
 
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
@@ -95,8 +91,6 @@ class QueueManager:
                 f"Waiting for {len(self.active_tasks)} active tasks to complete..."
             )
             await asyncio.gather(*self.active_tasks, return_exceptions=True)
-        if self.client:
-            await self.client.aclose()
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
@@ -247,9 +241,7 @@ class QueueManager:
                         logger.info(
                             f"Processing item for task type {message.task_type} with id {message.id} from work unit {work_unit_key}"
                         )
-                        await process_item(
-                            self.client, message.task_type, message.payload
-                        )
+                        await process_item(message.task_type, message.payload)
                         logger.debug(
                             f"Successfully processed queue item for task type {message.task_type} with id {message.id}"
                         )

@@ -33,7 +33,7 @@ class SummaryPayload(BasePayload):
     message_seq_in_session: int
 
 
-class WebhookQueuePayload(BasePayload):
+class WebhookPayload(BasePayload):
     """Payload for webhook delivery tasks."""
 
     task_type: Literal["webhook"] = "webhook"
@@ -44,7 +44,7 @@ class WebhookQueuePayload(BasePayload):
 
 # Union type for all possible queue payloads
 DeriverQueuePayload = RepresentationPayload | SummaryPayload
-QueuePayload = DeriverQueuePayload | WebhookQueuePayload
+QueuePayload = DeriverQueuePayload | WebhookPayload
 
 
 def create_webhook_payload(
@@ -52,7 +52,7 @@ def create_webhook_payload(
     event_type: str,
     data: dict[str, Any],
 ) -> dict[str, Any]:
-    return WebhookQueuePayload(
+    return WebhookPayload(
         workspace_name=workspace_name, event_type=event_type, data=data
     ).model_dump(mode="json")
 

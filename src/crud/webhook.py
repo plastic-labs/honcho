@@ -13,6 +13,7 @@ logger = getLogger(__name__)
 
 async def get_or_create_webhook_endpoint(
     db: AsyncSession,
+    workspace_name: str,
     webhook: schemas.WebhookEndpointCreate,
 ) -> schemas.WebhookEndpoint:
     """
@@ -29,10 +30,10 @@ async def get_or_create_webhook_endpoint(
         ResourceNotFoundException: If the workspace is specified and does not exist
     """
     # Verify workspace exists
-    await get_workspace(db, workspace_name=webhook.workspace_name)
+    await get_workspace(db, workspace_name=workspace_name)
 
     stmt = select(models.WebhookEndpoint).where(
-        models.WebhookEndpoint.workspace_name == webhook.workspace_name,
+        models.WebhookEndpoint.workspace_name == workspace_name,
     )
     result = await db.execute(stmt)
     endpoints = result.scalars().all()
@@ -50,7 +51,7 @@ async def get_or_create_webhook_endpoint(
 
     # Create new webhook endpoint
     webhook_endpoint = models.WebhookEndpoint(
-        workspace_name=webhook.workspace_name,
+        workspace_name=workspace_name,
         url=webhook.url,
     )
     db.add(webhook_endpoint)
@@ -82,7 +83,9 @@ async def list_webhook_endpoints(
     )
 
 
-async def delete_webhook_endpoint(db: AsyncSession, endpoint_id: str) -> None:
+async def delete_webhook_endpoint(
+    db: AsyncSession, workspace_name: str, endpoint_id: str
+) -> None:
     """
     Delete a webhook endpoint.
 
@@ -96,12 +99,15 @@ async def delete_webhook_endpoint(db: AsyncSession, endpoint_id: str) -> None:
     # Verify webhook endpoint exists
     stmt = select(models.WebhookEndpoint).where(
         models.WebhookEndpoint.id == endpoint_id,
+        models.WebhookEndpoint.workspace_name == workspace_name,
     )
     result = await db.execute(stmt)
     endpoint = result.scalar_one_or_none()
 
     if not endpoint:
-        raise ResourceNotFoundException(f"Webhook endpoint {endpoint_id} not found")
+        raise ResourceNotFoundException(
+            f"Webhook endpoint {endpoint_id} not found for workspace {workspace_name}"
+        )
 
     await db.delete(endpoint)
     await db.commit()
