@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 name = "honcho-mcp"
 
 [env.staging]
-name = "honcho-mcp-staging" 
+name = "honcho-mcp-staging"
 
 [observability.logs]
 enabled = true

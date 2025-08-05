@@ -460,7 +460,7 @@ name = "exceptiongroup"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.11'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/9f/a65090624ecf468cdca03533906e7c69ed7588582240cfe7cc9e770b50eb/exceptiongroup-1.3.0.tar.gz", hash = "sha256:b241f5885f560bc56a59ee63ca4c6a8bfa46ae4ad651af316d4e81817bb9fd88", size = 29749, upload-time = "2025-05-10T17:42:51.123Z" }
 wheels = [
@@ -892,7 +892,7 @@ dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "coverage", specifier = ">=7.6.0" },
     { name = "honcho-ai", specifier = ">=1.2.1" },
-    { name = "honcho-core", specifier = ">=1.2.0" },
+    { name = "honcho-core", git = "https://github.com/stainless-sdks/honcho-python.git?rev=ad6b08a7e93481c0def80cfeaf3cfcdf9a2037cf" },
     { name = "interrogate", specifier = ">=1.7.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "py-spy", specifier = ">=0.3.14" },
@@ -920,7 +920,7 @@ wheels = [
 [[package]]
 name = "honcho-core"
 version = "1.2.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/stainless-sdks/honcho-python.git?rev=ad6b08a7e93481c0def80cfeaf3cfcdf9a2037cf#ad6b08a7e93481c0def80cfeaf3cfcdf9a2037cf" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -928,10 +928,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9c/60/e870902c5d247b5a0fb38401d6f3730e11eaf038f5a15c68afc4465e332f/honcho_core-1.2.0.tar.gz", hash = "sha256:1f16fd9ecd236bfc4c30ecc33354baf4bdd9a4206e84f92ec785ecd61b25d193", size = 122450, upload-time = "2025-07-16T19:59:06.362Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/99/f435c093ea2067d7da50545cfbe2037e28370541ba161f5c8df6e33030b0/honcho_core-1.2.0-py3-none-any.whl", hash = "sha256:d9260e1a2a1254c26aeec464f8bca7ebb6c2fa9b5ae568a9344b5458467d78ab", size = 110721, upload-time = "2025-07-16T19:59:05.189Z" },
 ]
 
 [[package]]

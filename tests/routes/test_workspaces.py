@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
@@ -222,8 +224,8 @@ def test_search_workspace(client: TestClient, sample_data: tuple[Workspace, Peer
 
     # Test search with a query
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/search", 
-        json={"query": "test search query", "limit": 10}
+        f"/v2/workspaces/{test_workspace.name}/search",
+        json={"query": "test search query", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
@@ -240,8 +242,7 @@ def test_search_workspace_empty_query(
 
     # Test search with empty query
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/search", 
-        json={"query": "", "limit": 10}
+        f"/v2/workspaces/{test_workspace.name}/search", json={"query": "", "limit": 10}
     )
     assert response.status_code == 200
     data = response.json()
@@ -255,11 +256,11 @@ def test_search_workspace_nonexistent(client: TestClient):
     nonexistent_workspace_id = str(generate_nanoid())
 
     response = client.post(
-        f"/v2/workspaces/{nonexistent_workspace_id}/search", 
-        json={"query": "test query", "limit": 10}
+        f"/v2/workspaces/{nonexistent_workspace_id}/search",
+        json={"query": "test query", "limit": 10},
     )
     assert response.status_code == 200
-    data = response.json()
+    data: list[dict[str, Any]] = response.json()
     # Should return empty list for nonexistent workspace
     assert isinstance(data, list)
     assert len(data) == 0

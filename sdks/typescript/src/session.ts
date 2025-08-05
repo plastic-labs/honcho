@@ -1,24 +1,24 @@
+import type HonchoCore from '@honcho-ai/core'
+import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type { Uploadable } from '@honcho-ai/core/src/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { SessionContext } from './session_context'
-import HonchoCore from '@honcho-ai/core'
-import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
-import { Uploadable } from '@honcho-ai/core/src/uploads'
 import {
-  SessionPeerConfigSchema,
-  SearchQuerySchema,
-  FilterSchema,
   ContextParamsSchema,
   FileUploadSchema,
-  WorkingRepParamsSchema,
-  PeerAdditionSchema,
-  PeerRemovalSchema,
-  MessageAdditionSchema,
-  Filter,
-  PeerAddition,
-  PeerRemoval,
-  MessageAddition,
+  type Filter,
+  FilterSchema,
   LimitSchema,
+  type MessageAddition,
+  MessageAdditionSchema,
+  type PeerAddition,
+  PeerAdditionSchema,
+  type PeerRemoval,
+  PeerRemovalSchema,
+  SearchQuerySchema,
+  SessionPeerConfigSchema,
+  WorkingRepParamsSchema,
 } from './validation'
 
 /**
@@ -30,7 +30,7 @@ import {
  */
 export class SessionPeerConfig {
   /**
-   * Whether other peers in this session should try to form a session-level 
+   * Whether other peers in this session should try to form a session-level
    * theory-of-mind representation of this peer. When false, prevents other
    * peers from building local representations of this peer within this session.
    */
@@ -50,7 +50,10 @@ export class SessionPeerConfig {
    * @param observe_others - Whether this peer should observe others in the session
    */
   constructor(observe_me?: boolean | null, observe_others?: boolean) {
-    const validatedConfig = SessionPeerConfigSchema.parse({ observe_me, observe_others })
+    const validatedConfig = SessionPeerConfigSchema.parse({
+      observe_me,
+      observe_others,
+    })
     this.observe_me = validatedConfig.observe_me
     this.observe_others = validatedConfig.observe_others
   }
@@ -76,16 +79,16 @@ export class SessionPeerConfig {
  * @example
  * ```typescript
  * const session = await honcho.session('conversation-123')
- * 
+ *
  * // Add peers to the session
  * await session.addPeers(['user1', 'assistant1'])
- * 
+ *
  * // Send messages
  * await session.addMessages([
  *   { peer_id: 'user1', content: 'Hello!' },
  *   { peer_id: 'assistant1', content: 'Hi there!' }
  * ])
- * 
+ *
  * // Get optimized context
  * const context = await session.getContext(true, 4000)
  * ```
@@ -132,18 +135,18 @@ export class Session {
    *   - [string | Peer, SessionPeerConfig]: Single peer with session config
    *   - Array<string | Peer | [string | Peer, SessionPeerConfig]>: Mixed list
    *     of peers and peer+config combinations
-   * 
+   *
    * @example
    * ```typescript
    * // Add single peer
    * await session.addPeers('user123')
-   * 
+   *
    * // Add multiple peers
    * await session.addPeers(['user1', 'user2', peer3])
-   * 
+   *
    * // Add peer with custom config
    * await session.addPeers(['user1', new SessionPeerConfig(false, true)])
-   * 
+   *
    * // Add mixed peers with and without configs
    * await session.addPeers([
    *   'user1',
@@ -152,12 +155,12 @@ export class Session {
    * ])
    * ```
    */
-  async addPeers(
-    peers: PeerAddition
-  ): Promise<void> {
+  async addPeers(peers: PeerAddition): Promise<void> {
     const validatedPeers = PeerAdditionSchema.parse(peers)
     const peerDict: Record<string, SessionPeerConfig> = {}
-    const peersArray = Array.isArray(validatedPeers) ? validatedPeers : [validatedPeers]
+    const peersArray = Array.isArray(validatedPeers)
+      ? validatedPeers
+      : [validatedPeers]
 
     for (const peer of peersArray) {
       if (typeof peer === 'string') {
@@ -198,12 +201,12 @@ export class Session {
    *   - Array<string | Peer | [string | Peer, SessionPeerConfig]>: Mixed list
    *     of peers and peer+config combinations
    */
-  async setPeers(
-    peers: PeerAddition
-  ): Promise<void> {
+  async setPeers(peers: PeerAddition): Promise<void> {
     const validatedPeers = PeerAdditionSchema.parse(peers)
     const peerDict: Record<string, SessionPeerConfig> = {}
-    const peersArray = Array.isArray(validatedPeers) ? validatedPeers : [validatedPeers]
+    const peersArray = Array.isArray(validatedPeers)
+      ? validatedPeers
+      : [validatedPeers]
 
     for (const peer of peersArray) {
       if (typeof peer === 'string') {
@@ -241,13 +244,15 @@ export class Session {
    *   - Peer: Single Peer object
    *   - Array<string | Peer>: List of peer IDs and/or Peer objects
    */
-  async removePeers(
-    peers: PeerRemoval
-  ): Promise<void> {
+  async removePeers(peers: PeerRemoval): Promise<void> {
     const validatedPeers = PeerRemovalSchema.parse(peers)
     const peerIds = Array.isArray(validatedPeers)
       ? validatedPeers.map((p) => (typeof p === 'string' ? p : p.id))
-      : [typeof validatedPeers === 'string' ? validatedPeers : validatedPeers.id]
+      : [
+          typeof validatedPeers === 'string'
+            ? validatedPeers
+            : validatedPeers.id,
+        ]
     await this._client.workspaces.sessions.peers.remove(
       this.workspaceId,
       this.id,
@@ -265,8 +270,13 @@ export class Session {
    * @returns Promise resolving to a list of Peer objects that are members of this session
    */
   async getPeers(): Promise<Peer[]> {
-    const peersPage = await this._client.workspaces.sessions.peers.list(this.workspaceId, this.id)
-    return peersPage.items.map((peer: any) => new Peer(peer.id, this.workspaceId, this._client))
+    const peersPage = await this._client.workspaces.sessions.peers.list(
+      this.workspaceId,
+      this.id
+    )
+    return peersPage.items.map(
+      (peer) => new Peer(peer.id, this.workspaceId, this._client)
+    )
   }
 
   /**
@@ -326,7 +336,7 @@ export class Session {
    * @param messages - Messages to add to the session. Can be:
    *   - MessageCreate: Single message object with peer_id and content
    *   - MessageCreate[]: Array of message objects
-   * 
+   *
    * @example
    * ```typescript
    * // Add single message
@@ -334,7 +344,7 @@ export class Session {
    *   peer_id: 'user123',
    *   content: 'Hello world!'
    * })
-   * 
+   *
    * // Add multiple messages
    * await session.addMessages([
    *   { peer_id: 'user1', content: 'Hello!' },
@@ -344,12 +354,14 @@ export class Session {
    */
   async addMessages(messages: MessageAddition): Promise<void> {
     const validatedMessages = MessageAdditionSchema.parse(messages)
-    const messagesList = Array.isArray(validatedMessages) ? validatedMessages : [validatedMessages]
+    const messagesList = Array.isArray(validatedMessages)
+      ? validatedMessages
+      : [validatedMessages]
     await this._client.workspaces.sessions.messages.create(
       this.workspaceId,
       this.id,
       {
-        messages: messagesList
+        messages: messagesList,
       }
     )
   }
@@ -368,9 +380,7 @@ export class Session {
    *   - timestamp_end: Filter messages before a specific timestamp
    * @returns Promise resolving to a Page of Message objects matching the specified criteria
    */
-  async getMessages(
-    filter?: Filter
-  ): Promise<Page<Message>> {
+  async getMessages(filter?: Filter): Promise<Page<Message>> {
     const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const messagesPage = await this._client.workspaces.sessions.messages.list(
       this.workspaceId,
@@ -391,7 +401,10 @@ export class Session {
    *          Returns an empty dictionary if no metadata is set
    */
   async getMetadata(): Promise<Record<string, unknown>> {
-    const session = await this._client.workspaces.sessions.getOrCreate(this.workspaceId, { id: this.id })
+    const session = await this._client.workspaces.sessions.getOrCreate(
+      this.workspaceId,
+      { id: this.id }
+    )
     return session.metadata || {}
   }
 
@@ -407,11 +420,9 @@ export class Session {
    *                   Keys must be strings, values can be any JSON-serializable type
    */
   async setMetadata(metadata: Record<string, unknown>): Promise<void> {
-    await this._client.workspaces.sessions.update(
-      this.workspaceId,
-      this.id,
-      { metadata }
-    )
+    await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
+      metadata,
+    })
   }
 
   /**
@@ -430,7 +441,7 @@ export class Session {
    * @returns Promise resolving to a SessionContext object containing the optimized
    *          message history and summary (if available) that maximizes conversational
    *          context while respecting the token limit
-   * 
+   *
    * @note Token counting is performed using tiktoken. For models using different
    *       tokenizers, you may need to adjust the token limit accordingly.
    */
@@ -439,10 +450,14 @@ export class Session {
     tokens?: number
   ): Promise<SessionContext> {
     const contextParams = ContextParamsSchema.parse({ summary, tokens })
-    const context = await this._client.workspaces.sessions.getContext(this.workspaceId, this.id, {
-      tokens: contextParams.tokens,
-      summary: contextParams.summary,
-    })
+    const context = await this._client.workspaces.sessions.getContext(
+      this.workspaceId,
+      this.id,
+      {
+        tokens: contextParams.tokens,
+        summary: contextParams.summary,
+      }
+    )
     return new SessionContext(this.id, context.messages, context.summary)
   }
 
@@ -484,7 +499,7 @@ export class Session {
    * @note Supported file types include PDFs, text files, and JSON documents.
    *       Large files will be automatically split into multiple messages to fit
    *       within message size limits.
-   * 
+   *
    * @example
    * ```typescript
    * // Upload a file
@@ -492,15 +507,16 @@ export class Session {
    * console.log(`Created ${messages.length} messages from file`)
    * ```
    */
-  async uploadFile(
-    file: Uploadable,
-    peerId: string
-  ): Promise<Message[]> {
+  async uploadFile(file: Uploadable, peerId: string): Promise<Message[]> {
     const uploadParams = FileUploadSchema.parse({ file, peerId })
-    const response = await this._client.workspaces.sessions.messages.upload(this.workspaceId, this.id, {
-      file: uploadParams.file,
-      peer_id: uploadParams.peerId,
-    })
+    const response = await this._client.workspaces.sessions.messages.upload(
+      this.workspaceId,
+      this.id,
+      {
+        file: uploadParams.file,
+        peer_id: uploadParams.peerId,
+      }
+    )
 
     return response
   }
@@ -517,12 +533,12 @@ export class Session {
    *                 `target` within this session context rather than `peer`'s global representation
    * @returns Promise resolving to a dictionary containing the peer's representation information,
    *          including facts, characteristics, and contextual knowledge
-   * 
+   *
    * @example
    * ```typescript
    * // Get peer's global representation in this session
    * const globalRep = await session.workingRep('user123')
-   * 
+   *
    * // Get what user123 knows about assistant in this session
    * const localRep = await session.workingRep('user123', 'assistant')
    * ```
@@ -532,17 +548,24 @@ export class Session {
     target?: string | Peer
   ): Promise<Record<string, unknown>> {
     const workingRepParams = WorkingRepParamsSchema.parse({ peer, target })
-    const peerId = typeof workingRepParams.peer === 'string' ? workingRepParams.peer : workingRepParams.peer.id
+    const peerId =
+      typeof workingRepParams.peer === 'string'
+        ? workingRepParams.peer
+        : workingRepParams.peer.id
     const targetId = workingRepParams.target
       ? typeof workingRepParams.target === 'string'
         ? workingRepParams.target
         : workingRepParams.target.id
       : undefined
 
-    return await this._client.workspaces.peers.workingRepresentation(this.workspaceId, peerId, {
-      session_id: this.id,
-      target: targetId,
-    })
+    return await this._client.workspaces.peers.workingRepresentation(
+      this.workspaceId,
+      peerId,
+      {
+        session_id: this.id,
+        target: targetId,
+      }
+    )
   }
 
   /**

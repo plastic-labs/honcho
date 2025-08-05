@@ -636,39 +636,29 @@ describe('Session', () => {
 
   describe('search', () => {
     it('should search session messages and return Page', async () => {
-      const mockSearchResults = {
-        items: [
-          { id: 'msg1', content: 'Hello world', peer_id: 'peer1' },
-          { id: 'msg2', content: 'Hello there', peer_id: 'peer2' },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: false,
-      };
+      const mockSearchResults = [
+        { id: 'msg1', content: 'Hello world', peer_id: 'peer1' },
+        { id: 'msg2', content: 'Hello there', peer_id: 'peer2' },
+      ];
       mockClient.workspaces.sessions.search.mockResolvedValue(mockSearchResults);
 
       const results = await session.search('hello');
 
-      expect(results).toBeInstanceOf(Page);
+      expect(Array.isArray(results)).toBe(true);
       expect(mockClient.workspaces.sessions.search).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
-        { query: 'hello' }
+        { query: 'hello', limit: undefined }
       );
     });
 
     it('should handle empty search results', async () => {
-      const mockSearchResults = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: false,
-      };
+      const mockSearchResults: any[] = [];
       mockClient.workspaces.sessions.search.mockResolvedValue(mockSearchResults);
 
       const results = await session.search('nonexistent');
 
-      expect(results).toBeInstanceOf(Page);
+      expect(Array.isArray(results)).toBe(true);
     });
 
     it('should throw error for empty query', async () => {

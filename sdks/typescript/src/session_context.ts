@@ -1,4 +1,4 @@
-import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import type { Peer } from './peer'
 
 /**
@@ -50,7 +50,9 @@ export class SessionContext {
    * @returns A list of dictionaries in OpenAI format, where each dictionary contains
    *          "role" and "content" keys suitable for the OpenAI API
    */
-  toOpenAI(assistant: string | Peer): Array<{ role: string; content: string; name?: string }> {
+  toOpenAI(
+    assistant: string | Peer
+  ): Array<{ role: string; content: string; name?: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     const summaryMessage = {
       role: 'system',
@@ -91,13 +93,13 @@ export class SessionContext {
     const messages = this.messages.map((message) =>
       message.peer_id === assistantId
         ? {
-          role: 'assistant',
-          content: message.content,
-        }
+            role: 'assistant',
+            content: message.content,
+          }
         : {
-          role: 'user',
-          content: `${message.peer_id}: ${message.content}`,
-        }
+            role: 'user',
+            content: `${message.peer_id}: ${message.content}`,
+          }
     )
     return this.summary ? [summaryMessage, ...messages] : messages
   }

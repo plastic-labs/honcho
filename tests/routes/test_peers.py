@@ -1,3 +1,5 @@
+from typing import Any
+
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
@@ -430,7 +432,7 @@ def test_search_peer_nonexistent(
         json={"query": "test query", "limit": 10},
     )
     assert response.status_code == 200
-    data = response.json()
+    data: list[dict[str, Any]] = response.json()
     assert isinstance(data, list)
     assert len(data) == 0
 
@@ -489,7 +491,7 @@ def test_search_peer_with_limit(
     )
 
     assert response.status_code == 200
-    data = response.json()
+    data: list[dict[str, Any]] = response.json()
     assert isinstance(data, list)
     # Should not exceed the limit
     assert len(data) <= 2

@@ -31,7 +31,7 @@ dependencies = [
 ]
 [tool.uv]
 dev-dependencies = [
-    "honcho-core>=1.2.0",
+    "honcho-core @ git+https://github.com/stainless-sdks/honcho-python.git@ad6b08a7e93481c0def80cfeaf3cfcdf9a2037cf",
     "honcho-ai>=1.2.1",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",

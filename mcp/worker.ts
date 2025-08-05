@@ -1341,4 +1341,4 @@ export default {
             return createErrorResponse(requestData.id ?? null, -32603, errorMessage);
         }
     },
-}; 
+};

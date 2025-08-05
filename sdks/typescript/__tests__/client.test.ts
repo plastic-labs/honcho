@@ -346,35 +346,25 @@ describe('Honcho Client', () => {
 
   describe('search', () => {
     it('should search for messages and return Page', async () => {
-      const mockSearchResults = {
-        items: [
-          { id: 'msg1', content: 'Hello world', peer_id: 'peer1' },
-          { id: 'msg2', content: 'Hello there', peer_id: 'peer2' },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: false,
-      };
+      const mockSearchResults = [
+        { id: 'msg1', content: 'Hello world', peer_id: 'peer1' },
+        { id: 'msg2', content: 'Hello there', peer_id: 'peer2' },
+      ];
       mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
 
       const results = await honcho.search('hello');
 
-      expect(results).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { body: 'hello' });
+      expect(Array.isArray(results)).toBe(true);
+      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { query: 'hello', limit: undefined });
     });
 
     it('should handle empty search results', async () => {
-      const mockSearchResults = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: false,
-      };
+      const mockSearchResults: any[] = [];
       mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
 
       const results = await honcho.search('nonexistent');
 
-      expect(results).toBeInstanceOf(Page);
+      expect(Array.isArray(results)).toBe(true);
     });
 
     it('should throw error for empty query', async () => {
@@ -389,18 +379,13 @@ describe('Honcho Client', () => {
     });
 
     it('should handle complex search queries', async () => {
-      const mockSearchResults = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: false,
-      };
+      const mockSearchResults: any[] = [];
       mockClient.workspaces.search.mockResolvedValue(mockSearchResults);
 
       const complexQuery = 'complex query with "quotes" and special characters!@#$%';
       await honcho.search(complexQuery);
 
-      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { body: complexQuery });
+      expect(mockClient.workspaces.search).toHaveBeenCalledWith('test-workspace', { query: complexQuery, limit: undefined });
     });
 
     it('should handle API errors', async () => {

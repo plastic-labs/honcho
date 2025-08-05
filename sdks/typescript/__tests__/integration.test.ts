@@ -195,32 +195,17 @@ describe('Honcho SDK Integration Tests', () => {
 
     it('should handle search functionality across different scopes', async () => {
       // Setup mock responses
-      const mockWorkspaceSearchResults = {
-        items: [
-          { id: 'msg1', content: 'workspace message', peer_id: 'peer1' },
-        ],
-        total: 1,
-        size: 1,
-        hasNextPage: false,
-      };
+      const mockWorkspaceSearchResults = [
+        { id: 'msg1', content: 'workspace message', peer_id: 'peer1' },
+      ];
 
-      const mockPeerSearchResults = {
-        items: [
-          { id: 'msg2', content: 'peer message', peer_id: 'peer1' },
-        ],
-        total: 1,
-        size: 1,
-        hasNextPage: false,
-      };
+      const mockPeerSearchResults = [
+        { id: 'msg2', content: 'peer message', peer_id: 'peer1' },
+      ];
 
-      const mockSessionSearchResults = {
-        items: [
-          { id: 'msg3', content: 'session message', peer_id: 'peer1' },
-        ],
-        total: 1,
-        size: 1,
-        hasNextPage: false,
-      };
+      const mockSessionSearchResults = [
+        { id: 'msg3', content: 'session message', peer_id: 'peer1' },
+      ];
 
       mockWorkspacesApi.workspaces.search.mockResolvedValue(mockWorkspaceSearchResults);
       mockWorkspacesApi.workspaces.peers.search.mockResolvedValue(mockPeerSearchResults);
@@ -228,30 +213,30 @@ describe('Honcho SDK Integration Tests', () => {
 
       // Step 1: Search workspace
       const workspaceResults = await honcho.search('test query');
-      expect(workspaceResults).toBeInstanceOf(Page);
+      expect(Array.isArray(workspaceResults)).toBe(true);
       expect(mockWorkspacesApi.workspaces.search).toHaveBeenCalledWith(
         'integration-test-workspace',
-        { body: 'test query' }
+        { query: 'test query', limit: undefined }
       );
 
       // Step 2: Search peer
       const peer = await honcho.peer('test-peer');
       const peerResults = await peer.search('peer query');
-      expect(peerResults).toBeInstanceOf(Page);
+      expect(Array.isArray(peerResults)).toBe(true);
       expect(mockWorkspacesApi.workspaces.peers.search).toHaveBeenCalledWith(
         'integration-test-workspace',
         'test-peer',
-        { query: 'peer query' }
+        { query: 'peer query', limit: undefined }
       );
 
       // Step 3: Search session
       const session = await honcho.session('test-session');
       const sessionResults = await session.search('session query');
-      expect(sessionResults).toBeInstanceOf(Page);
+      expect(Array.isArray(sessionResults)).toBe(true);
       expect(mockWorkspacesApi.workspaces.sessions.search).toHaveBeenCalledWith(
         'integration-test-workspace',
         'test-session',
-        { query: 'session query' }
+        { query: 'session query', limit: undefined }
       );
     });
 

@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@types/node": "^24.0.1",
-    "@honcho-ai/core": "1.2.0",
+    "@honcho-ai/core": "github:plastic-labs/honcho-node-core#d4dbe24a74d3fb225f610c9cb28951908f368fc6",
     "zod": "4.0.0"
   },
   "devDependencies": {

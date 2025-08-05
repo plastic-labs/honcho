@@ -1,29 +1,34 @@
 import HonchoCore from '@honcho-ai/core'
+import type { DefaultQuery } from '@honcho-ai/core/src/core'
+import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type {
+  DeriverStatus,
+  WorkspaceDeriverStatusParams,
+} from '@honcho-ai/core/src/resources/workspaces/workspaces'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
-import { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import {
+  type DeriverStatusOptions,
+  DeriverStatusOptionsSchema,
+  type Filter,
+  FilterSchema,
+  type HonchoConfig,
   HonchoConfigSchema,
-  PeerMetadataSchema,
+  LimitSchema,
+  type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
-  SessionMetadataSchema,
+  type PeerMetadata,
+  PeerMetadataSchema,
+  SearchQuerySchema,
+  type SessionConfig,
   SessionConfigSchema,
   SessionIdSchema,
-  SearchQuerySchema,
-  FilterSchema,
-  DeriverStatusOptionsSchema,
+  type SessionMetadata,
+  SessionMetadataSchema,
+  type WorkspaceMetadata,
   WorkspaceMetadataSchema,
-  HonchoConfig,
-  PeerMetadata,
-  PeerConfig,
-  SessionMetadata,
-  SessionConfig,
-  Filter,
-  DeriverStatusOptions,
-  WorkspaceMetadata,
-  LimitSchema,
 } from './validation'
 
 /**
@@ -39,7 +44,7 @@ import {
  *   apiKey: 'your-api-key',
  *   workspaceId: 'your-workspace-id'
  * })
- * 
+ *
  * const peer = await honcho.peer('user123')
  * const session = await honcho.session('session456')
  * ```
@@ -75,7 +80,9 @@ export class Honcho {
   constructor(options: HonchoConfig) {
     const validatedOptions = HonchoConfigSchema.parse(options)
     this.workspaceId =
-      validatedOptions.workspaceId || process.env.HONCHO_WORKSPACE_ID || 'default'
+      validatedOptions.workspaceId ||
+      process.env.HONCHO_WORKSPACE_ID ||
+      'default'
     this._client = new HonchoCore({
       apiKey: validatedOptions.apiKey || process.env.HONCHO_API_KEY,
       environment: validatedOptions.environment,
@@ -83,8 +90,8 @@ export class Honcho {
       timeout: validatedOptions.timeout,
       maxRetries: validatedOptions.maxRetries,
       defaultHeaders: validatedOptions.defaultHeaders,
-      defaultQuery: validatedOptions.defaultQuery as any,
-    }) as any
+      defaultQuery: validatedOptions.defaultQuery as DefaultQuery,
+    })
     this._client.workspaces.getOrCreate({ id: this.workspaceId })
   }
 
@@ -105,17 +112,24 @@ export class Honcho {
    *          join sessions, and query the peer's knowledge representations
    * @throws Error if the peer ID is empty or invalid
    */
-  async peer(id: string, metadata?: PeerMetadata, config?: PeerConfig): Promise<Peer> {
+  async peer(
+    id: string,
+    metadata?: PeerMetadata,
+    config?: PeerConfig
+  ): Promise<Peer> {
     const validatedId = PeerIdSchema.parse(id)
-    const validatedMetadata = metadata ? PeerMetadataSchema.parse(metadata) : undefined
+    const validatedMetadata = metadata
+      ? PeerMetadataSchema.parse(metadata)
+      : undefined
     const validatedConfig = config ? PeerConfigSchema.parse(config) : undefined
     const peer = new Peer(validatedId, this.workspaceId, this._client)
 
     if (validatedConfig || validatedMetadata) {
-      await this._client.workspaces.peers.getOrCreate(
-        this.workspaceId,
-        { id: peer.id, configuration: validatedConfig, metadata: validatedMetadata }
-      )
+      await this._client.workspaces.peers.getOrCreate(this.workspaceId, {
+        id: peer.id,
+        configuration: validatedConfig,
+        metadata: validatedMetadata,
+      })
     }
 
     return peer
@@ -130,15 +144,16 @@ export class Honcho {
    * @param filter - Optional filter criteria for peers
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async getPeers(
-    filter?: Filter
-  ): Promise<Page<Peer>> {
+  async getPeers(filter?: Filter): Promise<Page<Peer>> {
     const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const peersPage = await this._client.workspaces.peers.list(
       this.workspaceId,
       { filter: validatedFilter }
     )
-    return new Page(peersPage, (peer: any) => new Peer(peer.id, this.workspaceId, this._client))
+    return new Page(
+      peersPage,
+      (peer) => new Peer(peer.id, this.workspaceId, this._client)
+    )
   }
 
   /**
@@ -159,17 +174,26 @@ export class Honcho {
    *          send messages, and manage conversation context
    * @throws Error if the session ID is empty or invalid
    */
-  async session(id: string, metadata?: SessionMetadata, config?: SessionConfig): Promise<Session> {
+  async session(
+    id: string,
+    metadata?: SessionMetadata,
+    config?: SessionConfig
+  ): Promise<Session> {
     const validatedId = SessionIdSchema.parse(id)
-    const validatedMetadata = metadata ? SessionMetadataSchema.parse(metadata) : undefined
-    const validatedConfig = config ? SessionConfigSchema.parse(config) : undefined
+    const validatedMetadata = metadata
+      ? SessionMetadataSchema.parse(metadata)
+      : undefined
+    const validatedConfig = config
+      ? SessionConfigSchema.parse(config)
+      : undefined
     const session = new Session(validatedId, this.workspaceId, this._client)
 
     if (validatedConfig || validatedMetadata) {
-      await this._client.workspaces.sessions.getOrCreate(
-        this.workspaceId,
-        { id: session.id, configuration: validatedConfig, metadata: validatedMetadata }
-      )
+      await this._client.workspaces.sessions.getOrCreate(this.workspaceId, {
+        id: session.id,
+        configuration: validatedConfig,
+        metadata: validatedMetadata,
+      })
     }
 
     return session
@@ -185,9 +209,7 @@ export class Honcho {
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async getSessions(
-    filter?: Filter
-  ): Promise<Page<Session>> {
+  async getSessions(filter?: Filter): Promise<Page<Session>> {
     const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
     const sessionsPage = await this._client.workspaces.sessions.list(
       this.workspaceId,
@@ -195,7 +217,7 @@ export class Honcho {
     )
     return new Page(
       sessionsPage,
-      (session: any) => new Session(session.id, this.workspaceId, this._client)
+      (session) => new Session(session.id, this.workspaceId, this._client)
     )
   }
 
@@ -227,7 +249,9 @@ export class Honcho {
    */
   async setMetadata(metadata: WorkspaceMetadata): Promise<void> {
     const validatedMetadata = WorkspaceMetadataSchema.parse(metadata)
-    await this._client.workspaces.update(this.workspaceId, { metadata: validatedMetadata })
+    await this._client.workspaces.update(this.workspaceId, {
+      metadata: validatedMetadata,
+    })
   }
 
   /**
@@ -240,11 +264,11 @@ export class Honcho {
    * @returns Promise resolving to a list of workspace ID strings. Returns an empty
    *          list if no workspaces are accessible or none exist
    */
-  async getWorkspaces(
-    filter?: Filter
-  ): Promise<string[]> {
+  async getWorkspaces(filter?: Filter): Promise<string[]> {
     const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
-    const workspacesPage = await this._client.workspaces.list({ filter: validatedFilter })
+    const workspacesPage = await this._client.workspaces.list({
+      filter: validatedFilter,
+    })
     const ids: string[] = []
     for await (const workspace of workspacesPage) {
       ids.push(workspace.id)
@@ -266,10 +290,10 @@ export class Honcho {
   async search(query: string, limit?: number): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
     const validatedLimit = limit ? LimitSchema.parse(limit) : undefined
-    return await this._client.workspaces.search(
-      this.workspaceId,
-      { query: validatedQuery, limit: validatedLimit }
-    )
+    return await this._client.workspaces.search(this.workspaceId, {
+      query: validatedQuery,
+      limit: validatedLimit,
+    })
   }
 
   /**
@@ -289,13 +313,18 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, any>
+    sessions?: Record<string, DeriverStatus.Sessions>
   }> {
-    const validatedOptions = options ? DeriverStatusOptionsSchema.parse(options) : undefined
-    const queryParams: any = {}
-    if (validatedOptions?.observerId) queryParams.observer_id = validatedOptions.observerId
-    if (validatedOptions?.senderId) queryParams.sender_id = validatedOptions.senderId
-    if (validatedOptions?.sessionId) queryParams.session_id = validatedOptions.sessionId
+    const validatedOptions = options
+      ? DeriverStatusOptionsSchema.parse(options)
+      : undefined
+    const queryParams: WorkspaceDeriverStatusParams = {}
+    if (validatedOptions?.observerId)
+      queryParams.observer_id = validatedOptions.observerId
+    if (validatedOptions?.senderId)
+      queryParams.sender_id = validatedOptions.senderId
+    if (validatedOptions?.sessionId)
+      queryParams.session_id = validatedOptions.sessionId
 
     const status = await this._client.workspaces.deriverStatus(
       this.workspaceId,
@@ -333,7 +362,9 @@ export class Honcho {
     pendingWorkUnits: number
     sessions?: Record<string, any>
   }> {
-    const validatedOptions = options ? DeriverStatusOptionsSchema.parse(options) : undefined
+    const validatedOptions = options
+      ? DeriverStatusOptionsSchema.parse(options)
+      : undefined
     const timeoutMs = validatedOptions?.timeoutMs ?? 300000 // Default to 5 minutes
     const startTime = Date.now()
 
@@ -348,7 +379,7 @@ export class Honcho {
       if (elapsedTime >= timeoutMs) {
         throw new Error(
           `Polling timeout exceeded after ${timeoutMs}ms. ` +
-          `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
+            `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
         )
       }
 

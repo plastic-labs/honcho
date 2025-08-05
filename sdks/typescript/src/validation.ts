@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 /**
  * Validation schemas for the Honcho TypeScript SDK.
- * 
+ *
  * These schemas ensure type safety and runtime validation for all inputs
  * to the SDK, providing clear error messages when validation fails.
  */
@@ -11,14 +11,21 @@ import { z } from 'zod'
  * Schema for Honcho client configuration options.
  */
 export const HonchoConfigSchema = z.object({
-    apiKey: z.string().optional(),
-    environment: z.enum(['local', 'production', 'demo']).optional(),
-    baseURL: z.string().url('Base URL must be a valid URL').optional(),
-    workspaceId: z.string().min(1, 'Workspace ID must be a non-empty string').optional(),
-    timeout: z.number().positive('Timeout must be a positive number').optional(),
-    maxRetries: z.number().int().min(0, 'Max retries must be a non-negative integer').optional(),
-    defaultHeaders: z.record(z.string(), z.string()).optional(),
-    defaultQuery: z.record(z.string(), z.unknown()).optional(),
+  apiKey: z.string().optional(),
+  environment: z.enum(['local', 'production', 'demo']).optional(),
+  baseURL: z.string().url('Base URL must be a valid URL').optional(),
+  workspaceId: z
+    .string()
+    .min(1, 'Workspace ID must be a non-empty string')
+    .optional(),
+  timeout: z.number().positive('Timeout must be a positive number').optional(),
+  maxRetries: z
+    .number()
+    .int()
+    .min(0, 'Max retries must be a non-negative integer')
+    .optional(),
+  defaultHeaders: z.record(z.string(), z.string()).optional(),
+  defaultQuery: z.record(z.string(), z.unknown()).optional(),
 })
 
 /**
@@ -34,7 +41,9 @@ export const PeerConfigSchema = z.record(z.string(), z.unknown())
 /**
  * Schema for peer ID validation.
  */
-export const PeerIdSchema = z.string().min(1, 'Peer ID must be a non-empty string')
+export const PeerIdSchema = z
+  .string()
+  .min(1, 'Peer ID must be a non-empty string')
 
 /**
  * Schema for session metadata.
@@ -49,45 +58,54 @@ export const SessionConfigSchema = z.record(z.string(), z.unknown())
 /**
  * Schema for session ID validation.
  */
-export const SessionIdSchema = z.string().min(1, 'Session ID must be a non-empty string')
+export const SessionIdSchema = z
+  .string()
+  .min(1, 'Session ID must be a non-empty string')
 
 /**
  * Schema for session peer configuration.
  */
 export const SessionPeerConfigSchema = z.object({
-    observe_me: z.boolean().nullable().optional(),
-    observe_others: z.boolean().optional(),
+  observe_me: z.boolean().nullable().optional(),
+  observe_others: z.boolean().optional(),
 })
 
 /**
  * Schema for message content.
  */
-export const MessageContentSchema = z.string().refine(
+export const MessageContentSchema = z
+  .string()
+  .refine(
     (content: string) => content === '' || content.trim().length > 0,
     'Message content cannot be only whitespace'
-)
+  )
 
 /**
  * Schema for message metadata.
  */
-export const MessageMetadataSchema = z.record(z.string(), z.unknown()).optional()
+export const MessageMetadataSchema = z
+  .record(z.string(), z.unknown())
+  .optional()
 
 /**
  * Schema for message creation.
  */
 export const MessageCreateSchema = z.object({
-    peer_id: PeerIdSchema,
-    content: MessageContentSchema,
-    metadata: MessageMetadataSchema,
+  peer_id: PeerIdSchema,
+  content: MessageContentSchema,
+  metadata: MessageMetadataSchema,
 })
 
 /**
  * Schema for search query validation.
  */
-export const SearchQuerySchema = z.string().min(1, 'Search query must be a non-empty string').refine(
+export const SearchQuerySchema = z
+  .string()
+  .min(1, 'Search query must be a non-empty string')
+  .refine(
     (query: string) => query.trim().length > 0,
     'Search query cannot be only whitespace'
-)
+  )
 
 /**
  * Schema for filter objects.
@@ -98,28 +116,34 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
  * Schema for chat query parameters.
  */
 export const ChatQuerySchema = z.object({
-    query: SearchQuerySchema,
-    stream: z.boolean().optional(),
-    target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
-    sessionId: z.string().optional(),
+  query: SearchQuerySchema,
+  stream: z.boolean().optional(),
+  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  sessionId: z.string().optional(),
 })
 
 /**
  * Schema for context retrieval parameters.
  */
 export const ContextParamsSchema = z.object({
-    summary: z.boolean().optional(),
-    tokens: z.number().positive('Token limit must be a positive number').optional(),
+  summary: z.boolean().optional(),
+  tokens: z
+    .number()
+    .positive('Token limit must be a positive number')
+    .optional(),
 })
 
 /**
  * Schema for deriver status options.
  */
 export const DeriverStatusOptionsSchema = z.object({
-    observerId: z.string().optional(),
-    senderId: z.string().optional(),
-    sessionId: z.string().optional(),
-    timeoutMs: z.number().positive('Timeout must be a positive number').optional(),
+  observerId: z.string().optional(),
+  senderId: z.string().optional(),
+  sessionId: z.string().optional(),
+  timeoutMs: z
+    .number()
+    .positive('Timeout must be a positive number')
+    .optional(),
 })
 
 /**
@@ -127,65 +151,77 @@ export const DeriverStatusOptionsSchema = z.object({
  * Supports File objects (browser), Buffer, Uint8Array, and custom uploadable objects.
  */
 export const FileUploadSchema = z.object({
-    file: z.union([
-        // Browser File object
-        z.instanceof(File),
-        // Node.js Buffer
-        z.instanceof(Buffer),
-        // Uint8Array
-        z.instanceof(Uint8Array),
-        // Custom uploadable object with filename, content, and content_type
-        z.object({
-            filename: z.string().min(1, 'Filename must be a non-empty string'),
-            content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
-            content_type: z.string().min(1, 'Content type must be a non-empty string'),
-        }),
-        // Fallback for any other uploadable type
-        z.any().refine(
-            (val) => val !== null && val !== undefined,
-            'File must not be null or undefined'
-        )
-    ]),
-    peerId: PeerIdSchema,
+  file: z.union([
+    // Browser File object
+    z.instanceof(File),
+    // Node.js Buffer
+    z.instanceof(Buffer),
+    // Uint8Array
+    z.instanceof(Uint8Array),
+    // Custom uploadable object with filename, content, and content_type
+    z.object({
+      filename: z.string().min(1, 'Filename must be a non-empty string'),
+      content: z.union([z.instanceof(Buffer), z.instanceof(Uint8Array)]),
+      content_type: z
+        .string()
+        .min(1, 'Content type must be a non-empty string'),
+    }),
+    // Fallback for any other uploadable type
+    z
+      .any()
+      .refine(
+        (val) => val !== null && val !== undefined,
+        'File must not be null or undefined'
+      ),
+  ]),
+  peerId: PeerIdSchema,
 })
 
 /**
  * Schema for working representation parameters.
  */
 export const WorkingRepParamsSchema = z.object({
-    peer: z.union([z.string(), z.object({ id: z.string() })]),
-    target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
+  peer: z.union([z.string(), z.object({ id: z.string() })]),
+  target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
 })
 
 /**
  * Schema for peer addition to session.
  */
 export const PeerAdditionSchema = z.union([
-    z.string(),
-    z.object({ id: z.string() }),
-    z.array(z.union([
-        z.string(),
-        z.object({ id: z.string() }),
-        z.tuple([z.union([z.string(), z.object({ id: z.string() })]), SessionPeerConfigSchema])
-    ])),
-    z.tuple([z.union([z.string(), z.object({ id: z.string() })]), SessionPeerConfigSchema])
+  z.string(),
+  z.object({ id: z.string() }),
+  z.array(
+    z.union([
+      z.string(),
+      z.object({ id: z.string() }),
+      z.tuple([
+        z.union([z.string(), z.object({ id: z.string() })]),
+        SessionPeerConfigSchema,
+      ]),
+    ])
+  ),
+  z.tuple([
+    z.union([z.string(), z.object({ id: z.string() })]),
+    SessionPeerConfigSchema,
+  ]),
 ])
 
 /**
  * Schema for peer removal from session.
  */
 export const PeerRemovalSchema = z.union([
-    z.string(),
-    z.object({ id: z.string() }),
-    z.array(z.union([z.string(), z.object({ id: z.string() })]))
+  z.string(),
+  z.object({ id: z.string() }),
+  z.array(z.union([z.string(), z.object({ id: z.string() })])),
 ])
 
 /**
  * Schema for message addition to session.
  */
 export const MessageAdditionSchema = z.union([
-    MessageCreateSchema,
-    z.array(MessageCreateSchema)
+  MessageCreateSchema,
+  z.array(MessageCreateSchema),
 ])
 
 /**
@@ -196,7 +232,11 @@ export const WorkspaceMetadataSchema = z.record(z.string(), z.unknown())
 /**
  * Schema for limit.
  */
-export const LimitSchema = z.number().int().min(1, 'Limit must be a positive integer').max(100, 'Limit must be less than or equal to 100')
+export const LimitSchema = z
+  .number()
+  .int()
+  .min(1, 'Limit must be a positive integer')
+  .max(100, 'Limit must be less than or equal to 100')
 
 /**
  * Type exports for use throughout the SDK.
