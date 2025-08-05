@@ -7,20 +7,19 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [1.2.3] - 2025-08-04
 
+### Added
+
+- Added get_peer_config to sessions module
+
+### Changed
+
+- Summaries are now included in `toOpenAI` and `toAnthropic` functions
+- `SessionContext.__len__` now counts the summary in its total
+
 ### Fixed
 
 - Added missing metadata inputs in many places
 - Better documentation all over
-
-### Added
-
-- getPeerConfig to sessions
-
-### Changed
-
-- Summaries now included in toOpenAI and toAnthropic functions for context
-- Length calculation for context object includes summary
-
 
 ## [1.2.2] - 2025-07-21
 
