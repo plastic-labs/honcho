@@ -4,7 +4,7 @@
     "": {
       "name": "@honcho-ai/sdk",
       "dependencies": {
-        "@honcho-ai/core": "1.2.0",
+        "@honcho-ai/core": "file:/Users/ben/plastic-labs/dist.tar.gz",
         "@types/node": "^24.0.1",
       },
       "devDependencies": {
@@ -107,7 +107,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.1.2", "", { "os": "win32", "cpu": "x64" }, "sha512-9zajnk59PMpjBkty3bK2IrjUsUHvqe9HWwyAWQBjGLE7MIBjbX2vwv1XPEhmO2RRuGoTkVx3WCanHrjAytICLA=="],
 
-    "@honcho-ai/core": ["@honcho-ai/core@1.2.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-VPHCFIGfC00GeE4P83DDIT7hkuMnMVkWlMTmMd2tw4HSEUciqLBh09AX/6aMKfJAzprg1diub6pJJ6LJP6eJ+g=="],
+    "@honcho-ai/core": ["@honcho-ai/core@/Users/ben/plastic-labs/dist.tar.gz", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }],
 
     "@istanbuljs/load-nyc-config": ["@istanbuljs/load-nyc-config@1.1.0", "", { "dependencies": { "camelcase": "^5.3.1", "find-up": "^4.1.0", "get-package-type": "^0.1.0", "js-yaml": "^3.13.1", "resolve-from": "^5.0.0" } }, "sha512-VjeHSlIzpv/NyD3N0YuHfXOPDIixcA1q2ZV98wsMqcYlPmv2n3Yb2lYP9XMElnaFVXg5A7YLTeLu6V84uQDjmQ=="],
 

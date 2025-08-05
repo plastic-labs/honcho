@@ -277,7 +277,9 @@ class Honcho(BaseModel):
     def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
-        limit: int = Field(default=10, ge=1, le=100, description="Number of results to return"),
+        limit: int = Field(
+            default=10, ge=1, le=100, description="Number of results to return"
+        ),
     ) -> list[Message]:
         """
         Search for messages in the current workspace.
@@ -292,10 +294,9 @@ class Honcho(BaseModel):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        messages = self._client.workspaces.search(
-            self.workspace_id, body={"query": query, "limit": limit}
+        return self._client.workspaces.search(
+            self.workspace_id, query=query, limit=limit
         )
-        return messages
 
     @validate_call
     def get_deriver_status(

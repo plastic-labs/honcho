@@ -8,7 +8,7 @@ authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
-    "honcho-core>=1.2.0",
+    "honcho-core @ git+https://github.com/stainless-sdks/honcho-python.git@05e9b03fc7c621d9d5ad9c4544b80eee13e61fdd",
     "httpx>=0.28.0, <1",
     "pydantic>=2.0.0, <3",
 ]

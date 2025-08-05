@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@types/node": "^24.0.1",
-    "@honcho-ai/core": "1.2.0"
+    "@honcho-ai/core": "file:/Users/ben/plastic-labs/dist.tar.gz"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.1.2",
