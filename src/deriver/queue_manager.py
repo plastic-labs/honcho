@@ -8,8 +8,7 @@ from logging import getLogger
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import delete, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -134,13 +133,14 @@ class QueueManager:
 
         query = (
             select(models.QueueItem.work_unit_key)
+            .outerjoin(
+                models.ActiveQueueSession,
+                models.QueueItem.work_unit_key
+                == models.ActiveQueueSession.work_unit_key,
+            )
             .where(~models.QueueItem.processed)
             .where(models.QueueItem.work_unit_key.isnot(None))
-            .where(
-                models.QueueItem.work_unit_key.not_in(
-                    select(models.ActiveQueueSession.work_unit_key)
-                )
-            )
+            .where(models.ActiveQueueSession.work_unit_key.is_(None))
             .distinct()
             .limit(self.workers)
         )
@@ -173,11 +173,11 @@ class QueueManager:
                         if new_work_units and not self.shutdown_event.is_set():
                             for work_unit in new_work_units:
                                 try:
-                                    # Try to claim the work unit using unique key approach
+                                    # Try to claim the work unit using work_unit_key
                                     await db.execute(
-                                        insert(models.ActiveQueueSession)
-                                        .values(work_unit_key=work_unit)
-                                        .on_conflict_do_nothing()
+                                        insert(models.ActiveQueueSession).values(
+                                            work_unit_key=work_unit
+                                        )
                                     )
                                     await db.commit()
 
@@ -198,7 +198,7 @@ class QueueManager:
                                     # Rollback the failed transaction to clear the error state
                                     await db.rollback()
                                     logger.debug(
-                                        f"Failed to claim work unit {work_unit}, already owned"
+                                        f"Failed to claim work unit {work_unit}, already owned by another worker"
                                     )
                             # If we couldn't claim any work units, avoid tight loop
                         else:
@@ -229,34 +229,12 @@ class QueueManager:
             self.semaphore,
             tracked_db("queue_process_work_unit") as db,
         ):  # Hold the semaphore for the entire work unit duration
+            message_count = 0
             try:
-                message_count = 0
                 while not self.shutdown_event.is_set():
                     message = await self.get_next_message(db, work_unit_key)
                     if not message:
                         logger.debug(f"No more messages for work unit {work_unit_key}")
-
-                        # Trigger the queue_empty webhook event
-                        try:
-                            from src.deriver.utils import parse_work_unit_key
-                            from src.webhooks.events import (
-                                QueueEmptyEvent,
-                                publish_webhook_event,
-                            )
-
-                            parsed_key = parse_work_unit_key(work_unit_key)
-                            if parsed_key["task_type"] in ["representation", "summary"]:
-                                await publish_webhook_event(
-                                    QueueEmptyEvent(
-                                        workspace_id=parsed_key["workspace_name"],
-                                        queue_type=parsed_key["task_type"],
-                                        session_id=parsed_key["session_name"],
-                                        sender_name=parsed_key["sender_name"],
-                                        observer_name=parsed_key["target_name"],
-                                    )
-                                )
-                        except Exception:
-                            logger.exception("Error triggering queue_empty webhook")
 
                         break
 
@@ -280,7 +258,6 @@ class QueueManager:
                         # Prevent malformed messages from stalling queue indefinitely
                         message.processed = True
                         await db.commit()
-                        logger.debug(f"Marked queue item {message.id} as processed")
 
                     if self.shutdown_event.is_set():
                         logger.debug(
@@ -302,12 +279,47 @@ class QueueManager:
             finally:
                 # Remove work unit from active_queue_sessions when done
                 logger.debug(f"Removing work unit {work_unit_key} from active sessions")
-                await db.execute(
+                delete_result = await db.execute(
                     delete(models.ActiveQueueSession).where(
                         models.ActiveQueueSession.work_unit_key == work_unit_key
                     )
                 )
                 await db.commit()
+
+                # Only publish webhook if we actually removed an active session
+                if delete_result.rowcount > 0 and message_count > 0:
+                    try:
+                        from src.deriver.utils import parse_work_unit_key
+                        from src.webhooks.events import (
+                            QueueEmptyEvent,
+                            publish_webhook_event,
+                        )
+
+                        parsed_key = parse_work_unit_key(work_unit_key)
+                        if parsed_key["task_type"] in ["representation", "summary"]:
+                            logger.info(
+                                f"Publishing queue.empty event for {work_unit_key}"
+                            )
+                            await publish_webhook_event(
+                                QueueEmptyEvent(
+                                    workspace_id=parsed_key["workspace_name"],
+                                    queue_type=parsed_key["task_type"],
+                                    session_id=parsed_key["session_name"],
+                                    sender_name=parsed_key["sender_name"],
+                                    observer_name=parsed_key["target_name"],
+                                )
+                            )
+                        else:
+                            logger.debug(
+                                f"Skipping queue.empty event for webhook work unit {work_unit_key}"
+                            )
+                    except Exception:
+                        logger.exception("Error triggering queue_empty webhook")
+                else:
+                    logger.debug(
+                        f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
+                    )
+
                 self.untrack_work_unit(work_unit_key)
 
     @sentry_sdk.trace
@@ -315,13 +327,12 @@ class QueueManager:
         self, db: AsyncSession, work_unit_key: str
     ) -> QueueItem | None:
         """Get the next unprocessed message for a specific work unit."""
-        # Build base query - need to add quotes to match database format
+
         query = (
             select(models.QueueItem)
             .where(models.QueueItem.work_unit_key == work_unit_key)
             .where(~models.QueueItem.processed)
             .order_by(models.QueueItem.id)
-            .with_for_update(skip_locked=True)
             .limit(1)
         )
         result = await db.execute(query)
