@@ -38,6 +38,9 @@ import {
  * from environment variables or explicit parameters. This is the primary entry
  * point for interacting with the Honcho conversational memory platform.
  *
+ * For advanced usage, the underlying @honcho-ai/core client can be accessed via the
+ * `core` property to use functionality not exposed through this SDK.
+ *
  * @example
  * ```typescript
  * const honcho = new Honcho({
@@ -58,6 +61,25 @@ export class Honcho {
    * Reference to the core Honcho client instance.
    */
   private _client: HonchoCore
+
+  /**
+   * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
+   * allowing users to access functionality that is not exposed through this SDK.
+   * 
+   * @returns The underlying HonchoCore client instance
+   * 
+   * @example
+   * ```typescript
+   * import { Honcho } from '@honcho-ai/sdk';
+   * 
+   * const client = new Honcho();
+   * 
+   * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace-id" });
+   * ```
+   */
+  get core(): InstanceType<typeof HonchoCore> {
+    return this._client;
+  }
 
   /**
    * Initialize the Honcho client.
