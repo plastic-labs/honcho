@@ -458,7 +458,7 @@ async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     body: schemas.MessageSearchOptions = Body(
-        ..., description="Message search parameters "
+        ..., description="Message search parameters"
     ),
     db: AsyncSession = db,
 ):

@@ -3953,7 +3953,7 @@
             },
             "AppGet": {
                 "properties": {
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -3963,7 +3963,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     }
                 },
                 "type": "object",
@@ -4061,7 +4061,7 @@
             },
             "CollectionGet": {
                 "properties": {
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4071,7 +4071,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     }
                 },
                 "type": "object",
@@ -4215,7 +4215,7 @@
             },
             "DocumentGet": {
                 "properties": {
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4225,7 +4225,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     }
                 },
                 "type": "object",
@@ -4239,7 +4239,7 @@
                         "minLength": 1,
                         "title": "Query"
                     },
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4249,7 +4249,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     },
                     "top_k": {
                         "type": "integer",
@@ -4406,7 +4406,7 @@
             },
             "MessageGet": {
                 "properties": {
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4416,7 +4416,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     }
                 },
                 "type": "object",
@@ -4596,7 +4596,7 @@
                         ],
                         "title": "Message Id"
                     },
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4606,7 +4606,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     }
                 },
                 "type": "object",
@@ -4990,7 +4990,7 @@
             },
             "SessionGet": {
                 "properties": {
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -5000,7 +5000,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     },
                     "is_active": {
                         "type": "boolean",
@@ -5083,7 +5083,7 @@
             },
             "UserGet": {
                 "properties": {
-                    "filters": {
+                    "filter": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -5093,7 +5093,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filters"
+                        "title": "Filter"
                     }
                 },
                 "type": "object",

@@ -114,6 +114,9 @@ export class Honcho {
       defaultHeaders: validatedOptions.defaultHeaders,
       defaultQuery: validatedOptions.defaultQuery as DefaultQuery,
     })
+    // Note: Constructor cannot be async, so we can't await here
+    // The workspace will be created on first use if it doesn't exist
+    // due to the upsert behavior of the API
     this._client.workspaces.getOrCreate({ id: this.workspaceId })
   }
 

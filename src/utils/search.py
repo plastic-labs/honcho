@@ -68,46 +68,6 @@ def reciprocal_rank_fusion(
     return result
 
 
-def reciprocal_rank_fusion_with_scores(
-    *ranked_lists: list[T], k: int = 60, limit: int | None = None
-) -> list[tuple[T, float]]:
-    """
-    Combine multiple ranked lists using RRF and return items with their scores.
-
-    Same as reciprocal_rank_fusion but returns tuples of (item, rrf_score).
-
-    Args:
-        *ranked_lists: Variable number of ranked lists to combine
-        k: RRF constant parameter (default: 60)
-        limit: Maximum number of results to return (default: None for all results)
-
-    Returns:
-        list of (item, rrf_score) tuples ranked by RRF score (highest score first)
-    """
-    if not ranked_lists:
-        return []
-
-    # dictionary to store RRF scores for each item
-    rrf_scores: dict[T, float] = {}
-
-    # Process each ranked list
-    for ranked_list in ranked_lists:
-        for rank, item in enumerate(ranked_list, 1):  # 1-indexed ranking
-            if item not in rrf_scores:
-                rrf_scores[item] = 0.0
-            # Add reciprocal rank contribution from this list
-            rrf_scores[item] += 1.0 / (k + rank)
-
-    # Sort items by RRF score (descending order)
-    sorted_items = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-
-    # Apply limit if specified
-    if limit is not None:
-        sorted_items = sorted_items[:limit]
-
-    return sorted_items
-
-
 async def _semantic_search(
     db: AsyncSession,
     query: str,
