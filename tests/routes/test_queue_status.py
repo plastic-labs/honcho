@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.deriver.utils import get_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -144,19 +145,23 @@ class TestDeriverStatusEndpoint:
         await db_session.commit()
         await db_session.refresh(session)
         # Add queue items
-        queue_items = [
-            models.QueueItem(
+        queue_items: list[models.QueueItem] = []
+        for _ in range(5):
+            payload = {
+                "sender_name": peer.name,
+                "target_name": peer.name,
+                "task_type": "representation",
+                "workspace_name": workspace.name,
+                "session_name": session.name,
+            }
+            queue_item = models.QueueItem(
                 session_id=session.id,
-                task_type="derive",
-                payload={
-                    "sender_name": peer.name,
-                    "target_name": peer.name,
-                    "task_type": "derive",
-                },
+                task_type="representation",
+                work_unit_key=get_work_unit_key("representation", payload),
+                payload=payload,
                 processed=False,
             )
-            for _ in range(5)
-        ]
+            queue_items.append(queue_item)
         db_session.add_all(queue_items)
         await db_session.commit()
         # Test without parameters
@@ -214,19 +219,23 @@ class TestDeriverStatusEndpoint:
             await db_session.refresh(s)
         # Add queue items to different sessions
         for i, session in enumerate(sessions):
-            queue_items = [
-                models.QueueItem(
+            queue_items: list[models.QueueItem] = []
+            for _ in range(i + 1):  # 1,2,3 items respectively
+                payload = {
+                    "sender_name": peer.name,
+                    "target_name": peer.name,
+                    "task_type": "representation",
+                    "workspace_name": workspace.name,
+                    "session_name": session.name,
+                }
+                queue_item = models.QueueItem(
                     session_id=session.id,
-                    task_type="derive",
-                    payload={
-                        "sender_name": peer.name,
-                        "target_name": peer.name,
-                        "task_type": "derive",
-                    },
+                    task_type="representation",
+                    work_unit_key=get_work_unit_key("representation", payload),
+                    payload=payload,
                     processed=False,
                 )
-                for _ in range(i + 1)  # 1,2,3 items respectively
-            ]
+                queue_items.append(queue_item)
             db_session.add_all(queue_items)
         await db_session.commit()
         response = client.get(
@@ -273,14 +282,18 @@ class TestDeriverStatusEndpoint:
         db_session.add(session)
         await db_session.commit()
         await db_session.refresh(session)
+        payload = {
+            "sender_name": peer.name,
+            "target_name": peer.name,
+            "task_type": "representation",
+            "workspace_name": workspace.name,
+            "session_name": session.name,
+        }
         queue_item = models.QueueItem(
             session_id=session.id,
-            task_type="derive",
-            payload={
-                "sender_name": peer.name,
-                "target_name": peer.name,
-                "task_type": "derive",
-            },
+            task_type="representation",
+            work_unit_key=get_work_unit_key("representation", payload),
+            payload=payload,
             processed=False,
         )
         db_session.add(queue_item)

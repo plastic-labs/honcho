@@ -371,7 +371,7 @@ class QueueItem(Base):
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id"), index=True, nullable=True
     )
-    work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=True)
+    work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)

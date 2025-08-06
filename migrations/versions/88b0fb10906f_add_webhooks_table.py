@@ -76,31 +76,41 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # 2.5 Backfill work_unit_key for unprocessed queue items
+    # 2.5 Backfill task_type and work_unit_key for existing queue items (batched)
     op.execute(
         sa.text(
             f"""
-            UPDATE {schema}.queue q
-            SET work_unit_key =
-                CASE
-                    WHEN q.payload->>'task_type' IN ('representation', 'summary') THEN
-                        (q.payload->>'task_type') || ':' ||
-                        COALESCE(s.workspace_name, q.payload->>'workspace_name', 'None') || ':' ||
-                        COALESCE(q.payload->>'session_name', 'None') || ':' ||
-                        COALESCE(q.payload->>'sender_name', 'None') || ':' ||
-                        COALESCE(q.payload->>'target_name', 'None')
-                    ELSE
-                        'representation:' ||
-                        COALESCE(s.workspace_name, q.payload->>'workspace_name', 'None') || ':' ||
-                        COALESCE(q.payload->>'session_name', 'None') || ':' ||
-                        COALESCE(q.payload->>'sender_name', 'None') || ':' ||
-                        COALESCE(q.payload->>'target_name', 'None')
-                END
-            FROM {schema}.sessions s
-            WHERE s.id = q.session_id AND q.processed = false AND q.work_unit_key IS NULL
+            DO $$
+            DECLARE
+                rows_updated INT;
+            BEGIN
+                LOOP
+                    UPDATE {schema}.queue
+                    SET
+                        task_type = COALESCE(payload->>'task_type', 'representation'),
+                        work_unit_key =
+                            COALESCE(payload->>'task_type', 'representation') || ':' ||
+                            COALESCE(payload->>'workspace_name', 'None') || ':' ||
+                            COALESCE(payload->>'session_name', 'None') || ':' ||
+                            COALESCE(payload->>'sender_name', 'None') || ':' ||
+                            COALESCE(payload->>'target_name', 'None')
+                    WHERE id IN (
+                        SELECT id FROM {schema}.queue
+                        WHERE task_type IS NULL OR work_unit_key IS NULL
+                        LIMIT 1000
+                    );
+
+                    GET DIAGNOSTICS rows_updated = ROW_COUNT;
+                    EXIT WHEN rows_updated = 0;
+                END LOOP;
+            END $$;
             """
         )
     )
+
+    # Make both columns non-nullable
+    op.alter_column("queue", "task_type", nullable=False, schema=schema)
+    op.alter_column("queue", "work_unit_key", nullable=False, schema=schema)
 
     # 3. Alter active queue sessions table
     op.add_column(
