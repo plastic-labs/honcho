@@ -20,9 +20,7 @@ from src.utils.filter import apply_filter
 T = TypeVar("T")
 
 
-def reciprocal_rank_fusion(
-    *ranked_lists: list[T], k: int = 60, limit: int | None = None
-) -> list[T]:
+def reciprocal_rank_fusion(*ranked_lists: list[T], k: int = 60, limit: int) -> list[T]:
     """
     Combine multiple ranked lists using Reciprocal Rank Fusion (RRF).
 
@@ -36,7 +34,7 @@ def reciprocal_rank_fusion(
     Args:
         *ranked_lists: Variable number of ranked lists to combine
         k: RRF constant parameter (default: 60)
-        limit: Maximum number of results to return (default: None for all results)
+        limit: Maximum number of results to return
 
     Returns:
         list of items ranked by RRF score (highest score first)
@@ -61,18 +59,14 @@ def reciprocal_rank_fusion(
     # Extract just the items (not the scores)
     result = [item for item, _ in sorted_items]
 
-    # Apply limit if specified
-    if limit is not None:
-        result = result[:limit]
-
-    return result
+    return result[:limit]
 
 
 async def _semantic_search(
     db: AsyncSession,
     query: str,
     stmt: Select[tuple[models.Message]],
-    limit: int | None = None,
+    limit: int,
 ) -> list[models.Message]:
     """
     Perform semantic search using message embeddings.
@@ -80,10 +74,7 @@ async def _semantic_search(
     Args:
         db: Database session
         query: Search query
-        base_conditions: Base SQL query conditions
-        workspace_name: Name of the workspace
-        session_name: Optional session name filter
-        peer_name: Optional peer name filter
+        stmt: Base SQL query conditions
         limit: Maximum number of results to return
 
     Returns:
@@ -102,8 +93,7 @@ async def _semantic_search(
         models.Message.public_id == models.MessageEmbedding.message_id,
     ).order_by(models.MessageEmbedding.embedding.cosine_distance(embedding_query))
 
-    if limit is not None:
-        semantic_query = semantic_query.limit(limit)
+    semantic_query = semantic_query.limit(limit)
 
     result = await db.execute(semantic_query)
     return list(result.scalars().all())
@@ -113,7 +103,7 @@ async def _fulltext_search(
     db: AsyncSession,
     query: str,
     stmt: Select[tuple[models.Message]],
-    limit: int | None = None,
+    limit: int,
 ) -> list[models.Message]:
     """
     Perform full-text search using PostgreSQL FTS and ILIKE fallback.
@@ -161,8 +151,7 @@ async def _fulltext_search(
             models.Message.created_at.desc(),
         )
 
-    if limit is not None:
-        fulltext_query = fulltext_query.limit(limit)
+    fulltext_query = fulltext_query.limit(limit)
 
     result = await db.execute(fulltext_query)
     return list(result.scalars().all())
@@ -185,17 +174,12 @@ async def search(
         db: Database session
         query: Search query to match against message content
         filters: Optional filters to scope search
-        semantic: Optional boolean to configure search strategy:
-            - None: use both semantic and full-text search with RRF if embed_messages is set, else full text only
-            - True: use semantic search only if embed_messages is set, else throw error
-            - False: use full text search only
         limit: Maximum number of results to return
 
     Returns:
         list of messages that match the search query, ordered by RRF relevance or individual search relevance
 
     Raises:
-        DisabledException: If semantic search is requested but EMBED_MESSAGES is not enabled
         ValidationException: If query exceeds maximum token limit for embeddings
     """
     # Base query conditions
@@ -228,8 +212,7 @@ async def search(
     elif len(search_results) == 1:
         # Single search method - apply limit directly
         combined_results = search_results[0]
-        if limit:
-            combined_results = combined_results[:limit]
+        combined_results = combined_results[:limit]
     else:
         # No search results
         combined_results = []
