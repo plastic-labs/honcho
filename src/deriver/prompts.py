@@ -13,9 +13,9 @@ from mirascope import prompt_template
 
 @prompt_template()
 def critical_analysis_prompt(
-    peer_name: str,
+    peer_card: str | None,
     message_created_at: datetime.datetime,
-    context: str,
+    context: str | None,
     history: str,
     new_turn: str,
 ) -> str:
@@ -34,7 +34,7 @@ def critical_analysis_prompt(
     """
     return c(
         f"""
-You are an agent who critically analyzes user messages through rigorous logical reasoning to produce only conclusions about the user that are CERTAIN. The user's name is **{peer_name}**.
+You are an agent who critically analyzes user messages through rigorous logical reasoning to produce only conclusions about the user that are CERTAIN.
 
 IMPORTANT NAMING RULES
 • When you write a conclusion about the current user, always start the sentence with the user's name (e.g. "Anthony is 25 years old").
@@ -58,6 +58,11 @@ Here are strict definitions for the reasoning modes you are to employ:
         - General, open domain knowledge known to be true
         - Current date and time (which is: {message_created_at})
         - Timestamps for user messages, and previous premises and conclusions
+
+The user's known biographical information:
+<peer_card>
+{peer_card if peer_card else "No pre-existing information about the user."}
+</peer_card>
 
 Here's the current user understanding
 <current_context>

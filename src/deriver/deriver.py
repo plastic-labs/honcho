@@ -57,14 +57,14 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
     retry_attempts=3,
 )
 async def critical_analysis_call(
-    peer_name: str,
+    peer_card: str | None,
     message_created_at: datetime.datetime,
-    context: str,
+    context: str | None,
     history: str,
     new_turn: str,
 ):
     return critical_analysis_prompt(
-        peer_name=peer_name,
+        peer_card=peer_card,
         message_created_at=message_created_at,
         context=context,
         history=history,
@@ -242,15 +242,20 @@ class Deriver:
             "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
         )
 
+        sender_peer_card: str | None = await crud.get_peer_card(
+            db, workspace_name, sender_name
+        )
+
         # Run single-pass reasoning
         final_observations = await reasoner.reason(
             initial_reasoning_context,
             formatted_history,
             content,
-            str(message_id),  # Convert int to str
+            message_id,
             session_name,
             message_dt_obj,
             sender_name,  # Pass the speaker name
+            sender_peer_card,
         )
 
         logger.debug(
@@ -341,6 +346,7 @@ class CertaintyReasoner:
         new_turn: str,
         message_created_at: datetime.datetime,
         speaker: str,
+        speaker_peer_card: str | None,
     ) -> ReasoningResponseWithThinking:
         """
         Critically analyzes and revises understanding, returning structured observations.
@@ -366,7 +372,7 @@ class CertaintyReasoner:
 
         # Call the standalone LLM function (now with Tenacity retries)
         response_obj = await critical_analysis_call(
-            peer_name=speaker,
+            peer_card=speaker_peer_card,
             message_created_at=message_created_at,
             context=formatted_context,
             history=history,
@@ -435,23 +441,21 @@ class CertaintyReasoner:
         context: ReasoningResponseWithThinking,
         history: str,
         new_turn: str,
-        message_id: str,
-        session_name: str | None = None,
-        message_created_at: datetime.datetime | None = None,
-        speaker: str = "user",
+        peer_id: str,
+        message_id: int,
+        session_name: str,
+        message_created_at: datetime.datetime,
+        speaker_peer_card: str | None,
     ) -> ReasoningResponseWithThinking:
         """
         Single-pass reasoning function that critically analyzes and derives insights.
         Performs one analysis pass and returns the final observations.
         """
-        if message_created_at is None:
-            message_created_at = datetime.datetime.now(datetime.timezone.utc)
-
         analysis_start = time.perf_counter()
 
         # Perform critical analysis to get observation lists
         reasoning_response = await self.derive_new_insights(
-            context, history, new_turn, message_created_at, speaker
+            context, history, new_turn, message_created_at, peer_id, speaker_peer_card
         )
 
         # Output the thinking content for this analysis
@@ -491,9 +495,9 @@ class CertaintyReasoner:
         self,
         original_context: ReasoningResponse,
         revised_observations: ReasoningResponse,
-        message_id: str,
-        session_name: str | None = None,
-        message_created_at: datetime.datetime | None = None,
+        message_id: int,
+        session_name: str,
+        message_created_at: datetime.datetime,
     ) -> None:
         """Save only the observations that are new compared to the original context."""
         # Use the utility function to find new observations
@@ -564,7 +568,7 @@ async def save_working_representation_to_peer(
     workspace_name: str,
     observer_name: str,  # renamed from peer_name for clarity
     observed_name: str,  # new parameter
-    session_name: str | None,
+    session_name: str,
     final_observations: ReasoningResponseWithThinking,
     message_id: int,
 ) -> None:
@@ -601,52 +605,21 @@ async def save_working_representation_to_peer(
     }
 
     # if session_name is supplied, save working representation to session peer
-    if session_name:
-        stmt = (
-            update(models.SessionPeer)
-            .where(
-                models.SessionPeer.workspace_name == workspace_name,
-                models.SessionPeer.session_name == session_name,
-                models.SessionPeer.peer_name == observer_name,
-            )
-            .values(
-                internal_metadata=models.SessionPeer.internal_metadata.op("||")(
-                    {metadata_key: working_rep_data}
-                )
+    stmt = (
+        update(models.SessionPeer)
+        .where(
+            models.SessionPeer.workspace_name == workspace_name,
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.peer_name == observer_name,
+        )
+        .values(
+            internal_metadata=models.SessionPeer.internal_metadata.op("||")(
+                {metadata_key: working_rep_data}
             )
         )
-        await db.execute(stmt)
-        await db.commit()
-        logger.info(
-            f"Saved working representation to session peer {session_name} - {observer_name} with key {metadata_key}"
-        )
-    else:
-        # For peer-level messages (session_name=None), only save global representations
-        if observer_name == observed_name:
-            stmt = (
-                update(models.Peer)
-                .where(
-                    models.Peer.workspace_name == workspace_name,
-                    models.Peer.name == observer_name,
-                )
-                .values(
-                    internal_metadata=models.Peer.internal_metadata.op("||")(
-                        {metadata_key: working_rep_data}
-                    )
-                )
-            )
-
-            await db.execute(stmt)
-            await db.commit()
-
-            logger.debug(
-                "Saved working representation to peer %s with key %s",
-                observer_name,
-                metadata_key,
-            )
-        else:
-            logger.debug(
-                "Skipping peer-level local representation save: observer=%s, observed=%s",
-                observer_name,
-                observed_name,
-            )
+    )
+    await db.execute(stmt)
+    await db.commit()
+    logger.info(
+        f"Saved working representation to session peer {session_name} - {observer_name} with key {metadata_key}"
+    )
