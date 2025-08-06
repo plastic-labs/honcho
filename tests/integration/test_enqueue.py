@@ -1035,9 +1035,9 @@ class TestGetEffectiveObserveMeFunction:
                 sender_name = f"sender_{i}"
 
             result = get_effective_observe_me(sender_name, peers_with_configuration)
-            assert result == expected, (
-                f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
-            )
+            assert (
+                result == expected
+            ), f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
 
 
 @pytest.mark.asyncio

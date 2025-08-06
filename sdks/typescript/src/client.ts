@@ -65,20 +65,20 @@ export class Honcho {
   /**
    * Access the underlying @honcho-ai/core client. The @honcho-ai/core client is the raw Stainless-generated client,
    * allowing users to access functionality that is not exposed through this SDK.
-   * 
+   *
    * @returns The underlying HonchoCore client instance
-   * 
+   *
    * @example
    * ```typescript
    * import { Honcho } from '@honcho-ai/sdk';
-   * 
+   *
    * const client = new Honcho();
-   * 
+   *
    * const workspace = await client.core.workspaces.getOrCreate({ id: "custom-workspace-id" });
    * ```
    */
   get core(): InstanceType<typeof HonchoCore> {
-    return this._client;
+    return this._client
   }
 
   /**
