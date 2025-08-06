@@ -207,6 +207,7 @@ def honcho_llm_call(
     retry_attempts: int = 3,
     stream: bool = False,
     return_call_response: bool = False,  # pyright: ignore
+    response_format: dict[str, Any] | None = None,  # Add response_format parameter
     **extra_call_params: Any,
 ) -> Any:
     """
@@ -322,6 +323,7 @@ def honcho_llm_call(
             # https://mirascope.com/docs/mirascope/learn/provider-specific/openai#response-models
             if resolved_provider == "openai":
                 response_model.model_config = ResponseModelConfigDict(strict=True)
+
             llm_kwargs["response_model"] = response_model
         if json_mode:
             llm_kwargs["json_mode"] = json_mode
