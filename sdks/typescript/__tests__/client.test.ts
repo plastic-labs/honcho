@@ -103,7 +103,7 @@ describe('Honcho Client', () => {
       const metadata = { name: 'Test Peer' };
       const config = { observe_me: false };
 
-      await honcho.peer('test-peer', metadata, config);
+      await honcho.peer('test-peer', { metadata, config });
 
       expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
         'test-workspace',
@@ -175,7 +175,7 @@ describe('Honcho Client', () => {
       const metadata = { name: 'Test Session' };
       const config = { anonymous: true };
 
-      await honcho.session('test-session', metadata, config);
+      await honcho.session('test-session', { metadata, config });
 
       expect(mockClient.workspaces.sessions.getOrCreate).toHaveBeenCalledWith(
         'test-workspace',

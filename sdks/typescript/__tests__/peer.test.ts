@@ -93,7 +93,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Streamed response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', true);
+      await peer.chat('Hello', { stream: true });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',
@@ -107,7 +107,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Targeted response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', undefined, targetPeer);
+      await peer.chat('Hello', { target: targetPeer });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',
@@ -120,7 +120,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Targeted response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', undefined, 'string-target');
+      await peer.chat('Hello', { target: 'string-target' });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',
@@ -133,7 +133,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Session-specific response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', undefined, undefined, 'session-123');
+      await peer.chat('Hello', { sessionId: 'session-123' });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',
@@ -147,7 +147,7 @@ describe('Peer', () => {
       const mockResponse = { content: 'Full options response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', true, targetPeer, 'session-456');
+      await peer.chat('Hello', { stream: true, target: targetPeer, sessionId: 'session-456' });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',

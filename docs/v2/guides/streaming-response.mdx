@@ -52,11 +52,11 @@ import { Honcho } from '@honcho-ai/sdk';
 const honcho = new Honcho();
 
 // Create or get peers
-const user = honcho.peer('demo-user');
-const assistant = honcho.peer('assistant');
+const user = await honcho.peer('demo-user');
+const assistant = await honcho.peer('assistant');
 
 // Create a new session
-const session = honcho.session('demo-session');
+const session = await honcho.session('demo-session');
 
 // Add peers to the session
 await session.addPeers([user, assistant]);
@@ -176,11 +176,11 @@ async function restaurantRecommendationChat() {
   const honcho = new Honcho();
 
   // Create peers
-  const user = honcho.peer('food-lover');
-  const assistant = honcho.peer('restaurant-assistant');
+  const user = await honcho.peer('food-lover');
+  const assistant = await honcho.peer('restaurant-assistant');
 
   // Create session
-  const session = honcho.session('food-preferences-session');
+  const session = await honcho.session('food-preferences-session');
 
   // Add peers to session
   await session.addPeers([user, assistant]);

@@ -6,6 +6,7 @@ import {
   ChatQuerySchema,
   FilterSchema,
   type Filters,
+  LimitSchema,
   MessageContentSchema,
   MessageMetadataSchema,
   SearchQuerySchema,
@@ -65,15 +66,17 @@ export class Peer {
    */
   async chat(
     query: string,
-    stream?: boolean,
-    target?: string | Peer,
-    sessionId?: string
+    options?: {
+      stream?: boolean
+      target?: string | Peer
+      sessionId?: string
+    }
   ): Promise<string | null> {
     const chatParams = ChatQuerySchema.parse({
       query,
-      stream,
-      target,
-      sessionId,
+      stream: options?.stream,
+      target: options?.target,
+      sessionId: options?.sessionId,
     })
     const response = await this._client.workspaces.peers.chat(
       this.workspaceId,
@@ -127,16 +130,16 @@ export class Peer {
    * The created message object can then be added to sessions or used in other operations.
    *
    * @param content - The text content for the message
-   * @param opts - Optional parameters including metadata dictionary to associate with the message
+   * @param metadata - Optional metadata to associate with the message
    * @returns A new message object with this peer's ID and the provided content
    */
   message(
     content: string,
-    opts?: { metadata?: Record<string, unknown> }
+    options?: { metadata?: Record<string, unknown> }
   ): ValidatedMessageCreate {
     const validatedContent = MessageContentSchema.parse(content)
-    const validatedMetadata = opts?.metadata
-      ? MessageMetadataSchema.parse(opts.metadata)
+    const validatedMetadata = options?.metadata
+      ? MessageMetadataSchema.parse(options.metadata)
       : undefined
 
     return {
@@ -219,16 +222,29 @@ export class Peer {
    *
    * @param query The search query to use
    * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+   * @param limit - Optional limit on the number of results to return.
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
    */
-  async search(query: string, filters?: Filters): Promise<Message[]> {
+  async search(
+    query: string,
+    options?: { filters?: Filters; limit?: number }
+  ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
-    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
+    const validatedFilters = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const validatedLimit = options?.limit
+      ? LimitSchema.parse(options.limit)
+      : undefined
     return await this._client.workspaces.peers.search(
       this.workspaceId,
       this.id,
-      { query: validatedQuery, filters: validatedFilters }
+      {
+        query: validatedQuery,
+        filters: validatedFilters,
+        limit: validatedLimit,
+      }
     )
   }
 

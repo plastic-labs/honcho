@@ -606,7 +606,7 @@ describe('Session', () => {
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
-      const context = await session.getContext(true, 1000);
+      const context = await session.getContext({ summary: true, tokens: 1000 });
 
       expect(context).toBeInstanceOf(SessionContext);
       expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(

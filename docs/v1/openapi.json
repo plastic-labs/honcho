@@ -568,10 +568,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "User ID to retrieve. If not provided, users JWT",
+                            "description": "User ID to retrieve. If not provided, uses JWT",
                             "title": "User Id"
                         },
-                        "description": "User ID to retrieve. If not provided, users JWT"
+                        "description": "User ID to retrieve. If not provided, uses JWT"
                     }
                 ],
                 "responses": {

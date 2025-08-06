@@ -441,11 +441,14 @@ export class Session {
    * @note Token counting is performed using tiktoken. For models using different
    *       tokenizers, you may need to adjust the token limit accordingly.
    */
-  async getContext(
-    summary?: boolean,
+  async getContext(options?: {
+    summary?: boolean
     tokens?: number
-  ): Promise<SessionContext> {
-    const contextParams = ContextParamsSchema.parse({ summary, tokens })
+  }): Promise<SessionContext> {
+    const contextParams = ContextParamsSchema.parse({
+      summary: options?.summary,
+      tokens: options?.tokens,
+    })
     const context = await this._client.workspaces.sessions.getContext(
       this.workspaceId,
       this.id,
@@ -470,12 +473,18 @@ export class Session {
    */
   async search(
     query: string,
-    filters?: Filters,
-    limit?: number
+    options?: {
+      filters?: Filters
+      limit?: number
+    }
   ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
-    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
-    const validatedLimit = limit ? LimitSchema.parse(limit) : undefined
+    const validatedFilters = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const validatedLimit = options?.limit
+      ? LimitSchema.parse(options.limit)
+      : undefined
     return await this._client.workspaces.sessions.search(
       this.workspaceId,
       this.id,

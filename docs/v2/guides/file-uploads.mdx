@@ -32,8 +32,6 @@ Files are processed in memory and not stored on disk. Only the extracted text co
 
 ## Basic Usage
 
-### Upload a Single File
-
 <CodeGroup>
 ```python Python
 from honcho import Honcho
@@ -63,41 +61,14 @@ import fs from "fs";
 const honcho = new Honcho({});
 
 // Create session and peer
-const session = honcho.session("research-session");
-const user = honcho.peer("researcher");
+const session = await honcho.session("research-session");
+const user = await honcho.peer("researcher");
 
 // Upload a PDF to a session
 const fileStream = fs.createReadStream("research_paper.pdf");
-const messages = await session.uploadFile({
-  file: fileStream,
-  peerId: user.id,
-});
+const messages = await session.uploadFile(fileStream, user.id);
 
 console.log(`Created ${messages.length} messages from the PDF`);
-```
-</CodeGroup>
-
-### Upload to Peer's Global Representation
-
-<CodeGroup>
-```python Python
-# Upload files directly to a peer's global representation
-with open("personal_notes.pdf", "rb") as file:
-    messages = user.upload_file(
-        file=file,
-    )
-
-print(f"Added {len(messages)} messages to {user.id}'s global representation")
-```
-
-```typescript TypeScript
-// Upload files directly to a peer's global representation
-const fileStream = fs.createReadStream("personal_notes.pdf");
-const messages = await user.uploadFile({
-  file: fileStream,
-});
-
-console.log(`Added ${messages.length} messages to ${user.id}'s global representation`);
 ```
 </CodeGroup>
 
@@ -108,7 +79,7 @@ The upload methods accept the following parameters:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `file` | File | Yes | File to upload |
-| `peer_id` | String | Session only | ID of the peer creating the messages |
+| `peer_id` | String | Yes | ID of the peer creating the messages |
 
 ## File Processing Details
 
@@ -264,16 +235,13 @@ import fs from "fs";
 
 // Initialize
 const honcho = new Honcho({});
-const session = honcho.session("document-analysis");
-const user = honcho.peer("analyst");
-const assistant = honcho.peer("analysis-bot");
+const session = await honcho.session("document-analysis");
+const user = await honcho.peer("analyst");
+const assistant = await honcho.peer("analysis-bot");
 
 async function uploadDocument(filePath: string, description: string) {
   const fileStream = fs.createReadStream(filePath);
-  const messages = await session.uploadFile({
-    file: fileStream,
-    peerId: user.id,
-  });
+  const messages = await session.uploadFile(fileStream, user.id);
   return messages;
 }
 

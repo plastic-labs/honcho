@@ -62,7 +62,7 @@ for result in results:
 
 ```typescript TypeScript
 // Create or get a session
-const session = honcho.session("team-meeting-jan");
+const session = await honcho.session("team-meeting-jan");
 
 // Search within this session only
 const results = await session.search("action items");
@@ -92,15 +92,16 @@ for result in results:
 ```
 
 ```typescript TypeScript
+import { Message } from "@honcho-ai/sdk";
 // Create or get a peer
-const alice = honcho.peer("alice");
+const alice = await honcho.peer("alice");
 
 // Search across all of Alice's messages and interactions
-const results = await alice.search("programming");
+const results: Message[] = await alice.search("programming");
 
 // View results
 for (const result of results) {
-  console.log(`Alice's content: ${result}`);
+  console.log(`Alice's content: ${result.content}`);
 }
 ```
 </CodeGroup>
@@ -117,7 +118,7 @@ results = honcho.search("budget planning", limit=20)
 ```
 
 ```typescript TypeScript
-const results = await honcho.search("budget planning", limit: 20);
+const results = await honcho.search("budget planning", { limit: 20 });
 ```
 </CodeGroup>
 
@@ -133,9 +134,9 @@ results = my_peer.search("budget planning", filters={"session_id": my_session.id
 ```
 
 ```typescript TypeScript
-const my_peer = honcho.peer("my-peer");
-const my_session = honcho.session("team-meeting-jan");
-const results = await my_peer.search("budget planning", filters: { session_id: my_session.id });
+const my_peer = await honcho.peer("my-peer");
+const my_session = await honcho.session("team-meeting-jan");
+const results = await my_peer.search("budget planning", { filters: { session_id: my_session.id } });
 ```
 </CodeGroup>
 
@@ -147,7 +148,7 @@ results = honcho.search("budget planning", filters={"created_at": {"gte": "2024-
 ```
 
 ```typescript TypeScript
-const results = await honcho.search("budget planning", filters: { created_at: { gte: "2024-01-01", lte: "2024-01-31" } });
+const results = await honcho.search("budget planning", { filters: { created_at: { gte: "2024-01-01", lte: "2024-01-31" } } });
 ```
 </CodeGroup>
 
@@ -159,7 +160,7 @@ results = honcho.search("budget planning", filters={"metadata": {"key": "value"}
 ```
 
 ```typescript TypeScript
-const results = await honcho.search("budget planning", filters: { metadata: { key: "value" } });
+const results = await honcho.search("budget planning", { filters: { metadata: { key: "value" } } });
 ```
 </CodeGroup>
 
@@ -182,14 +183,14 @@ else:
 ```
 
 ```typescript TypeScript
+import { Message } from "@honcho-ai/sdk";
 // Always check for empty results
-const results = await honcho.search("very specific query");
-const resultData = await results.data();
+const results: Message[] = await honcho.search("very specific query");
 
-if (resultData.length > 0) {
-  console.log(`Found ${resultData.length} results`);
-  for (const result of resultData) {
-    console.log(`- ${result}`);
+if (results.length > 0) {
+  console.log(`Found ${results.length} results`);
+  for (const result of results) {
+    console.log(`- ${result.content}`);
   }
 } else {
   console.log("No results found - try a broader search");

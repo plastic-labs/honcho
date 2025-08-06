@@ -142,14 +142,18 @@ export class Honcho {
    */
   async peer(
     id: string,
-    metadata?: PeerMetadata,
-    config?: PeerConfig
+    options?: {
+      metadata?: PeerMetadata
+      config?: PeerConfig
+    }
   ): Promise<Peer> {
     const validatedId = PeerIdSchema.parse(id)
-    const validatedMetadata = metadata
-      ? PeerMetadataSchema.parse(metadata)
+    const validatedMetadata = options?.metadata
+      ? PeerMetadataSchema.parse(options.metadata)
       : undefined
-    const validatedConfig = config ? PeerConfigSchema.parse(config) : undefined
+    const validatedConfig = options?.config
+      ? PeerConfigSchema.parse(options.config)
+      : undefined
     const peer = new Peer(validatedId, this.workspaceId, this._client)
 
     if (validatedConfig || validatedMetadata) {
@@ -207,15 +211,17 @@ export class Honcho {
    */
   async session(
     id: string,
-    metadata?: SessionMetadata,
-    config?: SessionConfig
+    options?: {
+      metadata?: SessionMetadata
+      config?: SessionConfig
+    }
   ): Promise<Session> {
     const validatedId = SessionIdSchema.parse(id)
-    const validatedMetadata = metadata
-      ? SessionMetadataSchema.parse(metadata)
+    const validatedMetadata = options?.metadata
+      ? SessionMetadataSchema.parse(options.metadata)
       : undefined
-    const validatedConfig = config
-      ? SessionConfigSchema.parse(config)
+    const validatedConfig = options?.config
+      ? SessionConfigSchema.parse(options.config)
       : undefined
     const session = new Session(validatedId, this.workspaceId, this._client)
 
@@ -321,12 +327,18 @@ export class Honcho {
    */
   async search(
     query: string,
-    filters?: Filters,
-    limit?: number
+    options?: {
+      filters?: Filters
+      limit?: number
+    }
   ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
-    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
-    const validatedLimit = limit ? LimitSchema.parse(limit) : undefined
+    const validatedFilters = options?.filters
+      ? FilterSchema.parse(options.filters)
+      : undefined
+    const validatedLimit = options?.limit
+      ? LimitSchema.parse(options.limit)
+      : undefined
     return await this._client.workspaces.search(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,

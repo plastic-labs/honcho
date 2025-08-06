@@ -33,7 +33,7 @@ import { Honcho } from "@honcho-ai/sdk";
 const honcho = new Honcho({});
 
 // Create peer with configuration
-const peer = await honcho.peer("my-peer", config: { observe_me: false });
+const peer = await honcho.peer("my-peer", { config: { observe_me: false } });
 ```
 </CodeGroup>
 
@@ -58,7 +58,7 @@ import { Honcho } from "@honcho-ai/sdk";
 const honcho = new Honcho({});
 
 // Create session with configuration
-const session = await honcho.session("my-session", config: { deriver_disabled: true });
+const session = await honcho.session("my-session", { config: { deriver_disabled: true } });
 ```
 </CodeGroup>
 

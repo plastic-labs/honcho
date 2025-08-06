@@ -29,7 +29,7 @@ import { Honcho } from "@honcho-ai/sdk";
 
 // Initialize client and create session
 const honcho = new Honcho({});
-const session = honcho.session("conversation-1");
+const session = await honcho.session("conversation-1");
 
 // Get basic context (not very useful before adding any messages!)
 const context = await session.getContext();
@@ -121,8 +121,8 @@ print(openai_messages)
 
 ```typescript TypeScript
 // Create peers
-const alice = honcho.peer("alice");
-const assistant = honcho.peer("assistant");
+const alice = await honcho.peer("alice");
+const assistant = await honcho.peer("assistant");
 
 // Add some conversation
 await session.addMessages([
@@ -295,9 +295,9 @@ chat_loop()
 
 ```typescript TypeScript
 async function chatLoop() {
-  const session = honcho.session("chat-session");
-  const user = honcho.peer("user");
-  const assistant = honcho.peer("ai-assistant");
+  const session = await honcho.session("chat-session");
+  const user = await honcho.peer("user");
+  const assistant = await honcho.peer("ai-assistant");
 
   // This would be replaced with actual user input handling in a real app
   const userInputs = [
@@ -356,7 +356,7 @@ print(f"Context contains {len(messages)} formatted messages")
 
 ```typescript TypeScript
 // For long conversations, use summary mode
-const longSession = honcho.session("long-conversation");
+const longSession = await honcho.session("long-conversation");
 
 // Get summarized context to fit within token limits
 const context = await longSession.getContext({
@@ -391,9 +391,9 @@ moderator_context = session.get_context().to_openai(assistant=moderator)
 
 ```typescript TypeScript
 // Create different assistant peers
-const chatbot = honcho.peer("chatbot");
-const analyzer = honcho.peer("data-analyzer");
-const moderator = honcho.peer("moderator");
+const chatbot = await honcho.peer("chatbot");
+const analyzer = await honcho.peer("data-analyzer");
+const moderator = await honcho.peer("moderator");
 
 // Get context formatted for each assistant type
 const context = await session.getContext();
