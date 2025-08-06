@@ -39,7 +39,7 @@ const peer = await honcho.peer("my-peer", config: { observe_me: false });
 
 ### Session Configuration
 
-By default, all sessions have the the deriver enabled, much like peers. You may create a session that escapes the deriver's watchful eye by setting the `deriver_disabled` flag to `true`. Note that this cannot be changed after the session is created. A session created with the deriver disabled will never contribute to Honcho's knowledge base.
+By default, all sessions have the the deriver enabled, much like peers. You may create a session that escapes the deriver's watchful eye by setting the `deriver_disabled` flag to `true`. You can update the flag by calling `get_or_create` on the session with a new configuration.
 
 <CodeGroup>
 ```python Python
