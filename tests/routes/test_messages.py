@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
@@ -793,3 +795,129 @@ async def test_create_batch_messages_max_limit(
     assert len(data) == 100
     assert data[0]["content"] == "Message 0"
     assert data[99]["content"] == "Message 99"
+
+
+@pytest.mark.asyncio
+async def test_get_messages_handles_crud_value_error(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that ValueError from CRUD is properly handled in get_messages"""
+    test_workspace, _test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Mock the CRUD function to raise ValueError
+    with patch("src.routers.messages.crud.get_messages") as mock_get:
+        mock_get.side_effect = ValueError("Test CRUD error")
+
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
+            json={},
+        )
+
+        # Should raise ResourceNotFoundException which gets converted to 404
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_message_handles_not_found(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that ResourceNotFoundException is properly handled in get_message"""
+    test_workspace, _ = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Try to get a non-existent message
+    with patch("src.routers.messages.crud.get_message") as mock_get:
+        mock_get.return_value = None
+
+        response = client.get(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/nonexistent"
+        )
+
+        # Should raise ResourceNotFoundException which gets converted to 404
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_message_handles_crud_value_error(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that ValueError from CRUD is properly handled in update_message"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    # Mock the CRUD function to raise ValueError
+    with patch("src.routers.messages.crud.update_message") as mock_update:
+        mock_update.side_effect = ValueError("Test CRUD error")
+
+        response = client.put(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
+            json={"metadata": {"key": "value"}},
+        )
+
+        # Should raise ResourceNotFoundException which gets converted to 404
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_file_too_large(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that FileTooLargeError is properly handled in create_messages_with_file"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Create a large file that exceeds the size limit
+    import io
+
+    large_content = b"x" * (10 * 1024 * 1024)  # 10MB file
+    file_data = io.BytesIO(large_content)
+
+    # Mock the settings to make the test deterministic
+    with patch(
+        "src.routers.messages.settings.MAX_FILE_SIZE", 5 * 1024 * 1024
+    ):  # 5MB limit
+        files = {"file": ("large_file.txt", file_data, "text/plain")}
+        form_data = {"peer_id": test_peer.name}
+
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+            files=files,
+            data=form_data,
+        )
+
+        # Should raise FileTooLargeError which gets converted to 413
+        assert response.status_code == 413
