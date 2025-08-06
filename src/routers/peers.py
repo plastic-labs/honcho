@@ -19,6 +19,7 @@ from src.dependencies import db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,8 @@ async def get_peers(
 ):
     """Get All Peers for a Workspace"""
     filter_param = None
-    if options and hasattr(options, "filter"):
-        filter_param = options.filter
+    if options and hasattr(options, "filters"):
+        filter_param = options.filters
         if filter_param == {}:
             filter_param = None
 
@@ -67,7 +68,7 @@ async def get_or_create_peer(
     Get a Peer by ID
 
     If peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-    Otherwise, it uses the peer_id from the JWT token.
+    Otherwise, it uses the peer_id from the JWT.
     """
     # validate workspace query param
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
@@ -125,8 +126,8 @@ async def get_sessions_for_peer(
     """Get All Sessions for a Peer"""
     filter_param = None
 
-    if options and hasattr(options, "filter"):
-        filter_param = options.filter
+    if options and hasattr(options, "filters"):
+        filter_param = options.filters
         if filter_param == {}:
             filter_param = None
 
@@ -239,7 +240,7 @@ async def get_working_representation(
 
 @router.post(
     "/{peer_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
     ],
@@ -247,17 +248,14 @@ async def get_working_representation(
 async def search_peer(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the peer"),
-    search: schemas.MessageSearchOptions = Body(
+    body: schemas.MessageSearchOptions = Body(
         ..., description="Message search parameters "
     ),
     db: AsyncSession = db,
 ):
     """Search a Peer"""
-    stmt = await crud.search(
-        search.query,
-        workspace_name=workspace_id,
-        peer_name=peer_id,
-        semantic=search.semantic,
-    )
-
-    return await apaginate(db, stmt)
+    # take user-provided filter and add workspace_id and peer_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    filters["peer_id"] = peer_id
+    return await search(db, body.query, filters=filters, limit=body.limit)

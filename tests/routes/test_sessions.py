@@ -146,7 +146,7 @@ def test_create_session_with_too_many_peers(
 
     session_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"id": "test_session"}},
+        json={"filters": {"id": "test_session"}},
     )
     assert session_response.status_code == 200
     assert len(session_response.json()["items"]) == 0
@@ -186,7 +186,7 @@ def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert data["workspace_id"] == test_workspace.name
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"metadata": {"test_key": "test_value"}}},
+        json={"filters": {"metadata": {"test_key": "test_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -203,7 +203,7 @@ def test_get_sessions_with_empty_filter(
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filter": {}}
+        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filters": {}}
     )
     assert response.status_code == 200
     data = response.json()
@@ -356,7 +356,7 @@ def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Check that session is marked as inactive
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"is_active": False}},
+        json={"filters": {"is_active": False}},
     )
     data = response.json()
     # Find our session in the inactive sessions
@@ -773,17 +773,13 @@ def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search query"},
+        json={"query": "search query", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_session_empty_query(
@@ -802,14 +798,13 @@ def test_search_session_empty_query(
     # Search with empty query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": ""},
+        json={"query": "", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should still have proper pagination structure
-    assert "items" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_session_nonexistent(
@@ -821,23 +816,25 @@ def test_search_session_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/search",
-        json={"query": "test query"},
+        json={"query": "test query", "limit": 10},
     )
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    data: list[dict[str, Any]] = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 0
 
 
-def test_search_session_with_semantic_search_false(
+def test_search_session_with_messages(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session search with semantic=false"""
+    """Test session search with actual messages"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
     # Create session
     client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Add messages to search through
@@ -851,38 +848,29 @@ def test_search_session_with_semantic_search_false(
         },
     )
 
-    # Search with semantic=false
+    # Search for content
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search", "semantic": False},
+        json={"query": "search", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
-def test_search_session_with_semantic_search_true_disabled(
-    client: TestClient,
-    sample_data: tuple[Workspace, Peer],
-    monkeypatch: pytest.MonkeyPatch,
+def test_search_session_with_limit(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session search with semantic=true when EMBED_MESSAGES is disabled"""
-    # Override the EMBED_MESSAGES setting to False for this test
-    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", False)
-
+    """Test session search with custom limit"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
     # Create session
     client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Add messages to search through
@@ -892,19 +880,19 @@ def test_search_session_with_semantic_search_true_disabled(
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},
                 {"content": "Another message to find", "peer_id": test_peer.name},
+                {"content": "More searchable content", "peer_id": test_peer.name},
             ]
         },
     )
 
-    # Search with semantic=true (should fail if EMBED_MESSAGES is disabled)
+    # Search with custom limit
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search", "semantic": True},
+        json={"query": "search", "limit": 2},
     )
 
-    assert response.status_code == 405
-
-    data = response.json()
-    assert "Semantic search requires EMBED_MESSAGES flag to be enabled" in data.get(
-        "detail", ""
-    )
+    assert response.status_code == 200
+    data: list[dict[str, Any]] = response.json()
+    assert isinstance(data, list)
+    # Should not exceed the limit
+    assert len(data) <= 2

@@ -48,23 +48,25 @@ session.add_messages([
 ```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
 
-// Initialize client (using the default workspace)
-const honcho = new Honcho();
+(async () => {
+    // Initialize client (using the default workspace)
+    const honcho = new Honcho();
 
-// Create or get peers
-const user = honcho.peer('demo-user');
-const assistant = honcho.peer('assistant');
+    // Create or get peers
+    const user = await honcho.peer('demo-user');
+    const assistant = await honcho.peer('assistant');
 
-// Create a new session
-const session = honcho.session('demo-session');
+    // Create a new session
+    const session = await honcho.session('demo-session');
 
-// Add peers to the session
-await session.addPeers([user, assistant]);
+    // Add peers to the session
+    await session.addPeers([user, assistant]);
 
-// Store some messages for context (optional)
-await session.addMessages([
-  user.message("Hello, I'm testing the streaming functionality")
-]);
+    // Store some messages for context (optional)
+    await session.addMessages([
+      user.message("Hello, I'm testing the streaming functionality")
+    ]);
+})();
 ```
 </CodeGroup>
 
@@ -83,15 +85,17 @@ for chunk in response_stream.iter_text():
 ```
 
 ```typescript TypeScript
-// Basic streaming example
-const responseStream = await user.chat("What can you tell me about this user?", {
-  stream: true
-});
+(async () => {
+    // Basic streaming example
+    const responseStream = await user.chat("What can you tell me about this user?", {
+      stream: true
+    });
 
-// Process the stream
-for await (const chunk of responseStream.iter_text()) {
-  process.stdout.write(chunk);  // Write to console without newlines
-}
+    // Process the stream
+    for await (const chunk of responseStream.iter_text()) {
+      process.stdout.write(chunk);  // Write to console without newlines
+    }
+})();
 ```
 </CodeGroup>
 
@@ -171,63 +175,65 @@ if __name__ == "__main__":
 ```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
 
-async function restaurantRecommendationChat() {
-  // Initialize client
-  const honcho = new Honcho();
+(async () => {
+    async function restaurantRecommendationChat() {
+      // Initialize client
+      const honcho = new Honcho();
 
-  // Create peers
-  const user = honcho.peer('food-lover');
-  const assistant = honcho.peer('restaurant-assistant');
+      // Create peers
+      const user = await honcho.peer('food-lover');
+      const assistant = await honcho.peer('restaurant-assistant');
 
-  // Create session
-  const session = honcho.session('food-preferences-session');
+      // Create session
+      const session = await honcho.session('food-preferences-session');
 
-  // Add peers to session
-  await session.addPeers([user, assistant]);
+      // Add peers to session
+      await session.addPeers([user, assistant]);
 
-  // Store multiple user messages about food preferences
-  const userMessages = [
-    "I absolutely love spicy Thai food, especially curries with coconut milk.",
-    "Italian cuisine is another favorite - fresh pasta and wood-fired pizza are my weakness!",
-    "I try to eat vegetarian most of the time, but occasionally enjoy seafood.",
-    "I can't handle overly sweet desserts, but love something with dark chocolate."
-  ];
+      // Store multiple user messages about food preferences
+      const userMessages = [
+        "I absolutely love spicy Thai food, especially curries with coconut milk.",
+        "Italian cuisine is another favorite - fresh pasta and wood-fired pizza are my weakness!",
+        "I try to eat vegetarian most of the time, but occasionally enjoy seafood.",
+        "I can't handle overly sweet desserts, but love something with dark chocolate."
+      ];
 
-  // Add the user's messages to the session
-  const sessionMessages = userMessages.map(message => user.message(message));
-  await session.addMessages(sessionMessages);
+      // Add the user's messages to the session
+      const sessionMessages = userMessages.map(message => user.message(message));
+      await session.addMessages(sessionMessages);
 
-  // Print the user messages
-  for (const message of userMessages) {
-    console.log(`User: ${message}`);
-  }
+      // Print the user messages
+      for (const message of userMessages) {
+        console.log(`User: ${message}`);
+      }
 
-  // Ask for restaurant recommendations based on preferences
-  console.log("\nRequesting restaurant recommendations...");
-  process.stdout.write("Assistant: ");
-  let fullResponse = "";
+      // Ask for restaurant recommendations based on preferences
+      console.log("\nRequesting restaurant recommendations...");
+      process.stdout.write("Assistant: ");
+      let fullResponse = "";
 
-  // Stream the response using the user's peer to get recommendations
-  const responseStream = await user.chat(
-    "Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side.",
-    {
-      stream: true,
-      sessionId: session.id
+      // Stream the response using the user's peer to get recommendations
+      const responseStream = await user.chat(
+        "Based on this user's food preferences, recommend 3 restaurants they might enjoy in the Lower East Side.",
+        {
+          stream: true,
+          sessionId: session.id
+        }
+      );
+
+      for await (const chunk of responseStream.iter_text()) {
+        process.stdout.write(chunk);
+        fullResponse += chunk;
+      }
+
+      // Store the assistant's complete response
+      await session.addMessages([
+        assistant.message(fullResponse)
+      ]);
     }
-  );
 
-  for await (const chunk of responseStream.iter_text()) {
-    process.stdout.write(chunk);
-    fullResponse += chunk;
-  }
-
-  // Store the assistant's complete response
-  await session.addMessages([
-    assistant.message(fullResponse)
-  ]);
-}
-
-restaurantRecommendationChat().catch(console.error);
+    await restaurantRecommendationChat();
+})();
 ```
 </CodeGroup>
 

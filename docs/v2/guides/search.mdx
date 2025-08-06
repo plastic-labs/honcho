@@ -6,14 +6,6 @@ icon: 'magnifying-glass'
 
 Honcho's search functionality allows you to find relevant messages and conversations across different scopes - from entire workspaces down to specific peers or sessions.
 
-## How Search Works
-
-Search in Honcho is implemented with a two-tier approach:
-1. **Primary**: PostgreSQL English language full-text search index for intelligent matching
-2. **Fallback**: Simple string matching for broader coverage
-
-All search results are returned in a paginated format, making it easy to handle large result sets efficiently.
-
 ## Search Scopes
 
 ### Workspace Search
@@ -38,16 +30,18 @@ for result in results:
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Search across entire workspace
-const results = await honcho.search("budget planning");
+    // Search across entire workspace
+    const results = await honcho.search("budget planning");
 
-// Iterate through all results
-for await (const result of results) {
-  console.log(`Found: ${result}`);
-}
+    // Iterate through all results
+    for (const result of results) {
+      console.log(`Found: ${result}`);
+    }
+})();
 ```
 </CodeGroup>
 
@@ -69,16 +63,18 @@ for result in results:
 ```
 
 ```typescript TypeScript
-// Create or get a session
-const session = honcho.session("team-meeting-jan");
+(async () => {
+    // Create or get a session
+    const session = await honcho.session("team-meeting-jan");
 
-// Search within this session only
-const results = await session.search("action items");
+    // Search within this session only
+    const results = await session.search("action items");
 
-// Process results
-for await (const result of results) {
-  console.log(`Session result: ${result}`);
-}
+    // Process results
+    for (const result of results) {
+      console.log(`Session result: ${result}`);
+    }
+})();
 ```
 </CodeGroup>
 
@@ -100,160 +96,90 @@ for result in results:
 ```
 
 ```typescript TypeScript
-// Create or get a peer
-const alice = honcho.peer("alice");
+import { Message } from "@honcho-ai/sdk";
 
-// Search across all of Alice's messages and interactions
-const results = await alice.search("programming");
+(async () => {
+    // Create or get a peer
+    const alice = await honcho.peer("alice");
 
-// View results
-for await (const result of results) {
-  console.log(`Alice's content: ${result}`);
-}
+    // Search across all of Alice's messages and interactions
+    const results: Message[] = await alice.search("programming");
+
+    // View results
+    for (const result of results) {
+      console.log(`Alice's content: ${result.content}`);
+    }
+})();
 ```
 </CodeGroup>
 
-## Working with Search Results
+## Filters and Limits
 
-### Basic Result Processing
+### Get a specific number of results
+
+You can specify the number of results you want to return by passing the `limit` parameter to the search method. The default is 10 results, with a maximum of 100.
 
 <CodeGroup>
 ```python Python
-# Search returns a paginated iterator
-results = honcho.search("customer feedback")
-
-# Simple iteration processes all results automatically
-for result in results:
-    # Each result contains the matched content and context
-    print(f"Match: {result}")
-
-# Check if there are any results
-results = honcho.search("nonexistent topic")
-result_list = list(results)
-if not result_list:
-    print("No results found")
+results = honcho.search("budget planning", limit=20)
 ```
 
 ```typescript TypeScript
-// Search returns a paginated Page object
-const results = await honcho.search("customer feedback");
-
-// Iterate through all results
-for await (const result of results) {
-  // Each result contains the matched content and context
-  console.log(`Match: ${result}`);
-}
-
-// Check if there are any results
-const emptyResults = await honcho.search("nonexistent topic");
-const resultData = await emptyResults.data();
-if (resultData.length === 0) {
-  console.log("No results found");
-}
+(async () => {
+    const results = await honcho.search("budget planning", { limit: 20 });
+})();
 ```
 </CodeGroup>
 
-### Manual Pagination
+### Get messages from a Peer in a specific Session
+
+Combine Peer-level search with a `session_id` filter to get messages from a Peer in a specific Session.
 
 <CodeGroup>
 ```python Python
-# For manual pagination control, you can work with pages directly
-results = honcho.search("project updates")
-
-# The iterator handles pagination automatically, but you can also
-# work with individual batches if needed
-count = 0
-for result in results:
-    count += 1
-    print(f"Result {count}: {result}")
-
-    # Stop after first 10 results
-    if count >= 10:
-        break
+my_peer = honcho.peer("my-peer")
+my_session = honcho.session("team-meeting-jan")
+results = my_peer.search("budget planning", filters={"session_id": my_session.id})
 ```
 
 ```typescript TypeScript
-// Manual pagination with TypeScript
-let currentPage = await honcho.search("project updates");
-
-while (currentPage) {
-  const data = await currentPage.data();
-  console.log(`Processing ${data.length} results`);
-
-  for (const result of data) {
-    console.log(`Result: ${result}`);
-  }
-
-  // Get next page
-  currentPage = await currentPage.nextPage();
-}
+(async () => {
+    const my_peer = await honcho.peer("my-peer");
+    const my_session = await honcho.session("team-meeting-jan");
+    const results = await my_peer.search("budget planning", { filters: { session_id: my_session.id } });
+})();
 ```
 </CodeGroup>
 
-### Search with Context Building
+### Filter results by time range
 
 <CodeGroup>
 ```python Python
-# Use search results to build context for LLM interactions
-def build_context_from_search(query: str, session_id: str):
-    session = honcho.session(session_id)
-
-    # Search for relevant past discussions
-    search_results = list(session.search(query))
-
-    if search_results:
-        # Use search results to inform context
-        context_summary = f"Found {len(search_results)} relevant past discussions about '{query}'"
-
-        # Get normal session context
-        session_context = session.get_context(tokens=1500)
-
-        return {
-            "search_summary": context_summary,
-            "session_context": session_context,
-            "search_results": search_results[:3]  # Top 3 results
-        }
-
-    return {"message": "No relevant past discussions found"}
-
-# Build context for a new question
-context_data = build_context_from_search("user authentication", "support-session-1")
-print(f"Context: {context_data.get('search_summary', 'No context')}")
+results = honcho.search("budget planning", filters={"created_at": {"gte": "2024-01-01", "lte": "2024-01-31"}})
 ```
 
 ```typescript TypeScript
-// Use search results to build context for LLM interactions
-async function buildContextFromSearch(query: string, sessionId: string) {
-  const session = honcho.session(sessionId);
-
-  // Search for relevant past discussions
-  const searchResults = await session.search(query);
-  const searchData = await searchResults.data();
-
-  if (searchData.length > 0) {
-    // Use search results to inform context
-    const contextSummary = `Found ${searchData.length} relevant past discussions about '${query}'`;
-
-    // Get normal session context
-    const sessionContext = await session.getContext({ tokens: 1500 });
-
-    return {
-      searchSummary: contextSummary,
-      sessionContext: sessionContext,
-      searchResults: searchData.slice(0, 3)  // Top 3 results
-    };
-  }
-
-  return { message: "No relevant past discussions found" };
-}
-
-// Build context for a new question
-const contextData = await buildContextFromSearch("user authentication", "support-session-1");
-console.log(`Context: ${contextData.searchSummary || contextData.message}`);
+(async () => {
+    const results = await honcho.search("budget planning", { filters: { created_at: { gte: "2024-01-01", lte: "2024-01-31" } } });
+})();
 ```
 </CodeGroup>
 
-## Best Practices
+### Filter results by metadata
+
+<CodeGroup>
+```python Python
+results = honcho.search("budget planning", filters={"metadata": {"key": "value"}})
+```
+
+```typescript TypeScript
+(async () => {
+    const results = await honcho.search("budget planning", { filters: { metadata: { key: "value" } } });
+})();
+```
+</CodeGroup>
+
+### Best Practices
 
 ### Handle Empty Results Gracefully
 
@@ -272,18 +198,21 @@ else:
 ```
 
 ```typescript TypeScript
-// Always check for empty results
-const results = await honcho.search("very specific query");
-const resultData = await results.data();
+import { Message } from "@honcho-ai/sdk";
 
-if (resultData.length > 0) {
-  console.log(`Found ${resultData.length} results`);
-  for (const result of resultData) {
-    console.log(`- ${result}`);
-  }
-} else {
-  console.log("No results found - try a broader search");
-}
+(async () => {
+    // Always check for empty results
+    const results: Message[] = await honcho.search("very specific query");
+
+    if (results.length > 0) {
+      console.log(`Found ${results.length} results`);
+      for (const result of results) {
+        console.log(`- ${result.content}`);
+      }
+    } else {
+      console.log("No results found - try a broader search");
+    }
+})();
 ```
 </CodeGroup>
 
