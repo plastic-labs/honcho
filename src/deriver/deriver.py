@@ -3,6 +3,7 @@ import logging
 import time
 from typing import Any
 
+import sentry_sdk
 from langfuse.decorators import langfuse_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -82,6 +83,7 @@ async def critical_analysis_call(
 class Deriver:
     """Deriver class for processing messages and extracting insights."""
 
+    @sentry_sdk.trace
     async def process_webhook(
         self,
         payload: WebhookPayload,
@@ -89,6 +91,7 @@ class Deriver:
         async with tracked_db() as db:
             await webhook_delivery.deliver_webhook(db, payload)
 
+    @sentry_sdk.trace
     async def process_message(
         self,
         task_type: str,
@@ -121,6 +124,7 @@ class Deriver:
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
 
+    @sentry_sdk.trace
     async def process_summary_task(
         self,
         db: AsyncSession,
@@ -138,6 +142,7 @@ class Deriver:
         )
         log_performance_metrics(f"deriver_message_{payload.message_id}")
 
+    @sentry_sdk.trace
     async def process_representation_task(
         self,
         db: AsyncSession,
@@ -356,6 +361,7 @@ class CertaintyReasoner:
         )
 
     @conditional_observe
+    @sentry_sdk.trace
     async def derive_new_insights(
         self,
         context: ReasoningResponseWithThinking,
@@ -452,6 +458,7 @@ class CertaintyReasoner:
         return response
 
     @conditional_observe
+    @sentry_sdk.trace
     async def reason(
         self,
         context: ReasoningResponseWithThinking,
@@ -509,6 +516,7 @@ class CertaintyReasoner:
         return reasoning_response
 
     @conditional_observe
+    @sentry_sdk.trace
     async def _save_new_observations(
         self,
         original_context: ReasoningResponse,
@@ -581,6 +589,7 @@ class CertaintyReasoner:
         )
 
 
+@sentry_sdk.trace
 async def save_working_representation_to_peer(
     db: AsyncSession,
     workspace_name: str,
