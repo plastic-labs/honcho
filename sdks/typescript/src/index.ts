@@ -13,7 +13,7 @@ export type {
   ContextParams,
   DeriverStatusOptions,
   FileUpload,
-  Filter,
+  Filters,
   HonchoConfig,
   MessageAddition,
   MessageCreate,

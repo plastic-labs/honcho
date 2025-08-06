@@ -124,7 +124,7 @@ class Peer(BaseModel):
         return response.content
 
     def get_sessions(
-        self, filter: dict[str, object] | None = None
+        self, filters: dict[str, object] | None = None
     ) -> SyncPage[Session]:
         """
         Get all sessions this peer is a member of.
@@ -141,7 +141,7 @@ class Peer(BaseModel):
         sessions_page = self._client.workspaces.peers.sessions.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,
-            filter=filter,
+            filters=filters,
         )
         return SyncPage(
             sessions_page,
@@ -260,6 +260,9 @@ class Peer(BaseModel):
     def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the search"
+        ),
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
@@ -271,6 +274,7 @@ class Peer(BaseModel):
 
         Args:
             query: The search query to use
+            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
@@ -278,7 +282,11 @@ class Peer(BaseModel):
             Returns an empty list if no messages are found.
         """
         return self._client.workspaces.peers.search(
-            self.id, workspace_id=self.workspace_id, query=query, limit=limit
+            self.id,
+            workspace_id=self.workspace_id,
+            query=query,
+            filters=filters,
+            limit=limit,
         )
 
     def __repr__(self) -> str:

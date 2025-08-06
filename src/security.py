@@ -70,7 +70,7 @@ def create_admin_jwt() -> str:
 
 
 def create_jwt(params: JWTParams) -> str:
-    """Create a JWT token from the given parameters."""
+    """Create a JWT from the given parameters."""
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
     if not settings.AUTH.JWT_SECRET:
         raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
@@ -80,7 +80,7 @@ def create_jwt(params: JWTParams) -> str:
 
 
 async def verify_jwt(token: str) -> JWTParams:
-    """Verify a JWT token and return the decoded parameters."""
+    """Verify a JWT and return the decoded parameters."""
 
     params = JWTParams()
     try:

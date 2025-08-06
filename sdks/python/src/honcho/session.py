@@ -337,7 +337,7 @@ class Session(BaseModel):
         messages_page = self._client.workspaces.sessions.messages.list(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            filter=filters,
+            filters=filters,
         )
         return SyncPage(messages_page)
 
@@ -429,6 +429,9 @@ class Session(BaseModel):
     def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the search"
+        ),
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
@@ -440,6 +443,7 @@ class Session(BaseModel):
 
         Args:
             query: The search query to use
+            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
@@ -447,7 +451,11 @@ class Session(BaseModel):
             Returns an empty list if no messages are found.
         """
         return self._client.workspaces.sessions.search(
-            self.id, workspace_id=self.workspace_id, query=query, limit=limit
+            self.id,
+            workspace_id=self.workspace_id,
+            query=query,
+            filters=filters,
+            limit=limit,
         )
 
     @validate_call

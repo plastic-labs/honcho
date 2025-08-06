@@ -220,9 +220,9 @@ def test_filter_validations_api(
     # Test invalid filter type in message list (at session level)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages/list",
-        json={"filter": "not a dict"},
+        json={"filters": "not a dict"},
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
-    assert error["loc"] == ["body", "filter"]
+    assert error["loc"] == ["body", "filters"]
     assert error["type"] == "dict_type"

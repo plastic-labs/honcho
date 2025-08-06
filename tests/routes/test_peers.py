@@ -115,7 +115,7 @@ def test_get_peers(client: TestClient, sample_data: tuple[Workspace, Peer]):
     # Get peers with simple filter (backward compatibility)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"metadata": {"peer_key": "peer_value"}}},
+        json={"filters": {"metadata": {"peer_key": "peer_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -126,7 +126,7 @@ def test_get_peers(client: TestClient, sample_data: tuple[Workspace, Peer]):
     # Test new filter with NOT operator
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
-        json={"filter": {"NOT": [{"metadata": {"peer_key": "peer_value2"}}]}},
+        json={"filters": {"NOT": [{"metadata": {"peer_key": "peer_value2"}}]}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -143,7 +143,7 @@ def test_get_peers_with_empty_filter(
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filter": {}}
+        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filters": {}}
     )
     assert response.status_code == 200
     data = response.json()
@@ -158,7 +158,7 @@ def test_get_peers_with_null_filter(
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filter": None}
+        f"/v2/workspaces/{test_workspace.name}/peers/list", json={"filters": None}
     )
     assert response.status_code == 200
     data = response.json()
@@ -297,7 +297,7 @@ def test_get_sessions_for_peer_with_empty_filter(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}/sessions",
-        json={"filter": {}},
+        json={"filters": {}},
     )
     assert response.status_code == 200
     data = response.json()

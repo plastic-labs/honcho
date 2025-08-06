@@ -31,7 +31,7 @@ async def get_or_create_workspace(
     Get a Workspace by ID.
 
     If workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-    Otherwise, it uses the workspace_id from the JWT token.
+    Otherwise, it uses the workspace_id from the JWT.
     """
     # If workspace_id provided in query, check if it matches jwt or user is admin
     if workspace.name:
@@ -61,8 +61,8 @@ async def get_all_workspaces(
 ):
     """Get all Workspaces"""
     filter_param = None
-    if options and hasattr(options, "filter"):
-        filter_param = options.filter
+    if options and hasattr(options, "filters"):
+        filter_param = options.filters
         if filter_param == {}:
             filter_param = None
 
@@ -105,7 +105,10 @@ async def search_workspace(
     db: AsyncSession = db,
 ):
     """Search a Workspace"""
-    return await search(db, body.query, workspace_name=workspace_id, limit=body.limit)
+    # take user-provided filter and add workspace_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    return await search(db, body.query, filters=filters, limit=body.limit)
 
 
 @router.get(

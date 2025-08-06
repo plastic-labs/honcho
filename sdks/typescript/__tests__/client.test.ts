@@ -138,7 +138,7 @@ describe('Honcho Client', () => {
       const peersPage = await honcho.getPeers();
 
       expect(peersPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filter: undefined });
+      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filters: undefined });
     });
 
     it('should handle empty peers list', async () => {
@@ -153,7 +153,7 @@ describe('Honcho Client', () => {
       const peersPage = await honcho.getPeers();
 
       expect(peersPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filter: undefined });
+      expect(mockClient.workspaces.peers.list).toHaveBeenCalledWith('test-workspace', { filters: undefined });
     });
 
     it('should handle API errors', async () => {
@@ -210,7 +210,7 @@ describe('Honcho Client', () => {
       const sessionsPage = await honcho.getSessions();
 
       expect(sessionsPage).toBeInstanceOf(Page);
-      expect(mockClient.workspaces.sessions.list).toHaveBeenCalledWith('test-workspace', { filter: undefined });
+      expect(mockClient.workspaces.sessions.list).toHaveBeenCalledWith('test-workspace', { filters: undefined });
     });
 
     it('should handle empty sessions list', async () => {

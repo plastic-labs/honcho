@@ -93,7 +93,7 @@ async def test_get_all_workspaces(client: TestClient):
 
     response = client.post(
         "/v2/workspaces/list",
-        json={"filter": {"metadata": {"test_key": "test_value"}}},
+        json={"filters": {"metadata": {"test_key": "test_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -105,7 +105,7 @@ async def test_get_all_workspaces(client: TestClient):
 @pytest.mark.asyncio
 async def test_get_all_workspaces_with_empty_filter(client: TestClient):
     """Test workspace listing with empty filter object"""
-    response = client.post("/v2/workspaces/list", json={"filter": {}})
+    response = client.post("/v2/workspaces/list", json={"filters": {}})
     assert response.status_code == 200
     data = response.json()
     assert "items" in data
@@ -115,7 +115,7 @@ async def test_get_all_workspaces_with_empty_filter(client: TestClient):
 @pytest.mark.asyncio
 async def test_get_all_workspaces_with_null_filter(client: TestClient):
     """Test workspace listing with null filter"""
-    response = client.post("/v2/workspaces/list", json={"filter": None})
+    response = client.post("/v2/workspaces/list", json={"filters": None})
     assert response.status_code == 200
     data = response.json()
     assert "items" in data

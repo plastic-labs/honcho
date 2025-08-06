@@ -8,13 +8,14 @@ of each item's rank in each list, then summing these reciprocal ranks.
 import re
 from typing import Any, TypeVar
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
+from src.utils.filter import apply_filter
 
 T = TypeVar("T")
 
@@ -110,10 +111,7 @@ def reciprocal_rank_fusion_with_scores(
 async def _semantic_search(
     db: AsyncSession,
     query: str,
-    base_conditions: list[Any],
-    workspace_name: str,
-    session_name: str | None = None,
-    peer_name: str | None = None,
+    stmt: Select[tuple[models.Message]],
     limit: int | None = None,
 ) -> list[models.Message]:
     """
@@ -139,25 +137,10 @@ async def _semantic_search(
         ) from e
 
     # Use cosine distance for semantic search on MessageEmbedding table
-    semantic_query = (
-        select(models.Message)
-        .join(
-            models.MessageEmbedding,
-            models.Message.public_id == models.MessageEmbedding.message_id,
-        )
-        .where(*base_conditions)
-        .where(models.MessageEmbedding.workspace_name == workspace_name)
-        .order_by(models.MessageEmbedding.embedding.cosine_distance(embedding_query))
-    )
-
-    if session_name is not None:
-        semantic_query = semantic_query.where(
-            models.MessageEmbedding.session_name == session_name
-        )
-    elif peer_name is not None:
-        semantic_query = semantic_query.where(
-            models.MessageEmbedding.peer_name == peer_name
-        )
+    semantic_query = stmt.join(
+        models.MessageEmbedding,
+        models.Message.public_id == models.MessageEmbedding.message_id,
+    ).order_by(models.MessageEmbedding.embedding.cosine_distance(embedding_query))
 
     if limit is not None:
         semantic_query = semantic_query.limit(limit)
@@ -169,7 +152,7 @@ async def _semantic_search(
 async def _fulltext_search(
     db: AsyncSession,
     query: str,
-    base_conditions: list[Any],
+    stmt: Select[tuple[models.Message]],
     limit: int | None = None,
 ) -> list[models.Message]:
     """
@@ -178,10 +161,7 @@ async def _fulltext_search(
     Args:
         db: Database session
         query: Search query
-        base_conditions: Base SQL query conditions
-        workspace_name: Name of the workspace
-        session_name: Optional session name filter
-        peer_name: Optional peer name filter
+        stmt: Base SQL query conditions
         limit: Maximum number of results to return
 
     Returns:
@@ -195,10 +175,8 @@ async def _fulltext_search(
     if has_special_chars:
         # For queries with special characters, use exact string matching (ILIKE)
         search_condition = models.Message.content.ilike(f"%{query}%")
-        fulltext_query = (
-            select(models.Message)
-            .where(*base_conditions, search_condition)
-            .order_by(models.Message.created_at.desc())
+        fulltext_query = stmt.where(search_condition).order_by(
+            models.Message.created_at.desc()
         )
     else:
         # For natural language queries, use full text search with ranking
@@ -211,20 +189,16 @@ async def _fulltext_search(
             fts_condition, models.Message.content.ilike(f"%{query}%")
         )
 
-        fulltext_query = (
-            select(models.Message)
-            .where(*base_conditions, combined_condition)
-            .order_by(
-                # Order by FTS relevance first, then by creation time
-                func.coalesce(
-                    func.ts_rank(
-                        func.to_tsvector("english", models.Message.content),
-                        func.plainto_tsquery("english", query),
-                    ),
-                    0,
-                ).desc(),
-                models.Message.created_at.desc(),
-            )
+        fulltext_query = stmt.where(combined_condition).order_by(
+            # Order by FTS relevance first, then by creation time
+            func.coalesce(
+                func.ts_rank(
+                    func.to_tsvector("english", models.Message.content),
+                    func.plainto_tsquery("english", query),
+                ),
+                0,
+            ).desc(),
+            models.Message.created_at.desc(),
         )
 
     if limit is not None:
@@ -238,9 +212,7 @@ async def search(
     db: AsyncSession,
     query: str,
     *,
-    workspace_name: str,
-    session_name: str | None = None,
-    peer_name: str | None = None,
+    filters: dict[str, Any] | None = None,
     limit: int = 10,
 ) -> list[models.Message]:
     """
@@ -252,9 +224,7 @@ async def search(
     Args:
         db: Database session
         query: Search query to match against message content
-        workspace_name: Name of the workspace
-        session_name: Optional name of the session to scope search
-        peer_name: Optional name of the peer to scope search
+        filters: Optional filters to scope search
         semantic: Optional boolean to configure search strategy:
             - None: use both semantic and full-text search with RRF if embed_messages is set, else full text only
             - True: use semantic search only if embed_messages is set, else throw error
@@ -269,13 +239,8 @@ async def search(
         ValidationException: If query exceeds maximum token limit for embeddings
     """
     # Base query conditions
-    base_conditions = [models.Message.workspace_name == workspace_name]
-
-    # Add additional filters based on parameters
-    if session_name is not None:
-        base_conditions.append(models.Message.session_name == session_name)
-    elif peer_name is not None:
-        base_conditions.append(models.Message.peer_name == peer_name)
+    stmt = select(models.Message)
+    stmt = apply_filter(stmt, models.Message, filters)
 
     search_results: list[list[models.Message]] = []
 
@@ -286,10 +251,7 @@ async def search(
         semantic_results = await _semantic_search(
             db=db,
             query=query,
-            base_conditions=base_conditions,
-            workspace_name=workspace_name,
-            session_name=session_name,
-            peer_name=peer_name,
+            stmt=stmt,
             limit=semantic_limit or 100,  # Default limit for fusion
         )
         search_results.append(semantic_results)
@@ -300,7 +262,7 @@ async def search(
     fulltext_results = await _fulltext_search(
         db=db,
         query=query,
-        base_conditions=base_conditions,
+        stmt=stmt,
         limit=fulltext_limit or 100,  # Default limit for fusion
     )
     search_results.append(fulltext_results)

@@ -4,8 +4,8 @@ import { Page } from './pagination'
 import { Session } from './session'
 import {
   ChatQuerySchema,
-  type Filter,
   FilterSchema,
+  type Filters,
   MessageContentSchema,
   MessageMetadataSchema,
   SearchQuerySchema,
@@ -101,17 +101,17 @@ export class Peer {
    * Makes an API call to retrieve all sessions where this peer is an active participant.
    * Sessions are created when peers are added to them or send messages to them.
    *
-   * @param filter - Optional filter criteria for sessions
+   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a paginated list of Session objects this peer belongs to.
    *          Returns an empty list if the peer is not a member of any sessions
    */
-  async getSessions(filter?: Filter | null): Promise<Page<Session>> {
-    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
+  async getSessions(filters?: Filters | null): Promise<Page<Session>> {
+    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const sessionsPage = await this._client.workspaces.peers.sessions.list(
       this.workspaceId,
       this.id,
       {
-        filter: validatedFilter,
+        filters: validatedFilter,
       }
     )
     return new Page(
@@ -218,15 +218,17 @@ export class Peer {
    * Makes an API call to search endpoint.
    *
    * @param query The search query to use
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
    */
-  async search(query: string): Promise<Message[]> {
+  async search(query: string, filters?: Filters): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
+    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
     return await this._client.workspaces.peers.search(
       this.workspaceId,
       this.id,
-      { query: validatedQuery }
+      { query: validatedQuery, filters: validatedFilters }
     )
   }
 

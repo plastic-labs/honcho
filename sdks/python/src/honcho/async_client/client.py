@@ -176,7 +176,7 @@ class AsyncHoncho(BaseModel):
         return AsyncPeer(id, self.workspace_id, self._client)
 
     async def get_peers(
-        self, filter: dict[str, object] | None = None
+        self, filters: dict[str, object] | None = None
     ) -> AsyncPage[AsyncPeer]:
         """
         Get all peers in the current workspace.
@@ -189,7 +189,7 @@ class AsyncHoncho(BaseModel):
             An AsyncPage of AsyncPeer objects representing all peers in the workspace
         """
         peers_page = await self._client.workspaces.peers.list(
-            workspace_id=self.workspace_id, filter=filter
+            workspace_id=self.workspace_id, filters=filters
         )
         return AsyncPage(
             peers_page, lambda peer: AsyncPeer(peer.id, self.workspace_id, self._client)
@@ -240,7 +240,7 @@ class AsyncHoncho(BaseModel):
         return AsyncSession(id, self.workspace_id, self._client)
 
     async def get_sessions(
-        self, filter: dict[str, object] | None = None
+        self, filters: dict[str, object] | None = None
     ) -> AsyncPage[AsyncSession]:
         """
         Get all sessions in the current workspace.
@@ -253,7 +253,7 @@ class AsyncHoncho(BaseModel):
             Returns an empty page if no sessions exist
         """
         sessions_page = await self._client.workspaces.sessions.list(
-            workspace_id=self.workspace_id, filter=filter
+            workspace_id=self.workspace_id, filters=filters
         )
         return AsyncPage(
             sessions_page,
@@ -293,7 +293,7 @@ class AsyncHoncho(BaseModel):
         await self._client.workspaces.update(self.workspace_id, metadata=metadata)
 
     async def get_workspaces(
-        self, filter: dict[str, object] | None = None
+        self, filters: dict[str, object] | None = None
     ) -> list[str]:
         """
         Get all workspace IDs from the Honcho instance.
@@ -305,7 +305,7 @@ class AsyncHoncho(BaseModel):
             A list of workspace ID strings. Returns an empty list if no workspaces
             are accessible or none exist
         """
-        workspaces_page = await self._client.workspaces.list(filter=filter)
+        workspaces_page = await self._client.workspaces.list(filters=filters)
         workspace_ids: list[str] = []
         async for workspace in workspaces_page:
             workspace_ids.append(workspace.id)
@@ -315,6 +315,9 @@ class AsyncHoncho(BaseModel):
     async def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the search"
+        ),
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
@@ -326,6 +329,7 @@ class AsyncHoncho(BaseModel):
 
         Args:
             query: The search query to use
+            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
@@ -333,7 +337,10 @@ class AsyncHoncho(BaseModel):
             Returns an empty list if no messages are found.
         """
         return await self._client.workspaces.search(
-            self.workspace_id, query=query, limit=limit
+            self.workspace_id,
+            query=query,
+            filters=filters,
+            limit=limit,
         )
 
     @validate_call

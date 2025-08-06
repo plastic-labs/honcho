@@ -161,7 +161,7 @@ class Honcho(BaseModel):
             id, self.workspace_id, self._client, config=config, metadata=metadata
         )
 
-    def get_peers(self, filter: dict[str, object] | None = None) -> SyncPage[Peer]:
+    def get_peers(self, filters: dict[str, object] | None = None) -> SyncPage[Peer]:
         """
         Get all peers in the current workspace.
 
@@ -173,7 +173,7 @@ class Honcho(BaseModel):
             A SyncPage of Peer objects representing all peers in the workspace
         """
         peers_page = self._client.workspaces.peers.list(
-            workspace_id=self.workspace_id, filter=filter
+            workspace_id=self.workspace_id, filters=filters
         )
         return SyncPage(
             peers_page, lambda peer: Peer(peer.id, self.workspace_id, self._client)
@@ -222,7 +222,7 @@ class Honcho(BaseModel):
         )
 
     def get_sessions(
-        self, filter: dict[str, object] | None = None
+        self, filters: dict[str, object] | None = None
     ) -> SyncPage[Session]:
         """
         Get all sessions in the current workspace.
@@ -235,7 +235,7 @@ class Honcho(BaseModel):
             Returns an empty page if no sessions exist
         """
         sessions_page = self._client.workspaces.sessions.list(
-            workspace_id=self.workspace_id, filter=filter
+            workspace_id=self.workspace_id, filters=filters
         )
         return SyncPage(
             sessions_page,
@@ -274,7 +274,7 @@ class Honcho(BaseModel):
         """
         self._client.workspaces.update(self.workspace_id, metadata=metadata)
 
-    def get_workspaces(self, filter: dict[str, object] | None = None) -> list[str]:
+    def get_workspaces(self, filters: dict[str, object] | None = None) -> list[str]:
         """
         Get all workspace IDs from the Honcho instance.
 
@@ -285,13 +285,16 @@ class Honcho(BaseModel):
             A list of workspace ID strings. Returns an empty list if no workspaces
             are accessible or none exist
         """
-        workspaces = self._client.workspaces.list(filter=filter)
+        workspaces = self._client.workspaces.list(filters=filters)
         return [workspace.id for workspace in workspaces]
 
     @validate_call
     def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the search"
+        ),
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
@@ -303,6 +306,7 @@ class Honcho(BaseModel):
 
         Args:
             query: The search query to use
+            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
@@ -310,7 +314,7 @@ class Honcho(BaseModel):
             Returns an empty list if no messages are found.
         """
         return self._client.workspaces.search(
-            self.workspace_id, query=query, limit=limit
+            self.workspace_id, query=query, filters=filters, limit=limit
         )
 
     @validate_call

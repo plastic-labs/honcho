@@ -112,7 +112,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", git = "https://github.com/stainless-sdks/honcho-python.git?rev=05e9b03fc7c621d9d5ad9c4544b80eee13e61fdd" },
+    { name = "honcho-core", git = "https://github.com/plastic-labs/honcho-python-core.git?rev=2fc998040ba1781762584664b6e308f135792852" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
 ]
@@ -122,8 +122,8 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.1.0"
-source = { git = "https://github.com/stainless-sdks/honcho-python.git?rev=05e9b03fc7c621d9d5ad9c4544b80eee13e61fdd#05e9b03fc7c621d9d5ad9c4544b80eee13e61fdd" }
+version = "1.3.0"
+source = { git = "https://github.com/plastic-labs/honcho-python-core.git?rev=2fc998040ba1781762584664b6e308f135792852#2fc998040ba1781762584664b6e308f135792852" }
 dependencies = [
     { name = "anyio", version = "4.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "anyio", version = "4.9.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },

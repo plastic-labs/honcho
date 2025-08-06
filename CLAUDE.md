@@ -40,7 +40,7 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - **Peers**: Create, list, update, chat (dialectic), messages, representation
 - **Sessions**: Create, list, update, delete, clone, manage peers, get context
 - **Messages**: Create (batch up to 100), list, get, update
-- **Keys**: Create scoped JWT tokens
+- **Keys**: Create scoped JWTs
 
 ### Key Features
 
@@ -142,7 +142,7 @@ src/
 2. **Flexible Theory of Mind**: Pluggable ToM implementations (conversational, single_prompt, long_term)
 3. **Background Processing**: Async queue system for expensive operations
 4. **Provider Abstraction**: Model client supports multiple LLM providers
-5. **Scoped Authentication**: JWT tokens can be scoped to workspace, peer, or session level
+5. **Scoped Authentication**: JWTs can be scoped to workspace, peer, or session level
 6. **Batch Operations**: Support for bulk message creation (up to 100 messages)
 7. **Session History**: Two-tier summarization (short every 20 messages, long every 60)
 

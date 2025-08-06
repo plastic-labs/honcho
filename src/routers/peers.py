@@ -43,8 +43,8 @@ async def get_peers(
 ):
     """Get All Peers for a Workspace"""
     filter_param = None
-    if options and hasattr(options, "filter"):
-        filter_param = options.filter
+    if options and hasattr(options, "filters"):
+        filter_param = options.filters
         if filter_param == {}:
             filter_param = None
 
@@ -68,7 +68,7 @@ async def get_or_create_peer(
     Get a Peer by ID
 
     If peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-    Otherwise, it uses the peer_id from the JWT token.
+    Otherwise, it uses the peer_id from the JWT.
     """
     # validate workspace query param
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
@@ -126,8 +126,8 @@ async def get_sessions_for_peer(
     """Get All Sessions for a Peer"""
     filter_param = None
 
-    if options and hasattr(options, "filter"):
-        filter_param = options.filter
+    if options and hasattr(options, "filters"):
+        filter_param = options.filters
         if filter_param == {}:
             filter_param = None
 
@@ -254,6 +254,8 @@ async def search_peer(
     db: AsyncSession = db,
 ):
     """Search a Peer"""
-    return await search(
-        db, body.query, workspace_name=workspace_id, peer_name=peer_id, limit=body.limit
-    )
+    # take user-provided filter and add workspace_id and peer_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    filters["peer_id"] = peer_id
+    return await search(db, body.query, filters=filters, limit=body.limit)

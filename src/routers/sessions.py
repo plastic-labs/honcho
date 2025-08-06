@@ -40,7 +40,7 @@ async def get_or_create_session(
     Get a specific session in a workspace.
 
     If session_id is provided as a query parameter, it verifies the session is in the workspace.
-    Otherwise, it uses the session_id from the JWT token for verification.
+    Otherwise, it uses the session_id from the JWT for verification.
     """
     # Verify JWT has access to the requested resource
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
@@ -86,8 +86,8 @@ async def get_sessions(
     """Get All Sessions in a Workspace"""
     filter_param = None
 
-    if options and hasattr(options, "filter") and options.filter:
-        filter_param = options.filter
+    if options and hasattr(options, "filters") and options.filters:
+        filter_param = options.filters
         if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
@@ -463,10 +463,13 @@ async def search_session(
     db: AsyncSession = db,
 ):
     """Search a Session"""
+    # take user-provided filter and add workspace_id and session_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    filters["session_id"] = session_id
     return await search(
         db,
         body.query,
-        workspace_name=workspace_id,
-        session_name=session_id,
+        filters=filters,
         limit=body.limit,
     )

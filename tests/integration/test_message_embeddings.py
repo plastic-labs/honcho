@@ -247,8 +247,10 @@ async def test_semantic_search_when_embeddings_enabled(
     search_results = await search(
         db=db_session,
         query=search_query,
-        workspace_name=test_workspace.name,
-        session_name=test_session.name,
+        filters={
+            "workspace_id": test_workspace.name,
+            "session_id": test_session.name,
+        },
     )
 
     # Verify that the embed method was called during search - e.g. we used semantic search

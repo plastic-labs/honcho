@@ -11,8 +11,8 @@ import { Session } from './session'
 import {
   type DeriverStatusOptions,
   DeriverStatusOptionsSchema,
-  type Filter,
   FilterSchema,
+  type Filters,
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
@@ -144,14 +144,14 @@ export class Honcho {
    * Makes an API call to retrieve all peers that have been created or used
    * within the current workspace. Returns a paginated result.
    *
-   * @param filter - Optional filter criteria for peers
+   * @param filters - Optional filter criteria for peers. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a Page of Peer objects representing all peers in the workspace
    */
-  async getPeers(filter?: Filter): Promise<Page<Peer>> {
-    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
+  async getPeers(filters?: Filters): Promise<Page<Peer>> {
+    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const peersPage = await this._client.workspaces.peers.list(
       this.workspaceId,
-      { filter: validatedFilter }
+      { filters: validatedFilter }
     )
     return new Page(
       peersPage,
@@ -211,15 +211,15 @@ export class Honcho {
    * Makes an API call to retrieve all sessions that have been created within
    * the current workspace.
    *
-   * @param filter - Optional filter criteria for sessions
+   * @param filters - Optional filter criteria for sessions. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a Page of Session objects representing all sessions
    *          in the workspace. Returns an empty page if no sessions exist
    */
-  async getSessions(filter?: Filter): Promise<Page<Session>> {
-    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
+  async getSessions(filters?: Filters): Promise<Page<Session>> {
+    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const sessionsPage = await this._client.workspaces.sessions.list(
       this.workspaceId,
-      { filter: validatedFilter }
+      { filters: validatedFilter }
     )
     return new Page(
       sessionsPage,
@@ -266,14 +266,14 @@ export class Honcho {
    * Makes an API call to retrieve all workspace IDs that the authenticated
    * user has access to.
    *
-   * @param filter - Optional filter criteria for workspaces
+   * @param filters - Optional filter criteria for workspaces. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a list of workspace ID strings. Returns an empty
    *          list if no workspaces are accessible or none exist
    */
-  async getWorkspaces(filter?: Filter): Promise<string[]> {
-    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
+  async getWorkspaces(filters?: Filters): Promise<string[]> {
+    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const workspacesPage = await this._client.workspaces.list({
-      filter: validatedFilter,
+      filters: validatedFilter,
     })
     const ids: string[] = []
     for await (const workspace of workspacesPage) {
@@ -288,16 +288,23 @@ export class Honcho {
    * Makes an API call to search for messages in the current workspace.
    *
    * @param query - The search query to use
+   * @param filters - Optional filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @param limit - Number of results to return (1-100, default: 10).
    * @returns Promise resolving to an array of Message objects representing the search results.
    *          Returns an empty array if no messages are found.
    * @throws Error if the search query is empty or invalid
    */
-  async search(query: string, limit?: number): Promise<Message[]> {
+  async search(
+    query: string,
+    filters?: Filters,
+    limit?: number
+  ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
+    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
     const validatedLimit = limit ? LimitSchema.parse(limit) : undefined
     return await this._client.workspaces.search(this.workspaceId, {
       query: validatedQuery,
+      filters: validatedFilters,
       limit: validatedLimit,
     })
   }
@@ -366,7 +373,7 @@ export class Honcho {
     completedWorkUnits: number
     inProgressWorkUnits: number
     pendingWorkUnits: number
-    sessions?: Record<string, any>
+    sessions?: Record<string, DeriverStatus.Sessions>
   }> {
     const validatedOptions = options
       ? DeriverStatusOptionsSchema.parse(options)

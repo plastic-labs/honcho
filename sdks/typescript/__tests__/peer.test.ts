@@ -182,7 +182,7 @@ describe('Peer', () => {
       expect(mockClient.workspaces.peers.sessions.list).toHaveBeenCalledWith(
         'test-workspace',
         'test-peer',
-        { filter: undefined }
+        { filters: undefined }
       );
     });
 

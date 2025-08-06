@@ -146,7 +146,7 @@ def test_create_session_with_too_many_peers(
 
     session_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"id": "test_session"}},
+        json={"filters": {"id": "test_session"}},
     )
     assert session_response.status_code == 200
     assert len(session_response.json()["items"]) == 0
@@ -186,7 +186,7 @@ def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert data["workspace_id"] == test_workspace.name
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"metadata": {"test_key": "test_value"}}},
+        json={"filters": {"metadata": {"test_key": "test_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -203,7 +203,7 @@ def test_get_sessions_with_empty_filter(
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filter": {}}
+        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filters": {}}
     )
     assert response.status_code == 200
     data = response.json()
@@ -356,7 +356,7 @@ def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Check that session is marked as inactive
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"is_active": False}},
+        json={"filters": {"is_active": False}},
     )
     data = response.json()
     # Find our session in the inactive sessions

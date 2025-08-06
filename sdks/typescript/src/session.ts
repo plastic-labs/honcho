@@ -7,8 +7,8 @@ import { SessionContext } from './session_context'
 import {
   ContextParamsSchema,
   FileUploadSchema,
-  type Filter,
   FilterSchema,
+  type Filters,
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
@@ -373,15 +373,11 @@ export class Session {
    * filtered based on various criteria and are returned in a paginated format.
    * Messages are ordered by creation time (most recent first by default).
    *
-   * @param filter - Optional filter criteria for messages. Supported filters include:
-   *   - peer_id: Filter messages by the peer who created them
-   *   - metadata: Filter messages by metadata key-value pairs
-   *   - timestamp_start: Filter messages after a specific timestamp
-   *   - timestamp_end: Filter messages before a specific timestamp
+   * @param filters - Optional filter criteria for messages. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @returns Promise resolving to a Page of Message objects matching the specified criteria
    */
-  async getMessages(filter?: Filter): Promise<Page<Message>> {
-    const validatedFilter = filter ? FilterSchema.parse(filter) : undefined
+  async getMessages(filters?: Filters): Promise<Page<Message>> {
+    const validatedFilter = filters ? FilterSchema.parse(filters) : undefined
     const messagesPage = await this._client.workspaces.sessions.messages.list(
       this.workspaceId,
       this.id,
@@ -467,17 +463,27 @@ export class Session {
    * Makes an API call to search for messages in this session.
    *
    * @param query The search query to use
+   * @param filters - Optional filters to scope the search: see [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
    * @param limit Number of results to return (1-100, default: 10).
    * @returns A list of Message objects representing the search results.
    *          Returns an empty list if no messages are found.
    */
-  async search(query: string, limit?: number): Promise<Message[]> {
+  async search(
+    query: string,
+    filters?: Filters,
+    limit?: number
+  ): Promise<Message[]> {
     const validatedQuery = SearchQuerySchema.parse(query)
+    const validatedFilters = filters ? FilterSchema.parse(filters) : undefined
     const validatedLimit = limit ? LimitSchema.parse(limit) : undefined
     return await this._client.workspaces.sessions.search(
       this.workspaceId,
       this.id,
-      { query: validatedQuery, limit: validatedLimit }
+      {
+        query: validatedQuery,
+        filters: validatedFilters,
+        limit: validatedLimit,
+      }
     )
   }
 
