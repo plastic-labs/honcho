@@ -438,7 +438,7 @@ class HonchoWorker {
      */
     async getSessionMessages(sessionId: string, filters?: Record<string, any>): Promise<any[]> {
         const session = this.honcho.session(sessionId);
-        const messagesPage = await session.getMessages({ filters: filters });
+        const messagesPage = await session.getMessages({ filter: filters });
         return await formatMessages(messagesPage);
     }
 

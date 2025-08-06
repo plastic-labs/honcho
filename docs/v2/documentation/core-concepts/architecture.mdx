@@ -211,9 +211,11 @@ backchannel directly with Honcho, via MCP or a direct API call.
 Developers should frame the Dialectic as talking to an expert on the Peer rather than addressing the Peer itself, meaning:
 
 ```python
-alice.chat("What is alice's mood like") # ✅ Correct
+alice.chat("What is the user's mood today?") # ✅ Ideal
 
-alice.chat("What is your mood like") # ❌ Wrong
+alice.chat("What is alice's mood today?") # ✅ Works -- but make sure to consider what peer "Alice" has been saying in their messages about name/identity.
+
+alice.chat("What is your mood today?") # ❌ Likely to fail -- the dialectic agent may conflate itself and the user.
 ```
 
 <Note>
