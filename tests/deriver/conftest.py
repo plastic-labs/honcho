@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.deriver.queue_payload import create_payload
+from src.deriver.utils import get_work_unit_key
 
 
 @pytest.fixture
@@ -18,7 +19,9 @@ def mock_deriver_process(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Any]:
     """Mock the deriver process_message method to avoid actual LLM calls"""
     from src.deriver.deriver import Deriver
 
-    async def mock_process_message(_self: Any, _payload: dict[str, Any]) -> None:
+    async def mock_process_message(
+        _self: Any, _task_type: str, _payload: dict[str, Any]
+    ) -> None:
         # Simulate processing without making actual LLM calls
         pass
 
@@ -174,8 +177,14 @@ async def add_queue_items(
         """Add queue items to the database and return them"""
         queue_items: list[models.QueueItem] = []
         for payload in payloads:
+            # Generate work_unit_key from the payload
+            task_type = payload.get("task_type", "unknown")
+            work_unit_key = get_work_unit_key(task_type, payload)
+
             queue_item = models.QueueItem(
                 session_id=session_id,
+                task_type=task_type,
+                work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
             )
@@ -249,17 +258,11 @@ async def create_active_queue_session(db_session: AsyncSession) -> Callable[...,
     """Helper function to create active queue sessions for testing work unit tracking"""
 
     async def _create_active_session(
-        session_id: str,
-        sender_name: str | None = None,
-        target_name: str | None = None,
-        task_type: str = "representation",
+        work_unit_key: str,
     ) -> models.ActiveQueueSession:
         """Create an active queue session"""
         active_session = models.ActiveQueueSession(
-            session_id=session_id,
-            sender_name=sender_name,
-            target_name=target_name,
-            task_type=task_type,
+            work_unit_key=work_unit_key,
         )
         db_session.add(active_session)
         await db_session.commit()

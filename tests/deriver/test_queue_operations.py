@@ -70,16 +70,21 @@ class TestQueueOperations:
         session, peers = sample_session_with_peers
         peer1, peer2, _ = peers
 
-        # Create an active queue session
-        active_session = await create_active_queue_session(
-            session_id=session.id,
-            sender_name=peer1.name,
-            target_name=peer2.name,
-            task_type="representation",
+        # Create a work unit key for a representation task
+        work_unit_key = (
+            f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
         )
 
+        # Create an active queue session
+        active_session = await create_active_queue_session(work_unit_key=work_unit_key)
+
         assert active_session is not None
-        assert active_session.session_id == session.id
-        assert active_session.sender_name == peer1.name
-        assert active_session.target_name == peer2.name
-        assert active_session.task_type == "representation"
+        assert active_session.work_unit_key == work_unit_key
+
+        # Verify the work unit key has the expected format
+        parts = work_unit_key.split(":")
+        assert parts[0] == "representation"
+        assert parts[1] == "workspace1"
+        assert parts[2] == session.name
+        assert parts[3] == peer1.name
+        assert parts[4] == peer2.name

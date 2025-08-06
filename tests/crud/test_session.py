@@ -62,10 +62,11 @@ class TestSessionCRUD:
         assert len(configurations) == 2
 
         # Verify the structure of returned data
-        for peer_name, peer_config, session_peer_config in configurations:
+        for peer_name, peer_config, session_peer_config, is_active in configurations:
             assert isinstance(peer_name, str)
             assert isinstance(peer_config, dict) or peer_config is None
             assert isinstance(session_peer_config, dict)
+            assert isinstance(is_active, bool)
 
             # Check that session_peer_config matches what we set
             expected_config = peer_configs[peer_name]

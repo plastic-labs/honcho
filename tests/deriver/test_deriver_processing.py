@@ -5,7 +5,6 @@ from typing import Any
 import pytest
 
 from src import models
-from src.deriver.queue_manager import WorkUnit
 
 
 @pytest.mark.asyncio
@@ -40,39 +39,43 @@ class TestDeriverProcessing:
         # The mock should be in place and return a predefined response
         # This ensures no actual LLM calls are made during testing
 
-    async def test_work_unit_creation(
+    async def test_work_unit_key_generation(
         self,
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ):
-        """Test that WorkUnit objects can be created correctly"""
+        """Test that work unit keys are generated correctly"""
+        from src.deriver.utils import get_work_unit_key
+
         session, peers = sample_session_with_peers
         peer1, peer2, _ = peers
 
-        # Create a WorkUnit for representation task
-        work_unit = WorkUnit(
-            session_id=session.id,
-            sender_name=peer1.name,
-            target_name=peer2.name,
-            task_type="representation",
+        # Create a payload for representation task
+        representation_payload = {
+            "workspace_name": "workspace1",
+            "session_name": session.name,
+            "sender_name": peer1.name,
+            "target_name": peer2.name,
+            "task_type": "representation",
+        }
+
+        # Generate work unit key for representation
+        work_unit_key = get_work_unit_key("representation", representation_payload)
+        expected_key = (
+            f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
         )
+        assert work_unit_key == expected_key
 
-        assert work_unit.session_id == session.id
-        assert work_unit.sender_name == peer1.name
-        assert work_unit.target_name == peer2.name
-        assert work_unit.task_type == "representation"
+        # Create a payload for summary task (sender_name and target_name should be None)
+        summary_payload = {
+            "workspace_name": "workspace1",
+            "session_name": session.name,
+            "task_type": "summary",
+        }
 
-        # Create a WorkUnit for summary task (sender_name and target_name should be None)
-        summary_work_unit = WorkUnit(
-            session_id=session.id,
-            sender_name=None,
-            target_name=None,
-            task_type="summary",
-        )
-
-        assert summary_work_unit.session_id == session.id
-        assert summary_work_unit.sender_name is None
-        assert summary_work_unit.target_name is None
-        assert summary_work_unit.task_type == "summary"
+        # Generate work unit key for summary
+        summary_work_unit_key = get_work_unit_key("summary", summary_payload)
+        expected_summary_key = f"summary:workspace1:{session.name}:None:None"
+        assert summary_work_unit_key == expected_summary_key
 
     async def test_mock_queue_manager(
         self,
