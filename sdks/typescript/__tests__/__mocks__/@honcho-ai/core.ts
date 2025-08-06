@@ -23,10 +23,13 @@ export default class MockHonchoCore {
         set: jest.fn(),
         remove: jest.fn(),
         list: jest.fn(),
+        getConfig: jest.fn(),
+        setConfig: jest.fn(),
       },
       messages: {
         create: jest.fn(),
         list: jest.fn(),
+        upload: jest.fn(),
       },
       getOrCreate: jest.fn(),
       update: jest.fn(),
@@ -37,6 +40,7 @@ export default class MockHonchoCore {
     update: jest.fn(),
     list: jest.fn(),
     search: jest.fn(),
+    deriverStatus: jest.fn(),
   };
 
   constructor(options?: any) {

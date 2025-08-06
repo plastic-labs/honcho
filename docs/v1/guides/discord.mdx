@@ -154,7 +154,7 @@ def get_session(user_id, location_id, create=False):
 
     # Query for *active* sessions with both user_id and location_id
     sessions_iter = honcho.apps.users.sessions.list(
-        app_id=app.id, user_id=user_id, reverse=True, filter={"is_active": True}
+        app_id=app.id, user_id=user_id, reverse=True, filters={"is_active": True}
     )
     sessions = list(session for session in sessions_iter)
 

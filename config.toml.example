@@ -6,8 +6,6 @@
 # Application-level settings
 [app]
 LOG_LEVEL = "INFO"
-FASTAPI_HOST = "0.0.0.0"
-FASTAPI_PORT = 8000
 SESSION_PEERS_LIMIT = 10
 GET_CONTEXT_MAX_TOKENS = 100000
 EMBED_MESSAGES = true
@@ -66,8 +64,6 @@ PROVIDER = "google"
 MODEL = "gemini-2.0-flash-lite"
 MAX_OUTPUT_TOKENS = 2500
 THINKING_BUDGET_TOKENS = 1024 # only applied when using Anthropic
-DEDUCTIVE_OBSERVATIONS_COUNT = 6
-EXPLICIT_OBSERVATIONS_COUNT = 10
 
 # Dialectic settings
 [dialectic]

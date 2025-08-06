@@ -269,7 +269,7 @@ async def test_get_messages_with_empty_filter(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {}},
+        json={"filters": {}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -302,7 +302,7 @@ async def test_get_messages_with_null_filter(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": None},
+        json={"filters": None},
     )
     assert response.status_code == 200
     data = response.json()
@@ -375,7 +375,7 @@ async def test_get_filtered_messages(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {"metadata": {"key": "value2"}}},
+        json={"filters": {"metadata": {"key": "value2"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -430,7 +430,7 @@ async def test_get_filtered_messages_with_complex_filter(
     # Test old-style filter (backward compatibility)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {"metadata": {"priority": "high", "category": "technical"}}},
+        json={"filters": {"metadata": {"priority": "high", "category": "technical"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -442,7 +442,7 @@ async def test_get_filtered_messages_with_complex_filter(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={
-            "filter": {
+            "filters": {
                 "AND": [
                     {"metadata": {"priority": "high"}},
                     {"metadata": {"category": "technical"}},
@@ -459,7 +459,7 @@ async def test_get_filtered_messages_with_complex_filter(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={
-            "filter": {
+            "filters": {
                 "OR": [
                     {"metadata": {"priority": "high"}},
                     {"metadata": {"type": "question"}},

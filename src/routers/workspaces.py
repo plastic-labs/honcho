@@ -9,6 +9,7 @@ from src import crud, schemas
 from src.dependencies import db
 from src.exceptions import AuthenticationException
 from src.security import JWTParams, require_auth
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ async def get_or_create_workspace(
     Get a Workspace by ID.
 
     If workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-    Otherwise, it uses the workspace_id from the JWT token.
+    Otherwise, it uses the workspace_id from the JWT.
     """
     # If workspace_id provided in query, check if it matches jwt or user is admin
     if workspace.name:
@@ -60,8 +61,8 @@ async def get_all_workspaces(
 ):
     """Get all Workspaces"""
     filter_param = None
-    if options and hasattr(options, "filter"):
-        filter_param = options.filter
+    if options and hasattr(options, "filters"):
+        filter_param = options.filters
         if filter_param == {}:
             filter_param = None
 
@@ -93,18 +94,21 @@ async def update_workspace(
 
 @router.post(
     "/{workspace_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[Depends(require_auth(workspace_name="workspace_id"))],
 )
 async def search_workspace(
     workspace_id: str = Path(..., description="ID of the workspace to search"),
-    query: str = Body(..., description="Search query"),
+    body: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters "
+    ),
     db: AsyncSession = db,
 ):
     """Search a Workspace"""
-    stmt = await crud.search(query, workspace_name=workspace_id)
-
-    return await apaginate(db, stmt)
+    # take user-provided filter and add workspace_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    return await search(db, body.query, filters=filters, limit=body.limit)
 
 
 @router.get(

@@ -12,9 +12,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.crud import create_messages, search
+from src.crud import create_messages
 from src.models import Peer, Workspace
 from src.schemas import MessageCreate
+from src.utils.search import search
 
 
 @pytest.mark.asyncio
@@ -243,21 +244,21 @@ async def test_semantic_search_when_embeddings_enabled(
     # Check the call count before search
     initial_call_count: int = mock_openai_embeddings["embed"].call_count
 
-    search_stmt = await search(
+    search_results = await search(
+        db=db_session,
         query=search_query,
-        workspace_name=test_workspace.name,
-        session_name=test_session.name,
+        filters={
+            "workspace_id": test_workspace.name,
+            "session_id": test_session.name,
+        },
     )
 
     # Verify that the embed method was called during search - e.g. we used semantic search
     assert mock_openai_embeddings["embed"].call_count == initial_call_count + 1
 
-    search_result = await db_session.execute(search_stmt)
-    found_messages = list(search_result.scalars().all())
-
     # Verify that our message was found via semantic search
-    assert len(found_messages) > 0
-    found_message_ids = [msg.public_id for msg in found_messages]
+    assert len(search_results) > 0
+    found_message_ids = [msg.public_id for msg in search_results]
     assert created_message.public_id in found_message_ids
 
 

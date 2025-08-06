@@ -32,7 +32,7 @@
                     "apps"
                 ],
                 "summary": "Get App",
-                "description": "Get an App by ID.\n\nIf app_id is provided as a query parameter, it uses that (must match JWT app_id).\nOtherwise, it uses the app_id from the JWT token.",
+                "description": "Get an App by ID.\n\nIf app_id is provided as a query parameter, it uses that (must match JWT app_id).\nOtherwise, it uses the app_id from the JWT.",
                 "operationId": "get_app_v1_apps_get",
                 "security": [
                     {
@@ -54,10 +54,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "App ID to retrieve. If not provided, uses JWT token",
+                            "description": "App ID to retrieve. If not provided, uses JWT",
                             "title": "App Id"
                         },
-                        "description": "App ID to retrieve. If not provided, uses JWT token"
+                        "description": "App ID to retrieve. If not provided, uses JWT"
                     }
                 ],
                 "responses": {
@@ -535,7 +535,7 @@
                     "users"
                 ],
                 "summary": "Get User",
-                "description": "Get a User by ID\n\nIf user_id is provided as a query parameter, it uses that (must match JWT app_id).\nOtherwise, it uses the user_id from the JWT token.",
+                "description": "Get a User by ID\n\nIf user_id is provided as a query parameter, it uses that (must match JWT app_id).\nOtherwise, it uses the user_id from the JWT.",
                 "operationId": "get_user_v1_apps__app_id__users_get",
                 "security": [
                     {
@@ -568,10 +568,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "User ID to retrieve. If not provided, users JWT token",
+                            "description": "User ID to retrieve. If not provided, users JWT",
                             "title": "User Id"
                         },
-                        "description": "User ID to retrieve. If not provided, users JWT token"
+                        "description": "User ID to retrieve. If not provided, users JWT"
                     }
                 ],
                 "responses": {
@@ -959,7 +959,7 @@
                     "sessions"
                 ],
                 "summary": "Get Session",
-                "description": "Get a specific session for a user.\n\nIf session_id is provided as a query parameter, it uses that (must match JWT session_id).\nOtherwise, it uses the session_id from the JWT token.",
+                "description": "Get a specific session for a user.\n\nIf session_id is provided as a query parameter, it uses that (must match JWT session_id).\nOtherwise, it uses the session_id from the JWT.",
                 "operationId": "get_session_v1_apps__app_id__users__user_id__sessions_get",
                 "security": [
                     {
@@ -1003,10 +1003,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "Session ID to retrieve. If not provided, uses JWT token",
+                            "description": "Session ID to retrieve. If not provided, uses JWT",
                             "title": "Session Id"
                         },
-                        "description": "Session ID to retrieve. If not provided, uses JWT token"
+                        "description": "Session ID to retrieve. If not provided, uses JWT"
                     }
                 ],
                 "responses": {
@@ -2577,7 +2577,7 @@
                     "collections"
                 ],
                 "summary": "Get Collection",
-                "description": "Get a specific collection for a user.\n\nIf collection_id is provided as a query parameter, it uses that (must match JWT collection_id).\nOtherwise, it uses the collection_id from the JWT token.",
+                "description": "Get a specific collection for a user.\n\nIf collection_id is provided as a query parameter, it uses that (must match JWT collection_id).\nOtherwise, it uses the collection_id from the JWT.",
                 "operationId": "get_collection_v1_apps__app_id__users__user_id__collections_get",
                 "security": [
                     {
@@ -2621,10 +2621,10 @@
                                     "type": "null"
                                 }
                             ],
-                            "description": "Collection ID to retrieve. If not provided, uses JWT token",
+                            "description": "Collection ID to retrieve. If not provided, uses JWT",
                             "title": "Collection Id"
                         },
-                        "description": "Collection ID to retrieve. If not provided, uses JWT token"
+                        "description": "Collection ID to retrieve. If not provided, uses JWT"
                     }
                 ],
                 "responses": {
@@ -3953,7 +3953,7 @@
             },
             "AppGet": {
                 "properties": {
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -3963,7 +3963,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     }
                 },
                 "type": "object",
@@ -4061,7 +4061,7 @@
             },
             "CollectionGet": {
                 "properties": {
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4071,7 +4071,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     }
                 },
                 "type": "object",
@@ -4215,7 +4215,7 @@
             },
             "DocumentGet": {
                 "properties": {
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4225,7 +4225,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     }
                 },
                 "type": "object",
@@ -4239,7 +4239,7 @@
                         "minLength": 1,
                         "title": "Query"
                     },
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4249,7 +4249,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     },
                     "top_k": {
                         "type": "integer",
@@ -4406,7 +4406,7 @@
             },
             "MessageGet": {
                 "properties": {
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4416,7 +4416,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     }
                 },
                 "type": "object",
@@ -4596,7 +4596,7 @@
                         ],
                         "title": "Message Id"
                     },
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -4606,7 +4606,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     }
                 },
                 "type": "object",
@@ -4990,7 +4990,7 @@
             },
             "SessionGet": {
                 "properties": {
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -5000,7 +5000,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     },
                     "is_active": {
                         "type": "boolean",
@@ -5083,7 +5083,7 @@
             },
             "UserGet": {
                 "properties": {
-                    "filter": {
+                    "filters": {
                         "anyOf": [
                             {
                                 "additionalProperties": true,
@@ -5093,7 +5093,7 @@
                                 "type": "null"
                             }
                         ],
-                        "title": "Filter"
+                        "title": "Filters"
                     }
                 },
                 "type": "object",

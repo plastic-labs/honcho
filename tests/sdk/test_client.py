@@ -172,9 +172,9 @@ async def test_workspace_search(client_fixture: tuple[Honcho | AsyncHoncho, str]
         await session.add_messages([user.message(search_query)])
 
         search_results = await honcho_client.search(search_query)
-        results = search_results.items
-        assert len(results) >= 1
-        assert search_query in results[0].content
+        assert isinstance(search_results, list)
+        assert len(search_results) >= 1
+        assert search_query in search_results[0].content
     else:
         assert isinstance(honcho_client, Honcho)
         session = honcho_client.session(id="search-session-ws")
@@ -184,9 +184,9 @@ async def test_workspace_search(client_fixture: tuple[Honcho | AsyncHoncho, str]
         session.add_messages([user.message(search_query)])
 
         search_results = honcho_client.search(search_query)
-        results = list(search_results)
-        assert len(results) >= 1
-        assert search_query in results[0].content
+        assert isinstance(search_results, list)
+        assert len(search_results) >= 1
+        assert search_query in search_results[0].content
 
 
 @pytest.mark.asyncio

@@ -154,8 +154,8 @@ async def get_messages(
     """Get all messages for a session"""
     try:
         filters = None
-        if options and hasattr(options, "filter"):
-            filters = options.filter
+        if options and hasattr(options, "filters"):
+            filters = options.filters
             if filters == {}:
                 filters = None
 
