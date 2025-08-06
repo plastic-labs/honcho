@@ -209,10 +209,7 @@ async def search(
         # Get more results for fusion
         semantic_limit = limit * 2
         semantic_results = await _semantic_search(
-            db=db,
-            query=query,
-            stmt=stmt,
-            limit=semantic_limit or 100,  # Default limit for fusion
+            db=db, query=query, stmt=stmt, limit=semantic_limit
         )
         search_results.append(semantic_results)
 
@@ -220,10 +217,7 @@ async def search(
     # Get more results for fusion
     fulltext_limit = limit * 2
     fulltext_results = await _fulltext_search(
-        db=db,
-        query=query,
-        stmt=stmt,
-        limit=fulltext_limit or 100,  # Default limit for fusion
+        db=db, query=query, stmt=stmt, limit=fulltext_limit
     )
     search_results.append(fulltext_results)
 

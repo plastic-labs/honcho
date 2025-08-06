@@ -31,15 +31,12 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         ### Added
 
         - Arbitrary filters now available on all search endpoints
-        - Search combines full-text and semantic using reciprocal rank fusion
-
-        ### Fixed
-
-        - API uses 'filters' instead of 'filter' everywhere for consistency and better behavior with Python native types
+        - Search combines full-text and semantic using [reciprocal rank fusion](https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf)
 
         ### Changed
 
-        - Search has 10 results by default, max 100 results
+        - API uses 'filters' instead of 'filter' everywhere for consistency and better behavior with Python native types (breaking change)
+        - Search has `limit` parameter: 10 results by default, max 100 results
         </Update>
 
 
