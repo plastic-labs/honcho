@@ -33,7 +33,7 @@ class WorkspaceCreate(WorkspaceBase):
 
 
 class WorkspaceGet(WorkspaceBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class WorkspaceUpdate(WorkspaceBase):
@@ -70,7 +70,7 @@ class PeerCreate(PeerBase):
 
 
 class PeerGet(PeerBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class PeerUpdate(PeerBase):
@@ -134,7 +134,7 @@ class MessageCreate(MessageBase):
 
 
 class MessageGet(MessageBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class MessageUpdate(MessageBase):
@@ -200,7 +200,7 @@ class SessionCreate(SessionBase):
 
 
 class SessionGet(SessionBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class SessionUpdate(SessionBase):
@@ -249,9 +249,14 @@ class DocumentUpdate(DocumentBase):
 
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
-    semantic: bool | None = Field(
-        default=None,
-        description="Whether to explicitly use semantic search to filter the results",
+    filters: dict[str, Any] | None = Field(
+        default=None, description="Filters to scope the search"
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of results to return",
     )
 
 

@@ -25,7 +25,7 @@ paths:
         Get a Workspace by ID.
 
         If workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-        Otherwise, it uses the workspace_id from the JWT token.
+        Otherwise, it uses the workspace_id from the JWT.
       operationId: get_or_create_workspace_v2_workspaces_post
       requestBody:
         content:
@@ -480,7 +480,7 @@ paths:
         Get a Peer by ID
 
         If peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-        Otherwise, it uses the peer_id from the JWT token.
+        Otherwise, it uses the peer_id from the JWT.
       operationId: get_or_create_peer_v2_workspaces__workspace_id__peers_post
       security:
         - HTTPBearer: []
@@ -972,7 +972,7 @@ paths:
         Get a specific session in a workspace.
 
         If session_id is provided as a query parameter, it verifies the session is in the workspace.
-        Otherwise, it uses the session_id from the JWT token for verification.
+        Otherwise, it uses the session_id from the JWT for verification.
       operationId: get_or_create_session_v2_workspaces__workspace_id__sessions_post
       security:
         - HTTPBearer: []
@@ -2114,7 +2114,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/Message'
                 title: >-
-                  Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id 
+                  Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id
                   Messages Upload Post
         '422':
           description: Validation Error
@@ -2677,7 +2677,7 @@ components:
       title: MessageCreate
     MessageGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
@@ -2879,7 +2879,7 @@ components:
       title: PeerCreate
     PeerGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
@@ -3032,7 +3032,7 @@ components:
       title: SessionDeriverStatus
     SessionGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
@@ -3142,7 +3142,7 @@ components:
       title: WorkspaceCreate
     WorkspaceGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object

@@ -1,0 +1,156 @@
+---
+title: 'Configuration'
+description: 'Customizing how Honcho handles peers and sessions'
+icon: 'wrench'
+---
+
+Entities in Honcho can sometimes be configured to change the behavior of the deriver, which is responsible for generating and storing facts, summaries, and user representations.
+
+These configurations can be set at the peer, session, and session-peer level (AKA the state of a peer within a specific session).
+
+### Peer Configuration
+
+By default, all peers are "observed" by Honcho. This means that Honcho will derive facts from messages sent by the peer and generate a representation of them. In most cases, this is why you use Honcho! However, sometimes an application requires a peer that should not be observed: for example, an assistant or game NPC that your program will never need to ask questions about.
+
+You may therefore disable observation of a peer by setting the `observe_me` flag in their configuration to `false`.
+
+If the peer has a session-level configuration, it will override this configuration. If the flag is not set, or is set to `true`, the peer will be observed.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Create peer with configuration
+peer = honcho.peer("my-peer", config={"observe_me": False})
+
+# Change peer's configuration
+peer.set_peer_config({"observe_me": True})
+
+# Note: creating the same peer again will also replace the configuration
+peer = honcho.peer("my-peer", config={"observe_me": False})
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
+
+    // Create peer with configuration
+    const peer = await honcho.peer("my-peer", { config: { observe_me: false } });
+
+    // Change peer's configuration
+    await peer.setPeerConfig({ observe_me: true });
+
+    // Note: creating the same peer again will also replace the configuration
+    await honcho.peer("my-peer", { config: { observe_me: false } });
+})();
+```
+</CodeGroup>
+
+### Session Configuration
+
+By default, all sessions have the deriver enabled, much like peers. You may create a session that escapes the deriver's watchful eye by setting the `deriver_disabled` flag to `true`. You can update the flag by calling `get_or_create` on the session with a new configuration.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Create session with configuration
+session = honcho.session("my-session", config={"deriver_disabled": True})
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
+
+    // Create session with configuration
+    const session = await honcho.session("my-session", { config: { deriver_disabled: true } });
+})();
+```
+</CodeGroup>
+
+### Session-Peer Configuration
+
+Configuration at the session-peer level is the most common use case for configuration flags. You will often want to arrange a session such that certain peers observe others in order to form "local representations" of them. There are two flags that can be set at the session-peer level:
+
+- `observe_me`: Whether this peer should *be observed* by others in the session. By default, this is `true`. This overrides the peer-level `observe_me` flag.
+
+- `observe_others`: Whether this peer should produce local representations of others in the session. By default, this is `false`. Other peers will only be observed if their `observe_me` flag is `true`.
+
+You can combine these flags across multiple peers to arrange any possible permutation of directional observation. Note that in the default case, no local representations are produced. To produce local representations, you must set the `observe_others` flag to `true` for at least one peer in the session and at least one other peer must have their `observe_me` flag set to `true`.
+
+Many applications will work best without local representations, preferring to chat with Honcho's top-down representation of each peer. Only enable local representations via the `observe_others` flag if you are doing advanced reasoning on user perspectives.
+
+<img src="/images/local-vs-global-reps.png" alt="Peer Representations" />
+
+You can dynamically change the configuration of a session-peer by calling `set_peer_config` on the session with the peer and the configuration you want to set.
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Initialize client
+honcho = Honcho()
+
+# Create session
+session = honcho.session("my-session")
+
+# Create peers
+alice = honcho.peer("alice")
+bob = honcho.peer("bob")
+
+# Add peers to session with default configuration
+session.add_peers([alice, bob])
+
+# Add another peer to the session with a custom configuration
+charlie = honcho.peer("charlie")
+session.add_peers([charlie, {"observe_me": False, "observe_others": True}])
+
+# Set session-peer configuration
+session.set_peer_config(alice, {"observe_others": True})
+session.set_peer_config(bob, {"observe_me": False})
+
+# Get session-peer configuration
+charlie_config = session.get_peer_config(charlie)
+print(charlie_config)
+```
+```typescript TypeScript
+import { Honcho } from "@honcho-ai/sdk";
+
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
+
+    // Create session
+    const session = await honcho.session("my-session");
+
+    // Create peers
+    const alice = await honcho.peer("alice");
+    const bob = await honcho.peer("bob");
+
+    // Add peers to session
+    await session.addPeers([alice, bob]);
+
+    // Add another peer to the session with a custom configuration
+    const charlie = await honcho.peer("charlie");
+    await session.addPeers([charlie, { observe_me: false, observe_others: true }]);
+
+    // Set session-peer configuration
+    await session.setPeerConfig(alice, { observe_others: true });
+    await session.setPeerConfig(bob, { observe_me: false });
+
+    // Get session-peer configuration
+    const charlieConfig = await session.getPeerConfig(charlie);
+    console.log(charlieConfig);
+})();
+```
+</CodeGroup>

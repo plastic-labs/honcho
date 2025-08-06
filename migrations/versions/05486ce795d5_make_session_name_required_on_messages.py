@@ -48,8 +48,8 @@ def upgrade() -> None:
         # Step 2: Get unique workspace-peer combinations that have orphaned messages
         workspace_peer_result = conn.execute(
             sa.text(f"""
-                SELECT DISTINCT workspace_name, peer_name 
-                FROM {schema}.messages 
+                SELECT DISTINCT workspace_name, peer_name
+                FROM {schema}.messages
                 WHERE session_name IS NULL
             """)
         )
@@ -109,9 +109,9 @@ def upgrade() -> None:
             # Step 4: Assign orphaned messages for this peer to the default session
             op.execute(
                 sa.text(f"""
-                    UPDATE {schema}.messages 
+                    UPDATE {schema}.messages
                     SET session_name = '{default_session_name}'
-                    WHERE workspace_name = '{workspace_name}' 
+                    WHERE workspace_name = '{workspace_name}'
                     AND peer_name = '{peer_name}'
                     AND session_name IS NULL
                 """)
@@ -120,9 +120,9 @@ def upgrade() -> None:
             # Step 4.5: Handle orphaned message embeddings for this peer
             op.execute(
                 sa.text(f"""
-                    UPDATE {schema}.message_embeddings 
+                    UPDATE {schema}.message_embeddings
                     SET session_name = '{default_session_name}'
-                    WHERE workspace_name = '{workspace_name}' 
+                    WHERE workspace_name = '{workspace_name}'
                     AND peer_name = '{peer_name}'
                     AND session_name IS NULL
                 """)

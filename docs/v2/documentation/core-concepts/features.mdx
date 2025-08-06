@@ -19,9 +19,17 @@ To help developers understand when a Peer's representation is fully up to date, 
 - If a Session is specified, the queue status reflects pending work for the Peer's working representation in that Session.
 
 ### Search
-Honcho supports full-text search across message content in different scopes.
-- You can search within a specific Session, Peer, or across all messages in a Workspace.
-- Search results are ordered by relevance, making it easy to quickly retrieve important past messages.
+Honcho implements a powerful search endpoint that allows you to search for messages across a workspace, session, or peer with complex [filters](/v2/guides/using-filters).
+
+The search process combines full-text and semantic search using reciprocal rank fusion. By default, all messages ingested into Honcho have embeddings generated and stored in the database, enabling semantic search -- if this feature is disabled, the search process will only use full-text search.
+
+Results are returned in the form of a list of Message objects, and you may choose how many results to return. The default is 10 results, with a maximum of 100.
+
+In the SDK, search is available on `Workspace`, `Session`, and `Peer` objects, and an optional `filters` parameter may be used to apply a narrower search scope such as a time range or developer-defined metadata attached to messages.
+
+Note that results are not ordered by recency, only relevance. Results can be sorted by timestamp or a filter on the `created_at` field can limit results to recent messages.
+
+[Look here for examples of how to use search in the SDK](/v2/guides/search).
 
 ### Scoped API Keys
 Builders can create scoped API keys to control access to different resources within Honcho.

@@ -143,15 +143,17 @@ print(response)
 ```
 
 ```typescript TypeScript
-// Ask what Bob is like
-const response = await alice.chat("Tell me about Bob's interests and habits");
-console.log(response);
+(async () => {
+    // Ask what Bob is like
+    const response = await alice.chat("Tell me about Bob's interests and habits");
+    console.log(response);
 
-// Returns rich context like:
-// "Bob is health-conscious and has been working on getting back in shape.
-// He regularly goes to the gym, particularly in the evenings, and finds
-// exercise helps him relax. He's encouraging about fitness and willing
-// to share advice about workout routines."
+    // Returns rich context like:
+    // "Bob is health-conscious and has been working on getting back in shape.
+    // He regularly goes to the gym, particularly in the evenings, and finds
+    // exercise helps him relax. He's encouraging about fitness and willing
+    // to share advice about workout routines."
+})();
 ```
 </CodeGroup>
 

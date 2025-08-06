@@ -194,10 +194,6 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    # Default number of observations to retrieve for each reasoning level
-    DEDUCTIVE_OBSERVATIONS_COUNT: Annotated[int, Field(default=6, gt=0, le=50)] = 6
-    EXPLICIT_OBSERVATIONS_COUNT: Annotated[int, Field(default=10, gt=0, le=50)] = 10
-
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
@@ -252,8 +248,6 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
-    FASTAPI_HOST: str = "0.0.0.0"  # nosec B104
-    FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65_535)] = 8000
     SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
     GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
