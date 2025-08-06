@@ -32,6 +32,7 @@ def main():
         print(f"Generated JWT secret: {secret}")
         print("\nAdd this to your .env file as:")
         print(f"AUTH_JWT_SECRET={secret}")
+        print(f"or as WEBHOOK_SECRET={secret}")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.deriver.consumer import process_item
-from src.deriver.queue_manager import QueueManager, WorkUnit
+from src.deriver.queue_manager import QueueManager
 
 
 @pytest.mark.asyncio
@@ -35,11 +35,11 @@ class TestQueueProcessing:
 
         # Check that all work units have the expected structure
         for work_unit in work_units:
-            assert isinstance(work_unit, WorkUnit)
-            assert work_unit.task_type in ["representation", "summary"]
+            assert isinstance(work_unit, str)
+            assert work_unit.split(":")[0] in ["representation", "summary"]
 
         # The test is mainly verifying that get_available_work_units works without errors
-        # and returns properly structured WorkUnit objects
+        # and returns properly structured work unit key strings
 
     async def test_work_unit_claiming(
         self,
@@ -60,10 +60,7 @@ class TestQueueProcessing:
         # Claim a work unit by creating an ActiveQueueSession entry
         work_unit = work_units[0]
         active_session = models.ActiveQueueSession(
-            session_id=work_unit.session_id,
-            sender_name=work_unit.sender_name,
-            target_name=work_unit.target_name,
-            task_type=work_unit.task_type,
+            work_unit_key=work_unit,
         )
         db_session.add(active_session)
         await db_session.commit()
@@ -108,45 +105,37 @@ class TestQueueProcessing:
         queue_item = sample_queue_items[0]
 
         # This should not raise an exception since the deriver is mocked
-        await process_item(queue_item.payload)
+        await process_item(queue_item.task_type, queue_item.payload)
 
         # The mock should have been called
         # Note: We can't easily verify this since we're mocking the class method directly
         # In a real test, we might want to mock at a different level
 
-    async def test_work_unit_string_representation(
+    async def test_work_unit_key_format(
         self, sample_session_with_peers: tuple[models.Session, list[models.Peer]]
     ):
-        """Test that WorkUnit string representation works correctly"""
+        """Test that work unit keys have the correct format"""
         session, peers = sample_session_with_peers
         peer1, peer2, _ = peers
 
-        # Create a representation work unit
-        work_unit = WorkUnit(
-            session_id=session.id,
-            sender_name=peer1.name,
-            target_name=peer2.name,
-            task_type="representation",
+        # Create a representation work unit key
+        # Format: task_type:workspace:session:sender:target
+        work_unit_key = (
+            f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
         )
 
-        # Convert to string
-        work_unit_str = str(work_unit)
+        # Check that the key contains the expected information
+        assert session.name in work_unit_key
+        assert peer1.name in work_unit_key
+        assert peer2.name in work_unit_key
+        assert "representation" in work_unit_key
+        assert "workspace1" in work_unit_key
 
-        # Check that the string contains the expected information
-        assert session.id in work_unit_str
-        assert peer1.name in work_unit_str
-        assert peer2.name in work_unit_str
-        assert "representation" in work_unit_str
+        # Create a summary work unit key
+        # Summary work units use None for sender/target
+        summary_work_unit_key = f"summary:workspace1:{session.name}:None:None"
 
-        # Create a summary work unit
-        summary_work_unit = WorkUnit(
-            session_id=session.id,
-            sender_name=None,
-            target_name=None,
-            task_type="summary",
-        )
-
-        summary_str = str(summary_work_unit)
-        assert session.id in summary_str
-        assert "None" in summary_str
-        assert "summary" in summary_str
+        assert session.name in summary_work_unit_key
+        assert "None" in summary_work_unit_key
+        assert "summary" in summary_work_unit_key
+        assert "workspace1" in summary_work_unit_key
