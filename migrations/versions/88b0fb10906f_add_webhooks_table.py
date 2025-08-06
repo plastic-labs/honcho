@@ -105,7 +105,15 @@ def upgrade() -> None:
     # 3. Alter active queue sessions table
     op.add_column(
         "active_queue_sessions",
-        sa.Column("work_unit_key", sa.Text(), unique=True, index=True),
+        sa.Column("work_unit_key", sa.Text(), index=True),
+        schema=schema,
+    )
+
+    # Add unique constraint for work_unit_key
+    op.create_unique_constraint(
+        "unique_work_unit_key",
+        "active_queue_sessions",
+        ["work_unit_key"],
         schema=schema,
     )
 
@@ -151,6 +159,14 @@ def downgrade() -> None:
 
     if column_exists("queue", "work_unit_key", inspector):
         op.drop_column("queue", "work_unit_key", schema=schema)
+
+    # Drop unique constraint first if it exists
+    if constraint_exists(
+        "active_queue_sessions", "unique_work_unit_key", "unique", inspector
+    ):
+        op.drop_constraint(
+            "unique_work_unit_key", "active_queue_sessions", schema=schema
+        )
 
     if column_exists("active_queue_sessions", "work_unit_key", inspector):
         op.drop_column("active_queue_sessions", "work_unit_key", schema=schema)
