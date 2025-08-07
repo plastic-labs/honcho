@@ -350,6 +350,12 @@ export class Session {
    *   { peer_id: 'user1', content: 'Hello!' },
    *   { peer_id: 'assistant', content: 'Hi there!' }
    * ])
+   * // Add message with custom ISO 8601 timestamp
+   * await session.addMessages({
+   *   peer_id: 'user123',
+   *   content: 'Hello world!',
+   *   created_at: '2021-01-01T00:00:00.000Z'
+   * })
    * ```
    */
   async addMessages(messages: MessageAddition): Promise<void> {
