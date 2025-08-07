@@ -7,6 +7,7 @@ from sqlalchemy import ColumnElement, Select, and_, case, cast, literal, not_, o
 from sqlalchemy.types import Numeric
 
 from ..exceptions import FilterError
+from .formatting import parse_datetime_iso
 
 logger = getLogger(__name__)
 
@@ -561,9 +562,9 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
         except ValueError:
             continue
 
-    # Try fromisoformat as a fallback (Python 3.7+)
+    # Try fromisoformat as a fallback (Python 3.7+) with Z format support
     try:
-        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parse_datetime_iso(value)
     except ValueError:
         pass
 

@@ -1,3 +1,4 @@
+import datetime
 from unittest.mock import patch
 
 import pytest
@@ -921,3 +922,219 @@ async def test_create_messages_with_file_too_large(
 
         # Should raise FileTooLargeError which gets converted to 413
         assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_create_message_with_timestamp(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating a message with custom timestamp"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Use a specific timestamp for testing
+    custom_timestamp = datetime.datetime(
+        2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
+    )
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message with timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": custom_timestamp.isoformat(),
+                    "metadata": {"test": "with_timestamp"},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message with timestamp"
+    assert message["peer_id"] == test_peer.name
+    assert message["metadata"] == {"test": "with_timestamp"}
+
+    # Verify the created_at field matches our custom timestamp
+    # Pydantic serializes UTC timezone as 'Z' format (ISO 8601 standard)
+    expected_timestamp = "2023-01-01T12:00:00Z"
+    assert message["created_at"] == expected_timestamp
+
+
+@pytest.mark.asyncio
+async def test_create_message_without_timestamp_uses_default(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating a message without timestamp uses default timestamp"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Record time before request
+    before_request = datetime.datetime.now(datetime.timezone.utc)
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message without timestamp",
+                    "peer_id": test_peer.name,
+                    "metadata": {"test": "no_timestamp"},
+                }
+            ]
+        },
+    )
+
+    # Record time after request
+    after_request = datetime.datetime.now(datetime.timezone.utc)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message without timestamp"
+    assert message["peer_id"] == test_peer.name
+    assert message["metadata"] == {"test": "no_timestamp"}
+
+    # Verify the created_at field is between our before/after times
+    message_created_at = datetime.datetime.fromisoformat(
+        message["created_at"].replace("Z", "+00:00")
+    )
+    assert before_request <= message_created_at <= after_request
+
+
+@pytest.mark.asyncio
+async def test_create_batch_messages_with_mixed_timestamps(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating batch messages with some having custom timestamps and others using default"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Use specific timestamps for testing
+    timestamp1 = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    timestamp2 = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    # Record time before request for default timestamp
+    before_request = datetime.datetime.now(datetime.timezone.utc)
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Message 1 with timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": timestamp1.isoformat(),
+                    "metadata": {"type": "custom_timestamp"},
+                },
+                {
+                    "content": "Message 2 without timestamp",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "default_timestamp"},
+                },
+                {
+                    "content": "Message 3 with timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": timestamp2.isoformat(),
+                    "metadata": {"type": "custom_timestamp"},
+                },
+            ]
+        },
+    )
+
+    after_request = datetime.datetime.now(datetime.timezone.utc)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 3
+
+    # Check first message with custom timestamp
+    assert data[0]["content"] == "Message 1 with timestamp"
+    assert (
+        data[0]["created_at"] == "2023-01-01T12:00:00Z"
+    )  # Pydantic converts to Z format
+    assert data[0]["metadata"] == {"type": "custom_timestamp"}
+
+    # Check second message with default timestamp
+    assert data[1]["content"] == "Message 2 without timestamp"
+    message2_created_at = datetime.datetime.fromisoformat(
+        data[1]["created_at"].replace("Z", "+00:00")
+    )
+    assert before_request <= message2_created_at <= after_request
+    assert data[1]["metadata"] == {"type": "default_timestamp"}
+
+    # Check third message with custom timestamp
+    assert data[2]["content"] == "Message 3 with timestamp"
+    assert (
+        data[2]["created_at"] == "2023-01-02T12:00:00Z"
+    )  # Pydantic converts to Z format
+    assert data[2]["metadata"] == {"type": "custom_timestamp"}
+
+
+@pytest.mark.asyncio
+async def test_create_message_with_null_timestamp(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating a message with null timestamp uses default"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Record time before request
+    before_request = datetime.datetime.now(datetime.timezone.utc)
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message with null timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": None,
+                    "metadata": {"test": "null_timestamp"},
+                }
+            ]
+        },
+    )
+
+    after_request = datetime.datetime.now(datetime.timezone.utc)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message with null timestamp"
+    assert message["metadata"] == {"test": "null_timestamp"}
+
+    # Verify the created_at field uses default (current time)
+    message_created_at = datetime.datetime.fromisoformat(
+        message["created_at"].replace("Z", "+00:00")
+    )
+    assert before_request <= message_created_at <= after_request

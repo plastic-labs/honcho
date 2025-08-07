@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from src.config import settings
+from src.utils.formatting import utc_now_iso
 
 from .exceptions import AuthenticationException
 
@@ -54,7 +55,7 @@ class JWTParams(BaseModel):
     `s`: (string) session name
     """
 
-    t: str = datetime.datetime.now().isoformat()
+    t: str = utc_now_iso()
     exp: str | None = None
     ad: bool | None = None
     w: str | None = None

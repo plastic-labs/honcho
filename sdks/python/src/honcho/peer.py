@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
@@ -158,6 +159,10 @@ class Peer(BaseModel):
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
+        created_at: datetime.datetime | str | None = Field(
+            None,
+            description="Optional created-at timestamp for the message. Accepts a datetime which will be converted to an ISO 8601 string, or a preformatted string.",
+        ),
     ) -> MessageCreateParam:
         """
         Create a MessageCreateParam object attributed to this peer.
@@ -172,7 +177,18 @@ class Peer(BaseModel):
         Returns:
             A new MessageCreateParam object with this peer's ID and the provided content
         """
-        return MessageCreateParam(peer_id=self.id, content=content, metadata=metadata)
+        created_at_str: str | None
+        if isinstance(created_at, datetime.datetime):
+            created_at_str = created_at.isoformat()
+        else:
+            created_at_str = created_at
+
+        return MessageCreateParam(
+            peer_id=self.id,
+            content=content,
+            metadata=metadata,
+            created_at=created_at_str,
+        )
 
     def get_metadata(self) -> dict[str, object]:
         """

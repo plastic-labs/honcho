@@ -3,7 +3,6 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.crud.webhook import list_webhook_endpoints
 from src.deriver.queue_payload import WebhookPayload
+from src.utils.formatting import utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ async def deliver_webhook(db: AsyncSession, payload: WebhookPayload) -> None:
             event_payload = {
                 "type": payload.event_type,
                 "data": payload.data,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": utc_now_iso(),
             }
             event_json = json.dumps(
                 event_payload, separators=(",", ":"), sort_keys=True

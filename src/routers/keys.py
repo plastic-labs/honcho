@@ -10,6 +10,7 @@ from src.security import (
     create_jwt,
     require_auth,
 )
+from src.utils.formatting import format_datetime_utc
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ async def create_key(
 
     key_str = create_jwt(
         JWTParams(
-            exp=expires_at.isoformat() if expires_at else None,
+            exp=format_datetime_utc(expires_at) if expires_at else None,
             w=workspace_id,
             p=peer_id,
             s=session_id,

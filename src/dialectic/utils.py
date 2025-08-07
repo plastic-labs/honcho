@@ -11,6 +11,7 @@ from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import (
     format_premises_for_display,
+    parse_datetime_iso,
 )
 from src.utils.logging import conditional_observe
 from src.utils.shared_models import SemanticQueries
@@ -190,11 +191,9 @@ def _format_observations(
         if last_accessed:
             # Format the last_accessed datetime for display
             try:
-                from datetime import datetime
-
                 if isinstance(last_accessed, str):
                     # Parse ISO format datetime string
-                    dt = datetime.fromisoformat(last_accessed.replace("Z", "+00:00"))
+                    dt = parse_datetime_iso(last_accessed)
                     formatted_last_accessed: str = dt.strftime("%Y-%m-%d %H:%M")
                     access_parts.append(f"last accessed {formatted_last_accessed}")
             except (ValueError, AttributeError):

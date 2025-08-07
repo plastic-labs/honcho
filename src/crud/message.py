@@ -89,6 +89,7 @@ async def create_messages(
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
             token_count=len(message.encoded_message),
+            created_at=message.created_at,  # Use provided created_at if available
         )
         message_objects.append(message_obj)
 

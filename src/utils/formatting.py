@@ -5,11 +5,81 @@ This module contains helper functions for processing observations, formatting co
 and handling temporal metadata for the reasoning system.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol, cast, runtime_checkable
 
 from src.utils.logging import conditional_observe
 from src.utils.shared_models import ReasoningResponse
+
+
+def format_datetime_utc(dt: datetime) -> str:
+    """
+    Format datetime to ISO 8601 string with Z suffix for UTC timezone.
+
+    This ensures consistent datetime formatting across the entire backend,
+    using the Z format which is the ISO 8601 standard for UTC and matches
+    Pydantic's JSON serialization behavior.
+
+    Args:
+        dt: datetime object (should be timezone-aware)
+
+    Returns:
+        ISO 8601 formatted string with Z suffix for UTC
+
+    Example:
+        >>> dt = datetime(2023, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        >>> format_datetime_utc(dt)
+        '2023-01-01T12:00:00Z'
+    """
+    if dt.tzinfo is None:
+        # If no timezone info, assume UTC
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    # Convert to UTC if not already
+    if dt.tzinfo != timezone.utc:
+        dt = dt.astimezone(timezone.utc)
+
+    # Format and replace +00:00 with Z
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def utc_now_iso() -> str:
+    """
+    Get current UTC time as ISO 8601 string with Z suffix.
+
+    Returns:
+        Current UTC time in ISO 8601 format with Z suffix
+
+    Example:
+        >>> utc_now_iso()
+        '2023-01-01T12:34:56.789123Z'
+    """
+    return format_datetime_utc(datetime.now(timezone.utc))
+
+
+def parse_datetime_iso(iso_string: str) -> datetime:
+    """
+    Parse ISO 8601 datetime string, handling both Z and +00:00 UTC formats.
+
+    This function handles the fact that Python's fromisoformat() doesn't
+    directly support the 'Z' suffix, which is the standard ISO 8601 way
+    to represent UTC timezone.
+
+    Args:
+        iso_string: ISO 8601 formatted datetime string
+
+    Returns:
+        datetime object with timezone information
+
+    Example:
+        >>> parse_datetime_iso('2023-01-01T12:00:00Z')
+        datetime.datetime(2023, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        >>> parse_datetime_iso('2023-01-01T12:00:00+00:00')
+        datetime.datetime(2023, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
+    """
+    # Convert Z format to +00:00 format for Python's fromisoformat
+    normalized_string = iso_string.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized_string)
 
 
 @runtime_checkable

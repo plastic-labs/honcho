@@ -555,6 +555,37 @@ const response = await openai.chat.completions.create({
 ```
 </CodeGroup>
 
+### Custom Message Timestamps
+
+<Note>
+**API-Level Feature**: The `created_at` parameter is available when using the raw Honcho API directly. It will be supported in the SDKs in a future release.
+</Note>
+
+When creating messages via the raw API, you can optionally specify a custom `created_at` timestamp instead of using the server's current time:
+
+```bash curl
+curl -X POST "https://api.honcho.dev/v2/workspaces/{workspace_id}/sessions/{session_id}/messages" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {
+        "peer_id": "user123",
+        "content": "This message happened yesterday",
+        "created_at": "2024-01-01T12:00:00Z",
+        "metadata": {"source": "historical_data"}
+      }
+    ]
+  }'
+```
+
+This is useful for:
+- Importing historical conversation data
+- Backfilling messages from other systems
+- Maintaining accurate timeline ordering when processing batch data
+
+If `created_at` is not provided, messages will use the server's current timestamp.
+
 ### Metadata and Filtering
 
 See [Using Filters](/v2/guides/using-filters) for more examples on how to use filters.

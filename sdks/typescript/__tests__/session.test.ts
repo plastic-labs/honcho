@@ -455,6 +455,107 @@ describe('Session', () => {
 
       await expect(session.addMessages({ peer_id: 'peer1', content: 'test' })).rejects.toThrow();
     });
+
+    it('should add message with custom timestamp', async () => {
+      const message = {
+        peer_id: 'peer1',
+        content: 'Message with timestamp',
+        created_at: '2023-01-01T12:00:00Z',
+        metadata: { test: 'timestamp' },
+      };
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
+
+      await session.addMessages(message);
+
+      expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          messages: [{
+            peer_id: 'peer1',
+            content: 'Message with timestamp',
+            created_at: '2023-01-01T12:00:00Z',
+            metadata: { test: 'timestamp' }
+          }]
+        }
+      );
+    });
+
+    it('should add message with null timestamp', async () => {
+      const message = {
+        peer_id: 'peer1',
+        content: 'Message without timestamp',
+        created_at: null,
+        metadata: { test: 'no_timestamp' },
+      };
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
+
+      await session.addMessages(message);
+
+      expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          messages: [{
+            peer_id: 'peer1',
+            content: 'Message without timestamp',
+            created_at: null,
+            metadata: { test: 'no_timestamp' }
+          }]
+        }
+      );
+    });
+
+    it('should add mixed messages with and without timestamps', async () => {
+      const messages = [
+        {
+          peer_id: 'peer1',
+          content: 'Message with timestamp',
+          created_at: '2023-01-01T12:00:00Z',
+          metadata: { type: 'historical' }
+        },
+        {
+          peer_id: 'peer2',
+          content: 'Message without timestamp',
+          metadata: { type: 'current' }
+        },
+        {
+          peer_id: 'peer3',
+          content: 'Message with null timestamp',
+          created_at: null,
+          metadata: { type: 'default' }
+        }
+      ];
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
+
+      await session.addMessages(messages);
+
+      expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          messages: [
+            {
+              peer_id: 'peer1',
+              content: 'Message with timestamp',
+              created_at: '2023-01-01T12:00:00Z',
+              metadata: { type: 'historical' }
+            },
+            {
+              peer_id: 'peer2',
+              content: 'Message without timestamp',
+              metadata: { type: 'current' }
+            },
+            {
+              peer_id: 'peer3',
+              content: 'Message with null timestamp',
+              created_at: null,
+              metadata: { type: 'default' }
+            }
+          ]
+        }
+      );
+    });
   });
 
   describe('getMessages', () => {

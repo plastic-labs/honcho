@@ -94,6 +94,7 @@ export const MessageCreateSchema = z.object({
   peer_id: PeerIdSchema,
   content: MessageContentSchema,
   metadata: MessageMetadataSchema,
+  created_at: z.string().nullable().optional(),
 })
 
 /**
