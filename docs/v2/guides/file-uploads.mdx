@@ -32,8 +32,6 @@ Files are processed in memory and not stored on disk. Only the extracted text co
 
 ## Basic Usage
 
-### Upload a Single File
-
 <CodeGroup>
 ```python Python
 from honcho import Honcho
@@ -59,45 +57,20 @@ print(f"Created {len(messages)} messages from the PDF")
 import { Honcho } from "@honcho-ai/sdk";
 import fs from "fs";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Create session and peer
-const session = honcho.session("research-session");
-const user = honcho.peer("researcher");
+    // Create session and peer
+    const session = await honcho.session("research-session");
+    const user = await honcho.peer("researcher");
 
-// Upload a PDF to a session
-const fileStream = fs.createReadStream("research_paper.pdf");
-const messages = await session.uploadFile({
-  file: fileStream,
-  peerId: user.id,
-});
+    // Upload a PDF to a session
+    const fileStream = fs.createReadStream("research_paper.pdf");
+    const messages = await session.uploadFile(fileStream, user.id);
 
-console.log(`Created ${messages.length} messages from the PDF`);
-```
-</CodeGroup>
-
-### Upload to Peer's Global Representation
-
-<CodeGroup>
-```python Python
-# Upload files directly to a peer's global representation
-with open("personal_notes.pdf", "rb") as file:
-    messages = user.upload_file(
-        file=file,
-    )
-
-print(f"Added {len(messages)} messages to {user.id}'s global representation")
-```
-
-```typescript TypeScript
-// Upload files directly to a peer's global representation
-const fileStream = fs.createReadStream("personal_notes.pdf");
-const messages = await user.uploadFile({
-  file: fileStream,
-});
-
-console.log(`Added ${messages.length} messages to ${user.id}'s global representation`);
+    console.log(`Created ${messages.length} messages from the PDF`);
+})();
 ```
 </CodeGroup>
 
@@ -108,7 +81,7 @@ The upload methods accept the following parameters:
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `file` | File | Yes | File to upload |
-| `peer_id` | String | Session only | ID of the peer creating the messages |
+| `peer_id` | String | Yes | ID of the peer creating the messages |
 
 ## File Processing Details
 
@@ -160,17 +133,19 @@ messages = context.to_openai(assistant=assistant)
 ```
 
 ```typescript TypeScript
-// Query what was learned from the uploaded documents
-const response = await user.chat("What are the key findings from the research papers I uploaded?");
-console.log(response);
+(async () => {
+    // Query what was learned from the uploaded documents
+    const response = await user.chat("What are the key findings from the research papers I uploaded?");
+    console.log(response);
 
-// Ask about specific documents
-const response2 = await user.chat("What does the quarterly report say about revenue growth?");
-console.log(response2);
+    // Ask about specific documents
+    const response2 = await user.chat("What does the quarterly report say about revenue growth?");
+    console.log(response2);
 
-// Get context from the uploaded documents for LLM integration
-const context = await session.getContext({ tokens: 3000 });
-const messages = context.toOpenAI(assistant);
+    // Get context from the uploaded documents for LLM integration
+    const context = await session.getContext({ tokens: 3000 });
+    const messages = context.toOpenAI(assistant);
+})();
 ```
 </CodeGroup>
 
@@ -262,52 +237,51 @@ print("Document Analysis:", analysis)
 import { Honcho } from "@honcho-ai/sdk";
 import fs from "fs";
 
-// Initialize
-const honcho = new Honcho({});
-const session = honcho.session("document-analysis");
-const user = honcho.peer("analyst");
-const assistant = honcho.peer("analysis-bot");
+(async () => {
+    // Initialize
+    const honcho = new Honcho({});
+    const session = await honcho.session("document-analysis");
+    const user = await honcho.peer("analyst");
+    const assistant = await honcho.peer("analysis-bot");
 
-async function uploadDocument(filePath: string, description: string) {
-  const fileStream = fs.createReadStream(filePath);
-  const messages = await session.uploadFile({
-    file: fileStream,
-    peerId: user.id,
-  });
-  return messages;
-}
+    async function uploadDocument(filePath: string, description: string) {
+      const fileStream = fs.createReadStream(filePath);
+      const messages = await session.uploadFile(fileStream, user.id);
+      return messages;
+    }
 
-async function analyzeDocuments() {
-  const context = await session.getContext({ tokens: 4000 });
-  const messages = context.toOpenAI(assistant);
-  // Add analysis request
-  messages.push({
-    role: "user",
-    content: "Please analyze all the documents I've uploaded and provide a comprehensive summary of the key findings, trends, and recommendations."
-  });
+    async function analyzeDocuments() {
+      const context = await session.getContext({ tokens: 4000 });
+      const messages = context.toOpenAI(assistant);
+      // Add analysis request
+      messages.push({
+        role: "user",
+        content: "Please analyze all the documents I've uploaded and provide a comprehensive summary of the key findings, trends, and recommendations."
+      });
 
-  // Call OpenAI (or your preferred LLM)
-  // const response = await openai.chat.completions.create({ model: "gpt-4", messages });
-  // return response.choices[0].message.content;
+      // Call OpenAI (or your preferred LLM)
+      // const response = await openai.chat.completions.create({ model: "gpt-4", messages });
+      // return response.choices[0].message.content;
 
-  return "Analysis would be generated here";
-}
+      return "Analysis would be generated here";
+    }
 
-// Upload multiple documents
-const documents = [
-  ["quarterly_report.pdf", "Q3 2024 Quarterly Financial Report"],
-  ["market_research.pdf", "Market Analysis and Competitive Landscape"],
-  ["product_roadmap.pdf", "Product Development Roadmap 2024-2025"]
-];
+    // Upload multiple documents
+    const documents = [
+      ["quarterly_report.pdf", "Q3 2024 Quarterly Financial Report"],
+      ["market_research.pdf", "Market Analysis and Competitive Landscape"],
+      ["product_roadmap.pdf", "Product Development Roadmap 2024-2025"]
+    ];
 
-for (const [filePath, description] of documents) {
-  const messages = await uploadDocument(filePath, description);
-  console.log(`Uploaded ${filePath}: ${messages.length} messages created`);
-}
+    for (const [filePath, description] of documents) {
+      const messages = await uploadDocument(filePath, description);
+      console.log(`Uploaded ${filePath}: ${messages.length} messages created`);
+    }
 
-// Get AI analysis
-const analysis = await analyzeDocuments();
-console.log("Document Analysis:", analysis);
+    // Get AI analysis
+    const analysis = await analyzeDocuments();
+    console.log("Document Analysis:", analysis);
+})();
 ```
 </CodeGroup>
 

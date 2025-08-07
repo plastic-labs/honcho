@@ -58,7 +58,6 @@ def _build_queue_status_query(
     """Build SQL query for queue status with validation and aggregation."""
     sender_name_expr = models.QueueItem.payload["sender_name"].astext
     target_name_expr = models.QueueItem.payload["target_name"].astext
-    task_type_expr = models.QueueItem.payload["task_type"].astext
 
     # Define conditions for cleaner window functions
     is_completed = models.QueueItem.processed
@@ -94,10 +93,7 @@ def _build_queue_status_query(
 
     stmt = stmt.outerjoin(
         models.ActiveQueueSession,
-        (models.QueueItem.session_id == models.ActiveQueueSession.session_id)
-        & (sender_name_expr == models.ActiveQueueSession.sender_name)
-        & (target_name_expr == models.ActiveQueueSession.target_name)
-        & (task_type_expr == models.ActiveQueueSession.task_type),
+        models.QueueItem.work_unit_key == models.ActiveQueueSession.work_unit_key,
     )
 
     stmt = stmt.join(models.Session, models.QueueItem.session_id == models.Session.id)

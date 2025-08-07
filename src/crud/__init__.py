@@ -7,7 +7,6 @@ from .message import (
     get_message_seq_in_session,
     get_messages,
     get_messages_id_range,
-    search,
     update_message,
 )
 from .peer import (
@@ -37,6 +36,11 @@ from .session import (
     set_peers_for_session,
     update_session,
 )
+from .webhook import (
+    delete_webhook_endpoint,
+    get_or_create_webhook_endpoint,
+    list_webhook_endpoints,
+)
 from .workspace import get_all_workspaces, get_or_create_workspace, update_workspace
 
 __all__ = [
@@ -56,7 +60,6 @@ __all__ = [
     "get_message",
     "get_message_seq_in_session",
     "update_message",
-    "search",
     # Peer
     "get_or_create_peers",
     "get_peer",
@@ -82,6 +85,10 @@ __all__ = [
     "set_peers_for_session",
     "get_peer_config",
     "set_peer_config",
+    # Webhook
+    "get_or_create_webhook_endpoint",
+    "delete_webhook_endpoint",
+    "list_webhook_endpoints",
     # Workspace
     "get_or_create_workspace",
     "get_all_workspaces",

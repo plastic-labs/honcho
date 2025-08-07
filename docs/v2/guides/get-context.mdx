@@ -27,12 +27,14 @@ context = session.get_context()
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client and create session
-const honcho = new Honcho({});
-const session = honcho.session("conversation-1");
+(async () => {
+    // Initialize client and create session
+    const honcho = new Honcho({});
+    const session = await honcho.session("conversation-1");
 
-// Get basic context (not very useful before adding any messages!)
-const context = await session.getContext();
+    // Get basic context (not very useful before adding any messages!)
+    const context = await session.getContext();
+})();
 ```
 </CodeGroup>
 
@@ -54,11 +56,13 @@ context = session.get_context(tokens=3000)
 ```
 
 ```typescript TypeScript
-// Limit context to 1500 tokens
-const context = await session.getContext({ tokens: 1500 });
+(async () => {
+    // Limit context to 1500 tokens
+    const context = await session.getContext({ tokens: 1500 });
 
-// Limit context to 3000 tokens for larger conversations
-const context = await session.getContext({ tokens: 3000 });
+    // Limit context to 3000 tokens for larger conversations
+    const context = await session.getContext({ tokens: 3000 });
+})();
 ```
 </CodeGroup>
 
@@ -76,14 +80,16 @@ context = session.get_context(summary=False, tokens=2000)
 ```
 
 ```typescript TypeScript
-// Get context with summary enabled -- will contain both summary and messages
-const context = await session.getContext({ summary: true });
+(async () => {
+    // Get context with summary enabled -- will contain both summary and messages
+    const context = await session.getContext({ summary: true });
 
-// Combine summary=False with token limits to get more messages
-const context = await session.getContext({
-  summary: false,
-  tokens: 2000
-});
+    // Combine summary=False with token limits to get more messages
+    const context = await session.getContext({
+      summary: false,
+      tokens: 2000
+    });
+})();
 ```
 </CodeGroup>
 
@@ -120,26 +126,28 @@ print(openai_messages)
 ```
 
 ```typescript TypeScript
-// Create peers
-const alice = honcho.peer("alice");
-const assistant = honcho.peer("assistant");
+(async () => {
+    // Create peers
+    const alice = await honcho.peer("alice");
+    const assistant = await honcho.peer("assistant");
 
-// Add some conversation
-await session.addMessages([
-  alice.message("What's the weather like today?"),
-  assistant.message("It's sunny and 75°F outside!")
-]);
+    // Add some conversation
+    await session.addMessages([
+      alice.message("What's the weather like today?"),
+      assistant.message("It's sunny and 75°F outside!")
+    ]);
 
-// Get context and convert to OpenAI format
-const context = await session.getContext();
-const openaiMessages = context.toOpenAI(assistant);
+    // Get context and convert to OpenAI format
+    const context = await session.getContext();
+    const openaiMessages = context.toOpenAI(assistant);
 
-// The messages are now ready for OpenAI API
-console.log(openaiMessages);
-// [
-//   {"role": "user", "content": "What's the weather like today?"},
-//   {"role": "assistant", "content": "It's sunny and 75°F outside!"}
-// ]
+    // The messages are now ready for OpenAI API
+    console.log(openaiMessages);
+    // [
+    //   {"role": "user", "content": "What's the weather like today?"},
+    //   {"role": "assistant", "content": "It's sunny and 75°F outside!"}
+    // ]
+})();
 ```
 </CodeGroup>
 
@@ -158,12 +166,14 @@ print(anthropic_messages)
 ```
 
 ```typescript TypeScript
-// Get context and convert to Anthropic format
-const context = await session.getContext();
-const anthropicMessages = context.toAnthropic(assistant);
+(async () => {
+    // Get context and convert to Anthropic format
+    const context = await session.getContext();
+    const anthropicMessages = context.toAnthropic(assistant);
 
-// Ready for Anthropic API
-console.log(anthropicMessages);
+    // Ready for Anthropic API
+    console.log(anthropicMessages);
+})();
 ```
 </CodeGroup>
 
@@ -217,39 +227,41 @@ session.add_messages([
 import OpenAI from 'openai';
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize clients
-const honcho = new Honcho({});
-const openai = new OpenAI();
+(async () => {
+    // Initialize clients
+    const honcho = new Honcho({});
+    const openai = new OpenAI();
 
-// Set up conversation
-const session = honcho.session("support-chat");
-const user = honcho.peer("user-123");
-const assistant = honcho.peer("support-bot");
+    // Set up conversation
+    const session = honcho.session("support-chat");
+    const user = honcho.peer("user-123");
+    const assistant = honcho.peer("support-bot");
 
-// Add conversation history
-await session.addMessages([
-  user.message("I'm having trouble with my account login"),
-  assistant.message("I can help you with that. What error message are you seeing?"),
-  user.message("It says 'Invalid credentials' but I'm sure my password is correct")
-]);
+    // Add conversation history
+    await session.addMessages([
+      user.message("I'm having trouble with my account login"),
+      assistant.message("I can help you with that. What error message are you seeing?"),
+      user.message("It says 'Invalid credentials' but I'm sure my password is correct")
+    ]);
 
-// Get context for LLM
-const messages = await session.getContext({ tokens: 2000 }).toOpenAI(assistant);
+    // Get context for LLM
+    const messages = await session.getContext({ tokens: 2000 }).toOpenAI(assistant);
 
-// Add new user message and get AI response
-const response = await openai.chat.completions.create({
-  model: "gpt-4",
-  messages: [
-    ...messages,
-    { role: "user", content: "Can you reset my password?" }
-  ]
-});
+    // Add new user message and get AI response
+    const response = await openai.chat.completions.create({
+      model: "gpt-4",
+      messages: [
+        ...messages,
+        { role: "user", content: "Can you reset my password?" }
+      ]
+    });
 
-// Add AI response back to session
-await session.addMessages([
-  user.message("Can you reset my password?"),
-  assistant.message(response.choices[0].message.content)
-]);
+    // Add AI response back to session
+    await session.addMessages([
+      user.message("Can you reset my password?"),
+      assistant.message(response.choices[0].message.content)
+    ]);
+})();
 ```
 </CodeGroup>
 
@@ -294,44 +306,46 @@ chat_loop()
 ```
 
 ```typescript TypeScript
-async function chatLoop() {
-  const session = honcho.session("chat-session");
-  const user = honcho.peer("user");
-  const assistant = honcho.peer("ai-assistant");
+(async () => {
+    async function chatLoop() {
+      const session = await honcho.session("chat-session");
+      const user = await honcho.peer("user");
+      const assistant = await honcho.peer("ai-assistant");
 
-  // This would be replaced with actual user input handling in a real app
-  const userInputs = [
-    "Hello, how are you?",
-    "What's the weather like?",
-    "Tell me a joke"
-  ];
+      // This would be replaced with actual user input handling in a real app
+      const userInputs = [
+        "Hello, how are you?",
+        "What's the weather like?",
+        "Tell me a joke"
+      ];
 
-  for (const userInput of userInputs) {
-    console.log(`You: ${userInput}`);
+      for (const userInput of userInputs) {
+        console.log(`You: ${userInput}`);
 
-    // Add user message to session
-    await session.addMessages([user.message(userInput)]);
+        // Add user message to session
+        await session.addMessages([user.message(userInput)]);
 
-    // Get conversation context
-    const context = await session.getContext({ tokens: 2000 });
-    const messages = context.toOpenAI(assistant);
+        // Get conversation context
+        const context = await session.getContext({ tokens: 2000 });
+        const messages = context.toOpenAI(assistant);
 
-    // Get AI response
-    const response = await openai.chat.completions.create({
-      model: "gpt-4",
-      messages: messages
-    });
+        // Get AI response
+        const response = await openai.chat.completions.create({
+          model: "gpt-4",
+          messages: messages
+        });
 
-    const aiResponse = response.choices[0].message.content;
-    console.log(`Assistant: ${aiResponse}`);
+        const aiResponse = response.choices[0].message.content;
+        console.log(`Assistant: ${aiResponse}`);
 
-    // Add AI response to session
-    await session.addMessages([assistant.message(aiResponse)]);
-  }
-}
+        // Add AI response to session
+        await session.addMessages([assistant.message(aiResponse)]);
+      }
+    }
 
-// Start the chat loop
-await chatLoop();
+    // Start the chat loop
+    await chatLoop();
+})();
 ```
 </CodeGroup>
 
@@ -355,18 +369,20 @@ print(f"Context contains {len(messages)} formatted messages")
 ```
 
 ```typescript TypeScript
-// For long conversations, use summary mode
-const longSession = honcho.session("long-conversation");
+(async () => {
+    // For long conversations, use summary mode
+    const longSession = await honcho.session("long-conversation");
 
-// Get summarized context to fit within token limits
-const context = await longSession.getContext({
-  summary: true,
-  tokens: 1500
-});
-const messages = context.toOpenAI(assistant);
+    // Get summarized context to fit within token limits
+    const context = await longSession.getContext({
+      summary: true,
+      tokens: 1500
+    });
+    const messages = context.toOpenAI(assistant);
 
-// This will include a summary of older messages and recent full messages
-console.log(`Context contains ${messages.length} formatted messages`);
+    // This will include a summary of older messages and recent full messages
+    console.log(`Context contains ${messages.length} formatted messages`);
+})();
 ```
 </CodeGroup>
 
@@ -390,18 +406,20 @@ moderator_context = session.get_context().to_openai(assistant=moderator)
 ```
 
 ```typescript TypeScript
-// Create different assistant peers
-const chatbot = honcho.peer("chatbot");
-const analyzer = honcho.peer("data-analyzer");
-const moderator = honcho.peer("moderator");
+(async () => {
+    // Create different assistant peers
+    const chatbot = await honcho.peer("chatbot");
+    const analyzer = await honcho.peer("data-analyzer");
+    const moderator = await honcho.peer("moderator");
 
-// Get context formatted for each assistant type
-const context = await session.getContext();
-const chatbotContext = context.toOpenAI(chatbot);
-const analyzerContext = context.toOpenAI(analyzer);
-const moderatorContext = context.toOpenAI(moderator);
+    // Get context formatted for each assistant type
+    const context = await session.getContext();
+    const chatbotContext = context.toOpenAI(chatbot);
+    const analyzerContext = context.toOpenAI(analyzer);
+    const moderatorContext = context.toOpenAI(moderator);
 
-// Each context will format the conversation from that assistant's perspective
+    // Each context will format the conversation from that assistant's perspective
+})();
 ```
 </CodeGroup>
 
@@ -422,12 +440,14 @@ context = session.get_context(summary=True, tokens=2000)
 ```
 
 ```typescript TypeScript
-// Good: Set reasonable token limits based on your model
-const context = await session.getContext({ tokens: 3000 });  // For GPT-4
-const context = await session.getContext({ tokens: 1500 });  // For smaller models
+(async () => {
+    // Good: Set reasonable token limits based on your model
+    const context = await session.getContext({ tokens: 3000 });  // For GPT-4
+    const context = await session.getContext({ tokens: 1500 });  // For smaller models
 
-// Good: Use summaries for very long conversations
-const context = await session.getContext({ summary: true, tokens: 2000 });
+    // Good: Use summaries for very long conversations
+    const context = await session.getContext({ summary: true, tokens: 2000 });
+})();
 ```
 </CodeGroup>
 
@@ -446,12 +466,14 @@ anthropic_messages = context.to_anthropic(assistant=assistant)
 ```
 
 ```typescript TypeScript
-// Cache context for multiple LLM calls within the same request
-const context = await session.getContext({ tokens: 2000 });
-const openaiMessages = context.toOpenAI(assistant);
-const anthropicMessages = context.toAnthropic(assistant);
+(async () => {
+    // Cache context for multiple LLM calls within the same request
+    const context = await session.getContext({ tokens: 2000 });
+    const openaiMessages = context.toOpenAI(assistant);
+    const anthropicMessages = context.toAnthropic(assistant);
 
-// Use the same context object for multiple format conversions
+    // Use the same context object for multiple format conversions
+})();
 ```
 </CodeGroup>
 
@@ -477,20 +499,22 @@ except Exception as e:
 ```
 
 ```typescript TypeScript
-try {
-  const context = await session.getContext({ tokens: 2000 });
-  const messages = context.toOpenAI(assistant);
+(async () => {
+    try {
+      const context = await session.getContext({ tokens: 2000 });
+      const messages = context.toOpenAI(assistant);
 
-  // Use messages with LLM API
-  const response = await openai.chat.completions.create({
-    model: "gpt-4",
-    messages: messages
-  });
+      // Use messages with LLM API
+      const response = await openai.chat.completions.create({
+        model: "gpt-4",
+        messages: messages
+      });
 
-} catch (error) {
-  console.error(`Error getting context: ${error}`);
-  // Handle error appropriately
-}
+    } catch (error) {
+      console.error(`Error getting context: ${error}`);
+      // Handle error appropriately
+    }
+})();
 ```
 </CodeGroup>
 

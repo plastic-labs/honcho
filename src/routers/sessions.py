@@ -14,6 +14,7 @@ from src.exceptions import (
 )
 from src.security import JWTParams, require_auth
 from src.utils import summarizer
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ async def get_or_create_session(
     Get a specific session in a workspace.
 
     If session_id is provided as a query parameter, it verifies the session is in the workspace.
-    Otherwise, it uses the session_id from the JWT token for verification.
+    Otherwise, it uses the session_id from the JWT for verification.
     """
     # Verify JWT has access to the requested resource
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
@@ -85,8 +86,8 @@ async def get_sessions(
     """Get All Sessions in a Workspace"""
     filter_param = None
 
-    if options and hasattr(options, "filter") and options.filter:
-        filter_param = options.filter
+    if options and hasattr(options, "filters") and options.filters:
+        filter_param = options.filters
         if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
@@ -448,7 +449,7 @@ async def get_session_context(
 
 @router.post(
     "/{session_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
@@ -456,19 +457,19 @@ async def get_session_context(
 async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    search: schemas.MessageSearchOptions = Body(
-        ..., description="Message search parameters "
+    body: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters"
     ),
     db: AsyncSession = db,
 ):
     """Search a Session"""
-    query, semantic = search.query, search.semantic
-
-    stmt = await crud.search(
-        query,
-        workspace_name=workspace_id,
-        session_name=session_id,
-        semantic=semantic,
+    # take user-provided filter and add workspace_id and session_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    filters["session_id"] = session_id
+    return await search(
+        db,
+        body.query,
+        filters=filters,
+        limit=body.limit,
     )
-
-    return await apaginate(db, stmt)

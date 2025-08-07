@@ -574,8 +574,8 @@ session.add_messages([
 ])
 
 # Filter messages by metadata
-finance_messages = session.get_messages(filter={"metadata": {"topic": "finance"}})
-action_items = session.get_messages(filter={"metadata": {"action_item": True}})
+finance_messages = session.get_messages(filters={"metadata": {"topic": "finance"}})
+action_items = session.get_messages(filters={"metadata": {"action_item": True}})
 ```
 
 ```typescript TypeScript
@@ -597,10 +597,10 @@ await session.addMessages([
 
 // Filter messages by metadata
 const financeMessages = await session.getMessages({
-  filter: { metadata: { topic: "finance" } }
+  filters: { metadata: { topic: "finance" } }
 });
 const actionItems = await session.getMessages({
-  filter: { metadata: { action_item: true } }
+  filters: { metadata: { action_item: true } }
 });
 ```
 </CodeGroup>

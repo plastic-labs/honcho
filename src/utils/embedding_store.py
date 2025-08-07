@@ -33,29 +33,6 @@ class EmbeddingStore:
         self.workspace_name: str = workspace_name
         self.peer_name: str = peer_name
         self.collection_name: str = collection_name
-        # Initialize observation counts with config defaults
-        self.explicit_observations_count: int = (
-            settings.DERIVER.EXPLICIT_OBSERVATIONS_COUNT
-        )
-        self.deductive_observations_count: int = (
-            settings.DERIVER.DEDUCTIVE_OBSERVATIONS_COUNT
-        )
-
-    def set_observation_counts(
-        self,
-        explicit: int | None = None,
-        deductive: int | None = None,
-    ) -> None:
-        """Set the number of observations to retrieve for each reasoning level.
-
-        Args:
-            explicit: Number of explicit observations to retrieve
-            deductive: Number of deductive observations to retrieve
-        """
-        if explicit is not None:
-            self.explicit_observations_count = explicit
-        if deductive is not None:
-            self.deductive_observations_count = deductive
 
     @conditional_observe
     async def save_unified_observations(

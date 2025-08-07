@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.2.0] - 2025-08-07
+
+### Added
+
+- Arbitrary filters now available on all search endpoints
+- Search combines full-text and semantic using reciprocal rank fusion
+- Webhook support (currently only supports queue_empty and test events, more to come)
+- Small test harness and custom test format for evaluating Honcho output quality
+- Added MCP server and documentation for it
+
+### Changed
+
+- Search has 10 results by default, max 100 results
+- Queue structure generalized to handle more event types
+- Summarizer now exhaustive by default and tuned for performance
+
+### Fixed
+
+- Resolve race condition for peers that leave a session while sending messages
+- Added explicit rollback to solve integrity error in queue
+- Re-introduced Sentry tracing to deriver
+- Better integrity logic in get_or_create API methods
+
 ## [2.1.2] - 2025-07-30
 
 ### Fixed
