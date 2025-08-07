@@ -207,7 +207,6 @@ def honcho_llm_call(
     retry_attempts: int = 3,
     stream: bool = False,
     return_call_response: bool = False,  # pyright: ignore
-    response_format: dict[str, Any] | None = None,  # Add response_format parameter
     **extra_call_params: Any,
 ) -> Any:
     """

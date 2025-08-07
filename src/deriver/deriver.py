@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
-def repair_json(json_str):
+def repair_json(json_str: str):
     """Attempt to repair incomplete JSON by adding missing closing braces/brackets"""
     json_str = json_str.strip()
 
@@ -72,7 +72,7 @@ def repair_json(json_str):
     return repaired
 
 
-def validate_and_repair_json(json_str):
+def validate_and_repair_json(json_str: str):
     """Validate JSON and attempt repairs if needed"""
     json_str = json_str.strip()
 
@@ -91,10 +91,10 @@ def validate_and_repair_json(json_str):
         try:
             json.loads(repaired)
             return repaired
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
             raise ValueError(
                 f"Could not repair JSON. Original length: {len(json_str)}, Repaired length: {len(repaired)}"
-            )
+            ) from e
 
 
 @honcho_llm_call(
@@ -469,7 +469,7 @@ class CertaintyReasoner:
 
         response = client.chat.completions.create(
             model=settings.DERIVER.MODEL,
-            messages=prompt,
+            messages=prompt,  # pyright: ignore
             stop=["   \n", "\n\n\n\n"],
             max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS,
             response_format={
@@ -483,7 +483,10 @@ class CertaintyReasoner:
 
         print("============================= test_rep ===============================")
 
-        test_rep = response.choices[0].message.content
+        test_rep = ""
+        if response.choices[0].message.content is not None:
+            test_rep = response.choices[0].message.content
+
         print(test_rep)
 
         logger.debug("CRITICAL ANALYSIS: Finished")
