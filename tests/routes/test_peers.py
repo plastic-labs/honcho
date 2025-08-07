@@ -517,7 +517,7 @@ def test_get_peers_with_complex_filter(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/peers/list",
         json={
-            "filter": {
+            "filters": {
                 "AND": [
                     {"metadata": {"type": "test"}},
                     {"metadata": {"index": {"gte": 1}}},
@@ -527,6 +527,12 @@ def test_get_peers_with_complex_filter(
     )
     assert response.status_code == 200
     data = response.json()
+    # for each peer returned, assert that the metadata["index"] fits our filter
+    for peer in data["items"]:
+        assert (
+            peer["metadata"].get("index", 0) >= 1
+            and peer["metadata"].get("type", "") == "test"
+        )
     assert "items" in data
 
 
