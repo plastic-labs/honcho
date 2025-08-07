@@ -7,7 +7,7 @@ from langfuse.decorators import langfuse_context
 
 from src.config import settings
 from src.models import Document
-from src.utils.clients import honcho_llm_call
+from src.utils.clients import create_retry_wrapper, direct_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import (
     format_premises_for_display,
@@ -228,13 +228,21 @@ def _format_observations(
     return "\n".join(parts).strip()
 
 
-@honcho_llm_call(
-    provider=settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
-    model=settings.DIALECTIC.QUERY_GENERATION_MODEL,
-    response_model=SemanticQueries,
-    enable_retry=True,
-    retry_attempts=3,
-)
-async def generate_semantic_queries(query: str, target_peer_name: str):
+@create_retry_wrapper(max_attempts=3)
+async def generate_semantic_queries(
+    query: str, target_peer_name: str
+) -> SemanticQueries:
     """Generate semantic search queries for observation retrieval."""
-    return query_generation_prompt(query, target_peer_name)
+    prompt_content = query_generation_prompt(
+        query=query, target_peer_name=target_peer_name
+    )
+
+    response = await direct_llm_call(
+        prompt=prompt_content,
+        provider=settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
+        model=settings.DIALECTIC.QUERY_GENERATION_MODEL,
+        response_model=SemanticQueries,
+        track_name="Query Generation Call",
+    )
+
+    return response

@@ -7,11 +7,9 @@ from fastapi import (
     Depends,
     Path,
 )
-from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
-from mirascope.llm import Stream
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
@@ -188,14 +186,14 @@ async def chat(
                 query=options.query,
                 stream=options.stream,
             )
-            if isinstance(stream, Stream):
-                async for chunk, _ in stream:
-                    yield chunk.content
+            if isinstance(stream, AsyncGenerator):
+                async for chunk in stream:
+                    yield chunk
             else:
-                raise HTTPException(status_code=500, detail="Invalid stream type")
+                yield str(stream)
         except Exception as e:
             logger.error(f"Error in stream: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            yield f"Error: {str(e)}"
 
     return StreamingResponse(
         content=parse_stream(), media_type="text/event-stream", status_code=200

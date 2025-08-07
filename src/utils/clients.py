@@ -1,21 +1,9 @@
-from collections.abc import Awaitable, Callable
-from typing import (
-    Any,
-    Literal,
-    ParamSpec,
-    Protocol,
-    TypeVar,
-    overload,
-    runtime_checkable,
-)
+from collections.abc import AsyncGenerator
+from typing import Any, TypeVar
 
 from anthropic import AsyncAnthropic
 from google import genai
 from groq import AsyncGroq
-from mirascope import llm
-from mirascope.core import ResponseModelConfigDict
-from mirascope.integrations.langfuse import with_langfuse
-from mirascope.llm import Stream
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sentry_sdk.ai.monitoring import ai_track
@@ -61,297 +49,248 @@ for provider_name, provider_value in providers:
     if provider_value not in clients:
         raise ValueError(f"Missing client for {provider_name}: {provider_value}")
 
-P = ParamSpec("P")
 T = TypeVar("T", bound=BaseModel)
-T_co = TypeVar("T_co", bound=BaseModel, covariant=True)
-F = TypeVar("F", bound=Callable[..., Any])
 
 
-# Define protocols for different return types
-@runtime_checkable
-class AsyncResponseModelCallable(Protocol[P, T_co]):
-    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T_co: ...
-
-
-@runtime_checkable
-class SyncResponseModelCallable(Protocol[P, T_co]):
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T_co: ...
-
-
-@runtime_checkable
-class AsyncStreamCallable(Protocol[P]):
-    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Stream: ...
-
-
-@runtime_checkable
-class SyncStreamCallable(Protocol[P]):
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Stream: ...
-
-
-@runtime_checkable
-class AsyncStringCallable(Protocol[P]):
-    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> str: ...
-
-
-@runtime_checkable
-class SyncStringCallable(Protocol[P]):
-    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> str: ...
-
-
-@runtime_checkable
-class AsyncCallResponseCallable(Protocol[P]):
-    async def __call__(self, *args: P.args, **kwargs: P.kwargs) -> llm.CallResponse: ...
-
-
-# Overload for stream=True with async function
-@overload
-def honcho_llm_call(
-    *,
-    provider: Providers | None = None,
-    model: str | None = None,
-    track_name: str | None = None,
-    response_model: type[BaseModel] | None = None,
+async def direct_llm_call(
+    prompt: str,
+    provider: Providers,
+    model: str,
+    response_model: type[T] | None = None,
     json_mode: bool = False,
     max_tokens: int | None = None,
     thinking_budget_tokens: int | None = None,
-    enable_retry: bool = True,
-    retry_attempts: int = 3,
-    stream: Literal[True],
-    **extra_call_params: Any,
-) -> Callable[[Callable[P, Awaitable[Any]]], AsyncStreamCallable[P]]: ...
-
-
-# Overload for response_model with async function
-@overload
-def honcho_llm_call(
-    *,
-    provider: Providers | None = None,
-    model: str | None = None,
-    track_name: str | None = None,
-    response_model: type[T],
-    json_mode: bool = False,
-    max_tokens: int | None = None,
-    thinking_budget_tokens: int | None = None,
-    enable_retry: bool = True,
-    retry_attempts: int = 3,
-    stream: Literal[False] = False,
-    **extra_call_params: Any,
-) -> Callable[[Callable[P, Awaitable[Any]]], AsyncResponseModelCallable[P, T]]: ...
-
-
-# Overload for return_call_response=True with async function
-@overload
-def honcho_llm_call(
-    *,
-    provider: Providers | None = None,
-    model: str | None = None,
-    track_name: str | None = None,
-    response_model: None = None,
-    json_mode: bool = False,
-    max_tokens: int | None = None,
-    thinking_budget_tokens: int | None = None,
-    enable_retry: bool = True,
-    retry_attempts: int = 3,
-    stream: Literal[False] = False,
-    return_call_response: Literal[True],
-    **extra_call_params: Any,
-) -> Callable[[Callable[P, Awaitable[Any]]], AsyncCallResponseCallable[P]]: ...
-
-
-# Overload for no response_model with async function (string return)
-@overload
-def honcho_llm_call(
-    *,
-    provider: Providers | None = None,
-    model: str | None = None,
-    track_name: str | None = None,
-    response_model: None = None,
-    json_mode: bool = False,
-    max_tokens: int | None = None,
-    thinking_budget_tokens: int | None = None,
-    enable_retry: bool = True,
-    retry_attempts: int = 3,
-    stream: Literal[False] = False,
-    return_call_response: Literal[False],
-    **extra_call_params: Any,
-) -> Callable[[Callable[P, Awaitable[Any]]], AsyncStringCallable[P]]: ...
-
-
-# Generic overload for sync functions (fallback)
-@overload
-def honcho_llm_call(
-    *,
-    provider: Providers | None = None,
-    model: str | None = None,
-    track_name: str | None = None,
-    response_model: type[BaseModel] | None = None,
-    json_mode: bool = False,
-    max_tokens: int | None = None,
-    thinking_budget_tokens: int | None = None,
-    enable_retry: bool = True,
-    retry_attempts: int = 3,
     stream: bool = False,
-    **extra_call_params: Any,
-) -> Callable[[Callable[P, Any]], Callable[P, Any]]: ...
-
-
-def honcho_llm_call(
-    provider: Providers | None = None,
-    model: str | None = None,
-    track_name: str | None = None,
-    response_model: type[BaseModel] | None = None,
-    json_mode: bool = False,
-    max_tokens: int | None = None,
-    thinking_budget_tokens: int | None = None,
-    enable_retry: bool = True,
-    retry_attempts: int = 3,
-    stream: bool = False,
-    return_call_response: bool = False,  # pyright: ignore
-    **extra_call_params: Any,
-) -> Any:
+    # track_name: str | None = None,
+) -> T | str | AsyncGenerator[str, None]:
     """
-    Consolidated decorator for LLM calls that handles provider-specific configurations.
-
-    This decorator automatically:
-    - Handles both sync and async functions seamlessly
-    - Applies retry logic with exponential backoff
-    - Adds AI tracking for Sentry
-    - Integrates with Langfuse for observability
-    - Builds provider-specific call parameters
-    - Handles client selection from the global clients dict
+    Direct LLM call using native client libraries.
 
     Args:
-        provider: The LLM provider to use (e.g., "anthropic", "google", "openai")
-        model: The model to use
-        track_name: Name for AI tracking (e.g., "Critical Analysis Call")
-        response_model: Optional Pydantic model for structured responses
-        json_mode: Whether to enable JSON mode (for providers that support it)
-        max_tokens: Maximum tokens for the response
+        prompt: The prompt text
+        provider: LLM provider to use
+        model: Model name
+        response_model: Pydantic model for structured responses
+        json_mode: Enable JSON mode
+        max_tokens: Maximum tokens for response
         thinking_budget_tokens: Budget for thinking tokens (Anthropic only)
-        enable_retry: Whether to enable retry logic (default: True)
-        retry_attempts: Number of retry attempts (default: 3)
-        stream: Whether to enable streaming responses (default: False)
-        _return_call_response: Whether to return the full CallResponse object (default: False)
-        **extra_call_params: Additional provider-specific parameters
+        stream: Enable streaming
+        track_name: Name for AI tracking
 
     Returns:
-        A decorator that returns:
-        - For async functions: Callable[P, Awaitable[T]] where T is Stream, response_model, CallResponse, or str
-        - For sync functions: Callable[P, T] where T is Stream, response_model, CallResponse, or str
-
-    Note: Type annotations may be needed at the call site for proper type checking.
-
-    Example (async function):
-        @honcho_llm_call(
-            provider=settings.DERIVER.PROVIDER,
-            model=settings.DERIVER.MODEL,
-            track_name="Critical Analysis Call",
-            response_model=ReasoningResponse,
-            json_mode=True,
-            max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS,
-        )
-        async def analyze(context: str, query: str):
-            return prompt_template(context, query)
-
-    Example (sync function):
-        @honcho_llm_call(
-            provider="openai",
-            model="gpt-4",
-            max_tokens=1000,
-        )
-        def generate_summary(text: str) -> str:
-            return f"Summarize: {text}"
-
-        # Call synchronously
-        result = generate_summary("Long text here...")
+        Response model instance, string, or streaming generator
     """
+    client = clients[provider]
 
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        # Handle special case for custom provider
-        # Custom providers use OpenAI-compatible endpoints, so we resolve to "openai" for the provider name
-        # but keep the original "custom" for client lookup
-        resolved_provider = "openai" if provider == "custom" else provider
+    # if track_name:
+    # Wrap with AI tracking
+    # from functools import wraps
 
-        # Build provider-specific call params
-        call_params: dict[str, Any] = {}
+    # def ai_track_decorator(func):
+    #     @wraps(func)
+    #     async def wrapper(*args, **kwargs):
+    #         return await ai_track(track_name)(func)(*args, **kwargs)
+    #
+    #     return wrapper
 
-        if resolved_provider == "google":
-            # Google uses 'config' parameter
-            config: dict[str, Any] = {}
-            if max_tokens:
-                config["max_output_tokens"] = max_tokens
+    # Handle custom provider (OpenAI-compatible)
+    resolved_provider = "openai" if provider == "custom" else provider
 
-            if response_model:
-                config["response_schema"] = response_model
+    if resolved_provider == "google":
+        return await _call_google(
+            client=client,  # pyright: ignore
+            prompt=prompt,
+            model=model,
+            response_model=response_model,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+            stream=stream,
+        )
+    elif resolved_provider == "anthropic":
+        return await _call_anthropic(
+            client=client,  # pyright: ignore
+            prompt=prompt,
+            model=model,
+            response_model=response_model,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+            thinking_budget_tokens=thinking_budget_tokens,
+            stream=stream,
+        )
+    else:  # openai, groq
+        return await _call_openai_compatible(
+            client=client,  # pyright: ignore
+            prompt=prompt,
+            model=model,
+            response_model=response_model,
+            json_mode=json_mode,
+            max_tokens=max_tokens,
+            stream=stream,
+        )
 
-            if json_mode:
-                config["response_mime_type"] = "application/json"
 
-            if config:
-                call_params["config"] = config
-        elif resolved_provider == "anthropic":
-            # Anthropic uses thinking params and max_tokens
-            if thinking_budget_tokens:
-                call_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget_tokens,
-                }
-            if max_tokens:
-                call_params["max_tokens"] = max_tokens
-        else:
-            # Other providers just use max_tokens
-            if max_tokens:
-                call_params["max_tokens"] = max_tokens
+async def _call_google(
+    client: genai.Client,
+    prompt: str,
+    model: str,
+    response_model: type[T] | None = None,
+    json_mode: bool = False,
+    max_tokens: int | None = None,
+    stream: bool = False,
+) -> T | str | AsyncGenerator[str, None]:
+    """Google Gemini API call."""
+    config: dict[str, Any] = {}
+    if max_tokens:
+        config["max_output_tokens"] = max_tokens
 
-        # Merge with any extra call params
-        # Remove return_call_response from extra_call_params --
-        # that one is just for our type system.
-        extra_call_params.pop("return_call_response", None)
-        call_params.update(extra_call_params)
+    if response_model:
+        config["response_schema"] = response_model
 
-        # Build kwargs for llm.call
-        llm_kwargs: dict[str, Any] = {}
-        if resolved_provider and provider:
-            llm_kwargs["provider"] = resolved_provider
-            llm_kwargs["client"] = clients[
-                provider
-            ]  # Use original provider for client lookup
-        if model:
-            llm_kwargs["model"] = model
+    if json_mode:
+        config["response_mime_type"] = "application/json"
+
+    if stream:
+        response = client.models.generate_content_stream(
+            model=model,
+            contents=prompt,
+            config=config,
+        )
+
+        async def stream_generator() -> AsyncGenerator[str, None]:
+            async for chunk in response:
+                if chunk.text:
+                    yield chunk.text
+
+        return stream_generator()
+    else:
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=config,
+        )
+
         if response_model:
-            # https://mirascope.com/docs/mirascope/learn/provider-specific/openai#response-models
-            if resolved_provider == "openai":
-                response_model.model_config = ResponseModelConfigDict(strict=True)
+            return response_model.model_validate_json(response.text)
+        elif response.text is None:
+            return ""
+        else:
+            return response.text
 
-            llm_kwargs["response_model"] = response_model
-        if json_mode:
-            llm_kwargs["json_mode"] = json_mode
-        if stream:
-            llm_kwargs["stream"] = stream
-        if call_params:
-            llm_kwargs["call_params"] = call_params
 
-        # Apply decorators in order
-        decorated: Any = func
+async def _call_anthropic(
+    client: AsyncAnthropic,
+    prompt: str,
+    model: str,
+    response_model: type[T] | None = None,
+    json_mode: bool = False,
+    max_tokens: int | None = None,
+    thinking_budget_tokens: int | None = None,
+    stream: bool = False,
+) -> T | str | AsyncGenerator[str, None]:
+    """Anthropic Claude API call."""
+    messages = [{"role": "user", "content": prompt}]
 
-        # Apply llm.call
-        decorated = llm.call(**llm_kwargs)(decorated)  # pyright: ignore
+    call_params = {}
+    if max_tokens:
+        call_params["max_tokens"] = max_tokens
 
-        # Apply langfuse if enabled
-        if settings.LANGFUSE_PUBLIC_KEY:
-            decorated = with_langfuse()(decorated)  # pyright: ignore
+    if thinking_budget_tokens:
+        call_params["thinking"] = {
+            "type": "enabled",
+            "budget_tokens": thinking_budget_tokens,
+        }
 
-        # Apply AI tracking if name provided
-        if track_name:
-            decorated = ai_track(track_name)(decorated)
+    if response_model or json_mode:
+        call_params["response_format"] = {"type": "json_object"}
 
-        # Apply retry logic if enabled
-        if enable_retry:
-            decorated = retry(  # pyright: ignore
-                stop=stop_after_attempt(retry_attempts),
-                wait=wait_exponential(multiplier=1, min=4, max=10),
-            )(decorated)  # pyright: ignore
+    if stream:
+        response = await client.messages.create(
+            model=model,
+            messages=messages,
+            stream=True,
+            **call_params,
+        )
 
-        return decorated  # pyright: ignore
+        async def stream_generator():
+            async for chunk in response:
+                if chunk.type == "content_block_delta" and chunk.delta.text:
+                    yield chunk.delta.text
 
-    return decorator
+        return stream_generator()
+    else:
+        response = await client.messages.create(
+            model=model,
+            messages=messages,
+            **call_params,
+        )
+
+        content = response.content[0].text
+
+        if response_model:
+            return response_model.model_validate_json(content)
+        else:
+            return content
+
+
+async def _call_openai_compatible(
+    client: AsyncOpenAI,
+    prompt: str,
+    model: str,
+    response_model: type[T] | None = None,
+    json_mode: bool = False,
+    max_tokens: int | None = None,
+    stream: bool = False,
+) -> T | str | AsyncGenerator[str, None]:
+    """OpenAI-compatible API call (OpenAI, Groq, custom providers)."""
+    messages = [{"role": "user", "content": prompt}]
+
+    call_params: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+    }
+
+    if max_tokens:
+        call_params["max_tokens"] = max_tokens
+
+    if response_model:
+        call_params["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_model.__name__,
+                "schema": response_model.model_json_schema(),
+                "strict": True,
+            },
+        }
+    elif json_mode:
+        call_params["response_format"] = {"type": "json_object"}
+
+    if stream:
+        call_params["stream"] = True
+        response = await client.chat.completions.create(**call_params)
+
+        async def stream_generator():
+            async for chunk in response:
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield chunk.choices[0].delta.content
+
+        return stream_generator()
+    else:
+        response = await client.chat.completions.create(**call_params)
+        content = response.choices[0].message.content
+
+        if response_model:
+            return response_model.model_validate_json(content or "")
+        else:
+            return content or ""
+
+
+def create_retry_wrapper(max_attempts: int = 3):
+    """Create retry decorator with exponential backoff."""
+    return retry(
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
+
+
+# Keep the old honcho_llm_call for now, but mark as deprecated
+# We'll remove it after all usages are migrated

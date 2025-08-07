@@ -9,17 +9,15 @@ historical observations.
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncGenerator
 
 import tiktoken
-from dotenv import load_dotenv
-from langfuse.decorators import langfuse_context
-from mirascope.llm import Stream
 
 from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
 from src.routers.sessions import get_session_context
-from src.utils.clients import honcho_llm_call
+from src.utils.clients import create_retry_wrapper, direct_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.logging import (
     accumulate_metric,
@@ -32,21 +30,13 @@ from .utils import get_observations
 # Configure logging
 logger = logging.getLogger(__name__)
 
+from dotenv import load_dotenv
+
 # Load environment variables
 load_dotenv()
 
 
-@honcho_llm_call(
-    provider=settings.DIALECTIC.PROVIDER,
-    model=settings.DIALECTIC.MODEL,
-    track_name="Dialectic Call",
-    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-    thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
-    if settings.DIALECTIC.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-)
+@create_retry_wrapper(max_attempts=3)
 async def dialectic_call(
     query: str,
     working_representation: str | None,
@@ -67,42 +57,36 @@ async def dialectic_call(
     Returns:
         Model response
     """
-    # Generate the prompt and log it
-    prompt_result = dialectic_prompt(
-        query,
-        working_representation,
-        recent_conversation_history,
-        additional_context,
-        peer_name,
-        target_name,
+    # Generate the prompt
+    prompt_content = dialectic_prompt(
+        query=query,
+        working_representation=working_representation,
+        recent_conversation_history=recent_conversation_history,
+        additional_context=additional_context,
+        peer_name=peer_name,
+        target_name=target_name,
     )
-
-    # Pretty print the prompt content
-    if len(prompt_result) > 0:
-        # Extract content from the first BaseMessageParam
-        prompt_content = prompt_result[0].content
-    else:
-        prompt_content = str(prompt_result)
 
     logger.debug("=== DIALECTIC PROMPT ===")
     logger.debug(prompt_content)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    return prompt_result
+    # Make direct LLM call
+    response = await direct_llm_call(
+        prompt=prompt_content,
+        provider=settings.DIALECTIC.PROVIDER,
+        model=settings.DIALECTIC.MODEL,
+        max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+        thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
+        if settings.DIALECTIC.PROVIDER == "anthropic"
+        else None,
+        track_name="Dialectic Call",
+    )
+
+    return response
 
 
-@honcho_llm_call(
-    provider=settings.DIALECTIC.PROVIDER,
-    model=settings.DIALECTIC.MODEL,
-    track_name="Dialectic Stream",
-    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-    thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
-    if settings.DIALECTIC.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-    stream=True,
-)
+@create_retry_wrapper(max_attempts=3)
 async def dialectic_stream(
     query: str,
     working_representation: str | None,
@@ -110,7 +94,7 @@ async def dialectic_stream(
     additional_context: str | None,
     peer_name: str,
     target_name: str | None = None,
-):
+) -> AsyncGenerator[str, None]:
     """
     Make a streaming call to the dialectic model for context synthesis.
 
@@ -123,28 +107,35 @@ async def dialectic_stream(
     Returns:
         Streaming model response
     """
-    # Generate the prompt and log it
-    prompt_result = dialectic_prompt(
-        query,
-        working_representation,
-        recent_conversation_history,
-        additional_context,
-        peer_name,
-        target_name,
+    # Generate the prompt
+    prompt_content = dialectic_prompt(
+        query=query,
+        working_representation=working_representation,
+        recent_conversation_history=recent_conversation_history,
+        additional_context=additional_context,
+        peer_name=peer_name,
+        target_name=target_name,
     )
-
-    # Pretty print the prompt content
-    if len(prompt_result) > 0:
-        # Extract content from the first BaseMessageParam
-        prompt_content = prompt_result[0].content
-    else:
-        prompt_content = str(prompt_result)
 
     logger.debug("=== DIALECTIC PROMPT (STREAM) ===")
     logger.debug(prompt_content)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    return prompt_result
+    # Make streaming LLM call
+    stream = await direct_llm_call(
+        prompt=prompt_content,
+        provider=settings.DIALECTIC.PROVIDER,
+        model=settings.DIALECTIC.MODEL,
+        max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+        thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
+        if settings.DIALECTIC.PROVIDER == "anthropic"
+        else None,
+        stream=True,
+        track_name="Dialectic Stream",
+    )
+
+    async for chunk in stream:
+        yield chunk
 
 
 async def chat(
@@ -155,7 +146,7 @@ async def chat(
     query: str,
     *,
     stream: bool = False,
-) -> Stream | str:
+) -> AsyncGenerator[str, None] | str:
     """
     Chat with the Dialectic API that builds on-demand user representations.
 

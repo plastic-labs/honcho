@@ -12,7 +12,7 @@ from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
 from src.utils import summarizer
-from src.utils.clients import honcho_llm_call
+from src.utils.clients import create_retry_wrapper, direct_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import (
     REASONING_LEVELS,
@@ -97,42 +97,37 @@ def validate_and_repair_json(json_str: str):
             ) from e
 
 
-@honcho_llm_call(
-    provider=settings.DERIVER.PROVIDER,
-    model=settings.DERIVER.MODEL,
-    track_name="Critical Analysis Call",
-    response_model=ReasoningResponse,
-    json_mode=True,
-    max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS,
-    thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
-    if settings.DERIVER.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-    response_format={
-        "type": "json_schema",
-        "json_schema": {
-            "name": ReasoningResponse.__name__,
-            "schema": ReasoningResponse.model_json_schema(),
-        },
-    },
-    # if settings.DERIVER.PROVIDER == "custom"
-    # else None,  # Only for vllm/custom provider
-)
+@create_retry_wrapper(max_attempts=3)
 async def critical_analysis_call(
     peer_name: str,
     message_created_at: datetime.datetime,
     context: str,
     history: str,
     new_turn: str,
-):
-    return critical_analysis_prompt(
+) -> ReasoningResponse:
+    prompt_content = critical_analysis_prompt(
         peer_name=peer_name,
         message_created_at=message_created_at,
         context=context,
         history=history,
         new_turn=new_turn,
     )
+
+    response = await direct_llm_call(
+        prompt=prompt_content,
+        provider=settings.DERIVER.PROVIDER,
+        model=settings.DERIVER.MODEL,
+        response_model=ReasoningResponse,
+        json_mode=True,
+        max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+        or settings.LLM.DEFAULT_MAX_TOKENS,
+        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
+        if settings.DERIVER.PROVIDER == "anthropic"
+        else None,
+        track_name="Critical Analysis Call",
+    )
+
+    return response
 
 
 @conditional_observe

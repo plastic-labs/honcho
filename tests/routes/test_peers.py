@@ -520,12 +520,13 @@ def test_get_peers_with_complex_filter(
             "filter": {
                 "AND": [
                     {"metadata": {"type": "test"}},
-                    {"metadata": {"index": {"gte": 1}}},
+                    {"metadata": {"index": {"gte": 2}}},
                 ]
             }
         },
     )
     assert response.status_code == 200
+    assert len(response.json()["items"]) == 3
     data = response.json()
     assert "items" in data
 

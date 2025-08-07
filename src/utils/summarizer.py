@@ -4,7 +4,6 @@ import logging
 import time
 from enum import Enum
 
-from mirascope import llm
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import TypedDict
@@ -12,7 +11,7 @@ from typing_extensions import TypedDict
 from src.config import settings
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
-from src.utils.clients import honcho_llm_call
+from src.utils.clients import create_retry_wrapper, direct_llm_call
 from src.utils.logging import accumulate_metric
 
 from .. import crud, models
@@ -63,17 +62,12 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
-@honcho_llm_call(
-    provider=settings.SUMMARY.PROVIDER,
-    model=settings.SUMMARY.MODEL,
-    max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
-    return_call_response=True,
-)
+@create_retry_wrapper(max_attempts=3)
 async def create_short_summary(
     messages: list[models.Message],
     input_tokens: int,
     previous_summary: str | None = None,
-):
+) -> str:
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
     # so we ask the agent to produce a word count roughly equal to either the input, or the max
@@ -112,16 +106,116 @@ Produce as thorough a summary as possible in {output_words} words or less.
 """
 
 
-@honcho_llm_call(
-    provider=settings.SUMMARY.PROVIDER,
-    model=settings.SUMMARY.MODEL,
-    max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
-    return_call_response=True,
-)
+@create_retry_wrapper(max_attempts=3)
+async def create_short_summary(
+    messages: list[models.Message],
+    input_tokens: int,
+    previous_summary: str | None = None,
+) -> str:
+    # input_tokens indicates how many tokens the message list + previous summary take up
+    # we want to optimize short summaries to be smaller than the actual content being summarized
+    # so we ask the agent to produce a word count roughly equal to either the input, or the max
+    # size if the input is larger. the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
+    output_words = int(min(input_tokens, settings.SUMMARY.MAX_TOKENS_SHORT) * 0.75)
+
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
+    prompt = f"""
+You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
+
+1. Key facts and information shared (**Capture as many explicit facts as possible**)
+2. User preferences, opinions, and questions
+3. Important context and requests
+4. Core topics discussed
+
+If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
+
+Provide a concise, factual summary that captures the essence of the conversation. Your summary should be detailed enough to serve as context for future messages, but brief enough to be helpful. Prefer a thorough chronological narrative over a list of bullet points.
+
+Return only the summary without any explanation or meta-commentary.
+
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
+
+<conversation>
+{_format_messages(messages)}
+</conversation>
+
+Produce as thorough a summary as possible in {output_words} words or less.
+"""
+
+    response = await direct_llm_call(
+        prompt=prompt,
+        provider=settings.SUMMARY.PROVIDER,
+        model=settings.SUMMARY.MODEL,
+        max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+        track_name="Short Summary Call",
+    )
+
+    return response
+
+
+@create_retry_wrapper(max_attempts=3)
 async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
-):
+) -> str:
+    # the word/token ratio is roughly 4:3 so we multiply by 0.75.
+    # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
+    output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
+
+    if previous_summary:
+        previous_summary_text = previous_summary
+    else:
+        previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
+
+    prompt = f"""
+You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
+
+1. Key facts and information shared (**Capture as many explicit facts as possible**)
+2. User preferences, opinions, and questions
+3. Important context and requests
+4. Core topics discussed in detail
+5. User's apparent emotional state and personality traits
+6. Important themes and patterns across the conversation
+
+If there is a previous summary, ALWAYS make your new summary inclusive of both it and the new messages, therefore capturing the ENTIRE conversation. Prioritize key facts across the entire conversation.
+
+Provide a comprehensive, detailed summary that thoroughly captures the entire conversation. Aim for completeness over brevity, but keep it focused on actionable insights and facts.
+
+Return only the summary without any explanation or meta-commentary.
+
+<previous_summary>
+{previous_summary_text}
+</previous_summary>
+
+<conversation>
+{_format_messages(messages)}
+</conversation>
+
+Create a comprehensive summary in approximately {output_words} words.
+"""
+
+    response = await direct_llm_call(
+        prompt=prompt,
+        provider=settings.SUMMARY.PROVIDER,
+        model=settings.SUMMARY.MODEL,
+        max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+        track_name="Long Summary Call",
+    )
+
+    return response
+
+
+async def create_long_summary(
+    messages: list[models.Message],
+    previous_summary: str | None = None,
+) -> str:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)

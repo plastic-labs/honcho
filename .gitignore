@@ -181,3 +181,6 @@ timing_logs.csv
 
 config.toml
 .aider*
+
+.crush/
+CRUSH.md

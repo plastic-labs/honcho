@@ -1,5 +1,3 @@
 from typing import Literal
 
-from mirascope import Provider
-
-Providers = Provider | Literal["custom"]
+Providers = Literal["anthropic", "openai", "google", "groq", "custom"]
