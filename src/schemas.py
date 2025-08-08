@@ -233,6 +233,32 @@ class SessionContext(SessionBase):
     )
 
 
+class SessionSummary(BaseModel):
+    content: str = Field(description="The summary text")
+    message_id: int = Field(
+        description="The ID of the message that this summary covers up to"
+    )
+    summary_type: str = Field(description="The type of summary (short or long)")
+    created_at: str = Field(
+        description="The timestamp of when the summary was created (ISO format)"
+    )
+    token_count: int = Field(description="The number of tokens in the summary text")
+
+
+class SessionSummaries(SessionBase):
+    name: str = Field(serialization_alias="id")
+    short_summary: SessionSummary | None = Field(
+        default=None, description="The short summary if available"
+    )
+    long_summary: SessionSummary | None = Field(
+        default=None, description="The long summary if available"
+    )
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
 class DocumentBase(BaseModel):
     pass
 

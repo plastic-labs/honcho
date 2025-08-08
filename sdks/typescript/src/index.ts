@@ -6,7 +6,11 @@ export { Honcho } from './client'
 export { Page } from './pagination'
 export { Peer } from './peer'
 export { Session, SessionPeerConfig } from './session'
-export { SessionContext } from './session_context'
+export {
+  SessionContext,
+  SessionSummaries,
+  SessionSummary,
+} from './session_context'
 
 // Export validation types for advanced usage
 export type {

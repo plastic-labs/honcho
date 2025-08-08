@@ -2,6 +2,84 @@ import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/
 import type { Peer } from './peer'
 
 /**
+ * Represents a summary of a session's conversation.
+ */
+export class SessionSummary {
+  /**
+   * The summary text.
+   */
+  readonly content: string
+
+  /**
+   * The ID of the message that this summary covers up to.
+   */
+  readonly messageId: number
+
+  /**
+   * The type of summary (short or long).
+   */
+  readonly summaryType: string
+
+  /**
+   * The timestamp of when the summary was created (ISO format).
+   */
+  readonly createdAt: string
+
+  /**
+   * The number of tokens in the summary text.
+   */
+  readonly tokenCount: number
+
+  constructor(data: {
+    content: string
+    message_id: number
+    summary_type: string
+    created_at: string
+    token_count: number
+  }) {
+    this.content = data.content
+    this.messageId = data.message_id
+    this.summaryType = data.summary_type
+    this.createdAt = data.created_at
+    this.tokenCount = data.token_count
+  }
+}
+
+/**
+ * Contains both short and long summaries for a session.
+ */
+export class SessionSummaries {
+  /**
+   * The session ID.
+   */
+  readonly id: string
+
+  /**
+   * The short summary if available.
+   */
+  readonly shortSummary: SessionSummary | null
+
+  /**
+   * The long summary if available.
+   */
+  readonly longSummary: SessionSummary | null
+
+  constructor(data: {
+    id: string
+    short_summary: any | null
+    long_summary: any | null
+  }) {
+    this.id = data.id
+    this.shortSummary = data.short_summary
+      ? new SessionSummary(data.short_summary)
+      : null
+    this.longSummary = data.long_summary
+      ? new SessionSummary(data.long_summary)
+      : null
+  }
+}
+
+/**
  * Represents the context of a session containing a curated list of messages.
  *
  * The SessionContext provides methods to convert message history into formats

@@ -447,6 +447,59 @@ async def get_session_context(
     )
 
 
+@router.get(
+    "/{session_id}/summaries",
+    response_model=schemas.SessionSummaries,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+    ],
+)
+async def get_session_summaries(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    db: AsyncSession = db,
+):
+    """
+    Get available summaries for a session.
+
+    Returns both short and long summaries if available, including metadata like
+    the message ID they cover up to, creation timestamp, and token count.
+    """
+    # Reuse the logic from get_context to get both summaries
+    short_summary, long_summary = await summarizer.get_both_summaries(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+    )
+
+    # Convert the internal Summary TypedDict to our Pydantic schema
+    short_summary_schema = None
+    if short_summary:
+        short_summary_schema = schemas.SessionSummary(
+            content=short_summary["content"],
+            message_id=short_summary["message_id"],
+            summary_type=short_summary["summary_type"],
+            created_at=short_summary["created_at"],
+            token_count=short_summary["token_count"],
+        )
+
+    long_summary_schema = None
+    if long_summary:
+        long_summary_schema = schemas.SessionSummary(
+            content=long_summary["content"],
+            message_id=long_summary["message_id"],
+            summary_type=long_summary["summary_type"],
+            created_at=long_summary["created_at"],
+            token_count=long_summary["token_count"],
+        )
+
+    return schemas.SessionSummaries(
+        name=session_id,
+        short_summary=short_summary_schema,
+        long_summary=long_summary_schema,
+    )
+
+
 @router.post(
     "/{session_id}/search",
     response_model=list[schemas.Message],

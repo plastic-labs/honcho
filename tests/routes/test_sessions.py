@@ -748,6 +748,51 @@ def test_get_session_context_with_all_params(
     assert "summary" in data
 
 
+def test_get_session_summaries(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    """Test getting summaries for a valid session"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get summaries
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/summaries",
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Validate response structure
+    assert "id" in data
+    assert data["id"] == session_id
+    assert "short_summary" in data
+    assert "long_summary" in data
+    # Summaries will be None since they're created asynchronously
+
+
+def test_get_session_summaries_nonexistent_session(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test getting summaries for a non-existent session"""
+    test_workspace, _ = sample_data
+    nonexistent_session_id = str(generate_nanoid())
+
+    # Try to get summaries for non-existent session
+    # Should still return 200 with null summaries
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/summaries",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == nonexistent_session_id
+    assert data["short_summary"] is None
+    assert data["long_summary"] is None
+
+
 def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the session search functionality"""
     test_workspace, test_peer = sample_data
