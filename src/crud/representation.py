@@ -20,6 +20,26 @@ async def get_peer_card(
     return peer.internal_metadata.get("peer_card", None)
 
 
+async def set_peer_card(
+    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: str | None
+) -> None:
+    """
+    Set peer card for a peer.
+    """
+    stmt = (
+        update(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == peer_name)
+        .values(
+            internal_metadata=models.Peer.internal_metadata.op("||")(
+                {"peer_card": peer_card}
+            )
+        )
+    )
+    await db.execute(stmt)
+    await db.commit()
+
+
 async def get_working_representation(
     db: AsyncSession,
     workspace_name: str,

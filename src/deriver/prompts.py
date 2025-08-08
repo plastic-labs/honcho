@@ -96,3 +96,59 @@ New conversation turn to analyze:
 </new_turn>
 """
     )
+
+
+@prompt_template()
+def peer_card_prompt(
+    old_peer_card: str | None,
+    new_observations: list[str],
+) -> str:
+    """
+    Generate the peer card prompt for the deriver.
+    """
+    old_peer_card_section = (
+        f"""
+The current user biographical card:
+<old_peer_card>
+{old_peer_card}
+</old_peer_card>
+"""
+        if old_peer_card is not None
+        else """
+The user does not have a card yet! Start by creating one if you have any key biographical information about the user. Do not include a title or header, only the facts.
+"""
+    )
+    return c(
+        f"""
+        You are an agent who creates a user's "biographical card" based on new observations. What is a biographical card? It's a concise summary of key biographical information about the user. Examples of facts to include are name, nickname(s), location, age, occupation, interests/hobbies, and likes/dislikes. This card will be ingested by AI agents to understand the user better.
+
+        If a new observation states an explicit fact that contradicts the current user information, update the biographical card to reflect the new information. If the new observation is a new fact that is consistent with the current user information, add it to the biographical card. If the card already contains a similar fact, replace the old fact with the new one. You may only save **25** facts, so keep the most important ones. Do not include facts that are unknown -- only genuinely useful information should be saved on the card.
+
+        EXAMPLE PEER CARDS:
+
+        <example_peer_card_1>
+        Name: Bob
+        Age: 24
+        Location: New York
+        Occupation: Software Engineer
+        Interests: Programming, hiking, reading
+        </example_peer_card_1>
+
+        <example_peer_card_2>
+        Name: Alice
+        Age: 47
+        Location: Paris
+        Occupation: Artist
+        Interests: Painting, biking, cooking
+        </example_peer_card_2>
+
+        {old_peer_card_section}
+
+        The new observations:
+        <new_observations>
+        {new_observations}
+        </new_observations>
+
+        Create the new peer card. If there is no new key information, return the current peer card with no changes. Do not include XML tags in your response.
+        """
+    )

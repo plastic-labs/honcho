@@ -176,7 +176,7 @@ def normalize_observations_for_comparison(observations: list[Any]) -> set[str]:
 @conditional_observe
 def find_new_observations(
     original_context: ReasoningResponse, revised_observations: ReasoningResponse
-) -> dict[str, Any]:
+) -> dict[str, list[str]]:
     """
     Find observations that are new in revised_observations compared to original_context.
 
@@ -187,7 +187,7 @@ def find_new_observations(
     Returns:
         Dictionary with new observations by level
     """
-    new_observations_by_level: dict[str, Any] = {}
+    new_observations_by_level: dict[str, list[str]] = {}
 
     for level in REASONING_LEVELS:
         original_observations = normalize_observations_for_comparison(
@@ -196,7 +196,7 @@ def find_new_observations(
         revised_list = getattr(revised_observations, level, [])
 
         # Find genuinely new observations
-        new_observations: list[Any] = []
+        new_observations: list[str] = []
         for observation in revised_list:
             normalized_observation = (
                 extract_observation_content(observation).strip().lower()

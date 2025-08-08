@@ -307,7 +307,7 @@ async def _create_and_save_summary(
 
     summary_duration = (time.perf_counter() - summary_start) * 1000
     accumulate_metric(
-        f"deriver_message_{message_id}",
+        f"summary_{workspace_name}_{message_id}",
         f"{summary_type.name}_summary_creation",
         summary_duration,
         "ms",
@@ -367,14 +367,14 @@ async def _create_summary(
         summary_tokens = 50
 
     accumulate_metric(
-        f"deriver_message_{messages[-1].id}",
+        f"summary_{messages[-1].workspace_name}_{messages[-1].id}",
         f"{summary_type.name}_summary_input",
         response.usage.input_tokens if response and response.usage else "unknown",
         "tokens",
     )
 
     accumulate_metric(
-        f"deriver_message_{messages[-1].id}",
+        f"summary_{messages[-1].workspace_name}_{messages[-1].id}",
         f"{summary_type.name}_summary_size",
         response.usage.output_tokens
         if response and response.usage

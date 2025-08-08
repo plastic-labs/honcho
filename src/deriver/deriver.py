@@ -15,7 +15,6 @@ from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import (
     REASONING_LEVELS,
-    extract_observation_content,
     find_new_observations,
     format_context_for_prompt,
     format_new_turn_with_timestamp,
@@ -37,7 +36,7 @@ from src.utils.shared_models import (
     UnifiedObservation,
 )
 
-from .prompts import critical_analysis_prompt
+from .prompts import critical_analysis_prompt, peer_card_prompt
 from .queue_payload import (
     RepresentationPayload,
 )
@@ -72,6 +71,28 @@ async def critical_analysis_call(
         working_representation=working_representation,
         history=history,
         new_turn=new_turn,
+    )
+
+
+@honcho_llm_call(
+    provider=settings.DERIVER.PEER_CARD_PROVIDER,
+    model=settings.DERIVER.PEER_CARD_MODEL,
+    track_name="Peer Card Call",
+    max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
+    or settings.LLM.DEFAULT_MAX_TOKENS,
+    thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
+    if settings.DERIVER.PROVIDER == "anthropic"
+    else None,
+    enable_retry=True,
+    retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
+)
+async def peer_card_call(
+    old_peer_card: str | None,
+    new_observations: list[str],
+):
+    return peer_card_prompt(
+        old_peer_card=old_peer_card,
+        new_observations=new_observations,
     )
 
 
@@ -190,7 +211,7 @@ async def process_representation_task(
         logger.info("No working representation found, using global semantic search")
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
-        f"deriver_message_{payload.message_id}",
+        f"deriver_representation_{payload.message_id}_{payload.target_name}",
         "context_preparation",
         context_prep_duration,
         "ms",
@@ -201,12 +222,22 @@ async def process_representation_task(
         "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
     )
 
-    sender_peer_card: str | None = await crud.get_peer_card(
-        db, payload.workspace_name, payload.sender_name
-    )
+    # We currently only use Peer Cards in Honcho-level representation derivation.
+    if payload.sender_name == payload.target_name:
+        sender_peer_card: str | None = await crud.get_peer_card(
+            db, payload.workspace_name, payload.sender_name
+        )
+        if sender_peer_card is None:
+            logger.warning("No peer card found for %s", payload.sender_name)
+        else:
+            logger.info("Using peer card: %s", sender_peer_card)
+    else:
+        logger.info("No peer card used for directional representation derivation")
+        sender_peer_card = None
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
+        db,
         working_representation,
         formatted_history,
         sender_peer_card,
@@ -226,7 +257,7 @@ async def process_representation_task(
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"deriver_message_{payload.message_id}",
+        f"deriver_representation_{payload.message_id}_{payload.target_name}",
         "total_processing_time",
         overall_duration,
         "ms",
@@ -235,12 +266,14 @@ async def process_representation_task(
     total_observations = sum(len(obs_list) for obs_list in final_obs_dict.values())
 
     accumulate_metric(
-        f"deriver_message_{payload.message_id}",
+        f"deriver_representation_{payload.message_id}_{payload.target_name}",
         "final_observation_count",
         total_observations,
         "",
     )
-    log_performance_metrics(f"deriver_message_{payload.message_id}")
+    log_performance_metrics(
+        f"deriver_representation_{payload.message_id}_{payload.target_name}"
+    )
 
     if settings.LANGFUSE_PUBLIC_KEY:
         langfuse_context.update_current_trace(
@@ -363,6 +396,7 @@ class CertaintyReasoner:
     @sentry_sdk.trace
     async def reason(
         self,
+        db: AsyncSession,
         working_representation: ReasoningResponseWithThinking,
         history: str,
         speaker_peer_card: str | None,
@@ -385,7 +419,7 @@ class CertaintyReasoner:
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
         accumulate_metric(
-            f"deriver_message_{self.ctx.message_id}",
+            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
             "critical_analysis_duration",
             analysis_duration_ms,
             "ms",
@@ -393,16 +427,40 @@ class CertaintyReasoner:
 
         save_observations_start = time.perf_counter()
         # Save only the NEW observations that weren't in the original context
-        await self._save_new_observations(working_representation, reasoning_response)
+        new_observations_by_level: dict[
+            str, list[str]
+        ] = await self._save_new_observations(
+            working_representation, reasoning_response
+        )
         save_observations_duration = (
             time.perf_counter() - save_observations_start
         ) * 1000
         accumulate_metric(
-            f"deriver_message_{self.ctx.message_id}",
+            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
             "save_new_observations",
             save_observations_duration,
             "ms",
         )
+
+        # Only update peer card if we are in Honcho-level representation derivation.
+        if self.ctx.sender_name == self.ctx.target_name:
+            update_peer_card_start = time.perf_counter()
+            # flatten new observations by level into a list
+            new_observations = [
+                observation
+                for level in new_observations_by_level.values()
+                for observation in level
+            ]
+            await self._update_peer_card(db, speaker_peer_card, new_observations)
+            update_peer_card_duration = (
+                time.perf_counter() - update_peer_card_start
+            ) * 1000
+            accumulate_metric(
+                f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
+                "update_peer_card",
+                update_peer_card_duration,
+                "ms",
+            )
 
         return reasoning_response
 
@@ -412,10 +470,10 @@ class CertaintyReasoner:
         self,
         original_working_representation: ReasoningResponse,
         revised_observations: ReasoningResponse,
-    ) -> None:
+    ) -> dict[str, list[str]]:
         """Save only the observations that are new compared to the original context."""
         # Use the utility function to find new observations
-        new_observations_by_level = find_new_observations(
+        new_observations_by_level: dict[str, list[str]] = find_new_observations(
             original_working_representation, revised_observations
         )
 
@@ -446,7 +504,7 @@ class CertaintyReasoner:
                         len(observation.premises),
                     )
 
-                elif isinstance(observation, str):
+                else:
                     # String observations (explicit) have no premises
                     unified_obs = UnifiedObservation.from_string(
                         observation, level=level
@@ -454,27 +512,44 @@ class CertaintyReasoner:
                     all_unified_observations.append(unified_obs)
                     logger.debug("Added %s observation: %s...", level, observation[:50])
 
-                else:
-                    # Handle unexpected types
-                    content = extract_observation_content(observation)
-                    unified_obs = UnifiedObservation.from_string(content, level=level)
-                    all_unified_observations.append(unified_obs)
-                    logger.warning(
-                        f"Added unexpected observation type: {type(observation)} as {level}"
-                    )
-
                 total_observations_count += 1
 
-        if not all_unified_observations:
+        if all_unified_observations:
+            await self.embedding_store.save_unified_observations(
+                all_unified_observations,
+                self.ctx.message_id,
+                self.ctx.session_name,
+                self.ctx.created_at,
+            )
+        else:
             logger.debug("No new observations to save")
-            return
 
-        await self.embedding_store.save_unified_observations(
-            all_unified_observations,
-            self.ctx.message_id,
-            self.ctx.session_name,
-            self.ctx.created_at,
-        )
+        return new_observations_by_level
+
+    @conditional_observe
+    @sentry_sdk.trace
+    async def _update_peer_card(
+        self,
+        db: AsyncSession,
+        old_peer_card: str | None,
+        new_observations: list[str],
+    ) -> None:
+        """
+        Update the peer card by calling LLM with the old peer card and new observations.
+        The new peer card is returned by the LLM and saved to peer internal metadata.
+        """
+        try:
+            response = await peer_card_call(old_peer_card, new_observations)
+            new_peer_card = str(response)
+            if new_peer_card == "":
+                logger.error("PEER CARD AGENT RETURNED EMPTY STRING")
+                new_peer_card = old_peer_card
+            logger.info(f"New peer card: {new_peer_card}")
+            await crud.set_peer_card(
+                db, self.ctx.workspace_name, self.ctx.sender_name, new_peer_card
+            )
+        except Exception as e:
+            logger.error(f"Error updating peer card! Skipping... {e}")
 
 
 def observation_context_to_reasoning_response(

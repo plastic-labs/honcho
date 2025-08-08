@@ -265,7 +265,7 @@ def log_performance_metrics(
 
     for metric, value, unit in metrics:
         if unit == "ms":
-            formatted_value = f"{value:.1f}"
+            formatted_value = f"{value:.0f}"
         elif unit == "s":
             formatted_value = f"{value:.3f}"
         else:
