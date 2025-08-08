@@ -3,7 +3,7 @@ import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/
 import type { Uploadable } from '@honcho-ai/core/src/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import { SessionContext } from './session_context'
+import { SessionContext, SessionSummaries } from './session_context'
 import {
   ContextParamsSchema,
   FileUploadSchema,
@@ -458,6 +458,41 @@ export class Session {
       }
     )
     return new SessionContext(this.id, context.messages, context.summary)
+  }
+
+  /**
+   * Get available summaries for this session.
+   *
+   * Makes an API call to retrieve both short and long summaries for this session,
+   * if they are available. Summaries are created asynchronously by the backend
+   * as messages are added to the session.
+   *
+   * @returns Promise resolving to a SessionSummaries object containing:
+   *          - id: The session ID
+   *          - shortSummary: The short summary if available, including metadata
+   *          - longSummary: The long summary if available, including metadata
+   *
+   * @note Summaries may be null if:
+   *       - Not enough messages have been added to trigger summary generation
+   *       - The summary generation is still in progress
+   *       - Summary generation is disabled for this session
+   */
+  async getSummaries(): Promise<SessionSummaries> {
+    // Make the API call to get summaries using the raw response
+    const response = await this._client.get(
+      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/summaries`,
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    )
+
+    // Parse the response data
+    const data = await response.json()
+
+    // Return a SessionSummaries instance
+    return new SessionSummaries(data)
   }
 
   /**

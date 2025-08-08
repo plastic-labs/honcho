@@ -9,6 +9,34 @@ if TYPE_CHECKING:
     from .peer import Peer
 
 
+class SessionSummary(BaseModel):
+    """Represents a summary of a session's conversation."""
+
+    content: str = Field(..., description="The summary text")
+    message_id: int = Field(
+        ..., description="The ID of the message that this summary covers up to"
+    )
+    summary_type: str = Field(..., description="The type of summary (short or long)")
+    created_at: str = Field(
+        ..., description="The timestamp of when the summary was created (ISO format)"
+    )
+    token_count: int = Field(
+        ..., description="The number of tokens in the summary text"
+    )
+
+
+class SessionSummaries(BaseModel):
+    """Contains both short and long summaries for a session."""
+
+    id: str = Field(..., description="The session ID")
+    short_summary: SessionSummary | None = Field(
+        None, description="The short summary if available"
+    )
+    long_summary: SessionSummary | None = Field(
+        None, description="The long summary if available"
+    )
+
+
 class SessionContext(BaseModel):
     """
     Represents the context of a session containing a curated list of messages.

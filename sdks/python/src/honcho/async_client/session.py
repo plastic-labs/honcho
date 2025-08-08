@@ -8,7 +8,7 @@ from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
-from ..session_context import SessionContext
+from ..session_context import SessionContext, SessionSummaries, SessionSummary
 from ..utils import prepare_file_for_upload
 from .pagination import AsyncPage
 
@@ -442,6 +442,61 @@ class AsyncSession(BaseModel):
 
         return SessionContext(
             session_id=self.id, messages=context.messages, summary=context.summary
+        )
+
+    async def get_summaries(self) -> SessionSummaries:
+        """
+        Get available summaries for this session.
+
+        Makes an async API call to retrieve both short and long summaries for this session,
+        if they are available. Summaries are created asynchronously by the backend
+        as messages are added to the session.
+
+        Returns:
+            A SessionSummaries object containing:
+            - id: The session ID
+            - short_summary: The short summary if available, including metadata
+            - long_summary: The long summary if available, including metadata
+
+        Note:
+            Summaries may be None if:
+            - Not enough messages have been added to trigger summary generation
+            - The summary generation is still in progress
+            - Summary generation is disabled for this session
+        """
+        # Make the async API call to get summaries
+        response = await self._client.workspaces.sessions.with_raw_response.get(
+            f"workspaces/{self.workspace_id}/sessions/{self.id}/summaries"
+        )
+
+        # Parse the response
+        data = response.json()
+
+        # Create SessionSummary objects from the response data
+        short_summary = None
+        if data.get("short_summary"):
+            short_summary = SessionSummary(
+                content=data["short_summary"]["content"],
+                message_id=data["short_summary"]["message_id"],
+                summary_type=data["short_summary"]["summary_type"],
+                created_at=data["short_summary"]["created_at"],
+                token_count=data["short_summary"]["token_count"],
+            )
+
+        long_summary = None
+        if data.get("long_summary"):
+            long_summary = SessionSummary(
+                content=data["long_summary"]["content"],
+                message_id=data["long_summary"]["message_id"],
+                summary_type=data["long_summary"]["summary_type"],
+                created_at=data["long_summary"]["created_at"],
+                token_count=data["long_summary"]["token_count"],
+            )
+
+        return SessionSummaries(
+            id=data.get("id", self.id),
+            short_summary=short_summary,
+            long_summary=long_summary,
         )
 
     @validate_call
