@@ -25,15 +25,29 @@ honcho = Honcho()
 
 # Create peer with configuration
 peer = honcho.peer("my-peer", config={"observe_me": False})
+
+# Change peer's configuration
+peer.set_peer_config({"observe_me": True})
+
+# Note: creating the same peer again will also replace the configuration
+peer = honcho.peer("my-peer", config={"observe_me": False})
 ```
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Create peer with configuration
-const peer = await honcho.peer("my-peer", { config: { observe_me: false } });
+    // Create peer with configuration
+    const peer = await honcho.peer("my-peer", { config: { observe_me: false } });
+
+    // Change peer's configuration
+    await peer.setPeerConfig({ observe_me: true });
+
+    // Note: creating the same peer again will also replace the configuration
+    await honcho.peer("my-peer", { config: { observe_me: false } });
+})();
 ```
 </CodeGroup>
 
@@ -54,11 +68,13 @@ session = honcho.session("my-session", config={"deriver_disabled": True})
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Create session with configuration
-const session = await honcho.session("my-session", { config: { deriver_disabled: true } });
+    // Create session with configuration
+    const session = await honcho.session("my-session", { config: { deriver_disabled: true } });
+})();
 ```
 </CodeGroup>
 
@@ -110,29 +126,31 @@ print(charlie_config)
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Create session
-const session = await honcho.session("my-session");
+    // Create session
+    const session = await honcho.session("my-session");
 
-// Create peers
-const alice = await honcho.peer("alice");
-const bob = await honcho.peer("bob");
+    // Create peers
+    const alice = await honcho.peer("alice");
+    const bob = await honcho.peer("bob");
 
-// Add peers to session
-await session.addPeers([alice, bob]);
+    // Add peers to session
+    await session.addPeers([alice, bob]);
 
-// Add another peer to the session with a custom configuration
-const charlie = await honcho.peer("charlie");
-await session.addPeers([charlie, { observe_me: false, observe_others: true }]);
+    // Add another peer to the session with a custom configuration
+    const charlie = await honcho.peer("charlie");
+    await session.addPeers([charlie, { observe_me: false, observe_others: true }]);
 
-// Set session-peer configuration
-await session.setPeerConfig(alice, { observe_others: true });
-await session.setPeerConfig(bob, { observe_me: false });
+    // Set session-peer configuration
+    await session.setPeerConfig(alice, { observe_others: true });
+    await session.setPeerConfig(bob, { observe_me: false });
 
-// Get session-peer configuration
-const charlieConfig = await session.getPeerConfig(charlie);
-console.log(charlieConfig);
+    // Get session-peer configuration
+    const charlieConfig = await session.getPeerConfig(charlie);
+    console.log(charlieConfig);
+})();
 ```
 </CodeGroup>

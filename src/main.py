@@ -24,6 +24,7 @@ from src.routers import (
     messages,
     peers,
     sessions,
+    webhooks,
     workspaces,
 )
 from src.security import create_admin_jwt
@@ -101,6 +102,7 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Lifespan events are now handled by the respective services
     yield
     await engine.dispose()
 
@@ -150,6 +152,7 @@ app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
+app.include_router(webhooks.router, prefix="/v2")
 
 
 # Global exception handlers

@@ -495,3 +495,62 @@ def test_search_peer_with_limit(
     assert isinstance(data, list)
     # Should not exceed the limit
     assert len(data) <= 2
+
+
+def test_get_peers_with_complex_filter(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer listing with complex filters"""
+    test_workspace, _ = sample_data
+
+    # Create peers with different metadata
+    for i in range(3):
+        client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers",
+            json={
+                "name": str(generate_nanoid()),
+                "metadata": {"index": i, "type": "test"},
+            },
+        )
+
+    # Test complex filter combination
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers/list",
+        json={
+            "filters": {
+                "AND": [
+                    {"metadata": {"type": "test"}},
+                    {"metadata": {"index": {"gte": 1}}},
+                ]
+            }
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # for each peer returned, assert that the metadata["index"] fits our filter
+    for peer in data["items"]:
+        assert (
+            peer["metadata"].get("index", 0) >= 1
+            and peer["metadata"].get("type", "") == "test"
+        )
+    assert "items" in data
+
+
+def test_update_peer_all_fields(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+):
+    """Test peer update with all possible fields"""
+    test_workspace, test_peer = sample_data
+
+    # Test updating both metadata and configuration
+    metadata = {"updated": True, "version": 2}
+    configuration = {"features": {"new_feature": True}}
+
+    response = client.put(
+        f"/v2/workspaces/{test_workspace.name}/peers/{test_peer.name}",
+        json={"metadata": metadata, "configuration": configuration},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metadata"] == metadata
+    assert data["configuration"] == configuration

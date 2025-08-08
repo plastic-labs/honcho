@@ -39,28 +39,30 @@ messages = honcho.get_messages(filters={
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Simple peer filter
-const peers = await honcho.getPeers({
-  filters: { peerId: "alice" }
-});
+    // Simple peer filter
+    const peers = await honcho.getPeers({
+      filters: { peerId: "alice" }
+    });
 
-// Simple session filter with metadata
-const sessions = await honcho.getSessions({
-  filters: {
-    metadata: { type: "support" }
-  }
-});
+    // Simple session filter with metadata
+    const sessions = await honcho.getSessions({
+      filters: {
+        metadata: { type: "support" }
+      }
+    });
 
-// Simple message filter
-const messages = await honcho.getMessages({
-  filters: {
-    sessionId: "support-chat-1",
-    peerId: "alice"
-  }
-});
+    // Simple message filter
+    const messages = await honcho.getMessages({
+      filters: {
+        sessionId: "support-chat-1",
+        peerId: "alice"
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -83,14 +85,16 @@ messages = honcho.get_messages(filters={
 ```
 
 ```typescript TypeScript
-const messages = await honcho.getMessages({
-  filters: {
-    AND: [
-      { sessionId: "chat-1" },
-      { createdAt: { gte: "2024-01-01" } }
-    ]
-  }
-});
+(async () => {
+    const messages = await honcho.getMessages({
+      filters: {
+        AND: [
+          { sessionId: "chat-1" },
+          { createdAt: { gte: "2024-01-01" } }
+        ]
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -119,26 +123,28 @@ sessions = honcho.get_sessions(filters={
 ```
 
 ```typescript TypeScript
-// Find messages from either alice or bob
-const messages = await session.getMessages({
-  filters: {
-    OR: [
-      { peerId: "alice" },
-      { peerId: "bob" }
-    ]
-  }
-});
+(async () => {
+    // Find messages from either alice or bob
+    const messages = await session.getMessages({
+      filters: {
+        OR: [
+          { peerId: "alice" },
+          { peerId: "bob" }
+        ]
+      }
+    });
 
-// Complex OR with metadata conditions
-const sessions = await honcho.getSessions({
-  filters: {
-    OR: [
-      { metadata: { priority: "high" } },
-      { metadata: { urgent: true } },
-      { metadata: { escalated: true } }
-    ]
-  }
-});
+    // Complex OR with metadata conditions
+    const sessions = await honcho.getSessions({
+      filters: {
+        OR: [
+          { metadata: { priority: "high" } },
+          { metadata: { urgent: true } },
+          { metadata: { escalated: true } }
+        ]
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -164,23 +170,25 @@ sessions = honcho.get_sessions(filters={
 ```
 
 ```typescript TypeScript
-// Find all peers except alice
-const peers = await honcho.getPeers({
-  filters: {
-    NOT: [
-      { peerId: "alice" }
-    ]
-  }
-});
+(async () => {
+    // Find all peers except alice
+    const peers = await honcho.getPeers({
+      filters: {
+        NOT: [
+          { peerId: "alice" }
+        ]
+      }
+    });
 
-// Find sessions that are NOT completed
-const sessions = await honcho.getSessions({
-  filters: {
-    NOT: [
-      { metadata: { status: "completed" } }
-    ]
-  }
-});
+    // Find sessions that are NOT completed
+    const sessions = await honcho.getSessions({
+      filters: {
+        NOT: [
+          { metadata: { status: "completed" } }
+        ]
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -209,24 +217,26 @@ messages = session.get_messages(filters={
 ```
 
 ```typescript TypeScript
-// Find messages from alice OR bob, but NOT where message has archived set to true in metadata
-const messages = await session.getMessages({
-  filters: {
-    AND: [
-      {
-        OR: [
-          { peerId: "alice" },
-          { peerId: "bob" }
-        ]
-      },
-      {
-        NOT: [
-          { metadata: { archived: true } }
+(async () => {
+    // Find messages from alice OR bob, but NOT where message has archived set to true in metadata
+    const messages = await session.getMessages({
+      filters: {
+        AND: [
+          {
+            OR: [
+              { peerId: "alice" },
+              { peerId: "bob" }
+            ]
+          },
+          {
+            NOT: [
+              { metadata: { archived: true } }
+            ]
+          }
         ]
       }
-    ]
-  }
-});
+    });
+})();
 ```
 </CodeGroup>
 
@@ -261,32 +271,34 @@ sessions = honcho.get_sessions(filters={
 ```
 
 ```typescript TypeScript
-// Find sessions created after a specific date
-const sessions = await honcho.getSessions({
-  filters: {
-    createdAt: { gte: "2024-01-01" }
-  }
-});
+(async () => {
+    // Find sessions created after a specific date
+    const sessions = await honcho.getSessions({
+      filters: {
+        createdAt: { gte: "2024-01-01" }
+      }
+    });
 
-// Find messages within a date range
-const messages = await session.getMessages({
-  filters: {
-    createdAt: {
-      gte: "2024-01-01",
-      lte: "2024-12-31"
-    }
-  }
-});
+    // Find messages within a date range
+    const messages = await session.getMessages({
+      filters: {
+        createdAt: {
+          gte: "2024-01-01",
+          lte: "2024-12-31"
+        }
+      }
+    });
 
-// Metadata numeric comparisons
-const sessions = await honcho.getSessions({
-  filters: {
-    metadata: {
-      score: { gt: 8.5 },
-      duration: { lte: 3600 }
-    }
-  }
-});
+    // Metadata numeric comparisons
+    const sessions = await honcho.getSessions({
+      filters: {
+        metadata: {
+          score: { gt: 8.5 },
+          duration: { lte: 3600 }
+        }
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -315,30 +327,32 @@ peers = honcho.get_peers(filters={
 ```
 
 ```typescript TypeScript
-// Find messages from specific peers in a session
-const messages = await session.getMessages({
-  filters: {
-    peerId: { in: ["alice", "bob", "charlie"] }
-  }
-});
+(async () => {
+    // Find messages from specific peers in a session
+    const messages = await session.getMessages({
+      filters: {
+        peerId: { in: ["alice", "bob", "charlie"] }
+      }
+    });
 
-// Find sessions with specific tags
-const sessions = await honcho.getSessions({
-  filters: {
-    metadata: {
-      tag: { in: ["important", "urgent", "follow-up"] }
-    }
-  }
-});
+    // Find sessions with specific tags
+    const sessions = await honcho.getSessions({
+      filters: {
+        metadata: {
+          tag: { in: ["important", "urgent", "follow-up"] }
+        }
+      }
+    });
 
-// Not equal comparisons
-const peers = await honcho.getPeers({
-  filters: {
-    metadata: {
-      status: { ne: "inactive" }
-    }
-  }
-});
+    // Not equal comparisons
+    const peers = await honcho.getPeers({
+      filters: {
+        metadata: {
+          status: { ne: "inactive" }
+        }
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -370,27 +384,29 @@ peers = honcho.get_peers(filters={
 ```
 
 ```typescript TypeScript
-// Simple metadata equality
-const sessions = await honcho.getSessions({
-  filters: {
-    metadata: {
-      type: "customer_support",
-      priority: "high"
-    }
-  }
-});
-
-// Nested metadata objects
-const peers = await honcho.getPeers({
-  filters: {
-    metadata: {
-      profile: {
-        role: "admin",
-        department: "engineering"
+(async () => {
+    // Simple metadata equality
+    const sessions = await honcho.getSessions({
+      filters: {
+        metadata: {
+          type: "customer_support",
+          priority: "high"
+        }
       }
-    }
-  }
-});
+    });
+
+    // Nested metadata objects
+    const peers = await honcho.getPeers({
+      filters: {
+        metadata: {
+          profile: {
+            role: "admin",
+            department: "engineering"
+          }
+        }
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -422,27 +438,29 @@ messages = session.get_messages(filters={
 ```
 
 ```typescript TypeScript
-// Metadata with comparison operators
-const sessions = await honcho.getSessions({
-  filters: {
-    metadata: {
-      score: { gte: 4.0, lte: 5.0 },
-      createdBy: { ne: "system" },
-      tags: { contains: "important" }
-    }
-  }
-});
+(async () => {
+    // Metadata with comparison operators
+    const sessions = await honcho.getSessions({
+      filters: {
+        metadata: {
+          score: { gte: 4.0, lte: 5.0 },
+          createdBy: { ne: "system" },
+          tags: { contains: "important" }
+        }
+      }
+    });
 
-// Complex metadata conditions
-const messages = await session.getMessages({
-  filters: {
-    AND: [
-      { metadata: { sentiment: { in: ["positive", "neutral"] } } },
-      { metadata: { confidence: { gt: 0.8 } } },
-      { content: { icontains: "thank" } }
-    ]
-  }
-});
+    // Complex metadata conditions
+    const messages = await session.getMessages({
+      filters: {
+        AND: [
+          { metadata: { sentiment: { in: ["positive", "neutral"] } } },
+          { metadata: { confidence: { gt: 0.8 } } },
+          { content: { icontains: "thank" } }
+        ]
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -472,29 +490,31 @@ sessions = honcho.get_sessions(filters={
 ```
 
 ```typescript TypeScript
-// Find all sessions with any peer_id (essentially all sessions)
-const sessions = await honcho.getSessions({
-  filters: {
-    peerId: "*"
-  }
-});
+(async () => {
+    // Find all sessions with any peer_id (essentially all sessions)
+    const sessions = await honcho.getSessions({
+      filters: {
+        peerId: "*"
+      }
+    });
 
-// Wildcard in lists - matches everything
-const messages = await session.getMessages({
-  filters: {
-    peerId: { in: ["alice", "bob", "*"] }
-  }
-});
+    // Wildcard in lists - matches everything
+    const messages = await session.getMessages({
+      filters: {
+        peerId: { in: ["alice", "bob", "*"] }
+      }
+    });
 
-// Metadata wildcards
-const sessions = await honcho.getSessions({
-  filters: {
-    metadata: {
-      type: "*",  // Any type
-      status: "active"  // But status must be active
-    }
-  }
-});
+    // Metadata wildcards
+    const sessions = await honcho.getSessions({
+      filters: {
+        metadata: {
+          type: "*",  // Any type
+          status: "active"  // But status must be active
+        }
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -519,22 +539,24 @@ workspaces = honcho.get_workspaces(filters={
 ```
 
 ```typescript TypeScript
-// Find workspaces by name pattern
-const workspaces = await honcho.getWorkspaces({
-  filters: {
-    name: { contains: "prod" }
-  }
-});
+(async () => {
+    // Find workspaces by name pattern
+    const workspaces = await honcho.getWorkspaces({
+      filters: {
+        name: { contains: "prod" }
+      }
+    });
 
-// Filter by metadata
-const workspaces = await honcho.getWorkspaces({
-  filters: {
-    metadata: {
-      environment: "production",
-      team: { in: ["backend", "frontend", "devops"] }
-    }
-  }
-});
+    // Filter by metadata
+    const workspaces = await honcho.getWorkspaces({
+      filters: {
+        metadata: {
+          environment: "production",
+          team: { in: ["backend", "frontend", "devops"] }
+        }
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -565,28 +587,30 @@ messages = session.get_messages(filters={
 ```
 
 ```typescript TypeScript
-// Find error messages from the last week
-const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-const messages = await session.getMessages({
-  filters: {
-    AND: [
-      { content: { icontains: "error" } },
-      { createdAt: { gte: weekAgo } },
-      { metadata: { level: { in: ["error", "critical"] } } }
-    ]
-  }
-});
+(async () => {
+    // Find error messages from the last week
+    const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const messages = await session.getMessages({
+      filters: {
+        AND: [
+          { content: { icontains: "error" } },
+          { createdAt: { gte: weekAgo } },
+          { metadata: { level: { in: ["error", "critical"] } } }
+        ]
+      }
+    });
 
-// Find messages in specific sessions with sentiment analysis
-const messages = await session.getMessages({
-  filters: {
-    AND: [
-      { sessionId: { in: ["support-1", "support-2", "support-3"] } },
-      { metadata: { sentiment: "negative" } },
-      { metadata: { confidence: { gte: 0.7 } } }
-    ]
-  }
-});
+    // Find messages in specific sessions with sentiment analysis
+    const messages = await session.getMessages({
+      filters: {
+        AND: [
+          { sessionId: { in: ["support-1", "support-2", "support-3"] } },
+          { metadata: { sentiment: "negative" } },
+          { metadata: { confidence: { gte: 0.7 } } }
+        ]
+      }
+    });
+})();
 ```
 </CodeGroup>
 
@@ -617,30 +641,32 @@ except FilterError as e:
 ```
 
 ```typescript TypeScript
-try {
-  // Invalid filter - unsupported operator
-  const messages = await session.getMessages({
-    filters: {
-      createdAt: { invalidOperator: "2024-01-01" }
+(async () => {
+    try {
+      // Invalid filter - unsupported operator
+      const messages = await session.getMessages({
+        filters: {
+          createdAt: { invalidOperator: "2024-01-01" }
+        }
+      });
+    } catch (error) {
+      if (error.message.includes("filters")) {
+        console.error(`Filter error: ${error.message}`);
+        // Handle the error appropriately
+      }
     }
-  });
-} catch (error) {
-  if (error.message.includes("filters")) {
-    console.error(`Filter error: ${error.message}`);
-    // Handle the error appropriately
-  }
-}
 
-try {
-  // Invalid column name
-  const sessions = await honcho.getSessions({
-    filters: {
-      nonexistentField: "value"
+    try {
+      // Invalid column name
+      const sessions = await honcho.getSessions({
+        filters: {
+          nonexistentField: "value"
+        }
+      });
+    } catch (error) {
+      console.error(`Invalid field: ${error.message}`);
     }
-  });
-} catch (error) {
-  console.error(`Invalid field: ${error.message}`);
-}
+})();
 ```
 </CodeGroup>
 

@@ -30,16 +30,18 @@ for result in results:
 ```typescript TypeScript
 import { Honcho } from "@honcho-ai/sdk";
 
-// Initialize client
-const honcho = new Honcho({});
+(async () => {
+    // Initialize client
+    const honcho = new Honcho({});
 
-// Search across entire workspace
-const results = await honcho.search("budget planning");
+    // Search across entire workspace
+    const results = await honcho.search("budget planning");
 
-// Iterate through all results
-for (const result of results) {
-  console.log(`Found: ${result}`);
-}
+    // Iterate through all results
+    for (const result of results) {
+      console.log(`Found: ${result}`);
+    }
+})();
 ```
 </CodeGroup>
 
@@ -61,16 +63,18 @@ for result in results:
 ```
 
 ```typescript TypeScript
-// Create or get a session
-const session = await honcho.session("team-meeting-jan");
+(async () => {
+    // Create or get a session
+    const session = await honcho.session("team-meeting-jan");
 
-// Search within this session only
-const results = await session.search("action items");
+    // Search within this session only
+    const results = await session.search("action items");
 
-// Process results
-for (const result of results) {
-  console.log(`Session result: ${result}`);
-}
+    // Process results
+    for (const result of results) {
+      console.log(`Session result: ${result}`);
+    }
+})();
 ```
 </CodeGroup>
 
@@ -93,16 +97,19 @@ for result in results:
 
 ```typescript TypeScript
 import { Message } from "@honcho-ai/sdk";
-// Create or get a peer
-const alice = await honcho.peer("alice");
 
-// Search across all of Alice's messages and interactions
-const results: Message[] = await alice.search("programming");
+(async () => {
+    // Create or get a peer
+    const alice = await honcho.peer("alice");
 
-// View results
-for (const result of results) {
-  console.log(`Alice's content: ${result.content}`);
-}
+    // Search across all of Alice's messages and interactions
+    const results: Message[] = await alice.search("programming");
+
+    // View results
+    for (const result of results) {
+      console.log(`Alice's content: ${result.content}`);
+    }
+})();
 ```
 </CodeGroup>
 
@@ -118,7 +125,9 @@ results = honcho.search("budget planning", limit=20)
 ```
 
 ```typescript TypeScript
-const results = await honcho.search("budget planning", { limit: 20 });
+(async () => {
+    const results = await honcho.search("budget planning", { limit: 20 });
+})();
 ```
 </CodeGroup>
 
@@ -134,9 +143,11 @@ results = my_peer.search("budget planning", filters={"session_id": my_session.id
 ```
 
 ```typescript TypeScript
-const my_peer = await honcho.peer("my-peer");
-const my_session = await honcho.session("team-meeting-jan");
-const results = await my_peer.search("budget planning", { filters: { session_id: my_session.id } });
+(async () => {
+    const my_peer = await honcho.peer("my-peer");
+    const my_session = await honcho.session("team-meeting-jan");
+    const results = await my_peer.search("budget planning", { filters: { session_id: my_session.id } });
+})();
 ```
 </CodeGroup>
 
@@ -148,7 +159,9 @@ results = honcho.search("budget planning", filters={"created_at": {"gte": "2024-
 ```
 
 ```typescript TypeScript
-const results = await honcho.search("budget planning", { filters: { created_at: { gte: "2024-01-01", lte: "2024-01-31" } } });
+(async () => {
+    const results = await honcho.search("budget planning", { filters: { created_at: { gte: "2024-01-01", lte: "2024-01-31" } } });
+})();
 ```
 </CodeGroup>
 
@@ -160,7 +173,9 @@ results = honcho.search("budget planning", filters={"metadata": {"key": "value"}
 ```
 
 ```typescript TypeScript
-const results = await honcho.search("budget planning", { filters: { metadata: { key: "value" } } });
+(async () => {
+    const results = await honcho.search("budget planning", { filters: { metadata: { key: "value" } } });
+})();
 ```
 </CodeGroup>
 
@@ -184,17 +199,20 @@ else:
 
 ```typescript TypeScript
 import { Message } from "@honcho-ai/sdk";
-// Always check for empty results
-const results: Message[] = await honcho.search("very specific query");
 
-if (results.length > 0) {
-  console.log(`Found ${results.length} results`);
-  for (const result of results) {
-    console.log(`- ${result.content}`);
-  }
-} else {
-  console.log("No results found - try a broader search");
-}
+(async () => {
+    // Always check for empty results
+    const results: Message[] = await honcho.search("very specific query");
+
+    if (results.length > 0) {
+      console.log(`Found ${results.length} results`);
+      for (const result of results) {
+        console.log(`- ${result.content}`);
+      }
+    } else {
+      console.log("No results found - try a broader search");
+    }
+})();
 ```
 </CodeGroup>
 

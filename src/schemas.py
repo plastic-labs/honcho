@@ -1,6 +1,8 @@
 # pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
+import ipaddress
 from typing import Annotated, Any, Self
+from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
@@ -8,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    field_validator,
     model_validator,
 )
 
@@ -351,3 +354,44 @@ class DeriverStatus(BaseModel):
     sessions: dict[str, SessionDeriverStatus] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )
+
+
+# Webhook endpoint schemas
+class WebhookEndpointBase(BaseModel):
+    pass
+
+
+class WebhookEndpointCreate(WebhookEndpointBase):
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+
+        if not all([parsed.scheme, parsed.netloc]):
+            raise ValueError("Invalid URL format")
+
+        # Only allow HTTP/HTTPS
+        if parsed.scheme not in ["http", "https"]:
+            raise ValueError("Only HTTP and HTTPS URLs are allowed")
+
+        # Block private/internal addresses
+        if parsed.hostname:
+            try:
+                ip_address = ipaddress.ip_address(parsed.hostname)
+                if ip_address.is_private:
+                    raise ValueError("Private IP addresses are not allowed")
+            except ValueError:  # Not an IP address, might be a hostname
+                pass
+
+        return v
+
+
+class WebhookEndpoint(WebhookEndpointBase):
+    id: str
+    workspace_name: str | None = Field(serialization_alias="workspace_id")
+    url: str
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore
