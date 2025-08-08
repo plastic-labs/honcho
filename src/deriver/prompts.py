@@ -15,7 +15,7 @@ from mirascope import prompt_template
 def critical_analysis_prompt(
     peer_card: str | None,
     message_created_at: datetime.datetime,
-    context: str | None,
+    working_representation: str | None,
     history: str,
     new_turn: str,
 ) -> str:
@@ -23,15 +23,37 @@ def critical_analysis_prompt(
     Generate the critical analysis prompt for the deriver.
 
     Args:
-        peer_name: The name of the user being analyzed
+        peer_card: The bio card of the user being analyzed
         message_created_at: Timestamp of the message being analyzed
-        context: Current user understanding context
+        working_representation: Current user understanding context
         history: Recent conversation history
         new_turn: New conversation turn to analyze
 
     Returns:
         Formatted prompt string for critical analysis
     """
+    peer_card_section = (
+        f"""
+The user's known biographical information:
+<peer_card>
+{peer_card}
+</peer_card>
+"""
+        if peer_card is not None
+        else ""
+    )
+
+    working_representation_section = (
+        f"""
+The current user understanding:
+<current_context>
+{working_representation}
+</current_context>
+"""
+        if working_representation is not None
+        else ""
+    )
+
     return c(
         f"""
 You are an agent who critically analyzes user messages through rigorous logical reasoning to produce only conclusions about the user that are CERTAIN.
@@ -59,15 +81,9 @@ Here are strict definitions for the reasoning modes you are to employ:
         - Current date and time (which is: {message_created_at})
         - Timestamps for user messages, and previous premises and conclusions
 
-The user's known biographical information:
-<peer_card>
-{peer_card if peer_card else "No pre-existing information about the user."}
-</peer_card>
+{peer_card_section}
 
-Here's the current user understanding
-<current_context>
-{context}
-</current_context>
+{working_representation_section}
 
 Recent conversation history for context:
 <history>

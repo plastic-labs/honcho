@@ -25,7 +25,6 @@ This directory contains tests for the deriver system, which handles background p
 
 ### Mocking Fixtures
 
-- `mock_deriver_process` - Mocks the deriver process_message method
 - `mock_critical_analysis_call` - Mocks the critical analysis LLM call
 - `mock_queue_manager` - Mocks the queue manager for testing
 - `mock_embedding_store` - Mocks the embedding store operations
@@ -60,13 +59,4 @@ work_unit = WorkUnit(
 
 # Test string representation
 assert str(work_unit) == f"({session.id}, {sender.name}, {target.name}, representation)"
-```
-
-### Mocking Deriver Processing
-
-```python
-# Use the mock_deriver_process fixture to avoid actual LLM calls
-async def test_with_mocked_deriver(mock_deriver_process):
-    # Deriver processing will use the mock
-    await process_item(queue_item.payload)
 ```

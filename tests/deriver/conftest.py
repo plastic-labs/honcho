@@ -15,23 +15,6 @@ from src.deriver.utils import get_work_unit_key
 
 
 @pytest.fixture
-def mock_deriver_process(monkeypatch: pytest.MonkeyPatch) -> Callable[..., Any]:
-    """Mock the deriver process_message method to avoid actual LLM calls"""
-    from src.deriver.deriver import Deriver
-
-    async def mock_process_message(
-        _self: Any, _task_type: str, _payload: dict[str, Any]
-    ) -> None:
-        # Simulate processing without making actual LLM calls
-        pass
-
-    monkeypatch.setattr(Deriver, "process_message", mock_process_message)
-
-    # Return the mock for further configuration if needed
-    return mock_process_message
-
-
-@pytest.fixture
 def mock_critical_analysis_call() -> Generator[Callable[..., Any], None, None]:
     """Mock the critical analysis call to avoid actual LLM calls"""
 

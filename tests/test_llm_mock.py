@@ -17,7 +17,7 @@ async def test_generic_honcho_llm_call_mock():
     result = await critical_analysis_call(
         peer_card="test_peer_card",
         message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-        context="test context",
+        working_representation="test working representation",
         history="test history",
         new_turn="test new turn",
     )

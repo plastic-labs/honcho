@@ -1,10 +1,7 @@
-from typing import Any
-
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.deriver.consumer import process_item
 from src.deriver.queue_manager import QueueManager
 
 
@@ -94,22 +91,6 @@ class TestQueueProcessing:
 
         # This test ensures the cleanup logic doesn't break, though we don't have stale entries yet
         assert isinstance(work_units, list)
-
-    async def test_process_item_with_mocked_deriver(
-        self,
-        mock_deriver_process: Any,  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
-        sample_queue_items: list[models.QueueItem],
-    ):
-        """Test that process_item works with mocked deriver"""
-        # Take a sample queue item and process it
-        queue_item = sample_queue_items[0]
-
-        # This should not raise an exception since the deriver is mocked
-        await process_item(queue_item.task_type, queue_item.payload)
-
-        # The mock should have been called
-        # Note: We can't easily verify this since we're mocking the class method directly
-        # In a real test, we might want to mock at a different level
 
     async def test_work_unit_key_format(
         self, sample_session_with_peers: tuple[models.Session, list[models.Peer]]
