@@ -18,8 +18,10 @@ from .peer import (
 )
 from .representation import (
     construct_collection_name,
+    get_peer_card,
     get_working_representation,
     get_working_representation_data,
+    set_peer_card,
     set_working_representation,
 )
 from .session import (
@@ -66,12 +68,13 @@ __all__ = [
     "get_peers",
     "update_peer",
     "get_sessions_for_peer",
-    # Search
-    "representation",
+    # Representation
+    "construct_collection_name",
+    "get_peer_card",
     "get_working_representation",
     "get_working_representation_data",
+    "set_peer_card",
     "set_working_representation",
-    "construct_collection_name",
     # Session
     "get_sessions",
     "get_or_create_session",

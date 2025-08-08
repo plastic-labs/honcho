@@ -194,6 +194,12 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
+    PEER_CARD_PROVIDER: Providers = "google"
+    PEER_CARD_MODEL: str = "gemini-2.5-flash"
+    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[int, Field(default=500, gt=100, le=5000)] = (
+        500
+    )
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore

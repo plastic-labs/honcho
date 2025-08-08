@@ -298,6 +298,9 @@ def honcho_llm_call(
                 }
             if max_tokens:
                 call_params["max_tokens"] = max_tokens
+        elif resolved_provider == "openai":
+            if model and "gpt-5" in model:
+                call_params["max_completion_tokens"] = max_tokens
         else:
             # Other providers just use max_tokens
             if max_tokens:

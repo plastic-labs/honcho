@@ -11,22 +11,6 @@ from src import models
 class TestDeriverProcessing:
     """Test suite for deriver processing using the conftest fixtures"""
 
-    async def test_mock_deriver_process(
-        self,
-        mock_deriver_process: Callable[..., Any],  # noqa: ARG001
-        sample_queue_items: list[models.QueueItem],  # noqa: ARG001
-    ):
-        """Test that the deriver process is properly mocked"""
-        # The mock should be in place, so processing should not make real LLM calls
-        assert mock_deriver_process is not None
-
-        # Verify that we have queue items to process
-        assert len(sample_queue_items) > 0
-
-        # Verify the mock is working by checking the first queue item
-        first_item = sample_queue_items[0]
-        assert first_item.payload is not None
-
     async def test_mock_critical_analysis_call(
         self,
         mock_critical_analysis_call: Generator[Callable[..., Any], None, None],

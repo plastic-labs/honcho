@@ -4,9 +4,40 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models
+from src import models, schemas
+from src.crud.peer import get_peer
 
 logger = getLogger(__name__)
+
+
+async def get_peer_card(
+    db: AsyncSession, workspace_name: str, peer_name: str
+) -> str | None:
+    """
+    Get peer card for a peer.
+    """
+    peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+    return peer.internal_metadata.get("peer_card", None)
+
+
+async def set_peer_card(
+    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: str | None
+) -> None:
+    """
+    Set peer card for a peer.
+    """
+    stmt = (
+        update(models.Peer)
+        .where(models.Peer.workspace_name == workspace_name)
+        .where(models.Peer.name == peer_name)
+        .values(
+            internal_metadata=models.Peer.internal_metadata.op("||")(
+                {"peer_card": peer_card}
+            )
+        )
+    )
+    await db.execute(stmt)
+    await db.commit()
 
 
 async def get_working_representation(

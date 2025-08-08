@@ -42,11 +42,6 @@ class WebhookPayload(BasePayload):
     data: dict[str, Any]
 
 
-# Union type for all possible queue payloads
-DeriverQueuePayload = RepresentationPayload | SummaryPayload
-QueuePayload = DeriverQueuePayload | WebhookPayload
-
-
 def create_webhook_payload(
     workspace_name: str,
     event_type: str,
