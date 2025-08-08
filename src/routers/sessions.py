@@ -388,56 +388,13 @@ async def get_session_context(
     """
     token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
 
-    summary_content = ""
-    messages_tokens = token_limit
-    messages_start_id = 0
-
-    if summary:
-        summary_tokens_limit = token_limit * 0.4
-
-        latest_short_summary, latest_long_summary = await summarizer.get_both_summaries(
-            db,
-            workspace_name=workspace_id,
-            session_name=session_id,
-        )
-
-        long_len = latest_long_summary["token_count"] if latest_long_summary else 0
-        short_len = latest_short_summary["token_count"] if latest_short_summary else 0
-
-        # The goal is to return the longest summary that fits within the token limit
-        # Sometimes (rarely) the short summary can be longer than the long summary,
-        # so we need to check for that and return the longer one.
-
-        if (
-            latest_long_summary
-            and long_len <= summary_tokens_limit
-            and long_len > short_len
-        ):
-            summary_content = latest_long_summary["content"]
-            messages_tokens = token_limit - latest_long_summary["token_count"]
-            messages_start_id = latest_long_summary["message_id"]
-        elif (
-            latest_short_summary and short_len <= summary_tokens_limit and short_len > 0
-        ):
-            summary_content = latest_short_summary["content"]
-            messages_tokens = token_limit - latest_short_summary["token_count"]
-            messages_start_id = latest_short_summary["message_id"]
-        else:
-            logger.info(
-                "No summary available for get_context call with token limit %s, returning empty string. long_summary_len: %s, short_summary_len: %s",
-                token_limit,
-                long_len,
-                short_len,
-            )
-            summary_content = ""
-
-    # Get the recent messages after summary to return verbatim
-    messages = await crud.get_messages_id_range(
+    # Use the shared get_session_context function from summarizer
+    summary_content, messages = await summarizer.get_session_context(
         db,
         workspace_name=workspace_id,
         session_name=session_id,
-        start_id=messages_start_id,
-        token_limit=messages_tokens,
+        token_limit=token_limit,
+        include_summary=summary,
     )
 
     return schemas.SessionContext(

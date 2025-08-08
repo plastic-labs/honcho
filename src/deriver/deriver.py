@@ -169,12 +169,14 @@ class Deriver:
         # created_at is now always a datetime object from Pydantic validation
         message_dt_obj = created_at
 
-        formatted_history = await summarizer.get_summarized_history(
+        # Use get_session_context_formatted with configurable token limit
+        formatted_history = await summarizer.get_session_context_formatted(
             db,
             workspace_name,
             session_name,
+            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
             cutoff=message_id,
-            summary_type=summarizer.SummaryType.SHORT,
+            include_summary=True,
         )
 
         # instantiate embedding store from collection

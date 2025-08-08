@@ -45,6 +45,8 @@ __all__ = [
     "get_summary",
     "get_both_summaries",
     "get_summarized_history",
+    "get_session_context",
+    "get_session_context_formatted",
     "SummaryType",
     "Summary",
 ]
@@ -552,6 +554,119 @@ async def get_both_summaries(
 
     summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
     return summaries.get(SummaryType.SHORT.value), summaries.get(SummaryType.LONG.value)
+
+
+async def get_session_context(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    token_limit: int,
+    cutoff: int | None = None,
+    include_summary: bool = True,
+) -> tuple[str, list[models.Message]]:
+    """
+    Get session context similar to the API endpoint but for internal use.
+
+    Args:
+        db: Database session
+        workspace_name: The workspace name
+        session_name: The session name
+        token_limit: Maximum tokens for the context
+        cutoff: Optional message ID to stop at (exclusive)
+        include_summary: Whether to include summary if available
+
+    Returns:
+        Tuple of (summary_content, messages) where summary_content is the summary text (or empty string)
+        and messages is the list of message objects
+    """
+    summary_content = ""
+    messages_tokens = token_limit
+    messages_start_id = 0
+
+    if include_summary:
+        # Allocate 40% of tokens to summary, 60% to messages
+        summary_tokens_limit = token_limit * 0.4
+
+        latest_short_summary, latest_long_summary = await get_both_summaries(
+            db, workspace_name, session_name
+        )
+
+        long_len = latest_long_summary["token_count"] if latest_long_summary else 0
+        short_len = latest_short_summary["token_count"] if latest_short_summary else 0
+
+        # Return the longest summary that fits within the token limit
+        if (
+            latest_long_summary
+            and long_len <= summary_tokens_limit
+            and long_len > short_len
+        ):
+            summary_content = latest_long_summary["content"]
+            messages_tokens = token_limit - latest_long_summary["token_count"]
+            messages_start_id = latest_long_summary["message_id"]
+        elif (
+            latest_short_summary and short_len <= summary_tokens_limit and short_len > 0
+        ):
+            summary_content = latest_short_summary["content"]
+            messages_tokens = token_limit - latest_short_summary["token_count"]
+            messages_start_id = latest_short_summary["message_id"]
+        else:
+            logger.warning(
+                "No summary available for get_context call with token limit %s, returning empty string. long_summary_len: %s, short_summary_len: %s",
+                token_limit,
+                long_len,
+                short_len,
+            )
+
+    # Get recent messages after summary
+    messages = await crud.get_messages_id_range(
+        db,
+        workspace_name,
+        session_name,
+        start_id=messages_start_id,
+        end_id=cutoff,
+        token_limit=messages_tokens,
+    )
+
+    return summary_content, messages
+
+
+async def get_session_context_formatted(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    token_limit: int,
+    cutoff: int | None = None,
+    include_summary: bool = True,
+) -> str:
+    """
+    Get formatted session context as a string for internal use (e.g., deriver).
+
+    This is a convenience wrapper around get_session_context that formats
+    the output as a string.
+    """
+    summary_content, messages = await get_session_context(
+        db, workspace_name, session_name, token_limit, cutoff, include_summary
+    )
+
+    # Format the messages
+    messages_text = _format_messages(messages)
+
+    if summary_content and messages_text:
+        return f"""<summary>
+{summary_content}
+</summary>
+
+<recent_messages>
+{messages_text}
+</recent_messages>"""
+    elif summary_content:
+        return f"""<summary>
+{summary_content}
+</summary>"""
+    elif messages_text:
+        return messages_text
+    else:
+        return ""
 
 
 def _format_messages(messages: list[models.Message]) -> str:
