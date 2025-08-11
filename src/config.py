@@ -194,6 +194,11 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
+    # Context token limit for get_context method
+    CONTEXT_TOKEN_LIMIT: Annotated[int, Field(default=30_000, gt=1000, le=100_000)] = (
+        30_000
+    )
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
