@@ -13,6 +13,8 @@ from typing import (
 # Some versions of the OpenAI SDK do not expose ChatCompletionMessageToolCall
 # at openai.types.chat, but some integrations import it from there at runtime.
 # We defensively define it if missing to avoid import-time failures.
+#
+# We can get rid of this by getting rid of mirascope...
 from openai.types import chat as _openai_chat_types  # type: ignore
 
 if not hasattr(_openai_chat_types, "ChatCompletionMessageToolCall"):

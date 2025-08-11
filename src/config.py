@@ -196,6 +196,7 @@ class DeriverSettings(HonchoSettings):
 
     PEER_CARD_PROVIDER: Providers = "openai"
     PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
+    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
     PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
         int, Field(default=2000, gt=1000, le=10_000)
     ] = 2000
