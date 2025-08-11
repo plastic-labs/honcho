@@ -110,12 +110,14 @@ async def process_representation_task(
 
     logger.debug("Starting insight extraction for user message: %s", payload.message_id)
 
-    formatted_history = await summarizer.get_summarized_history(
+    # Use get_session_context_formatted with configurable token limit
+    formatted_history = await summarizer.get_session_context_formatted(
         db,
-        payload.workspace_name,
-        payload.session_name,
-        cutoff=payload.message_id,
-        summary_type=summarizer.SummaryType.SHORT,
+        workspace_name,
+        session_name,
+        token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
+        cutoff=message_id,
+        include_summary=True,
     )
 
     # instantiate embedding store from collection
@@ -126,6 +128,7 @@ async def process_representation_task(
         if payload.sender_name != payload.target_name
         else "global_representation"
     )
+    
     try:
         collection = await crud.get_or_create_collection(
             db,

@@ -199,6 +199,11 @@ class DeriverSettings(HonchoSettings):
     PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
         int, Field(default=2000, gt=1000, le=10_000)
     ] = 2000
+      
+    # Context token limit for get_context method
+    CONTEXT_TOKEN_LIMIT: Annotated[int, Field(default=30_000, gt=1000, le=100_000)] = (
+        30_000
+    )
 
 
 class DialecticSettings(HonchoSettings):
