@@ -36,6 +36,9 @@ async def set_peer_card(
 ) -> None:
     """
     Set peer card for a peer.
+
+    Raises:
+        ResourceNotFoundException: If the peer does not exist
     """
     stmt = (
         update(models.Peer)
@@ -47,7 +50,11 @@ async def set_peer_card(
             )
         )
     )
-    await db.execute(stmt)
+    result = await db.execute(stmt)
+    if result.rowcount == 0:
+        raise exceptions.ResourceNotFoundException(
+            f"Peer {peer_name} not found in workspace {workspace_name}"
+        )
     await db.commit()
 
 

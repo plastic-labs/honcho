@@ -45,7 +45,6 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await process_webhook(validated)
         logger.debug("Finished processing webhook %s", validated.event_type)
-        return None
 
     if settings.LANGFUSE_PUBLIC_KEY:
         langfuse_context.update_current_trace(

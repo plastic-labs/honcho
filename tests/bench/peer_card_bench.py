@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run
 """
 Peer Card Benchmark
 

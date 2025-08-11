@@ -354,7 +354,9 @@ class CertaintyReasoner:
                     ],
                 )
             except (json.JSONDecodeError, KeyError, TypeError) as e:
-                logger.warning(f"Failed to parse string response as JSON: {e}")
+                if settings.SENTRY.ENABLED:
+                    sentry_sdk.capture_exception(e)
+                logger.warning("Failed to parse string response as JSON: %s", e)
                 new_insights = ReasoningResponse(explicit=[], deductive=[])
         else:
             # If response is already a ReasoningResponse object
@@ -373,7 +375,7 @@ class CertaintyReasoner:
             if thinking is None:
                 logger.debug("No thinking content found in response")
         except (AttributeError, TypeError) as e:
-            logger.warning(f"Error accessing thinking content: {e}, setting to None")
+            logger.warning("Error accessing thinking content: %s, setting to None", e)
             thinking = None
 
         response = ReasoningResponseWithThinking(
@@ -547,12 +549,14 @@ class CertaintyReasoner:
             if NO_CHANGES_RESPONSE in new_peer_card or new_peer_card == "":
                 logger.info("No changes to peer card")
                 return
-            logger.info(f"New peer card: {new_peer_card}")
+            logger.info("New peer card: %s", new_peer_card)
             await crud.set_peer_card(
                 db, self.ctx.workspace_name, self.ctx.sender_name, new_peer_card
             )
         except Exception as e:
-            logger.error(f"Error updating peer card! Skipping... {e}")
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_exception(e)
+            logger.error("Error updating peer card! Skipping... %s", e)
 
 
 def observation_context_to_reasoning_response(
@@ -637,5 +641,8 @@ async def save_working_representation_to_peer(
     await db.execute(stmt)
     await db.commit()
     logger.info(
-        f"Saved working representation to session peer {payload.session_name} - {payload.target_name} with key {metadata_key}"
+        "Saved working representation to session peer %s - %s with key %s",
+        payload.session_name,
+        payload.target_name,
+        metadata_key,
     )

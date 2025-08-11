@@ -26,6 +26,8 @@ def dialectic_prompt(
     Returns:
         Formatted prompt string for the dialectic model
     """
+
+    # NOTE: currently we will print "None" if the card(s) don't exist yet. This might be okay as is.
     if target_name:
         query_target = f"""The query is about user {peer_name}'s understanding of {target_name}.
 
@@ -35,7 +37,7 @@ The user's known biographical information:
 The target's known biographical information:
 {target_peer_card}
 
-If the users's name or nickname is known, exclusively refer to them by that name.
+If the user's name or nickname is known, exclusively refer to them by that name.
 If the target's name or nickname is known, exclusively refer to them by that name.
 """
     else:
@@ -44,7 +46,7 @@ If the target's name or nickname is known, exclusively refer to them by that nam
 The user's known biographical information:
 {peer_card}
 
-If the users's name or nickname is known, exclusively refer to them by that name.
+If the user's name or nickname is known, exclusively refer to them by that name.
 """
 
     return c(
