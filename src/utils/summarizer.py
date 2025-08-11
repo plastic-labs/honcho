@@ -561,6 +561,7 @@ async def get_session_context(
     workspace_name: str,
     session_name: str,
     token_limit: int,
+    *,
     cutoff: int | None = None,
     include_summary: bool = True,
 ) -> tuple[str, list[models.Message]]:
@@ -585,7 +586,7 @@ async def get_session_context(
 
     if include_summary:
         # Allocate 40% of tokens to summary, 60% to messages
-        summary_tokens_limit = token_limit * 0.4
+        summary_tokens_limit = int(token_limit * 0.4)
 
         latest_short_summary, latest_long_summary = await get_both_summaries(
             db, workspace_name, session_name
@@ -635,6 +636,7 @@ async def get_session_context_formatted(
     workspace_name: str,
     session_name: str,
     token_limit: int,
+    *,
     cutoff: int | None = None,
     include_summary: bool = True,
 ) -> str:
@@ -645,7 +647,12 @@ async def get_session_context_formatted(
     the output as a string.
     """
     summary_content, messages = await get_session_context(
-        db, workspace_name, session_name, token_limit, cutoff, include_summary
+        db,
+        workspace_name,
+        session_name,
+        token_limit,
+        cutoff=cutoff,
+        include_summary=include_summary,
     )
 
     # Format the messages
