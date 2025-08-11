@@ -20,15 +20,21 @@ import argparse
 import asyncio
 import json
 import os
+import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, cast
 
 from anthropic import AsyncAnthropic
 
 from src.config import settings
-from src.deriver.prompts import peer_card_prompt
+from src.deriver.prompts import NO_CHANGES_RESPONSE, peer_card_prompt
 from src.utils.clients import honcho_llm_call
+
+COLOR_GREEN = "\033[32m"
+COLOR_RED = "\033[31m"
+COLOR_RESET = "\033[0m"
 
 
 @dataclass(frozen=True)
@@ -41,96 +47,60 @@ class Candidate:
 
 @dataclass
 class Case:
-    """Represents a single benchmark case with expectations for grading."""
+    """Represents a single benchmark case with expectations for grading.
+
+    Attributes:
+        name: Human-friendly identifier for the case.
+        old_peer_card: Existing card text to update, or None to create fresh.
+        new_observations: New input observations that may change the card.
+        expected_facts: Facts that must be semantically present in the result.
+        forbidden_facts: Facts that must NOT be present in the result.
+    """
 
     name: str
     old_peer_card: str | None
     new_observations: list[str]
     expected_facts: list[str]
+    forbidden_facts: list[str]
 
 
-def build_cases() -> list[Case]:
-    """Return a suite of diverse cases to evaluate peer card behavior."""
+def load_case_file(path: Path) -> Case:
+    """Load a single peer-card test case from a JSON file.
 
-    return [
-        Case(
-            name="create_basic_card",
-            old_peer_card=None,
-            new_observations=[
-                "I'm Alice, 29 years old.",
-                "I live in San Francisco.",
-                "I'm a product manager.",
-                "I love climbing and cooking.",
-            ],
-            expected_facts=[
-                "Name: Alice",
-                "Age: 29",
-                "Location: San Francisco",
-                "Occupation: Product Manager",
-                "Interests: climbing, cooking",
-            ],
-        ),
-        Case(
-            name="update_location",
-            old_peer_card="""Name: Bob\nAge: 24\nLocation: New York\nOccupation: Software Engineer\nInterests: Programming, hiking""",
-            new_observations=["I just moved to Boston for work."],
-            expected_facts=["Location: Boston"],
-        ),
-        Case(
-            name="update_age",
-            old_peer_card="""Name: Carol\nAge: 34\nLocation: Seattle\nOccupation: Data Scientist""",
-            new_observations=["I turned 35 last week!"],
-            expected_facts=["Age: 35"],
-        ),
-        Case(
-            name="add_nickname",
-            old_peer_card="""Name: Daniel\nLocation: Austin\nOccupation: Graphic Designer""",
-            new_observations=["Friends call me Dan the Man."],
-            expected_facts=["Name: Daniel", "Nickname: Dan the Man"],
-        ),
-        Case(
-            name="add_dislike",
-            old_peer_card="""Name: Eve\nLocation: London\nOccupation: Teacher""",
-            new_observations=["I absolutely hate cilantro."],
-            expected_facts=["Dislikes: cilantro"],
-        ),
-        Case(
-            name="no_new_key_info",
-            old_peer_card="""Name: Frank\nAge: 41\nLocation: Chicago\nOccupation: Sales Manager""",
-            new_observations=["Nice weather today. How are you?"],
-            expected_facts=[
-                "Name: Frank",
-                "Age: 41",
-                "Location: Chicago",
-                "Occupation: Sales Manager",
-            ],
-        ),
-        Case(
-            name="multiple_changes",
-            old_peer_card="""Name: Grace\nAge: 30\nLocation: Paris\nOccupation: Artist\nInterests: Painting""",
-            new_observations=[
-                "I'm 31 now.",
-                "I relocated to Berlin.",
-                "I started biking a lot.",
-            ],
-            expected_facts=[
-                "Age: 31",
-                "Location: Berlin",
-                "Interests: biking",
-            ],
-        ),
-        Case(
-            name="limit_signal",
-            old_peer_card=None,
-            new_observations=[
-                "I'm Henry.",
-                "I like chess.",
-                "I like chess a lot.",
-                "People call me Hank.",
-            ],
-            expected_facts=["Name: Henry", "Nickname: Hank", "Interests: chess"],
-        ),
-    ]
+    The JSON schema must include: name, old_peer_card (nullable), new_observations (list[str]), expected_facts (list[str]).
+    """
+
+    with path.open() as f:
+        data = json.load(f)
+
+    return Case(
+        name=str(data["name"]),
+        old_peer_card=data.get("old_peer_card"),
+        new_observations=list(data.get("new_observations", [])),
+        expected_facts=list(data.get("expected_facts", [])),
+        forbidden_facts=list(data.get("forbidden_facts", [])),
+    )
+
+
+def load_cases(tests_dir: Path, test_name: str | None) -> list[Case]:
+    """Load all cases from a directory, or a specific case by filename.
+
+    Args:
+        tests_dir: Directory containing JSON case files.
+        test_name: Optional filename to load a single case (e.g., "create_basic_card.json").
+
+    Returns:
+        List of loaded Case objects.
+    """
+
+    if test_name:
+        file_path = tests_dir / test_name
+        if not file_path.exists():
+            raise FileNotFoundError(f"Test file {file_path} does not exist")
+        return [load_case_file(file_path)]
+
+    files = sorted(p for p in tests_dir.glob("*.json") if p.is_file())
+    return [load_case_file(p) for p in files]
 
 
 def parse_candidates(values: list[str]) -> list[Candidate]:
@@ -177,9 +147,9 @@ def build_peer_card_caller(
         track_name="Peer Card Call",
         max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
         or settings.LLM.DEFAULT_MAX_TOKENS,
-        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
-        if settings.DERIVER.PROVIDER == "anthropic"
-        else None,
+        thinking_budget_tokens=None,
+        reasoning_effort="minimal",
+        verbosity="low",
         enable_retry=True,
         retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
     )
@@ -193,6 +163,84 @@ def build_peer_card_caller(
     return call  # type: ignore[return-value]
 
 
+def _extract_json_from_text(text: str) -> dict[str, Any]:
+    """Extract a JSON object from potentially noisy LLM output.
+
+    Strategy in order:
+    - Try to parse the whole text as JSON
+    - Try to parse contents of any fenced code blocks (``` or ```json)
+    - Try the substring from the first '{' to the last '}'
+    - Scan for balanced-brace substrings and try them in order
+
+    Raises ValueError when no valid JSON object can be found.
+    """
+
+    stripped: str = text.strip()
+
+    candidates: list[str] = []
+
+    # 1) Fenced code blocks
+    if "```" in stripped:
+        idx: int = 0
+        while True:
+            start = stripped.find("```", idx)
+            if start == -1:
+                break
+            lang_line_end = stripped.find("\n", start + 3)
+            if lang_line_end == -1:
+                break
+            end = stripped.find("```", lang_line_end + 1)
+            if end == -1:
+                break
+            block = stripped[lang_line_end + 1 : end].strip()
+            if block:
+                candidates.append(block)
+            idx = end + 3
+
+    # 2) From first '{' to last '}'
+    first_brace = stripped.find("{")
+    last_brace = stripped.rfind("}")
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        candidates.append(stripped[first_brace : last_brace + 1])
+
+    # 3) Balanced-brace scan
+    depth = 0
+    start_idx = -1
+    for i, ch in enumerate(stripped):
+        if ch == "{":
+            if depth == 0:
+                start_idx = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start_idx != -1:
+                    candidates.append(stripped[start_idx : i + 1])
+
+    # Try all candidates, prefer ones containing the expected keys
+    preferred_keys = {"passed", "reasoning"}
+    fallback_obj: dict[str, Any] | None = None
+    for cand in candidates:
+        try:
+            obj_candidate: object = json.loads(cand)
+            if isinstance(obj_candidate, dict):
+                casted_obj: dict[str, Any] = {
+                    str(k): v  # pyright: ignore
+                    for k, v in obj_candidate.items()  # pyright: ignore
+                }
+                if preferred_keys.issubset(set(casted_obj.keys())):
+                    return casted_obj
+                if fallback_obj is None:
+                    fallback_obj = casted_obj
+        except Exception:
+            continue
+
+    if fallback_obj is not None:
+        return fallback_obj
+
+    raise ValueError("Could not extract JSON from judge response")
+
+
 async def judge_response(
     anthropic: AsyncAnthropic,
     case: Case,
@@ -204,21 +252,28 @@ async def judge_response(
     """
 
     system_prompt = (
-        "You are an expert evaluator. Determine if a biographical card contains the expected facts. "
-        "Allow flexible phrasing and synonyms. A fact is present if its semantic content is clearly stated. "
-        "Only fail if a core expected fact is missing or contradicted. Always return JSON: "
+        "You are an expert evaluator. Determine if a biographical card satisfies BOTH: "
+        "(1) it contains all expected facts (semantic match allowed) and "
+        "(2) it does NOT contain any forbidden facts (semantic match). "
+        "Allow flexible phrasing and synonyms for matching. A fact is present if its semantic content is clearly stated. "
+        "Fail if any expected fact is missing or any forbidden fact appears. Always return JSON: "
         '{"passed": boolean, "reasoning": string}'
     )
     expected = "\n".join(f"- {f}" for f in case.expected_facts)
+    forbidden = "\n".join(f"- {f}" for f in case.forbidden_facts)
     user_prompt = (
-        f"Case: {case.name}\n\nExpected facts (semantic):\n{expected}\n\n"
-        f"Biographical card:\n{actual_card}\n\nEvaluate strictly by semantic equivalence."
+        f"Case: {case.name}\n\n"
+        f"Expected facts (must appear, semantic):\n{expected or '- (none)'}\n\n"
+        f"Forbidden facts (must NOT appear, semantic):\n{forbidden or '- (none)'}\n\n"
+        f"Biographical card to evaluate:\n{actual_card}\n\n"
+        f"Evaluation criteria: PASS only if all expected facts are present AND all forbidden facts are absent."
     )
 
+    judgment_text: str | None = None
     try:
         response = await anthropic.messages.create(
             model="claude-3-7-sonnet-20250219",
-            max_tokens=300,
+            max_tokens=1000,
             temperature=0.0,
             system=system_prompt,
             messages=[{"role": "user", "content": user_prompt}],
@@ -227,38 +282,30 @@ async def judge_response(
         judgment_text = getattr(content_block, "text", None)
         if not judgment_text:
             raise ValueError("Empty judge response")
-        if "```json" in judgment_text:
-            start = judgment_text.find("```json") + 7
-            end = judgment_text.find("```", start)
-            judgment_text = judgment_text[start:end].strip()
-        elif "```" in judgment_text:
-            start = judgment_text.find("```") + 3
-            end = judgment_text.find("```", start)
-            judgment_text = judgment_text[start:end].strip()
-        return json.loads(judgment_text)
-    except Exception:
-        ok = all(f.lower() in actual_card.lower() for f in case.expected_facts)
-        return {
-            "passed": ok,
-            "reasoning": "Fallback string check used by judge.",
-        }
+        return _extract_json_from_text(judgment_text)
+    except Exception as e:
+        print(judgment_text)
+        raise ValueError(f"!!!Error judging response for case {case.name}: {e}") from e
 
 
-async def run_benchmark(candidates: list[Candidate]) -> int:
-    """Execute all cases against all candidates and print a concise report. Returns non-zero on failures."""
+async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
+    """Execute cases against candidates and print a concise report.
+
+    Returns non-zero when any case fails for any candidate.
+    """
 
     anthropic_key = os.getenv("LLM_ANTHROPIC_API_KEY")
     if not anthropic_key:
         raise ValueError("LLM_ANTHROPIC_API_KEY is required for grading")
     anthropic = AsyncAnthropic(api_key=anthropic_key)
 
-    cases = build_cases()
     any_fail = False
 
     print(f"Running {len(cases)} cases across {len(candidates)} candidates\n")
 
     for candidate in candidates:
         print(f"=== Candidate: {candidate.provider}:{candidate.model} ===")
+        candidate_start_time = time.perf_counter()
         try:
             caller = build_peer_card_caller(candidate)
         except Exception as e:
@@ -274,12 +321,15 @@ async def run_benchmark(candidates: list[Candidate]) -> int:
         ) -> tuple[Case, dict[str, Any]]:
             card: object = await _caller(case.old_peer_card, case.new_observations)
             response = str(card)
+            if NO_CHANGES_RESPONSE in response or response == "":
+                response = case.old_peer_card or ""
             judgment = await judge_response(anthropic, case, response)
             return case, {"card": response, "judgment": judgment}
 
         results = await asyncio.gather(
             *(run_case(c) for c in cases), return_exceptions=True
         )
+        passed_count: int = 0
         for res in results:
             if isinstance(res, BaseException):
                 print(f"  ERROR running case: {res}")
@@ -287,16 +337,34 @@ async def run_benchmark(candidates: list[Candidate]) -> int:
                 continue
             case, payload = res
             judgment = payload["judgment"]
-            status = "PASS" if judgment.get("passed") else "FAIL"
-            print(f"  {case.name:24} {status:4} - {judgment.get('reasoning', '')}")
-            if not judgment.get("passed"):
+            passed = bool(judgment.get("passed"))
+            status_colored = (
+                f"{COLOR_GREEN}PASS{COLOR_RESET}"
+                if passed
+                else f"{COLOR_RED}FAIL{COLOR_RESET}"
+            )
+            if passed:
+                print(f"  {case.name:24} {status_colored}")
+                passed_count += 1
+            else:
+                print(
+                    f"  {case.name:24} {status_colored} - {judgment.get('reasoning', '')}"
+                )
                 any_fail = True
                 print("    expected:")
                 for f in case.expected_facts:
                     print(f"      - {f}")
+                if case.forbidden_facts:
+                    print("    forbidden (must NOT appear):")
+                    for f in case.forbidden_facts:
+                        print(f"      - {f}")
                 print("    got:")
-                print("      " + payload["card"])
-        print()
+                [print("      " + line) for line in payload["card"].splitlines()]
+        total_count: int = len(cases)
+        percentage: float = (passed_count / total_count * 100.0) if total_count else 0.0
+        print(f"  Summary: {passed_count}/{total_count} passed ({percentage:.1f}%)")
+        elapsed = time.perf_counter() - candidate_start_time
+        print(f"  Time: {elapsed:.2f}s\n")
 
     print("Done.")
     return 1 if any_fail else 0
@@ -312,7 +380,24 @@ def main() -> int:
         "--candidates",
         action="append",
         default=None,
-        help="Provider:model pairs. Repeat or comma-separate. Default: anthropic:claude-3-7-sonnet-20250219",
+        help=(
+            "Provider:model pairs. Repeat or comma-separate. "
+            "Default: anthropic:claude-3-7-sonnet-20250219"
+        ),
+    )
+    parser.add_argument(
+        "--tests-dir",
+        type=Path,
+        default=Path("tests/bench/peer_card_tests"),
+        help=(
+            "Directory containing JSON peer-card cases "
+            "(default: tests/bench/peer_card_tests)"
+        ),
+    )
+    parser.add_argument(
+        "--test",
+        type=str,
+        help="Run a specific test file by name (e.g., 'create_basic_card.json')",
     )
     args = parser.parse_args()
 
@@ -329,7 +414,14 @@ def main() -> int:
     candidates = parse_candidates(flat)
     candidates = deduplicate_preserve_order(candidates)
 
-    return asyncio.run(run_benchmark(candidates))
+    # Load cases from JSON files
+    if not args.tests_dir.exists():
+        raise SystemExit(f"Error: Tests directory {args.tests_dir} does not exist")
+    cases = load_cases(args.tests_dir, args.test)
+    if not cases:
+        raise SystemExit(f"Error: No JSON test cases found in {args.tests_dir}")
+
+    return asyncio.run(run_benchmark(candidates, cases))
 
 
 if __name__ == "__main__":

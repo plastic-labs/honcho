@@ -10,6 +10,8 @@ from inspect import cleandoc as c
 
 from mirascope import prompt_template
 
+NO_CHANGES_RESPONSE = "No changes"
+
 
 @prompt_template()
 def critical_analysis_prompt(
@@ -105,50 +107,46 @@ def peer_card_prompt(
 ) -> str:
     """
     Generate the peer card prompt for the deriver.
+    Currently optimized for GPT-5 mini/nano.
     """
     old_peer_card_section = (
         f"""
-The current user biographical card:
-<old_peer_card>
+Current user biographical card:
 {old_peer_card}
-</old_peer_card>
-"""
+    """
         if old_peer_card is not None
         else """
-The user does not have a card yet! Start by creating one if you have any key biographical information about the user. Do not include a title or header, only the facts.
-"""
+User does not have a card. Create one with any key facts—no titles, headers, only facts.
+    """
     )
     return c(
         f"""
-        You are an agent who creates a user's "biographical card" based on new observations. What is a biographical card? It's a concise summary of key biographical information about the user. Examples of facts to include are name, nickname(s), location, age, occupation, interests/hobbies, and likes/dislikes. This card will be ingested by AI agents to understand the user better.
+You are an agent that creates a concise "biographical card" based on new observations for a user. A biographical card summarizes essential information like name, nicknames, location, age, occupation, interests/hobbies, and likes/dislikes.
 
-        If a new observation states an explicit fact that contradicts the current user information, update the biographical card to reflect the new information. If the new observation is a new fact that is consistent with the current user information, add it to the biographical card. If the card already contains a similar fact, replace the old fact with the new one. You may only save **25** facts, so keep the most important ones. Do not include facts that are unknown -- only genuinely useful information should be saved on the card.
+The goal is to capture only the most important observations about the user. Value permanent properties over transient ones, and value concision over detail, preferring to omit details that are not essential to the user's identity. The card should give a broad overview of who the user is while not including details that are unlikely to be relevant in most settings.
 
-        EXAMPLE PEER CARDS:
+For example, "User is from Chicago" is worth inclusion. "User went to New Trier High School" is not.
+"User is a software engineer" is worth inclusion. "User wrote Python today" is not.
 
-        <example_peer_card_1>
-        Name: Bob
-        Age: 24
-        Location: New York
-        Occupation: Software Engineer
-        Interests: Programming, hiking, reading
-        </example_peer_card_1>
+Never infer or generalize traits from one-off behaviors. Never manipulate the text of an observation to make an action or behavior into a "permanent" trait.
 
-        <example_peer_card_2>
-        Name: Alice
-        Age: 47
-        Location: Paris
-        Occupation: Artist
-        Interests: Painting, biking, cooking
-        </example_peer_card_2>
+When a new observation contradicts an existing one, update it, favoring new information.
 
-        {old_peer_card_section}
+Example 1:
+Name: Bob
+Age: 24
+Location: New York
 
-        The new observations:
-        <new_observations>
-        {new_observations}
-        </new_observations>
+Example 2:
+Name: Alice
+Occupation: Artist
+Interests: Painting, biking, cooking
 
-        Create the new peer card. If there is no new key information, return the current peer card with no changes. Do not include XML tags in your response.
-        """
+{old_peer_card_section}
+
+New observations:
+{new_observations}
+
+Output only the updated peer card, no XML tags. If there's no new key info, return the string {NO_CHANGES_RESPONSE}.
+    """
     )

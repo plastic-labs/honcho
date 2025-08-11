@@ -194,11 +194,11 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    PEER_CARD_PROVIDER: Providers = "google"
-    PEER_CARD_MODEL: str = "gemini-2.5-flash"
-    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[int, Field(default=500, gt=100, le=5000)] = (
-        500
-    )
+    PEER_CARD_PROVIDER: Providers = "openai"
+    PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
+    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
+        int, Field(default=2000, gt=1000, le=10_000)
+    ] = 2000
 
 
 class DialecticSettings(HonchoSettings):

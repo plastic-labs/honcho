@@ -1,0 +1,10 @@
+{
+  "name": "add_dislike",
+  "old_peer_card": "Name: Eve\nLocation: London\nOccupation: Teacher",
+  "new_observations": [
+    "Eve dislikes cilantro."
+  ],
+  "expected_facts": [
+    "Dislikes: cilantro"
+  ]
+}

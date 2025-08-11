@@ -36,7 +36,7 @@ from src.utils.shared_models import (
     UnifiedObservation,
 )
 
-from .prompts import critical_analysis_prompt, peer_card_prompt
+from .prompts import NO_CHANGES_RESPONSE, critical_analysis_prompt, peer_card_prompt
 from .queue_payload import (
     RepresentationPayload,
 )
@@ -80,9 +80,9 @@ async def critical_analysis_call(
     track_name="Peer Card Call",
     max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
     or settings.LLM.DEFAULT_MAX_TOKENS,
-    thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
-    if settings.DERIVER.PROVIDER == "anthropic"
-    else None,
+    thinking_budget_tokens=None,
+    reasoning_effort="minimal",
+    verbosity="low",
     enable_retry=True,
     retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
 )
@@ -541,9 +541,9 @@ class CertaintyReasoner:
         try:
             response = await peer_card_call(old_peer_card, new_observations)
             new_peer_card = str(response)
-            if new_peer_card == "":
-                logger.error("PEER CARD AGENT RETURNED EMPTY STRING")
-                new_peer_card = old_peer_card
+            if NO_CHANGES_RESPONSE in new_peer_card or new_peer_card == "":
+                logger.info("No changes to peer card")
+                return
             logger.info(f"New peer card: {new_peer_card}")
             await crud.set_peer_card(
                 db, self.ctx.workspace_name, self.ctx.sender_name, new_peer_card

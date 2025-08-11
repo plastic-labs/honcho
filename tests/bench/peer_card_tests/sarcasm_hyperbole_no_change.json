@@ -1,0 +1,22 @@
+{
+  "name": "sarcasm_hyperbole_no_change",
+  "old_peer_card": "Name: Omar\nAge: 31\nLocation: Boston\nOccupation: Researcher\nInterests: soccer, cooking",
+  "new_observations": [
+    "The user says they died laughing at a meme.",
+    "The user joked that they are a million years old.",
+    "The user joked that they live in the office."
+  ],
+  "expected_facts": [
+    "Name: Omar",
+    "Age: 31",
+    "Location: Boston",
+    "Occupation: Researcher",
+    "Interests: soccer",
+    "Interests: cooking"
+  ],
+  "forbidden_facts": [
+    "Age: 1000000",
+    "Location: the office",
+    "Deceased: true"
+  ]
+}

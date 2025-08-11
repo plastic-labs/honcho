@@ -1,0 +1,10 @@
+{
+  "name": "update_location",
+  "old_peer_card": "Name: Bob\nAge: 24\nLocation: New York\nOccupation: Software Engineer\nInterests: Programming, hiking",
+  "new_observations": [
+    "Bob now lives in Boston."
+  ],
+  "expected_facts": [
+    "Location: Boston"
+  ]
+}

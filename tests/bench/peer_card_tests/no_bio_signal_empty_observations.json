@@ -1,0 +1,13 @@
+{
+  "name": "no_bio_signal_empty_observations",
+  "old_peer_card": "Name: Leo\nAge: 22\nLocation: Madrid\nOccupation: Student\nInterests: football, coding",
+  "new_observations": [],
+  "expected_facts": [
+    "Name: Leo",
+    "Age: 22",
+    "Location: Madrid",
+    "Occupation: Student",
+    "Interests: football",
+    "Interests: coding"
+  ]
+}
