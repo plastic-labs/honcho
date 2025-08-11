@@ -113,10 +113,10 @@ async def process_representation_task(
     # Use get_session_context_formatted with configurable token limit
     formatted_history = await summarizer.get_session_context_formatted(
         db,
-        workspace_name,
-        session_name,
+        payload.workspace_name,
+        payload.session_name,
         token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-        cutoff=message_id,
+        cutoff=payload.message_id,
         include_summary=True,
     )
 
@@ -128,7 +128,7 @@ async def process_representation_task(
         if payload.sender_name != payload.target_name
         else "global_representation"
     )
-    
+
     try:
         collection = await crud.get_or_create_collection(
             db,

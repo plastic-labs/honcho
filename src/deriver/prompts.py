@@ -130,6 +130,8 @@ For example, "User is from Chicago" is worth inclusion. "User went to New Trier 
 
 Never infer or generalize traits from one-off behaviors. Never manipulate the text of an observation to make an action or behavior into a "permanent" trait.
 
+**Never add a "notes" section or any other temporary information store.**
+
 When a new observation contradicts an existing one, update it, favoring new information.
 
 Example 1:

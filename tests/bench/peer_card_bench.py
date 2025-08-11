@@ -272,7 +272,7 @@ async def judge_response(
     judgment_text: str | None = None
     try:
         response = await anthropic.messages.create(
-            model="claude-3-7-sonnet-20250219",
+            model="claude-sonnet-4-20250514",
             max_tokens=1000,
             temperature=0.0,
             system=system_prompt,

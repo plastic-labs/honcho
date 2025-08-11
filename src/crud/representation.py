@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import models, schemas
+from src import exceptions, models, schemas
 from src.crud.peer import get_peer
 
 logger = getLogger(__name__)
@@ -14,10 +14,21 @@ async def get_peer_card(
     db: AsyncSession, workspace_name: str, peer_name: str
 ) -> str | None:
     """
-    Get peer card for a peer.
+    Get peer card from internal_metadata.
+
+    Args:
+        workspace_name: Name of the workspace
+        peer_name: Name of the peer
+
+    Returns:
+        Peer card for the peer
+        (None if the peer does not exist or if the peer card has not been created yet)
     """
-    peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
-    return peer.internal_metadata.get("peer_card", None)
+    try:
+        peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
+        return peer.internal_metadata.get("peer_card", None)
+    except exceptions.ResourceNotFoundException:
+        return None
 
 
 async def set_peer_card(

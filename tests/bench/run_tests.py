@@ -198,7 +198,7 @@ Evaluate whether the actual response contains the core correct information from 
 """
 
             response = await self.anthropic_client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-sonnet-4-20250514",
                 max_tokens=300,
                 temperature=0.0,
                 system=system_prompt,
