@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud
 from src.config import settings
+from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
@@ -126,7 +127,7 @@ async def process_representation_task(
             observer=payload.target_name, observed=payload.sender_name
         )
         if payload.sender_name != payload.target_name
-        else "global_representation"
+        else GLOBAL_REPRESENTATION_COLLECTION_NAME
     )
 
     try:
@@ -593,17 +594,6 @@ async def save_working_representation_to_peer(
     final_observations: ReasoningResponseWithThinking,
 ) -> None:
     """Save working representation to peer internal_metadata for dialectic access."""
-    from sqlalchemy import update
-
-    from src import models
-
-    # Determine metadata key based on observer/observed relationship
-    if payload.sender_name == payload.target_name:
-        metadata_key = "global_representation"
-    else:
-        metadata_key = crud.construct_collection_name(
-            observer=payload.target_name, observed=payload.sender_name
-        )
 
     # Convert ReasoningResponse to serializable dict
     final_obs_dict = {
@@ -624,25 +614,11 @@ async def save_working_representation_to_peer(
         "created_at": datetime.datetime.now().isoformat(),
     }
 
-    # if session_name is supplied, save working representation to session peer
-    stmt = (
-        update(models.SessionPeer)
-        .where(
-            models.SessionPeer.workspace_name == payload.workspace_name,
-            models.SessionPeer.session_name == payload.session_name,
-            models.SessionPeer.peer_name == payload.target_name,
-        )
-        .values(
-            internal_metadata=models.SessionPeer.internal_metadata.op("||")(
-                {metadata_key: working_rep_data}
-            )
-        )
-    )
-    await db.execute(stmt)
-    await db.commit()
-    logger.info(
-        "Saved working representation to session peer %s - %s with key %s",
-        payload.session_name,
+    await crud.set_working_representation(
+        db,
+        working_rep_data,
+        payload.workspace_name,
         payload.target_name,
-        metadata_key,
+        payload.sender_name,
+        payload.session_name,
     )

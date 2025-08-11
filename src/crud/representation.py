@@ -9,6 +9,12 @@ from src.crud.peer import get_peer
 
 logger = getLogger(__name__)
 
+GLOBAL_REPRESENTATION_COLLECTION_NAME = "global_representation"
+
+WORKING_REPRESENTATION_METADATA_KEY = "working_representation"
+# Remove in 2.3.0?
+WORKING_REPRESENTATION_LEGACY_METADATA_KEY = "global_representation"
+
 
 async def get_peer_card(
     db: AsyncSession, workspace_name: str, peer_name: str
@@ -63,7 +69,7 @@ async def get_working_representation(
     workspace_name: str,
     observer_name: str,
     observed_name: str,
-    session_name: str | None = None,
+    session_name: str,
 ) -> str:
     """
     Get working representation for observer/observed relationship.
@@ -72,8 +78,8 @@ async def get_working_representation(
         db: Database session
         workspace_name: Name of the workspace
         observer_name: Name of the peer doing the observing
-        observed_name: Name of the peer being observed (required for explicit global/local)
-        session_name: Optional session name (None for peer-level metadata)
+        observed_name: Name of the peer being observed
+        session_name: Name of the session
 
     Returns:
         Formatted working representation string
@@ -109,8 +115,8 @@ async def get_working_representation_data(
     db: AsyncSession,
     workspace_name: str,
     observer_name: str,
-    observed_name: str,  # now required
-    session_name: str | None = None,
+    observed_name: str,
+    session_name: str,
 ) -> dict[str, Any] | str | None:
     """
     Get raw working representation data from internal_metadata.
@@ -119,23 +125,17 @@ async def get_working_representation_data(
     """
     # Determine metadata key based on observer/observed relationship
     if observer_name == observed_name:
-        metadata_key = "global_representation"
+        metadata_key = WORKING_REPRESENTATION_METADATA_KEY
     else:
         metadata_key = construct_collection_name(
             observer=observer_name, observed=observed_name
         )
 
-    if session_name:
-        stmt = select(models.SessionPeer.internal_metadata).where(
-            models.SessionPeer.peer_name == observer_name,
-            models.SessionPeer.workspace_name == workspace_name,
-            models.SessionPeer.session_name == session_name,
-        )
-    else:
-        stmt = select(models.Peer.internal_metadata).where(
-            models.Peer.name == observer_name,
-            models.Peer.workspace_name == workspace_name,
-        )
+    stmt = select(models.SessionPeer.internal_metadata).where(
+        models.SessionPeer.peer_name == observer_name,
+        models.SessionPeer.workspace_name == workspace_name,
+        models.SessionPeer.session_name == session_name,
+    )
 
     result = await db.execute(stmt)
     peer_metadata = result.scalar_one_or_none()
@@ -147,28 +147,6 @@ async def get_working_representation_data(
     working_rep_data = peer_metadata.get(metadata_key)
     if working_rep_data:
         return working_rep_data
-
-    # Fallback logic for migration period
-    legacy_data = peer_metadata.get("latest_working_representation")
-    if legacy_data:
-        logger.debug(
-            "Using legacy key 'latest_working_representation' for %s->%s",
-            observer_name,
-            observed_name,
-        )
-        return legacy_data
-
-    # Final fallback to old user_representation key
-    USER_REPRESENTATION_METADATA_KEY = "user_representation"
-    user_rep_data = peer_metadata.get(USER_REPRESENTATION_METADATA_KEY)
-    if user_rep_data:
-        logger.debug(
-            "Using legacy key '%s' for %s->%s",
-            USER_REPRESENTATION_METADATA_KEY,
-            observer_name,
-            observed_name,
-        )
-        return user_rep_data
 
     return None
 
@@ -216,9 +194,9 @@ async def set_working_representation(
     db: AsyncSession,
     representation: str | dict[str, Any],
     workspace_name: str,
-    observer_name: str,  # renamed from peer_name
-    observed_name: str,  # now required - no default
-    session_name: str | None = None,
+    observer_name: str,
+    observed_name: str,
+    session_name: str,
 ) -> None:
     """
     Set working representation for observer/observed relationship.
@@ -233,48 +211,33 @@ async def set_working_representation(
     """
     # Determine metadata key based on observer/observed relationship
     if observer_name == observed_name:
-        metadata_key = "global_representation"
+        metadata_key = WORKING_REPRESENTATION_METADATA_KEY
     else:
         metadata_key = construct_collection_name(
             observer=observer_name, observed=observed_name
         )
 
-    if session_name:
-        # Session-level: save all types (global and local)
-        stmt = (
-            update(models.SessionPeer)
-            .where(models.SessionPeer.workspace_name == workspace_name)
-            .where(models.SessionPeer.peer_name == observer_name)
-            .where(models.SessionPeer.session_name == session_name)
-            .values(
-                internal_metadata=models.SessionPeer.internal_metadata.op("||")(
-                    {metadata_key: representation}
-                )
+    stmt = (
+        update(models.SessionPeer)
+        .where(models.SessionPeer.workspace_name == workspace_name)
+        .where(models.SessionPeer.peer_name == observer_name)
+        .where(models.SessionPeer.session_name == session_name)
+        .values(
+            internal_metadata=models.SessionPeer.internal_metadata.op("||")(
+                {metadata_key: representation}
             )
         )
-    else:
-        # Peer-level: only save global representations
-        if observer_name == observed_name:
-            stmt = (
-                update(models.Peer)
-                .where(models.Peer.workspace_name == workspace_name)
-                .where(models.Peer.name == observer_name)
-                .values(
-                    internal_metadata=models.Peer.internal_metadata.op("||")(
-                        {metadata_key: representation}
-                    )
-                )
-            )
-        else:
-            logger.error(
-                "Skipping peer-level local representation save (this should never happen!): observer=%s, observed=%s",
-                observer_name,
-                observed_name,
-            )
-            return
+    )
 
     await db.execute(stmt)
     await db.commit()
+
+    logger.info(
+        "Saved working representation to session peer %s - %s with key %s",
+        session_name,
+        observer_name,
+        metadata_key,
+    )
 
 
 def construct_collection_name(*, observer: str, observed: str) -> str:
