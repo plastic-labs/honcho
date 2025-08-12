@@ -13,7 +13,7 @@ from mirascope import prompt_template
 
 @prompt_template()
 def critical_analysis_prompt(
-    peer_card: str | None,
+    peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
     history: str,
@@ -32,11 +32,12 @@ def critical_analysis_prompt(
     Returns:
         Formatted prompt string for critical analysis
     """
+    # Format the peer card as a string with newlines
     peer_card_section = (
         f"""
 The user's known biographical information:
 <peer_card>
-{peer_card}
+{chr(10).join(peer_card)}
 </peer_card>
 """
         if peer_card is not None

@@ -159,7 +159,7 @@ def build_peer_card_caller(
             old_peer_card=old_peer_card, new_observations=new_observations
         )
 
-    return call  # type: ignore[return-value]
+    return call
 
 
 def _extract_json_from_text(text: str) -> dict[str, Any]:
@@ -260,11 +260,12 @@ async def judge_response(
     )
     expected = "\n".join(f"- {f}" for f in case.expected_facts)
     forbidden = "\n".join(f"- {f}" for f in case.forbidden_facts)
+    card_text = "\n".join(actual_card) if actual_card else "- (none)"
     user_prompt = (
         f"Case: {case.name}\n\n"
         f"Expected facts (must appear, semantic):\n{expected or '- (none)'}\n\n"
         f"Forbidden facts (must NOT appear, semantic):\n{forbidden or '- (none)'}\n\n"
-        f"Biographical card to evaluate:\n{actual_card or '- (none)'}\n\n"
+        f"Biographical card to evaluate:\n{card_text}\n\n"
         f"Evaluation criteria: PASS only if all expected facts are present AND all forbidden facts are absent."
     )
 

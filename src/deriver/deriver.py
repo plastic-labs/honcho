@@ -60,7 +60,7 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
     retry_attempts=3,
 )
 async def critical_analysis_call(
-    peer_card: str | None,
+    peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
     history: str,
@@ -130,27 +130,13 @@ async def process_representation_task(
         else "global_representation"
     )
 
-    try:
-        collection = await crud.get_or_create_collection(
-            db,
-            payload.workspace_name,
-            collection_name,
-            payload.sender_name,
-        )
-    except Exception as e:
-        # Handle race condition from concurrent processing
-        if "duplicate key" in str(e).lower():
-            # Rollback the failed transaction
-            await db.rollback()
-            # Collection already exists, fetch it
-            collection = await crud.get_collection(
-                db,
-                payload.workspace_name,
-                collection_name,
-                payload.sender_name,
-            )
-        else:
-            raise
+    # get_or_create_collection already handles IntegrityError with rollback and a retry
+    collection = await crud.get_or_create_collection(
+        db,
+        payload.workspace_name,
+        collection_name,
+        payload.sender_name,
+    )
 
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
@@ -303,7 +289,7 @@ class CertaintyReasoner:
         self,
         working_representation: ReasoningResponseWithThinking,
         history: str,
-        speaker_peer_card: str | None,
+        speaker_peer_card: list[str] | None,
     ) -> ReasoningResponseWithThinking:
         """
         Critically analyzes and revises understanding, returning structured observations.
@@ -405,7 +391,7 @@ class CertaintyReasoner:
         db: AsyncSession,
         working_representation: ReasoningResponseWithThinking,
         history: str,
-        speaker_peer_card: str | None,
+        speaker_peer_card: list[str] | None,
     ) -> ReasoningResponseWithThinking:
         """
         Single-pass reasoning function that critically analyzes and derives insights.
