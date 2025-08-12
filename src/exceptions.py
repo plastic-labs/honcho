@@ -29,7 +29,7 @@ class ResourceNotFoundException(HonchoException):
 
 @final
 class ObserverException(HonchoException):
-    """Exception raised when a request tries to add too man observers to a session"""
+    """Exception raised when a request tries to add too many observers to a session"""
 
     status_code = 400
 
