@@ -677,7 +677,7 @@ def test_get_session_context(client: TestClient, sample_data: tuple[Workspace, P
     assert "summary" in data
     assert data["id"] == session_id
     assert isinstance(data["messages"], list)
-    assert data["summary"] == ""  # Default is empty when summary=False
+    assert data["summary"] is None  # No summary available
 
 
 def test_get_session_context_with_summary(

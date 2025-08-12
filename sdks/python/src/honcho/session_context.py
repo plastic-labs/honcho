@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .peer import Peer
 
 
-class SessionSummary(BaseModel):
+class Summary(BaseModel):
     """Represents a summary of a session's conversation."""
 
     content: str = Field(..., description="The summary text")
@@ -29,10 +29,10 @@ class SessionSummaries(BaseModel):
     """Contains both short and long summaries for a session."""
 
     id: str = Field(..., description="The session ID")
-    short_summary: SessionSummary | None = Field(
+    short_summary: Summary | None = Field(
         None, description="The short summary if available"
     )
-    long_summary: SessionSummary | None = Field(
+    long_summary: Summary | None = Field(
         None, description="The long summary if available"
     )
 
@@ -55,8 +55,8 @@ class SessionContext(BaseModel):
     messages: list[Message] = Field(
         ..., description="List of Message objects to include in the context"
     )
-    summary: str = Field(
-        ..., description="Summary of the session history prior to the message cutoff"
+    summary: Summary | None = Field(
+        None, description="Summary of the session history prior to the message cutoff"
     )
 
     @validate_call
@@ -68,8 +68,8 @@ class SessionContext(BaseModel):
         messages: list[Message] = Field(
             ..., description="List of Message objects to include in the context"
         ),
-        summary: str = Field(
-            ...,
+        summary: Summary | None = Field(
+            None,
             description="Summary of the session history prior to the message cutoff",
         ),
     ) -> None:
@@ -78,6 +78,7 @@ class SessionContext(BaseModel):
 
         Args:
             messages: List of Message objects to include in the context
+            summary: Optional Summary object containing summary information
         """
         super().__init__(
             session_id=session_id,
@@ -108,10 +109,6 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        summary_message = {
-            "role": "system",
-            "content": f"<summary>{self.summary}</summary>",
-        }
         messages = [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",
@@ -120,7 +117,14 @@ class SessionContext(BaseModel):
             }
             for message in self.messages
         ]
-        return [summary_message, *messages] if self.summary else messages
+
+        if self.summary:
+            summary_message = {
+                "role": "system",
+                "content": f"<summary>{self.summary.content}</summary>",
+            }
+            return [summary_message, *messages]
+        return messages
 
     def to_anthropic(
         self,
@@ -148,10 +152,6 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        summary_message = {
-            "role": "user",
-            "content": f"<summary>{self.summary}</summary>",
-        }
         messages = [
             {
                 "role": "assistant",
@@ -164,7 +164,14 @@ class SessionContext(BaseModel):
             }
             for message in self.messages
         ]
-        return [summary_message, *messages] if self.summary else messages
+
+        if self.summary:
+            summary_message = {
+                "role": "user",
+                "content": f"<summary>{self.summary.content}</summary>",
+            }
+            return [summary_message, *messages]
+        return messages
 
     def __len__(self) -> int:
         """
@@ -182,4 +189,4 @@ class SessionContext(BaseModel):
         Returns:
             A string representation suitable for debugging
         """
-        return f"SessionContext(messages={len(self.messages)}, summary={self.summary})"
+        return f"SessionContext(messages={len(self.messages)}, summary={'present' if self.summary else 'None'})"

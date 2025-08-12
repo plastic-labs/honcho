@@ -374,9 +374,10 @@ async def get_session_context(
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
         description=f"Number of tokens to use for the context. Includes summary if set to true. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
-    summary: bool = Query(
+    include_summary: bool = Query(
         True,
         description="Whether or not to include a summary *if* one is available for the session",
+        alias="summary",
     ),
     db: AsyncSession = db,
 ):
@@ -389,18 +390,18 @@ async def get_session_context(
     token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
 
     # Use the shared get_session_context function from summarizer
-    summary_content, messages = await summarizer.get_session_context(
+    summary_obj, messages = await summarizer.get_session_context(
         db,
         workspace_name=workspace_id,
         session_name=session_id,
         token_limit=token_limit,
-        include_summary=summary,
+        include_summary=include_summary,
     )
 
     return schemas.SessionContext(
         name=session_id,
         messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
-        summary=summary_content,
+        summary=summary_obj,
     )
 
 
@@ -432,7 +433,7 @@ async def get_session_summaries(
     # Convert the internal Summary TypedDict to our Pydantic schema
     short_summary_schema = None
     if short_summary:
-        short_summary_schema = schemas.SessionSummary(
+        short_summary_schema = schemas.Summary(
             content=short_summary["content"],
             message_id=short_summary["message_id"],
             summary_type=short_summary["summary_type"],
@@ -442,7 +443,7 @@ async def get_session_summaries(
 
     long_summary_schema = None
     if long_summary:
-        long_summary_schema = schemas.SessionSummary(
+        long_summary_schema = schemas.Summary(
             content=long_summary["content"],
             message_id=long_summary["message_id"],
             summary_type=long_summary["summary_type"],

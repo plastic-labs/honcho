@@ -224,17 +224,7 @@ class Session(SessionBase):
     )
 
 
-class SessionContext(SessionBase):
-    name: str = Field(serialization_alias="id")
-    messages: list[Message]
-    summary: str
-
-    model_config = ConfigDict(  # pyright: ignore
-        from_attributes=True, populate_by_name=True
-    )
-
-
-class SessionSummary(BaseModel):
+class Summary(BaseModel):
     content: str = Field(description="The summary text")
     message_id: int = Field(
         description="The ID of the message that this summary covers up to"
@@ -246,12 +236,24 @@ class SessionSummary(BaseModel):
     token_count: int = Field(description="The number of tokens in the summary text")
 
 
+class SessionContext(SessionBase):
+    name: str = Field(serialization_alias="id")
+    messages: list[Message]
+    summary: Summary | None = Field(
+        default=None, description="The summary if available"
+    )
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
 class SessionSummaries(SessionBase):
     name: str = Field(serialization_alias="id")
-    short_summary: SessionSummary | None = Field(
+    short_summary: Summary | None = Field(
         default=None, description="The short summary if available"
     )
-    long_summary: SessionSummary | None = Field(
+    long_summary: Summary | None = Field(
         default=None, description="The long summary if available"
     )
 

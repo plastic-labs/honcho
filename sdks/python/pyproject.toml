@@ -1,6 +1,6 @@
 [project]
 name = "honcho-ai"
-version = "1.3.0"
+version = "1.4.0"
 description = "Official DX Optimized Python SDK for Honcho"
 dynamic = ["readme"]
 license = "Apache-2.0"
@@ -55,7 +55,7 @@ publish-url = "https://test.pypi.org/legacy/"
 explicit = true
 
 [tool.uv.sources]
-honcho-core = { url = "https://pkg.stainless.com/s/honcho-python/ffa0cb18fd084729c30f2f723cc3287103e1edd0/honcho_core-1.3.0-py3-none-any.whl" }
+honcho-core = { git = "https://github.com/plastic-labs/honcho-python-core.git", rev = "next" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

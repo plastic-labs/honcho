@@ -3,7 +3,7 @@ import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/
 import type { Uploadable } from '@honcho-ai/core/src/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import { SessionContext, SessionSummaries } from './session_context'
+import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
   FileUploadSchema,
@@ -463,7 +463,9 @@ export class Session {
         summary: contextParams.summary,
       }
     )
-    return new SessionContext(this.id, context.messages, context.summary)
+    // Convert the summary response to Summary object if present
+    const summary = context.summary ? new Summary(context.summary) : null
+    return new SessionContext(this.id, context.messages, summary)
   }
 
   /**
@@ -484,18 +486,11 @@ export class Session {
    *       - Summary generation is disabled for this session
    */
   async getSummaries(): Promise<SessionSummaries> {
-    // Make the API call to get summaries using the raw response
-    const response = await this._client.get(
-      `/v2/workspaces/${this.workspaceId}/sessions/${this.id}/summaries`,
-      {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      }
+    // Use the core SDK's summaries method
+    const data = await this._client.workspaces.sessions.summaries(
+      this.workspaceId,
+      this.id
     )
-
-    // Parse the response data
-    const data = await response.json()
 
     // Return a SessionSummaries instance
     return new SessionSummaries(data)

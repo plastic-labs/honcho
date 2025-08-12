@@ -1,4 +1,4 @@
-import { SessionContext } from '../src/session_context';
+import { SessionContext, Summary } from '../src/session_context';
 import { Peer } from '../src/peer';
 
 /**
@@ -17,6 +17,19 @@ function createTestMessage(id: string, content: string, peer_id: string, additio
   };
 }
 
+/**
+ * Helper function to create a test Summary object
+ */
+function createTestSummary(content: string): Summary {
+  return new Summary({
+    content,
+    message_id: 1,
+    summary_type: 'short',
+    created_at: new Date().toISOString(),
+    token_count: content.length
+  });
+}
+
 describe('SessionContext', () => {
   let sessionContext: SessionContext;
   let mockMessages: any[];
@@ -29,38 +42,39 @@ describe('SessionContext', () => {
       createTestMessage('msg4', 'I am doing well, thank you!', 'assistant'),
     ];
 
-    sessionContext = new SessionContext('test-session', mockMessages, '');
+    sessionContext = new SessionContext('test-session', mockMessages, null);
   });
 
   describe('constructor', () => {
     it('should initialize with all properties', () => {
       expect(sessionContext.sessionId).toBe('test-session');
       expect(sessionContext.messages).toEqual(mockMessages);
-      expect(sessionContext.summary).toBe('');
+      expect(sessionContext.summary).toBe(null);
     });
 
-    it('should initialize with empty summary when not provided', () => {
+    it('should initialize with null summary when not provided', () => {
       const context = new SessionContext('session-id', mockMessages);
 
       expect(context.sessionId).toBe('session-id');
       expect(context.messages).toEqual(mockMessages);
-      expect(context.summary).toBe('');
+      expect(context.summary).toBe(null);
     });
 
     it('should handle empty messages array', () => {
-      const context = new SessionContext('session-id', [], 'No messages');
+      const summary = createTestSummary('No messages');
+      const context = new SessionContext('session-id', [], summary);
 
       expect(context.sessionId).toBe('session-id');
       expect(context.messages).toEqual([]);
-      expect(context.summary).toBe('No messages');
+      expect(context.summary).toBe(summary);
     });
 
     it('should handle null/undefined summary', () => {
       const context1 = new SessionContext('session-id', mockMessages, undefined as any);
-      const context2 = new SessionContext('session-id', mockMessages, null as any);
+      const context2 = new SessionContext('session-id', mockMessages, null);
 
-      expect(context1.summary).toBe('');
-      expect(context2.summary).toBe('');
+      expect(context1.summary).toBe(null);
+      expect(context2.summary).toBe(null);
     });
   });
 
@@ -109,7 +123,8 @@ describe('SessionContext', () => {
     });
 
     it('should include summary message when summary exists', () => {
-      const contextWithSummary = new SessionContext('test-session', mockMessages, 'This is a summary');
+      const summary = createTestSummary('This is a summary');
+      const contextWithSummary = new SessionContext('test-session', mockMessages, summary);
       const openAIMessages = contextWithSummary.toOpenAI('assistant');
 
       expect(openAIMessages).toEqual([
@@ -201,7 +216,8 @@ describe('SessionContext', () => {
     });
 
     it('should include summary message when summary exists', () => {
-      const contextWithSummary = new SessionContext('test-session', mockMessages, 'This is a summary');
+      const summary = createTestSummary('This is a summary');
+      const contextWithSummary = new SessionContext('test-session', mockMessages, summary);
       const anthropicMessages = contextWithSummary.toAnthropic('assistant');
 
       expect(anthropicMessages).toEqual([
@@ -250,13 +266,13 @@ describe('SessionContext', () => {
   describe('toString', () => {
     it('should return correct string representation', () => {
       const result = sessionContext.toString();
-      expect(result).toBe('SessionContext(messages=4, summary=)');
+      expect(result).toBe('SessionContext(messages=4, summary=none)');
     });
 
     it('should handle empty messages', () => {
       const emptyContext = new SessionContext('session-id', []);
       const result = emptyContext.toString();
-      expect(result).toBe('SessionContext(messages=0, summary=)');
+      expect(result).toBe('SessionContext(messages=0, summary=none)');
     });
 
     it('should handle large number of messages', () => {
@@ -266,7 +282,7 @@ describe('SessionContext', () => {
       const context = new SessionContext('session-id', manyMessages);
 
       const result = context.toString();
-      expect(result).toBe('SessionContext(messages=1000, summary=)');
+      expect(result).toBe('SessionContext(messages=1000, summary=none)');
     });
   });
 
@@ -305,11 +321,13 @@ describe('SessionContext', () => {
 
     it('should handle very long session IDs and summaries', () => {
       const longSessionId = 'x'.repeat(1000);
-      const longSummary = 'Very long summary that goes on and on...'.repeat(100);
+      const longSummaryText = 'Very long summary that goes on and on...'.repeat(100);
+      const longSummary = createTestSummary(longSummaryText);
       const context = new SessionContext(longSessionId, mockMessages, longSummary);
 
       expect(context.sessionId).toBe(longSessionId);
       expect(context.summary).toBe(longSummary);
+      expect(context.summary?.content).toBe(longSummaryText);
       expect(context.length).toBe(5); // 4 messages + 1 summary
     });
 

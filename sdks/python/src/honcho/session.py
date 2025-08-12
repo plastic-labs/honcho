@@ -9,7 +9,7 @@ from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
-from .session_context import SessionContext, SessionSummaries, SessionSummary
+from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
@@ -421,8 +421,19 @@ class Session(BaseModel):
             summary=summary,
         )
 
+        # Convert the honcho_core summary to our Summary if it exists
+        session_summary = None
+        if context.summary:
+            session_summary = Summary(
+                content=context.summary.content,
+                message_id=context.summary.message_id,
+                summary_type=context.summary.summary_type,
+                created_at=context.summary.created_at,
+                token_count=context.summary.token_count,
+            )
+
         return SessionContext(
-            session_id=self.id, messages=context.messages, summary=context.summary
+            session_id=self.id, messages=context.messages, summary=session_summary
         )
 
     def get_summaries(self) -> SessionSummaries:
@@ -445,37 +456,35 @@ class Session(BaseModel):
             - The summary generation is still in progress
             - Summary generation is disabled for this session
         """
-        # Make the API call to get summaries
-        response = self._client.workspaces.sessions.with_raw_response.get(
-            f"workspaces/{self.workspace_id}/sessions/{self.id}/summaries"
+        # Use the honcho_core client to get summaries
+        response = self._client.workspaces.sessions.summaries(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
         )
 
-        # Parse the response
-        data = response.json()
-
-        # Create SessionSummary objects from the response data
+        # Create Summary objects from the response data
         short_summary = None
-        if data.get("short_summary"):
-            short_summary = SessionSummary(
-                content=data["short_summary"]["content"],
-                message_id=data["short_summary"]["message_id"],
-                summary_type=data["short_summary"]["summary_type"],
-                created_at=data["short_summary"]["created_at"],
-                token_count=data["short_summary"]["token_count"],
+        if response.short_summary:
+            short_summary = Summary(
+                content=response.short_summary.content,
+                message_id=response.short_summary.message_id,
+                summary_type=response.short_summary.summary_type,
+                created_at=response.short_summary.created_at,
+                token_count=response.short_summary.token_count,
             )
 
         long_summary = None
-        if data.get("long_summary"):
-            long_summary = SessionSummary(
-                content=data["long_summary"]["content"],
-                message_id=data["long_summary"]["message_id"],
-                summary_type=data["long_summary"]["summary_type"],
-                created_at=data["long_summary"]["created_at"],
-                token_count=data["long_summary"]["token_count"],
+        if response.long_summary:
+            long_summary = Summary(
+                content=response.long_summary.content,
+                message_id=response.long_summary.message_id,
+                summary_type=response.long_summary.summary_type,
+                created_at=response.long_summary.created_at,
+                token_count=response.long_summary.token_count,
             )
 
         return SessionSummaries(
-            id=data.get("id", self.id),
+            id=response.id or self.id,
             short_summary=short_summary,
             long_summary=long_summary,
         )

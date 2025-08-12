@@ -9,7 +9,7 @@ export { Session, SessionPeerConfig } from './session'
 export {
   SessionContext,
   SessionSummaries,
-  SessionSummary,
+  Summary,
 } from './session_context'
 
 // Export validation types for advanced usage

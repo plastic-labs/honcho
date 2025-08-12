@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.2.0"
+version = "2.3.0"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -29,11 +29,9 @@ dependencies = [
     "google-generativeai>=0.8.5",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
-    "honcho-core",
 ]
 [tool.uv]
 dev-dependencies = [
-    "honcho-core @ git+https://github.com/plastic-labs/honcho-python-core.git#7e77a7764e77629383e59a55a0b9d651a5c03848",
     "honcho-ai==1.3.0",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
@@ -45,10 +43,11 @@ dev-dependencies = [
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
+    "honcho-core",
 ]
 
 [tool.uv.sources]
-honcho-core = { url = "https://pkg.stainless.com/s/honcho-python/ffa0cb18fd084729c30f2f723cc3287103e1edd0/honcho_core-1.3.0-py3-none-any.whl" }
+honcho-core = { git = "https://github.com/plastic-labs/honcho-python-core.git", rev = "next" }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example
