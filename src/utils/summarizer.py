@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import logging
 import time
 from enum import Enum
@@ -13,6 +12,7 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import honcho_llm_call
+from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric
 
 from .. import crud, models
@@ -388,7 +388,7 @@ async def _create_summary(
         content=summary_text,
         message_id=messages[-1].id if messages else 0,
         summary_type=summary_type.value,
-        created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        created_at=utc_now_iso(),
         token_count=summary_tokens,
     )
 

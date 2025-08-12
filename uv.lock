@@ -830,6 +830,7 @@ dependencies = [
     { name = "fastapi-pagination" },
     { name = "google-generativeai" },
     { name = "greenlet" },
+    { name = "honcho-core" },
     { name = "httpx" },
     { name = "mirascope", extra = ["anthropic", "google", "groq", "langfuse"] },
     { name = "nanoid" },
@@ -871,6 +872,7 @@ requires-dist = [
     { name = "fastapi-pagination", specifier = ">=0.12.24" },
     { name = "google-generativeai", specifier = ">=0.8.5" },
     { name = "greenlet", specifier = ">=3.0.3" },
+    { name = "honcho-core", url = "https://pkg.stainless.com/s/honcho-python/ffa0cb18fd084729c30f2f723cc3287103e1edd0/honcho_core-1.3.0-py3-none-any.whl" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "mirascope", extras = ["anthropic", "google", "groq", "langfuse"], specifier = ">=1.25.1" },
     { name = "nanoid", specifier = ">=2.0.0" },
@@ -894,7 +896,7 @@ dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "coverage", specifier = ">=7.6.0" },
     { name = "honcho-ai", specifier = "==1.3.0" },
-    { name = "honcho-core", specifier = "==1.3.0" },
+    { name = "honcho-core", url = "https://pkg.stainless.com/s/honcho-python/ffa0cb18fd084729c30f2f723cc3287103e1edd0/honcho_core-1.3.0-py3-none-any.whl" },
     { name = "interrogate", specifier = ">=1.7.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "py-spy", specifier = ">=0.3.14" },
@@ -922,7 +924,7 @@ wheels = [
 [[package]]
 name = "honcho-core"
 version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
+source = { url = "https://pkg.stainless.com/s/honcho-python/ffa0cb18fd084729c30f2f723cc3287103e1edd0/honcho_core-1.3.0-py3-none-any.whl" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -931,10 +933,22 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ee/49/1810de2351be1fdff330ffadcc5eef709889b2f698b0340966cae2c1eef9/honcho_core-1.3.0.tar.gz", hash = "sha256:276a73e8d523f7d22f06746922fda97e4a11fbbef4a51a0b43573bc817089cec", size = 123333, upload-time = "2025-08-06T16:42:10.941Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6e/3f/3beb750ed65bb1b604c585ae1c51a54f8b34ea3002f4525f93fe86549531/honcho_core-1.3.0-py3-none-any.whl", hash = "sha256:c7c0bf77b61162e6c65a580327fc054785aef794923abc35acd3dbd8287245db", size = 112895, upload-time = "2025-08-06T16:42:08.967Z" },
+    { url = "https://pkg.stainless.com/s/honcho-python/ffa0cb18fd084729c30f2f723cc3287103e1edd0/honcho_core-1.3.0-py3-none-any.whl", hash = "sha256:4c64a9db1d90ef9733baa44fced589085eaf5fe7906752e7c49fc0c7606a36f4" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'aiohttp'" },
+    { name = "anyio", specifier = ">=3.5.0,<5" },
+    { name = "distro", specifier = ">=1.7.0,<2" },
+    { name = "httpx", specifier = ">=0.23.0,<1" },
+    { name = "httpx-aiohttp", marker = "extra == 'aiohttp'", specifier = ">=0.1.8" },
+    { name = "pydantic", specifier = ">=1.9.0,<3" },
+    { name = "sniffio" },
+    { name = "typing-extensions", specifier = ">=4.10,<5" },
+]
+provides-extras = ["aiohttp"]
 
 [[package]]
 name = "httpcore"

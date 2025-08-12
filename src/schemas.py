@@ -117,6 +117,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+    created_at: datetime.datetime | None = None
 
     _encoded_message: list[int] = PrivateAttr(default=[])
 
