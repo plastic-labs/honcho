@@ -455,6 +455,107 @@ describe('Session', () => {
 
       await expect(session.addMessages({ peer_id: 'peer1', content: 'test' })).rejects.toThrow();
     });
+
+    it('should add message with custom timestamp', async () => {
+      const message = {
+        peer_id: 'peer1',
+        content: 'Message with timestamp',
+        created_at: '2023-01-01T12:00:00Z',
+        metadata: { test: 'timestamp' },
+      };
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
+
+      await session.addMessages(message);
+
+      expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          messages: [{
+            peer_id: 'peer1',
+            content: 'Message with timestamp',
+            created_at: '2023-01-01T12:00:00Z',
+            metadata: { test: 'timestamp' }
+          }]
+        }
+      );
+    });
+
+    it('should add message with null timestamp', async () => {
+      const message = {
+        peer_id: 'peer1',
+        content: 'Message without timestamp',
+        created_at: null,
+        metadata: { test: 'no_timestamp' },
+      };
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
+
+      await session.addMessages(message);
+
+      expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          messages: [{
+            peer_id: 'peer1',
+            content: 'Message without timestamp',
+            created_at: null,
+            metadata: { test: 'no_timestamp' }
+          }]
+        }
+      );
+    });
+
+    it('should add mixed messages with and without timestamps', async () => {
+      const messages = [
+        {
+          peer_id: 'peer1',
+          content: 'Message with timestamp',
+          created_at: '2023-01-01T12:00:00Z',
+          metadata: { type: 'historical' }
+        },
+        {
+          peer_id: 'peer2',
+          content: 'Message without timestamp',
+          metadata: { type: 'current' }
+        },
+        {
+          peer_id: 'peer3',
+          content: 'Message with null timestamp',
+          created_at: null,
+          metadata: { type: 'default' }
+        }
+      ];
+      mockClient.workspaces.sessions.messages.create.mockResolvedValue({});
+
+      await session.addMessages(messages);
+
+      expect(mockClient.workspaces.sessions.messages.create).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        {
+          messages: [
+            {
+              peer_id: 'peer1',
+              content: 'Message with timestamp',
+              created_at: '2023-01-01T12:00:00Z',
+              metadata: { type: 'historical' }
+            },
+            {
+              peer_id: 'peer2',
+              content: 'Message without timestamp',
+              metadata: { type: 'current' }
+            },
+            {
+              peer_id: 'peer3',
+              content: 'Message with null timestamp',
+              created_at: null,
+              metadata: { type: 'default' }
+            }
+          ]
+        }
+      );
+    });
   });
 
   describe('getMessages', () => {
@@ -582,7 +683,13 @@ describe('Session', () => {
           { id: 'msg1', content: 'Hello', peer_id: 'peer1' },
           { id: 'msg2', content: 'Hi there', peer_id: 'peer2' },
         ],
-        summary: 'Conversation summary',
+        summary: {
+          content: 'Conversation summary',
+          message_id: 10,
+          summary_type: 'short',
+          created_at: '2024-01-01T00:00:00Z',
+          token_count: 100
+        },
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
@@ -591,7 +698,7 @@ describe('Session', () => {
       expect(context).toBeInstanceOf(SessionContext);
       expect(context.sessionId).toBe('test-session');
       expect(context.messages).toEqual(mockContext.messages);
-      expect(context.summary).toBe('Conversation summary');
+      expect(context.summary?.content).toBe('Conversation summary');
       expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -602,7 +709,13 @@ describe('Session', () => {
     it('should get session context with options', async () => {
       const mockContext = {
         messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
-        summary: 'Brief summary',
+        summary: {
+          content: 'Brief summary',
+          message_id: 5,
+          summary_type: 'short',
+          created_at: '2024-01-01T00:00:00Z',
+          token_count: 50
+        },
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
@@ -624,7 +737,7 @@ describe('Session', () => {
 
       const context = await session.getContext();
 
-      expect(context.summary).toBe('');
+      expect(context.summary).toBeNull();
     });
 
     it('should handle API errors', async () => {

@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import logging
 import time
 from enum import Enum
@@ -9,10 +8,12 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import TypedDict
 
+from src import schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
 from src.utils.clients import honcho_llm_call
+from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric
 
 from .. import crud, models
@@ -40,6 +41,16 @@ class Summary(TypedDict):
     token_count: int
 
 
+def to_schema_summary(s: Summary) -> schemas.Summary:
+    return schemas.Summary(
+        content=s["content"],
+        message_id=s["message_id"],
+        summary_type=s["summary_type"],
+        created_at=s["created_at"],
+        token_count=s["token_count"],
+    )
+
+
 # Export the public functions
 __all__ = [
     "get_summary",
@@ -49,6 +60,7 @@ __all__ = [
     "get_session_context_formatted",
     "SummaryType",
     "Summary",
+    "to_schema_summary",
 ]
 
 
@@ -388,7 +400,7 @@ async def _create_summary(
         content=summary_text,
         message_id=messages[-1].id if messages else 0,
         summary_type=summary_type.value,
-        created_at=datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        created_at=utc_now_iso(),
         token_count=summary_tokens,
     )
 
@@ -564,7 +576,7 @@ async def get_session_context(
     *,
     cutoff: int | None = None,
     include_summary: bool = True,
-) -> tuple[str, list[models.Message]]:
+) -> tuple[schemas.Summary | None, list[models.Message]]:
     """
     Get session context similar to the API endpoint but for internal use.
 
@@ -577,10 +589,10 @@ async def get_session_context(
         include_summary: Whether to include summary if available
 
     Returns:
-        Tuple of (summary_content, messages) where summary_content is the summary text (or empty string)
+        Tuple of (summary, messages) where summary is a Summary pydantic model (or None)
         and messages is the list of message objects
     """
-    summary_content = ""
+    summary = None
     messages_tokens = token_limit
     messages_start_id = 0
 
@@ -601,13 +613,25 @@ async def get_session_context(
             and long_len <= summary_tokens_limit
             and long_len > short_len
         ):
-            summary_content = latest_long_summary["content"]
+            summary = schemas.Summary(
+                content=latest_long_summary["content"],
+                message_id=latest_long_summary["message_id"],
+                summary_type=latest_long_summary["summary_type"],
+                created_at=latest_long_summary["created_at"],
+                token_count=latest_long_summary["token_count"],
+            )
             messages_tokens = token_limit - latest_long_summary["token_count"]
             messages_start_id = latest_long_summary["message_id"]
         elif (
             latest_short_summary and short_len <= summary_tokens_limit and short_len > 0
         ):
-            summary_content = latest_short_summary["content"]
+            summary = schemas.Summary(
+                content=latest_short_summary["content"],
+                message_id=latest_short_summary["message_id"],
+                summary_type=latest_short_summary["summary_type"],
+                created_at=latest_short_summary["created_at"],
+                token_count=latest_short_summary["token_count"],
+            )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
         else:
@@ -628,7 +652,7 @@ async def get_session_context(
         token_limit=messages_tokens,
     )
 
-    return summary_content, messages
+    return summary, messages
 
 
 async def get_session_context_formatted(
@@ -646,7 +670,7 @@ async def get_session_context_formatted(
     This is a convenience wrapper around get_session_context that formats
     the output as a string.
     """
-    summary_content, messages = await get_session_context(
+    summary, messages = await get_session_context(
         db,
         workspace_name,
         session_name,
@@ -657,6 +681,7 @@ async def get_session_context_formatted(
 
     # Format the messages
     messages_text = _format_messages(messages)
+    summary_content = summary.content if summary else ""
 
     if summary_content and messages_text:
         return f"""<summary>

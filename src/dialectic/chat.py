@@ -18,7 +18,7 @@ from mirascope.llm import Stream
 from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
-from src.routers.sessions import get_session_context
+from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.logging import (
@@ -262,25 +262,16 @@ async def chat(
     # If query is session-scoped, get recent conversation history from that session
     if session_name:
         async with tracked_db("chat.get_session_context") as db:
-            session_context = await get_session_context(
-                workspace_id=workspace_name,
-                session_id=session_name,
-                tokens=context_window_size,
-                summary=True,
-                db=db,
+            recent_conversation_history = (
+                await summarizer.get_session_context_formatted(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    token_limit=context_window_size,
+                    include_summary=True,
+                )
             )
-        logger.info(
-            "Retrieved recent conversation history with %s messages",
-            len(session_context.messages),
-        )
-        recent_conversation_history = f"""
-        <summary>
-        {session_context.summary}
-        </summary>
-        <recent_messages>
-        {session_context.messages}
-        </recent_messages>
-        """
+        logger.info("Retrieved recent conversation history")
     else:
         recent_conversation_history = None
         logger.info("Query is not session-scoped, skipping recent conversation history")

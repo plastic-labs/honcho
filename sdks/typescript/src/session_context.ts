@@ -1,6 +1,84 @@
 import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import type { Peer } from './peer'
 
+export interface SummaryData {
+  content: string
+  message_id: number
+  summary_type: string
+  created_at: string
+  token_count: number
+}
+
+/**
+ * Represents a summary of a session's conversation.
+ */
+export class Summary {
+  /**
+   * The summary text.
+   */
+  readonly content: string
+
+  /**
+   * The ID of the message that this summary covers up to.
+   */
+  readonly messageId: number
+
+  /**
+   * The type of summary (short or long).
+   */
+  readonly summaryType: string
+
+  /**
+   * The timestamp of when the summary was created (ISO format).
+   */
+  readonly createdAt: string
+
+  /**
+   * The number of tokens in the summary text.
+   */
+  readonly tokenCount: number
+
+  constructor(data: SummaryData) {
+    this.content = data.content
+    this.messageId = data.message_id
+    this.summaryType = data.summary_type
+    this.createdAt = data.created_at
+    this.tokenCount = data.token_count
+  }
+}
+
+/**
+ * Contains both short and long summaries for a session.
+ */
+export class SessionSummaries {
+  /**
+   * The session ID.
+   */
+  readonly id: string
+
+  /**
+   * The short summary if available.
+   */
+  readonly shortSummary: Summary | null
+
+  /**
+   * The long summary if available.
+   */
+  readonly longSummary: Summary | null
+
+  constructor(data: {
+    id: string
+    short_summary?: SummaryData | null
+    long_summary?: SummaryData | null
+  }) {
+    this.id = data.id
+    this.shortSummary = data.short_summary
+      ? new Summary(data.short_summary)
+      : null
+    this.longSummary = data.long_summary ? new Summary(data.long_summary) : null
+  }
+}
+
 /**
  * Represents the context of a session containing a curated list of messages.
  *
@@ -22,7 +100,7 @@ export class SessionContext {
   /**
    * Summary of the session history prior to the message cutoff.
    */
-  readonly summary: string
+  readonly summary: Summary | null
 
   /**
    * Initialize a new SessionContext.
@@ -31,10 +109,14 @@ export class SessionContext {
    * @param messages List of Message objects to include in the context
    * @param summary Summary of the session history prior to the message cutoff
    */
-  constructor(sessionId: string, messages: Message[], summary: string = '') {
+  constructor(
+    sessionId: string,
+    messages: Message[],
+    summary: Summary | null = null
+  ) {
     this.sessionId = sessionId
     this.messages = messages
-    this.summary = summary || ''
+    this.summary = summary
   }
 
   /**
@@ -54,16 +136,18 @@ export class SessionContext {
     assistant: string | Peer
   ): Array<{ role: string; content: string; name?: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    const summaryMessage = {
-      role: 'system',
-      content: `<summary>${this.summary}</summary>`,
-    }
+    const summaryMessage = this.summary
+      ? {
+          role: 'system',
+          content: `<summary>${this.summary.content}</summary>`,
+        }
+      : null
     const messages = this.messages.map((message) => ({
       role: message.peer_id === assistantId ? 'assistant' : 'user',
       name: message.peer_id,
       content: message.content,
     }))
-    return this.summary ? [summaryMessage, ...messages] : messages
+    return summaryMessage ? [summaryMessage, ...messages] : messages
   }
 
   /**
@@ -86,10 +170,12 @@ export class SessionContext {
     assistant: string | Peer
   ): Array<{ role: string; content: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    const summaryMessage = {
-      role: 'user',
-      content: `<summary>${this.summary}</summary>`,
-    }
+    const summaryMessage = this.summary
+      ? {
+          role: 'user',
+          content: `<summary>${this.summary.content}</summary>`,
+        }
+      : null
     const messages = this.messages.map((message) =>
       message.peer_id === assistantId
         ? {
@@ -101,20 +187,20 @@ export class SessionContext {
             content: `${message.peer_id}: ${message.content}`,
           }
     )
-    return this.summary ? [summaryMessage, ...messages] : messages
+    return summaryMessage ? [summaryMessage, ...messages] : messages
   }
 
   /**
    * Return the number of messages in the context.
    */
   get length(): number {
-    return this.messages.length + (this.summary.length > 0 ? 1 : 0)
+    return this.messages.length + (this.summary ? 1 : 0)
   }
 
   /**
    * Return a string representation of the SessionContext.
    */
   toString(): string {
-    return `SessionContext(messages=${this.messages.length}, summary=${this.summary})`
+    return `SessionContext(messages=${this.messages.length}, summary=${this.summary ? 'present' : 'none'})`
   }
 }

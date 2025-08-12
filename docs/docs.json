@@ -14,7 +14,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.2.0",
+        "version": "v2.3.0",
         "api": {
           "openapi": ["openapi.documented.yml"]
         },
@@ -131,6 +131,7 @@
                   "v2/api-reference/endpoint/sessions/get-peer-config",
                   "v2/api-reference/endpoint/sessions/set-peer-config",
                   "v2/api-reference/endpoint/sessions/get-session-context",
+                  "v2/api-reference/endpoint/sessions/get-session-summaries",
                   "v2/api-reference/endpoint/sessions/search-session"
                 ]
               },
@@ -141,12 +142,21 @@
                   "v2/api-reference/endpoint/messages/get-messages",
                   "v2/api-reference/endpoint/messages/get-message",
                   "v2/api-reference/endpoint/messages/update-message",
-                  "v2/api-reference/endpoint/messages/upload-file"
+                  "v2/api-reference/endpoint/messages/create-messages-with-file"
                 ]
               },
               {
                 "group": "keys",
                 "pages": ["v2/api-reference/endpoint/keys/create-key"]
+              },
+              {
+                "group": "webhooks",
+                "pages": [
+                  "v2/api-reference/endpoint/webhooks/list-webhook-endpoints",
+                  "v2/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint",
+                  "v2/api-reference/endpoint/webhooks/delete-webhook-endpoint",
+                  "v2/api-reference/endpoint/webhooks/test-emit"
+                ]
               }
             ]
           },

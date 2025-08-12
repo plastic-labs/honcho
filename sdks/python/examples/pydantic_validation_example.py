@@ -5,10 +5,12 @@ This example shows how the SDK now uses Pydantic to validate inputs at runtime,
 providing better error messages and type safety.
 """
 
+import datetime
 import logging
 
-from honcho import Honcho
 from pydantic import ValidationError
+
+from honcho import Honcho
 
 logging.basicConfig(level=logging.INFO)
 
@@ -116,6 +118,24 @@ def demonstrate_validation():
         # Valid peer operations (validation passes, but no API calls made)
         print("✅ All validations passed for standard operations")
 
+    except ValidationError as e:
+        print(f"❌ Validation error: {e}")
+
+    # Example 10: Custom created_at timestamps
+    print("10. Custom created_at timestamps:")
+    try:
+        honcho = Honcho(environment="local", workspace_id="test")
+        peer = honcho.peer("alice")
+        message = peer.message("Hello, world!", created_at=datetime.datetime.now())
+        print(f"✅ Created message: {message}")
+        message = peer.message(
+            "Hello, world!",
+            created_at=datetime.datetime(1999, 1, 1, tzinfo=datetime.timezone.utc),
+        )
+        print(f"✅ Created message: {message}")
+        session = honcho.session("conversation_1")
+        session.add_messages([message])
+        print(f"✅ Added message to session: {session}")
     except ValidationError as e:
         print(f"❌ Validation error: {e}")
 
