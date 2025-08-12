@@ -509,8 +509,12 @@ Evaluate whether the actual response contains the core correct information from 
                     summary=summary, tokens=max_tokens
                 )
 
+                summary_content = ""
+                if session_context.summary:
+                    summary_content = session_context.summary.content
+
                 tokenizer = tiktoken.get_encoding("cl100k_base")
-                summary_tokens = len(tokenizer.encode(session_context.summary))
+                summary_tokens = len(tokenizer.encode(summary_content))
                 print(f"    summary: {session_context.summary}")
 
                 got_tokens = summary_tokens

@@ -774,8 +774,8 @@ def test_get_session_summaries(
     assert "short_summary" in data
     assert "long_summary" in data
     # Summaries will be None since they're created asynchronously
-    assert "short_summary" == None
-    assert "long_summary" == None
+    assert data["short_summary"] is None
+    assert data["long_summary"] is None
 
 
 def test_get_session_summaries_nonexistent_session(
