@@ -15,7 +15,7 @@ async def test_generic_honcho_llm_call_mock():
 
     # Call the decorated function - this should use our mock
     result = await critical_analysis_call(
-        peer_card="test_peer_card",
+        peer_card=["test_peer_card"],
         message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
         working_representation="test working representation",
         history="test history",

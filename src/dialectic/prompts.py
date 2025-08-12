@@ -10,9 +10,9 @@ def dialectic_prompt(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
-    peer_card: str | None,
+    peer_card: list[str] | None,
     target_name: str | None = None,
-    target_peer_card: str | None = None,
+    target_peer_card: list[str] | None = None,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
@@ -32,10 +32,10 @@ def dialectic_prompt(
         query_target = f"""The query is about user {peer_name}'s understanding of {target_name}.
 
 The user's known biographical information:
-{peer_card}
+{chr(10).join(peer_card) if peer_card else "(none)"}
 
 The target's known biographical information:
-{target_peer_card}
+{chr(10).join(target_peer_card) if target_peer_card else "(none)"}
 
 If the user's name or nickname is known, exclusively refer to them by that name.
 If the target's name or nickname is known, exclusively refer to them by that name.
@@ -44,7 +44,7 @@ If the target's name or nickname is known, exclusively refer to them by that nam
         query_target = f"""The query is about user {peer_name}.
 
 The user's known biographical information:
-{peer_card}
+{chr(10).join(peer_card) if peer_card else "(none)"}
 
 If the user's name or nickname is known, exclusively refer to them by that name.
 """

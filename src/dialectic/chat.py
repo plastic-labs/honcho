@@ -54,9 +54,9 @@ async def dialectic_call(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
-    peer_card: str | None,
+    peer_card: list[str] | None,
     target_name: str | None = None,
-    target_peer_card: str | None = None,
+    target_peer_card: list[str] | None = None,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -114,9 +114,9 @@ async def dialectic_stream(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
-    peer_card: str | None,
+    peer_card: list[str] | None,
     target_name: str | None = None,
-    target_peer_card: str | None = None,
+    target_peer_card: list[str] | None = None,
 ):
     """
     Make a streaming call to the dialectic model for context synthesis.

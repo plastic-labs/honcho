@@ -191,3 +191,15 @@ class ObservationDict(TypedDict, total=False):
     content: str
     premises: list[str]
     created_at: str
+
+
+class PeerCardQuery(BaseModel):
+    """
+    Model for peer card query generation responses.
+
+    Contains the new peer card, or None if there are no new key observations.
+    The notes field is just a place for stupid models to dump useless info.
+    """
+
+    card: list[str] | None
+    notes: str | None

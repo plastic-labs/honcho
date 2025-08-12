@@ -10,12 +10,10 @@ from inspect import cleandoc as c
 
 from mirascope import prompt_template
 
-NO_CHANGES_RESPONSE = "No changes"
-
 
 @prompt_template()
 def critical_analysis_prompt(
-    peer_card: str | None,
+    peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
     history: str,
@@ -34,11 +32,12 @@ def critical_analysis_prompt(
     Returns:
         Formatted prompt string for critical analysis
     """
+    # Format the peer card as a string with newlines
     peer_card_section = (
         f"""
 The user's known biographical information:
 <peer_card>
-{peer_card}
+{chr(10).join(peer_card)}
 </peer_card>
 """
         if peer_card is not None
@@ -102,7 +101,7 @@ New conversation turn to analyze:
 
 @prompt_template()
 def peer_card_prompt(
-    old_peer_card: str | None,
+    old_peer_card: list[str] | None,
     new_observations: list[str],
 ) -> str:
     """
@@ -116,7 +115,7 @@ Current user biographical card:
     """
         if old_peer_card is not None
         else """
-User does not have a card. Create one with any key facts—no titles, headers, only facts.
+User does not have a card. Create one with any key observations.
     """
     )
     return c(
@@ -125,30 +124,36 @@ You are an agent that creates a concise "biographical card" based on new observa
 
 The goal is to capture only the most important observations about the user. Value permanent properties over transient ones, and value concision over detail, preferring to omit details that are not essential to the user's identity. The card should give a broad overview of who the user is while not including details that are unlikely to be relevant in most settings.
 
-For example, "User is from Chicago" is worth inclusion. "User went to New Trier High School" is not.
+For example, "User is from Chicago" is worth inclusion. "User has an Instagram account" is not.
 "User is a software engineer" is worth inclusion. "User wrote Python today" is not.
 
 Never infer or generalize traits from one-off behaviors. Never manipulate the text of an observation to make an action or behavior into a "permanent" trait.
 
-**Never add a "notes" section or any other temporary information store.**
-
 When a new observation contradicts an existing one, update it, favoring new information.
 
 Example 1:
-Name: Bob
-Age: 24
-Location: New York
+{{
+    "card": [
+        "Name: Bob",
+        "Age: 24",
+        "Location: New York"
+    ]
+}}
 
 Example 2:
-Name: Alice
-Occupation: Artist
-Interests: Painting, biking, cooking
+{{
+    "card": [
+        "Name: Alice",
+        "Occupation: Artist",
+        "Interests: Painting, biking, cooking"
+    ]
+}}
 
 {old_peer_card_section}
 
 New observations:
 {new_observations}
 
-Output only the updated peer card, no XML tags. If there's no new key info, return the string {NO_CHANGES_RESPONSE}.
+If there's no new key info, you should return an empty card. **NEVER** include notes or temporary information in the card itself, instead use the notes field.
     """
     )
