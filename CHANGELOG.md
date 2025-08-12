@@ -5,7 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [2.2.0] - 2025-08-07
+## [2.3.0] — 2025-08-14
+
+### Added
+
+- `getSummaries` endpoint to get all available summaries for a session directly
+
+### Changed
+
+- Session Peer limit to be based on observers instead, renamed config value to
+  `SESSION_OBSERVERS_LIMIT`
+- Deriver uses `get_context` internally to prevent context window limit errors
+- `Messages` can take a custom timestamp for the `created_at` field, defaulting
+  to the current time
+- `get_context` endpoint returns detailed `Summary` object rather than just
+  summary content
+
+## [2.2.0] — 2025-08-07
 
 ### Added
 
@@ -28,14 +44,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Re-introduced Sentry tracing to deriver
 - Better integrity logic in get_or_create API methods
 
-## [2.1.2] - 2025-07-30
+## [2.1.2] — 2025-07-30
 
 ### Fixed
 
 - Summarizer module to ignore empty summaries and pass appropriate one to get_context
 - Structured Outputs calls with OpenAI provider to pass strict=True to Pydantic Schema
 
-## [2.1.1] - 2025-07-23
+## [2.1.1] — 2025-07-23
 
 ### Added
 
@@ -58,7 +74,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Refactor summarization for performance and code clarity
 - Refactor queue payloads for clarity
 
-## [2.1.0] - 2025-07-17
+## [2.1.0] — 2025-07-17
 
 ### Added
 

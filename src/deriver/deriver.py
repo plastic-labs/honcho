@@ -19,6 +19,7 @@ from src.utils.formatting import (
     find_new_observations,
     format_context_for_prompt,
     format_new_turn_with_timestamp,
+    utc_now_iso,
 )
 from src.utils.logging import (
     accumulate_metric,
@@ -609,7 +610,7 @@ async def save_working_representation_to_peer(
     working_rep_data = {
         "final_observations": final_obs_dict,
         "message_id": payload.message_id,
-        "created_at": datetime.datetime.now().isoformat(),
+        "created_at": utc_now_iso(),
     }
 
     await crud.set_working_representation(

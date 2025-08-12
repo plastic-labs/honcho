@@ -44,9 +44,9 @@ from .client import Honcho
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
-from .session_context import SessionContext
+from .session_context import SessionContext, SessionSummaries, Summary
 
-__version__ = "1.0.0"
+__version__ = "1.4.0"
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 
@@ -59,5 +59,7 @@ __all__ = [
     "Peer",
     "Session",
     "SessionContext",
+    "SessionSummaries",
+    "Summary",
     "SyncPage",
 ]

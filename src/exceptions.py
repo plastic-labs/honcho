@@ -5,6 +5,8 @@ Custom exceptions for the Honcho application.
 import json
 from typing import Any, final
 
+from src.config import settings
+
 
 class HonchoException(Exception):
     """Base exception for all Honcho-specific errors."""
@@ -24,6 +26,21 @@ class ResourceNotFoundException(HonchoException):
 
     status_code = 404
     detail = "Resource not found"
+
+
+@final
+class ObserverException(HonchoException):
+    """Exception raised when a request tries to add too many observers to a session"""
+
+    status_code = 400
+
+    def __init__(self, session_name: str, extra_count: int):
+        self.detail = (
+            f"Cannot create session {session_name} with {extra_count} observers. "
+            + f"Maximum allowed is {settings.SESSION_OBSERVERS_LIMIT} observers per session. "
+            + "Observers are peers with 'observe_others' set to true."
+        )
+        super().__init__(self.detail)
 
 
 @final

@@ -608,7 +608,7 @@ TYPESCRIPT_VERSION=
             )
 
             # Add new row at the top
-            new_row = f"| v{api_version} (Current) | v{typescript_version} | v{python_version} | Latest release |"
+            new_row = f"| v{api_version} (Current) | v{typescript_version} | v{python_version} |"
 
             # Reconstruct table
             new_table = header + new_row + "\n" + rows + after_table

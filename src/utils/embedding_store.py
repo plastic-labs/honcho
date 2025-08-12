@@ -12,6 +12,7 @@ from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.utils.formatting import format_datetime_utc
 from src.utils.logging import conditional_observe
 from src.utils.shared_models import (
     Observation,
@@ -112,7 +113,7 @@ class EmbeddingStore:
                     "message_id": message_id,
                     "session_name": session_name,
                     "premises": obs.premises,  # Store premises in metadata
-                    "created_at": message_created_at.isoformat(),
+                    "created_at": format_datetime_utc(message_created_at),
                 }
 
                 doc = models.Document(

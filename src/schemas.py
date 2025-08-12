@@ -117,6 +117,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+    created_at: datetime.datetime | None = None
 
     _encoded_message: list[int] = PrivateAttr(default=[])
 
@@ -223,10 +224,38 @@ class Session(SessionBase):
     )
 
 
+class Summary(BaseModel):
+    content: str = Field(description="The summary text")
+    message_id: int = Field(
+        description="The ID of the message that this summary covers up to"
+    )
+    summary_type: str = Field(description="The type of summary (short or long)")
+    created_at: str = Field(
+        description="The timestamp of when the summary was created (ISO format)"
+    )
+    token_count: int = Field(description="The number of tokens in the summary text")
+
+
 class SessionContext(SessionBase):
     name: str = Field(serialization_alias="id")
     messages: list[Message]
-    summary: str
+    summary: Summary | None = Field(
+        default=None, description="The summary if available"
+    )
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
+class SessionSummaries(SessionBase):
+    name: str = Field(serialization_alias="id")
+    short_summary: Summary | None = Field(
+        default=None, description="The short summary if available"
+    )
+    long_summary: Summary | None = Field(
+        default=None, description="The long summary if available"
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True

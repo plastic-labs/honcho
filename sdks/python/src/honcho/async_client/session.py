@@ -8,7 +8,7 @@ from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
-from ..session_context import SessionContext
+from ..session_context import SessionContext, SessionSummaries, Summary
 from ..utils import prepare_file_for_upload
 from .pagination import AsyncPage
 
@@ -440,8 +440,72 @@ class AsyncSession(BaseModel):
             summary=summary,
         )
 
+        # Convert the honcho_core summary to our Summary if it exists
+        session_summary = None
+        if context.summary:
+            session_summary = Summary(
+                content=context.summary.content,
+                message_id=context.summary.message_id,
+                summary_type=context.summary.summary_type,
+                created_at=context.summary.created_at,
+                token_count=context.summary.token_count,
+            )
+
         return SessionContext(
-            session_id=self.id, messages=context.messages, summary=context.summary
+            session_id=self.id, messages=context.messages, summary=session_summary
+        )
+
+    async def get_summaries(self) -> SessionSummaries:
+        """
+        Get available summaries for this session.
+
+        Makes an async API call to retrieve both short and long summaries for this session,
+        if they are available. Summaries are created asynchronously by the backend
+        as messages are added to the session.
+
+        Returns:
+            A SessionSummaries object containing:
+            - id: The session ID
+            - short_summary: The short summary if available, including metadata
+            - long_summary: The long summary if available, including metadata
+
+        Note:
+            Summaries may be None if:
+            - Not enough messages have been added to trigger summary generation
+            - The summary generation is still in progress
+            - Summary generation is disabled for this session
+        """
+        # Use the honcho_core client to get summaries
+        response = await self._client.workspaces.sessions.summaries(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+        )
+
+        # Create Summary objects from the response data
+        short_summary = None
+        if response.short_summary:
+            short_summary = Summary(
+                content=response.short_summary.content,
+                message_id=response.short_summary.message_id,
+                summary_type=response.short_summary.summary_type,
+                created_at=response.short_summary.created_at,
+                token_count=response.short_summary.token_count,
+            )
+
+        long_summary = None
+        if response.long_summary:
+            long_summary = Summary(
+                content=response.long_summary.content,
+                message_id=response.long_summary.message_id,
+                summary_type=response.long_summary.summary_type,
+                created_at=response.long_summary.created_at,
+                token_count=response.long_summary.token_count,
+            )
+
+        return SessionSummaries(
+            id=response.id or self.id,
+            short_summary=short_summary,
+            long_summary=long_summary,
         )
 
     @validate_call

@@ -3,7 +3,7 @@ import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/
 import type { Uploadable } from '@honcho-ai/core/src/uploads'
 import { Page } from './pagination'
 import { Peer } from './peer'
-import { SessionContext } from './session_context'
+import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
   FileUploadSchema,
@@ -350,6 +350,12 @@ export class Session {
    *   { peer_id: 'user1', content: 'Hello!' },
    *   { peer_id: 'assistant', content: 'Hi there!' }
    * ])
+   * // Add message with custom ISO 8601 timestamp
+   * await session.addMessages({
+   *   peer_id: 'user123',
+   *   content: 'Hello world!',
+   *   created_at: '2021-01-01T00:00:00.000Z'
+   * })
    * ```
    */
   async addMessages(messages: MessageAddition): Promise<void> {
@@ -457,7 +463,37 @@ export class Session {
         summary: contextParams.summary,
       }
     )
-    return new SessionContext(this.id, context.messages, context.summary)
+    // Convert the summary response to Summary object if present
+    const summary = context.summary ? new Summary(context.summary) : null
+    return new SessionContext(this.id, context.messages, summary)
+  }
+
+  /**
+   * Get available summaries for this session.
+   *
+   * Makes an API call to retrieve both short and long summaries for this session,
+   * if they are available. Summaries are created asynchronously by the backend
+   * as messages are added to the session.
+   *
+   * @returns Promise resolving to a SessionSummaries object containing:
+   *          - id: The session ID
+   *          - shortSummary: The short summary if available, including metadata
+   *          - longSummary: The long summary if available, including metadata
+   *
+   * @note Summaries may be null if:
+   *       - Not enough messages have been added to trigger summary generation
+   *       - The summary generation is still in progress
+   *       - Summary generation is disabled for this session
+   */
+  async getSummaries(): Promise<SessionSummaries> {
+    // Use the core SDK's summaries method
+    const data = await this._client.workspaces.sessions.summaries(
+      this.workspaceId,
+      this.id
+    )
+
+    // Return a SessionSummaries instance
+    return new SessionSummaries(data)
   }
 
   /**

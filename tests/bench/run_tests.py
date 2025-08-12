@@ -23,7 +23,7 @@ from typing import Any
 import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from honcho.async_client import AsyncHoncho
+from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig
 from typing_extensions import TypedDict
 
@@ -548,8 +548,12 @@ Evaluate whether the actual response contains the core correct information from 
                     summary=summary, tokens=max_tokens
                 )
 
+                summary_content = ""
+                if session_context.summary:
+                    summary_content = session_context.summary.content
+
                 tokenizer = tiktoken.get_encoding("cl100k_base")
-                summary_tokens = len(tokenizer.encode(session_context.summary))
+                summary_tokens = len(tokenizer.encode(summary_content))
                 output_lines.append(f"    summary: {session_context.summary}")
 
                 got_tokens = summary_tokens

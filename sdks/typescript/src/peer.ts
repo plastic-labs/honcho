@@ -131,21 +131,31 @@ export class Peer {
    *
    * @param content - The text content for the message
    * @param metadata - Optional metadata to associate with the message
+   * @param created_at - Optional ISO 8601 timestamp for the message
    * @returns A new message object with this peer's ID and the provided content
    */
   message(
     content: string,
-    options?: { metadata?: Record<string, unknown> }
+    options?: {
+      metadata?: Record<string, unknown>
+      created_at?: string | Date
+    }
   ): ValidatedMessageCreate {
     const validatedContent = MessageContentSchema.parse(content)
     const validatedMetadata = options?.metadata
       ? MessageMetadataSchema.parse(options.metadata)
       : undefined
 
+    const createdAt =
+      options?.created_at instanceof Date
+        ? options.created_at.toISOString()
+        : options?.created_at
+
     return {
       peer_id: this.id,
       content: validatedContent,
       metadata: validatedMetadata,
+      created_at: createdAt,
     }
   }
 
