@@ -12,8 +12,8 @@ from src import models, schemas
 from src.config import settings
 from src.exceptions import (
     ConflictException,
+    ObserverException,
     ResourceNotFoundException,
-    ValidationException,
 )
 from src.utils.filter import apply_filter
 
@@ -95,11 +95,7 @@ async def get_or_create_session(
             # Count peers that will be observing others
             observer_count = count_observers_in_config(session.peer_names)
             if observer_count > settings.SESSION_OBSERVERS_LIMIT:
-                raise ValidationException(
-                    f"Cannot create session {session.name} with {observer_count} observers. "
-                    + f"Maximum allowed is {settings.SESSION_OBSERVERS_LIMIT} observers per session. "
-                    + "Observers are peers with 'observe_others' set to true."
-                )
+                raise ObserverException(session.name, observer_count)
 
         # Get or create workspace to ensure it exists
         await get_or_create_workspace(
@@ -500,11 +496,7 @@ async def set_peers_for_session(
     # Validate observer limit before making any changes
     observer_count = count_observers_in_config(peer_names)
     if observer_count > settings.SESSION_OBSERVERS_LIMIT:
-        raise ValidationException(
-            f"Cannot set {observer_count} observers for session {session_name}. "
-            + f"Maximum allowed is {settings.SESSION_OBSERVERS_LIMIT} observers per session. "
-            + "Observers are peers with 'observe_others' set to true."
-        )
+        raise ObserverException(session_name, observer_count)
 
     # Verify session exists
     stmt = (
@@ -605,12 +597,7 @@ async def _get_or_add_peers_to_session(
         total_observers = existing_observer_count + new_observer_count
 
         if total_observers > settings.SESSION_OBSERVERS_LIMIT:
-            raise ValidationException(
-                f"Cannot add peer(s) as it would result in {total_observers} observers. "
-                + f"Session currently has {existing_observer_count} observer(s). "
-                + f"Maximum allowed is {settings.SESSION_OBSERVERS_LIMIT} observers per session. "
-                + "Observers are peers with 'observe_others' set to true."
-            )
+            raise ObserverException(session_name, total_observers)
 
     # Use upsert to handle both new peers and rejoining peers
     stmt = pg_insert(models.SessionPeer).values(
@@ -711,7 +698,7 @@ async def set_peer_config(
         config: The peer configuration to set
 
     Raises:
-        ValidationException: If the update would exceed the observer limit
+        ObserverException: If the update would exceed the observer limit
     """
     # First, get the session and peer to ensure they exist
     await get_session(db, session_name, workspace_name)
@@ -756,11 +743,7 @@ async def set_peer_config(
             observer_count += 1
 
             if observer_count > settings.SESSION_OBSERVERS_LIMIT:
-                raise ValidationException(
-                    f"Cannot update peer {peer_name} configuration to observe others. "
-                    + f"Session {session_name} would have {observer_count} observers. "
-                    + f"Maximum allowed is {settings.SESSION_OBSERVERS_LIMIT} observers per session."
-                )
+                raise ObserverException(session_name, observer_count)
 
     update_data = config.model_dump(exclude_none=True)
 

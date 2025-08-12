@@ -152,7 +152,7 @@ def test_create_session_with_too_many_peers(
             },
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 400
     assert "11 observers" in response.json()["detail"]
     assert "Maximum allowed is 10 observers" in response.json()["detail"]
 
@@ -621,7 +621,7 @@ def test_set_session_peers_with_observer_limit(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
         json=peers_dict_all_observers,
     )
-    assert response.status_code == 422  # ValidationException
+    assert response.status_code == 400  # ObserverException
     assert "11 observers" in response.json()["detail"]
     assert "Maximum allowed is 10 observers" in response.json()["detail"]
 
@@ -682,7 +682,7 @@ def test_update_peer_config_observer_limit(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{test_peer.name}/config",
         json={"observe_others": True},
     )
-    assert response.status_code == 422  # ValidationException
+    assert response.status_code == 400  # ObserverException
     assert "11 observers" in response.json()["detail"]
     assert "Maximum allowed is 10 observers" in response.json()["detail"]
 
