@@ -138,7 +138,7 @@ export class Peer {
     content: string,
     options?: {
       metadata?: Record<string, unknown>
-      created_at?: string
+      created_at?: string | Date
     }
   ): ValidatedMessageCreate {
     const validatedContent = MessageContentSchema.parse(content)
@@ -146,11 +146,16 @@ export class Peer {
       ? MessageMetadataSchema.parse(options.metadata)
       : undefined
 
+    const createdAt =
+      options?.created_at instanceof Date
+        ? options.created_at.toISOString()
+        : options?.created_at
+
     return {
       peer_id: this.id,
       content: validatedContent,
       metadata: validatedMetadata,
-      created_at: options?.created_at,
+      created_at: createdAt,
     }
   }
 

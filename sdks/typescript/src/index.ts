@@ -10,6 +10,7 @@ export {
   SessionContext,
   SessionSummaries,
   Summary,
+  SummaryData,
 } from './session_context'
 
 // Export validation types for advanced usage

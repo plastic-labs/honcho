@@ -16,8 +16,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Session Peer limit to be based on observers instead, renamed config value to
   `SESSION_OBSERVERS_LIMIT`
 - Deriver uses `get_context` internally to prevent context window limit errors
-- `Messages` can take an custom timestamp for the `created_at` field, defaulting
-  to current time
+- `Messages` can take a custom timestamp for the `created_at` field, defaulting
+  to the current time
 - `get_context` endpoint returns detailed `Summary` object rather than just
   summary content
 

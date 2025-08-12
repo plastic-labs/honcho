@@ -748,7 +748,9 @@ def test_get_session_context_with_all_params(
     assert "summary" in data
 
 
-def test_get_session_summaries(client: TestClient, sample_data: tuple[Workspace, Peer]):
+def test_get_session_summaries(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+) -> None:
     """Test getting summaries for a valid session"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
@@ -772,11 +774,13 @@ def test_get_session_summaries(client: TestClient, sample_data: tuple[Workspace,
     assert "short_summary" in data
     assert "long_summary" in data
     # Summaries will be None since they're created asynchronously
+    assert "short_summary" == None
+    assert "long_summary" == None
 
 
 def test_get_session_summaries_nonexistent_session(
     client: TestClient, sample_data: tuple[Workspace, Peer]
-):
+) -> None:
     """Test getting summaries for a non-existent session"""
     test_workspace, _ = sample_data
     nonexistent_session_id = str(generate_nanoid())

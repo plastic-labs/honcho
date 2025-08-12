@@ -374,8 +374,9 @@ async def get_session_context(
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
         description=f"Number of tokens to use for the context. Includes summary if set to true. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
+    *,
     include_summary: bool = Query(
-        True,
+        default=True,
         description="Whether or not to include a summary *if* one is available for the session",
         alias="summary",
     ),
@@ -416,7 +417,7 @@ async def get_session_summaries(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
     db: AsyncSession = db,
-):
+) -> schemas.SessionSummaries:
     """
     Get available summaries for a session.
 
@@ -433,23 +434,11 @@ async def get_session_summaries(
     # Convert the internal Summary TypedDict to our Pydantic schema
     short_summary_schema = None
     if short_summary:
-        short_summary_schema = schemas.Summary(
-            content=short_summary["content"],
-            message_id=short_summary["message_id"],
-            summary_type=short_summary["summary_type"],
-            created_at=short_summary["created_at"],
-            token_count=short_summary["token_count"],
-        )
+        short_summary_schema = summarizer.to_schema_summary(short_summary)
 
     long_summary_schema = None
     if long_summary:
-        long_summary_schema = schemas.Summary(
-            content=long_summary["content"],
-            message_id=long_summary["message_id"],
-            summary_type=long_summary["summary_type"],
-            created_at=long_summary["created_at"],
-            token_count=long_summary["token_count"],
-        )
+        long_summary_schema = summarizer.to_schema_summary(long_summary)
 
     return schemas.SessionSummaries(
         name=session_id,

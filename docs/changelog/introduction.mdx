@@ -28,7 +28,19 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 <Tabs>
     <Tab title="Honcho API">
         <Update label="v2.3.0 (Current)">
+        ### Added
 
+        - `getSummaries` endpoint to get all available summaries for a session directly
+
+        ### Changed
+
+        - Session Peer limit to be based on observers instead, renamed config value to
+          `SESSION_OBSERVERS_LIMIT`
+        - Deriver uses `get_context` internally to prevent context window limit errors
+        - `Messages` can take a custom timestamp for the `created_at` field, defaulting
+          to the current time
+        - `get_context` endpoint returns detailed `Summary` object rather than just
+          summary content
         </Update>
 
         <Update label="v2.2.0">
@@ -244,7 +256,14 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
         <Update label="v1.4.0 (Current)">
+        ### Added
 
+        - getSummaries API returning structured summaries
+
+        ### Changed
+
+        - Messages can take an optional `created_at` value, defaulting to the current
+          time (UTC ISO 8601)
         </Update>
         <Update label="v1.2.2">
             ### Added
@@ -283,7 +302,14 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
         <Update label="v1.4.0 (Current)">
+        ### Added
 
+        - getSummaries API returning structured summaries
+
+        ### Changed
+
+        - Messages can take an optional `created_at` value, defaulting to the current
+          time (UTC ISO 8601)
         </Update>
         <Update label="v1.2.1">
             ### Added

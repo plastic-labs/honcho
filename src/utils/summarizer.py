@@ -41,6 +41,16 @@ class Summary(TypedDict):
     token_count: int
 
 
+def to_schema_summary(s: Summary) -> schemas.Summary:
+    return schemas.Summary(
+        content=s["content"],
+        message_id=s["message_id"],
+        summary_type=s["summary_type"],
+        created_at=s["created_at"],
+        token_count=s["token_count"],
+    )
+
+
 # Export the public functions
 __all__ = [
     "get_summary",
@@ -50,6 +60,7 @@ __all__ = [
     "get_session_context_formatted",
     "SummaryType",
     "Summary",
+    "to_schema_summary",
 ]
 
 

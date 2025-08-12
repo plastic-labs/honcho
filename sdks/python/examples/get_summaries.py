@@ -6,9 +6,8 @@ for a session, including their metadata like message ID, creation timestamp,
 and token count.
 """
 
-from honcho import Honcho, SessionSummaries
+from honcho import AsyncHoncho, Honcho, SessionSummaries
 import asyncio
-from honcho import AsyncHoncho
 import os
 
 # Initialize the Honcho client

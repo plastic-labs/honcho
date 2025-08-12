@@ -1,6 +1,14 @@
 import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import type { Peer } from './peer'
 
+export interface SummaryData {
+  content: string
+  message_id: number
+  summary_type: string
+  created_at: string
+  token_count: number
+}
+
 /**
  * Represents a summary of a session's conversation.
  */
@@ -30,13 +38,7 @@ export class Summary {
    */
   readonly tokenCount: number
 
-  constructor(data: {
-    content: string
-    message_id: number
-    summary_type: string
-    created_at: string
-    token_count: number
-  }) {
+  constructor(data: SummaryData) {
     this.content = data.content
     this.messageId = data.message_id
     this.summaryType = data.summary_type
@@ -66,8 +68,8 @@ export class SessionSummaries {
 
   constructor(data: {
     id: string
-    short_summary?: any | null
-    long_summary?: any | null
+    short_summary?: SummaryData | null
+    long_summary?: SummaryData | null
   }) {
     this.id = data.id
     this.shortSummary = data.short_summary

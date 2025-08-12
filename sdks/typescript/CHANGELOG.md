@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## [1.4.0] - 2025-08-12
 
+### Added
+
+- getSummaries API returning structured summaries
+
 ### Changed
 
-- Updated version
+- Messages can take an optional `created_at` value, defaulting to the current
+  time (UTC ISO 8601)
 
 ## [1.3.0] - 2025-08-04
 
