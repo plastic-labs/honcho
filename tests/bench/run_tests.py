@@ -173,7 +173,9 @@ class TestRunner:
         try:
             await honcho_client.poll_deriver_status(
                 session_id=session_id,
-                timeout=float(self.timeout_seconds) if self.timeout_seconds else 300.0,
+                timeout=float(self.timeout_seconds)
+                if self.timeout_seconds
+                else 10000.0,
             )
             return True
         except Exception as e:

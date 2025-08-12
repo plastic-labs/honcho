@@ -377,6 +377,9 @@ class QueueItem(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    def __repr__(self) -> str:
+        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed})"
+
 
 @final
 class ActiveQueueSession(Base):
