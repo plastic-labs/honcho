@@ -27,7 +27,6 @@ def dialectic_prompt(
         Formatted prompt string for the dialectic model
     """
 
-    # NOTE: currently we will print "None" if the card(s) don't exist yet. This might be okay as is.
     if target_name:
         query_target = f"""The query is about user {peer_name}'s understanding of {target_name}.
 

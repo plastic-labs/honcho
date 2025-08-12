@@ -111,7 +111,7 @@ def peer_card_prompt(
     old_peer_card_section = (
         f"""
 Current user biographical card:
-{old_peer_card}
+{chr(10).join(old_peer_card)}
     """
         if old_peer_card is not None
         else """
