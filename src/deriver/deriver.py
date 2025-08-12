@@ -8,7 +8,7 @@ import sentry_sdk
 from langfuse.decorators import langfuse_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud
+from src import crud, exceptions
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.utils import summarizer
@@ -337,14 +337,21 @@ class CertaintyReasoner:
             formatted_new_turn,
         )
 
-        # Call the standalone LLM function (now with Tenacity retries)
-        response_obj = await critical_analysis_call(
-            peer_card=speaker_peer_card,
-            message_created_at=self.ctx.created_at,
-            working_representation=formatted_working_representation,
-            history=history,
-            new_turn=formatted_new_turn,
-        )
+        try:
+            response_obj = await critical_analysis_call(
+                peer_card=speaker_peer_card,
+                message_created_at=self.ctx.created_at,
+                working_representation=formatted_working_representation,
+                history=history,
+                new_turn=formatted_new_turn,
+            )
+        except Exception as e:
+            raise exceptions.LLMError(
+                speaker_peer_card=speaker_peer_card,
+                working_representation=formatted_working_representation,
+                history=history,
+                new_turn=formatted_new_turn,
+            ) from e
 
         # If response is a string, try to parse as JSON
         if isinstance(response_obj, str):
