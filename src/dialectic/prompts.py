@@ -10,9 +10,9 @@ def dialectic_prompt(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
-    peer_card: str | None,
+    peer_card: list[str] | None,
     target_name: str | None = None,
-    target_peer_card: str | None = None,
+    target_peer_card: list[str] | None = None,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.

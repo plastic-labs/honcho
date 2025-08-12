@@ -31,12 +31,13 @@ from src.utils.logging import (
 from src.utils.shared_models import (
     DeductiveObservation,
     ObservationContext,
+    PeerCardQuery,
     ReasoningResponse,
     ReasoningResponseWithThinking,
     UnifiedObservation,
 )
 
-from .prompts import NO_CHANGES_RESPONSE, critical_analysis_prompt, peer_card_prompt
+from .prompts import critical_analysis_prompt, peer_card_prompt
 from .queue_payload import (
     RepresentationPayload,
 )
@@ -78,6 +79,7 @@ async def critical_analysis_call(
     provider=settings.DERIVER.PEER_CARD_PROVIDER,
     model=settings.DERIVER.PEER_CARD_MODEL,
     track_name="Peer Card Call",
+    response_model=PeerCardQuery,
     max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
     or settings.LLM.DEFAULT_MAX_TOKENS,
     thinking_budget_tokens=None,
@@ -87,7 +89,7 @@ async def critical_analysis_call(
     retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
 )
 async def peer_card_call(
-    old_peer_card: str | None,
+    old_peer_card: list[str] | None,
     new_observations: list[str],
 ):
     return peer_card_prompt(
@@ -227,7 +229,7 @@ async def process_representation_task(
 
     # We currently only use Peer Cards in Honcho-level representation derivation.
     if payload.sender_name == payload.target_name:
-        sender_peer_card: str | None = await crud.get_peer_card(
+        sender_peer_card: list[str] | None = await crud.get_peer_card(
             db, payload.workspace_name, payload.sender_name
         )
         if sender_peer_card is None:
@@ -456,7 +458,8 @@ class CertaintyReasoner:
                 for level in new_observations_by_level.values()
                 for observation in level
             ]
-            await self._update_peer_card(db, speaker_peer_card, new_observations)
+            if new_observations:
+                await self._update_peer_card(db, speaker_peer_card, new_observations)
             update_peer_card_duration = (
                 time.perf_counter() - update_peer_card_start
             ) * 1000
@@ -536,7 +539,7 @@ class CertaintyReasoner:
     async def _update_peer_card(
         self,
         db: AsyncSession,
-        old_peer_card: str | None,
+        old_peer_card: list[str] | None,
         new_observations: list[str],
     ) -> None:
         """
@@ -545,8 +548,8 @@ class CertaintyReasoner:
         """
         try:
             response = await peer_card_call(old_peer_card, new_observations)
-            new_peer_card = str(response)
-            if NO_CHANGES_RESPONSE in new_peer_card or new_peer_card == "":
+            new_peer_card = response.card
+            if new_peer_card is None:
                 logger.info("No changes to peer card")
                 return
             logger.info("New peer card: %s", new_peer_card)

@@ -12,7 +12,7 @@ logger = getLogger(__name__)
 
 async def get_peer_card(
     db: AsyncSession, workspace_name: str, peer_name: str
-) -> str | None:
+) -> list[str] | None:
     """
     Get peer card from internal_metadata.
 
@@ -32,7 +32,7 @@ async def get_peer_card(
 
 
 async def set_peer_card(
-    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: str | None
+    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: list[str] | None
 ) -> None:
     """
     Set peer card for a peer.

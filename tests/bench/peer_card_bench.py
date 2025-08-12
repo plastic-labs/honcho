@@ -27,9 +27,9 @@ from typing import Any, cast
 
 from anthropic import AsyncAnthropic
 
-from src.config import settings
-from src.deriver.prompts import NO_CHANGES_RESPONSE, peer_card_prompt
+from src.deriver.prompts import peer_card_prompt
 from src.utils.clients import honcho_llm_call
+from src.utils.shared_models import PeerCardQuery
 
 COLOR_GREEN = "\033[32m"
 COLOR_RED = "\033[31m"
@@ -57,7 +57,7 @@ class Case:
     """
 
     name: str
-    old_peer_card: str | None
+    old_peer_card: list[str] | None
     new_observations: list[str]
     expected_facts: list[str]
     forbidden_facts: list[str]
@@ -133,7 +133,7 @@ def deduplicate_preserve_order(items: list[Candidate]) -> list[Candidate]:
 
 def build_peer_card_caller(
     candidate: Candidate,
-) -> Callable[[str | None, list[str]], Coroutine[Any, Any, str]]:
+) -> Callable[[list[str] | None, list[str]], Coroutine[Any, Any, PeerCardQuery]]:
     """Create an async callable that invokes the peer card prompt with a specific provider/model."""
 
     resolved_provider = (
@@ -144,15 +144,14 @@ def build_peer_card_caller(
         provider=cast(Any, resolved_provider),
         model=candidate.model,
         track_name="Peer Card Call",
-        max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
-        or settings.LLM.DEFAULT_MAX_TOKENS,
-        thinking_budget_tokens=None,
+        response_model=PeerCardQuery,
+        json_mode=True,
+        max_tokens=5000,
         reasoning_effort="minimal",
-        verbosity="low",
         enable_retry=True,
         retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
     )
-    async def call(old_peer_card: str | None, new_observations: list[str]) -> Any:
+    async def call(old_peer_card: list[str] | None, new_observations: list[str]) -> Any:
         """Return the prompt content for Mirascope to execute as a model call."""
 
         return peer_card_prompt(
@@ -243,7 +242,7 @@ def _extract_json_from_text(text: str) -> dict[str, Any]:
 async def judge_response(
     anthropic: AsyncAnthropic,
     case: Case,
-    actual_card: str,
+    actual_card: list[str],
 ) -> dict[str, Any]:
     """Use an LLM judge to evaluate whether the card contains the expected facts.
 
@@ -264,7 +263,7 @@ async def judge_response(
         f"Case: {case.name}\n\n"
         f"Expected facts (must appear, semantic):\n{expected or '- (none)'}\n\n"
         f"Forbidden facts (must NOT appear, semantic):\n{forbidden or '- (none)'}\n\n"
-        f"Biographical card to evaluate:\n{actual_card}\n\n"
+        f"Biographical card to evaluate:\n{actual_card or '- (none)'}\n\n"
         f"Evaluation criteria: PASS only if all expected facts are present AND all forbidden facts are absent."
     )
 
@@ -315,15 +314,17 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
         async def run_case(
             case: Case,
             _caller: Callable[
-                [str | None, list[str]], Coroutine[Any, Any, object]
+                [list[str] | None, list[str]], Coroutine[Any, Any, PeerCardQuery]
             ] = caller,
         ) -> tuple[Case, dict[str, Any]]:
-            card: object = await _caller(case.old_peer_card, case.new_observations)
-            response = str(card)
-            if NO_CHANGES_RESPONSE in response or response == "":
-                response = case.old_peer_card or ""
-            judgment = await judge_response(anthropic, case, response)
-            return case, {"card": response, "judgment": judgment}
+            card: PeerCardQuery = await _caller(
+                case.old_peer_card, case.new_observations
+            )
+            new_card = card.card
+            if new_card is None:
+                new_card = case.old_peer_card or []
+            judgment = await judge_response(anthropic, case, new_card)
+            return case, {"card": card, "judgment": judgment}
 
         results = await asyncio.gather(
             *(run_case(c) for c in cases), return_exceptions=True
@@ -358,7 +359,12 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
                     for f in case.forbidden_facts:
                         print(f"      - {f}")
                 print("    got:")
-                [print("      " + line) for line in payload["card"].splitlines()]
+                [print("      " + line) for line in payload["card"].card]
+                print("    with 'notes' field:")
+                if payload["card"].notes:
+                    print("      " + payload["card"].notes)
+                else:
+                    print("      - (none)")
         total_count: int = len(cases)
         percentage: float = (passed_count / total_count * 100.0) if total_count else 0.0
         print(f"  Summary: {passed_count}/{total_count} passed ({percentage:.1f}%)")
