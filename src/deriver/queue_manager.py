@@ -275,7 +275,8 @@ class QueueManager:
 
                     if self.shutdown_event.is_set():
                         logger.debug(
-                            f"Shutdown requested, stopping processing for work unit {work_unit_key}"
+                            "Shutdown requested, stopping processing for work unit %s",
+                            work_unit_key,
                         )
                         break
 

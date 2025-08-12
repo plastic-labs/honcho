@@ -23,11 +23,11 @@ def critical_analysis_prompt(
     Generate the critical analysis prompt for the deriver.
 
     Args:
-        peer_card: The bio card of the user being analyzed
-        message_created_at: Timestamp of the message being analyzed
-        working_representation: Current user understanding context
-        history: Recent conversation history
-        new_turn: New conversation turn to analyze
+        peer_card (list[str] | None): The bio card of the user being analyzed.
+        message_created_at (datetime.datetime): Timestamp of the message.
+        working_representation (str | None): Current user understanding context.
+        history (str): Recent conversation history.
+        new_turn (str): New conversation turn to analyze.
 
     Returns:
         Formatted prompt string for critical analysis
@@ -152,7 +152,7 @@ Example 2:
 {old_peer_card_section}
 
 New observations:
-{new_observations}
+{chr(10).join(new_observations)}
 
 If there's no new key info, you should return an empty card. **NEVER** include notes or temporary information in the card itself, instead use the notes field.
     """

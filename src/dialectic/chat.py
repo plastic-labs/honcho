@@ -311,11 +311,10 @@ async def chat(
         else:
             target_peer_card = None
 
-    logger.info(
-        "Retrieved peer cards:\n%s\n%s",
-        peer_card,
-        target_peer_card if target_peer_card else "",
-    )
+    if target_peer_card:
+        logger.info("Retrieved peer cards:\n%s\n%s", peer_card, target_peer_card)
+    else:
+        logger.info("Retrieved peer card:\n%s", peer_card)
 
     # 5. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = asyncio.get_event_loop().time()
