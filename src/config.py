@@ -206,6 +206,12 @@ class DeriverSettings(HonchoSettings):
         30_000
     )
 
+    # Maximum number of observations to store in working representation
+    # This is applied to both explicit and deductive observations
+    WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
+        int, Field(default=100, gt=0, le=500)
+    ] = 100
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore

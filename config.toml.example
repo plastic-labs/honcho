@@ -64,6 +64,11 @@ PROVIDER = "google"
 MODEL = "gemini-2.0-flash-lite"
 MAX_OUTPUT_TOKENS = 2500
 THINKING_BUDGET_TOKENS = 1024 # only applied when using Anthropic
+PEER_CARD_PROVIDER = "openai"
+PEER_CARD_MODEL = "gpt-5-nano-2025-08-07"
+PEER_CARD_MAX_OUTPUT_TOKENS = 2000
+CONTEXT_TOKEN_LIMIT = 30000
+WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
 
 # Dialectic settings
 [dialectic]

@@ -17,6 +17,7 @@ from mirascope.llm import Stream
 
 from src import crud
 from src.config import settings
+from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
 from src.routers.sessions import get_session_context
 from src.utils.clients import honcho_llm_call
@@ -243,7 +244,7 @@ async def chat(
     embedding_store = EmbeddingStore(
         workspace_name=workspace_name,
         peer_name=target_name if target_name else peer_name,
-        collection_name="global_representation"
+        collection_name=GLOBAL_REPRESENTATION_COLLECTION_NAME
         if not target_name
         else crud.construct_collection_name(observer=peer_name, observed=target_name),
     )
