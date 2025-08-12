@@ -16,7 +16,7 @@ The `harness.py` script orchestrates the complete Honcho development environment
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.11+
 - Docker and Docker Compose
 - Honcho project dependencies installed (`uv sync`)
 

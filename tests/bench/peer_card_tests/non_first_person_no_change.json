@@ -1,0 +1,21 @@
+{
+  "name": "non_first_person_no_change",
+  "old_peer_card": "Name: Sofia\nAge: 25\nLocation: Miami\nOccupation: Marketing Specialist\nInterests: dancing, podcasts",
+  "new_observations": [
+    "You should try a new cafe downtown.",
+    "They say running reduces stress.",
+    "People love living near the beach."
+  ],
+  "expected_facts": [
+    "Name: Sofia",
+    "Age: 25",
+    "Location: Miami",
+    "Occupation: Marketing Specialist",
+    "Interests: dancing",
+    "Interests: podcasts"
+  ],
+  "forbidden_facts": [
+    "Occupation: Barista",
+    "Location: Downtown"
+  ]
+}

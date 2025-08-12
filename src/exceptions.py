@@ -2,7 +2,8 @@
 Custom exceptions for the Honcho application.
 """
 
-from typing import final
+import json
+from typing import Any, final
 
 from src.config import settings
 
@@ -106,3 +107,38 @@ class FileTooLargeError(HonchoException):
 class FileProcessingError(HonchoException):
     status_code = 500
     detail = "File processing error"
+
+
+class LLMError(Exception):
+    """Exception raised when an LLM call fails.
+
+    Accepts arbitrary positional and keyword inputs, normalizes them into a
+    JSON-serializable object, and uses the resulting JSON string as the
+    exception message. The normalized object is available via ``to_dict()``
+    and the ``data`` attribute.
+
+    Positional and keyword inputs are represented as a JSON object. If a
+    single positional argument is a mapping and there are no keyword
+    arguments, that mapping is used as the root object; otherwise the shape is
+    ``{"args": [...], "kwargs": {...}}``. Values that are not natively
+    serializable are converted using ``repr``.
+    """
+
+    data: dict[str, Any]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        normalized = {"args": list(args), "kwargs": kwargs}
+        message = json.dumps(
+            normalized, default=self._json_fallback, ensure_ascii=False
+        )
+        self.data = normalized
+        super().__init__(message)
+
+    @staticmethod
+    def _json_fallback(value: Any) -> str:
+        """Fallback serializer that returns ``repr(value)`` for unsupported types."""
+        return repr(value)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the normalized JSON object for programmatic access."""
+        return self.data

@@ -1,0 +1,17 @@
+{
+  "name": "contradiction_update_location_amidst_noise",
+  "old_peer_card": "Name: Mei\nAge: 32\nLocation: Vancouver\nOccupation: Nurse\nInterests: hiking, painting\nLanguages: English, Mandarin",
+  "new_observations": [
+    "The Canucks lost.",
+    "Mei moved to Calgary for work.",
+    "A friend started a bakery.",
+    "It is snowing again."
+  ],
+  "expected_facts": [
+    "Location: Calgary"
+  ],
+  "forbidden_facts": [
+    "Location: Vancouver",
+    "Occupation: Baker"
+  ]
+}

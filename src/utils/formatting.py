@@ -162,24 +162,21 @@ def extract_observation_content(observation: str | dict[str, Any] | Any) -> str:
 
 
 def format_new_turn_with_timestamp(
-    new_turn: str, current_time: str | datetime, speaker: str
+    new_turn: str, current_time: datetime, speaker: str
 ) -> str:
     """
     Format new turn message with optional timestamp.
 
     Args:
         new_turn: The message content
-        current_time: Timestamp string or "unknown"
+        current_time: Message timestamp
         speaker: The speaker's name
 
     Returns:
-        Formatted string like "2023-05-08 13:56:00 speaker: hello" or "speaker: hello"
+        Formatted string like "2023-05-08 13:56:00 speaker: hello"
     """
-    if isinstance(current_time, datetime):
-        current_time = current_time.strftime("%Y-%m-%d %H:%M:%S")
-    if current_time and current_time != "unknown":
-        return f"{current_time} {speaker}: {new_turn}"
-    return f"{speaker}: {new_turn}"
+    current_time_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
+    return f"{current_time_str} {speaker}: {new_turn}"
 
 
 def format_context_for_prompt(
@@ -249,7 +246,7 @@ def normalize_observations_for_comparison(observations: list[Any]) -> set[str]:
 @conditional_observe
 def find_new_observations(
     original_context: ReasoningResponse, revised_observations: ReasoningResponse
-) -> dict[str, Any]:
+) -> dict[str, list[str]]:
     """
     Find observations that are new in revised_observations compared to original_context.
 
@@ -260,7 +257,7 @@ def find_new_observations(
     Returns:
         Dictionary with new observations by level
     """
-    new_observations_by_level: dict[str, Any] = {}
+    new_observations_by_level: dict[str, list[str]] = {}
 
     for level in REASONING_LEVELS:
         original_observations = normalize_observations_for_comparison(
@@ -269,7 +266,7 @@ def find_new_observations(
         revised_list = getattr(revised_observations, level, [])
 
         # Find genuinely new observations
-        new_observations: list[Any] = []
+        new_observations: list[str] = []
         for observation in revised_list:
             normalized_observation = (
                 extract_observation_content(observation).strip().lower()

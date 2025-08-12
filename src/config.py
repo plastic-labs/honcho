@@ -194,10 +194,23 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
+    PEER_CARD_PROVIDER: Providers = "openai"
+    PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
+    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
+    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
+        int, Field(default=4000, gt=1000, le=10_000)
+    ] = 4000
+
     # Context token limit for get_context method
     CONTEXT_TOKEN_LIMIT: Annotated[int, Field(default=30_000, gt=1000, le=100_000)] = (
         30_000
     )
+
+    # Maximum number of observations to store in working representation
+    # This is applied to both explicit and deductive observations
+    WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
+        int, Field(default=100, gt=0, le=500)
+    ] = 100
 
 
 class DialecticSettings(HonchoSettings):

@@ -1,0 +1,22 @@
+{
+  "name": "third_party_only_no_change",
+  "old_peer_card": "Name: Priya\nAge: 29\nLocation: Seattle\nOccupation: Data Scientist\nInterests: climbing, board games",
+  "new_observations": [
+    "Sam loves salsa dancing.",
+    "Alex got a puppy.",
+    "Taylor is really into pickling."
+  ],
+  "expected_facts": [
+    "Name: Priya",
+    "Age: 29",
+    "Location: Seattle",
+    "Occupation: Data Scientist",
+    "Interests: climbing",
+    "Interests: board games"
+  ],
+  "forbidden_facts": [
+    "Interests: salsa dancing",
+    "Pets: puppy",
+    "Interests: pickling"
+  ]
+}

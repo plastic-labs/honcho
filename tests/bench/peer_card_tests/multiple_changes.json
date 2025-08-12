@@ -1,0 +1,14 @@
+{
+  "name": "multiple_changes",
+  "old_peer_card": "Name: Grace\nAge: 30\nLocation: Paris\nOccupation: Artist\nInterests: Painting",
+  "new_observations": [
+    "Grace is 31 years old.",
+    "Grace lives in Berlin.",
+    "Grace is interested in biking."
+  ],
+  "expected_facts": [
+    "Age: 31",
+    "Location: Berlin",
+    "Interests: biking"
+  ]
+}

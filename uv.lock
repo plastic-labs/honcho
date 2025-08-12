@@ -877,9 +877,9 @@ requires-dist = [
     { name = "google-generativeai", specifier = ">=0.8.5" },
     { name = "greenlet", specifier = ">=3.0.3" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "mirascope", extras = ["anthropic", "google", "groq", "langfuse"], specifier = ">=1.25.1" },
+    { name = "mirascope", extras = ["anthropic", "google", "groq", "langfuse"], specifier = ">=1.25.5" },
     { name = "nanoid", specifier = ">=2.0.0" },
-    { name = "openai", specifier = ">=1.91.0" },
+    { name = "openai", specifier = ">=1.99.7" },
     { name = "pdfplumber", specifier = ">=0.11.7" },
     { name = "pgvector", specifier = ">=0.2.5" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1.19" },
@@ -1480,7 +1480,7 @@ wheels = [
 
 [[package]]
 name = "openai"
-version = "1.99.1"
+version = "1.99.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1492,9 +1492,9 @@ dependencies = [
     { name = "tqdm" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/03/30/f0fb7907a77e733bb801c7bdcde903500b31215141cdb261f04421e6fbec/openai-1.99.1.tar.gz", hash = "sha256:2c9d8e498c298f51bb94bcac724257a3a6cac6139ccdfc1186c6708f7a93120f", size = 497075, upload-time = "2025-08-05T19:42:36.131Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d8/e3/14812e91dee4d7a1d6aa365ec722b9f2c7ecca3b4f1fb5c56c2c1d83de82/openai-1.99.7.tar.gz", hash = "sha256:d2f4211642b9dbcd8e3cc6e6ef1180ac149f80d2e5ab1ee7f5afdd8d34c9b33b", size = 505598, upload-time = "2025-08-11T15:13:10.693Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/15/9c85154ffd283abfc43309ff3aaa63c3fd02f7767ee684e73670f6c5ade2/openai-1.99.1-py3-none-any.whl", hash = "sha256:8eeccc69e0ece1357b51ca0d9fb21324afee09b20c3e5b547d02445ca18a4e03", size = 767827, upload-time = "2025-08-05T19:42:34.192Z" },
+    { url = "https://files.pythonhosted.org/packages/64/2d/a41c49550a69374111647be22b587e3311a6fc31fc7370e14448e78018bc/openai-1.99.7-py3-none-any.whl", hash = "sha256:ef4165cc4f8872dd4a967d109f12b0b9c98a1e20ae05940c28701729c2883891", size = 786809, upload-time = "2025-08-11T15:13:08.537Z" },
 ]
 
 [[package]]

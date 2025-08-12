@@ -169,11 +169,13 @@
         {
             "observer": "alice",
             "query": "What are Alice's favorite numbers?",
+            "session": "session1",
             "expected_response": "7, 74, 12, 8, 2, 3, 14, 24, 37"
         },
         {
             "observer": "bob",
             "query": "What is Bob's favorite number?",
+            "session": "session1",
             "expected_response": "7"
         }
     ],

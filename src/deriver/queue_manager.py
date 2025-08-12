@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from src import exceptions
 from src.config import settings
 from src.models import QueueItem
 
@@ -235,7 +236,6 @@ class QueueManager:
                     message = await self.get_next_message(db, work_unit_key)
                     if not message:
                         logger.debug(f"No more messages for work unit {work_unit_key}")
-
                         break
 
                     message_count += 1
@@ -247,6 +247,13 @@ class QueueManager:
                         logger.debug(
                             f"Successfully processed queue item for task type {message.task_type} with id {message.id}"
                         )
+                    except exceptions.LLMError as e:
+                        logger.error(
+                            f"LLM returned bad JSON for message {message}, re-queueing",
+                        )
+                        if settings.SENTRY.ENABLED:
+                            sentry_sdk.capture_exception(e)
+                        continue
                     except Exception as e:
                         logger.error(
                             f"Error processing queue item for task type {message.task_type} with id {message.id}: {str(e)}",
@@ -254,16 +261,9 @@ class QueueManager:
                         )
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
-                    finally:
-                        # Prevent malformed messages from stalling queue indefinitely
-                        message.processed = True
-                        await db.commit()
 
-                    if self.shutdown_event.is_set():
-                        logger.debug(
-                            f"Shutdown requested, stopping processing for work unit {work_unit_key}"
-                        )
-                        break
+                    # Prevent malformed messages from stalling queue indefinitely
+                    message.processed = True
 
                     # Update last_updated timestamp to show this work unit is still being processed
                     await db.execute(
@@ -272,6 +272,13 @@ class QueueManager:
                         .values(last_updated=func.now())
                     )
                     await db.commit()
+
+                    if self.shutdown_event.is_set():
+                        logger.debug(
+                            "Shutdown requested, stopping processing for work unit %s",
+                            work_unit_key,
+                        )
+                        break
 
                 logger.debug(
                     f"Completed processing work unit {work_unit_key}, processed {message_count} messages"

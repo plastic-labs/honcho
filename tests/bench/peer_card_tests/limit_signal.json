@@ -1,0 +1,19 @@
+{
+  "name": "limit_signal",
+  "old_peer_card": null,
+  "new_observations": [
+    "The user's name is Henry.",
+    "The user is interested in chess.",
+    "The user is interested in chess a lot.",
+    "Henry's nickname is Hank."
+  ],
+  "expected_facts": [
+    "Name: Henry",
+    "Nickname: Hank",
+    "Interests: chess"
+  ],
+  "forbidden_facts": [
+    "Interests: chess a lot",
+    "Interests: checkers"
+  ]
+}

@@ -39,11 +39,11 @@ class EmbeddingStore:
     async def save_unified_observations(
         self,
         observations: list[UnifiedObservation],
+        message_id: int,
+        session_name: str,
+        message_created_at: datetime.datetime,
+        fallback_level: str = "explicit",
         similarity_threshold: float = 0.85,
-        message_id: str | None = None,
-        level: str | None = None,
-        session_name: str | None = None,
-        message_created_at: datetime.datetime | None = None,
     ) -> None:
         """Save UnifiedObservation objects to the collection.
 
@@ -53,11 +53,11 @@ class EmbeddingStore:
 
         Args:
             observations: List of UnifiedObservation objects or strings
-            similarity_threshold: Threshold for considering observations similar
             message_id: Message ID to link with observations
-            level: Reasoning level for the observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
+            fallback_level: Reasoning level for the observations if not provided
+            similarity_threshold: Threshold for considering observations similar
         """
         async with tracked_db("ed_embedding_store.save_unified_observations") as db:
             # Extract conclusions for deduplication and embedding
@@ -104,11 +104,8 @@ class EmbeddingStore:
             # Batch create document objects
             document_objects: list[models.Document] = []
             for obs, embedding in zip(unique_observations, embeddings, strict=True):
-                # Use the observation's own level, fall back to parameter level,
-                # or infer from premises
-                obs_level = obs.level or level
-                if obs_level is None:
-                    obs_level = "deductive" if obs.has_premises else "explicit"
+                # Use the observation's own level or fall back to parameter level
+                obs_level = obs.level or fallback_level
 
                 # Build metadata including premises
                 metadata: dict[str, Any] = {
@@ -116,9 +113,7 @@ class EmbeddingStore:
                     "message_id": message_id,
                     "session_name": session_name,
                     "premises": obs.premises,  # Store premises in metadata
-                    "created_at": format_datetime_utc(message_created_at)
-                    if message_created_at
-                    else None,
+                    "created_at": format_datetime_utc(message_created_at),
                 }
 
                 doc = models.Document(
