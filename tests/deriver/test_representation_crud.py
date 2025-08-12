@@ -29,12 +29,12 @@ async def test_peer_card_get_set_roundtrip(
     assert await get_peer_card(db_session, workspace.name, peer.name) is None
 
     # Set and read back
-    value_1 = "Initial peer card text"
+    value_1 = ["Initial peer card text"]
     await set_peer_card(db_session, workspace.name, peer.name, value_1)
     assert await get_peer_card(db_session, workspace.name, peer.name) == value_1
 
     # Update and read back
-    value_2 = "Updated peer card text"
+    value_2 = ["Updated peer card text", "Another line"]
     await set_peer_card(db_session, workspace.name, peer.name, value_2)
     assert await get_peer_card(db_session, workspace.name, peer.name) == value_2
 
@@ -46,7 +46,7 @@ async def test_set_peer_card_missing_peer_raises(
     """Setting a peer card for a non-existent peer should raise ResourceNotFoundException."""
     workspace, _existing_peer = sample_data
     with pytest.raises(ResourceNotFoundException):
-        await set_peer_card(db_session, workspace.name, "missing-peer", "card")
+        await set_peer_card(db_session, workspace.name, "missing-peer", ["card"])
 
 
 async def _create_session_with_peers(
