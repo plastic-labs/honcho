@@ -80,11 +80,10 @@ async def critical_analysis_call(
     model=settings.DERIVER.PEER_CARD_MODEL,
     track_name="Peer Card Call",
     response_model=PeerCardQuery,
+    json_mode=True,
     max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
     or settings.LLM.DEFAULT_MAX_TOKENS,
-    thinking_budget_tokens=None,
     reasoning_effort="minimal",
-    verbosity="low",
     enable_retry=True,
     retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
 )

@@ -27,6 +27,7 @@ from typing import Any, cast
 
 from anthropic import AsyncAnthropic
 
+from src.config import settings
 from src.deriver.prompts import peer_card_prompt
 from src.utils.clients import honcho_llm_call
 from src.utils.shared_models import PeerCardQuery
@@ -146,7 +147,7 @@ def build_peer_card_caller(
         track_name="Peer Card Call",
         response_model=PeerCardQuery,
         json_mode=True,
-        max_tokens=5000,
+        max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
         reasoning_effort="minimal",
         enable_retry=True,
         retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
