@@ -66,8 +66,8 @@ export class SessionSummaries {
 
   constructor(data: {
     id: string
-    short_summary: any | null
-    long_summary: any | null
+    short_summary?: any | null
+    long_summary?: any | null
   }) {
     this.id = data.id
     this.shortSummary = data.short_summary

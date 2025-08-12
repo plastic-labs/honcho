@@ -61,7 +61,16 @@ describe('Honcho SDK Integration Tests', () => {
         { id: 'msg1', content: 'Hello', peer_id: 'user' },
         { id: 'msg2', content: 'Hi there!', peer_id: 'assistant' },
       ];
-      const mockContextData = { messages: mockMessages, summary: 'Friendly greeting' };
+      const mockContextData = {
+        messages: mockMessages,
+        summary: {
+          content: 'Friendly greeting',
+          message_id: 5,
+          summary_type: 'short',
+          created_at: '2024-01-01T00:00:00Z',
+          token_count: 50
+        }
+      };
 
       mockWorkspacesApi.workspaces.peers.getOrCreate.mockResolvedValue(mockPeerData);
       mockWorkspacesApi.workspaces.sessions.getOrCreate.mockResolvedValue(mockSessionData);
@@ -116,7 +125,7 @@ describe('Honcho SDK Integration Tests', () => {
       expect(context).toBeInstanceOf(SessionContext);
       expect(context.sessionId).toBe('chat-session');
       expect(context.messages).toEqual(mockMessages);
-      expect(context.summary).toBe('Friendly greeting');
+      expect(context.summary?.content).toBe('Friendly greeting');
 
       // Step 6: Convert context to different formats
       const openAIFormat = context.toOpenAI('assistant');
@@ -380,13 +389,20 @@ describe('Honcho SDK Integration Tests', () => {
       // Mock successful operations
       mockWorkspacesApi.workspaces.sessions.getContext.mockResolvedValue({
         messages: [{ id: 'msg1', content: 'Hello', peer_id: 'typed-peer' }],
-        summary: 'Test summary',
+        summary: {
+          content: 'Test summary',
+          message_id: 1,
+          summary_type: 'short',
+          created_at: '2024-01-01T00:00:00Z',
+          token_count: 20
+        },
       });
 
       const context: SessionContext = await session.getContext();
       expect(typeof context.sessionId).toBe('string');
       expect(Array.isArray(context.messages)).toBe(true);
-      expect(typeof context.summary).toBe('string');
+      expect(context.summary).not.toBeNull();
+      expect(typeof context.summary?.content).toBe('string');
       expect(typeof context.length).toBe('number');
       expect(typeof context.toString()).toBe('string');
 

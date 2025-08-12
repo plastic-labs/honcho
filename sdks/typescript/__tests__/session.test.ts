@@ -683,7 +683,13 @@ describe('Session', () => {
           { id: 'msg1', content: 'Hello', peer_id: 'peer1' },
           { id: 'msg2', content: 'Hi there', peer_id: 'peer2' },
         ],
-        summary: 'Conversation summary',
+        summary: {
+          content: 'Conversation summary',
+          message_id: 10,
+          summary_type: 'short',
+          created_at: '2024-01-01T00:00:00Z',
+          token_count: 100
+        },
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
@@ -692,7 +698,7 @@ describe('Session', () => {
       expect(context).toBeInstanceOf(SessionContext);
       expect(context.sessionId).toBe('test-session');
       expect(context.messages).toEqual(mockContext.messages);
-      expect(context.summary).toBe('Conversation summary');
+      expect(context.summary?.content).toBe('Conversation summary');
       expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -703,7 +709,13 @@ describe('Session', () => {
     it('should get session context with options', async () => {
       const mockContext = {
         messages: [{ id: 'msg1', content: 'Hello', peer_id: 'peer1' }],
-        summary: 'Brief summary',
+        summary: {
+          content: 'Brief summary',
+          message_id: 5,
+          summary_type: 'short',
+          created_at: '2024-01-01T00:00:00Z',
+          token_count: 50
+        },
       };
       mockClient.workspaces.sessions.getContext.mockResolvedValue(mockContext);
 
@@ -725,7 +737,7 @@ describe('Session', () => {
 
       const context = await session.getContext();
 
-      expect(context.summary).toBe('');
+      expect(context.summary).toBeNull();
     });
 
     it('should handle API errors', async () => {

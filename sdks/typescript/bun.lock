@@ -4,8 +4,8 @@
     "": {
       "name": "@honcho-ai/sdk",
       "dependencies": {
+        "@honcho-ai/core": "^1.4.0",
         "@types/node": "^24.0.1",
-        "@honcho-ai/core": "github:plastic-labs/honcho-node-core#next",
         "zod": "4.0.0",
       },
       "devDependencies": {
@@ -108,7 +108,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.1.3", "", { "os": "win32", "cpu": "x64" }, "sha512-dxy599q6lgp8ANPpR8sDMscwdp9oOumEsVXuVCVT9N2vAho8uYXlCz53JhxX6LtJOXaE73qzgkGQ7QqvFlMC0g=="],
 
-    "@honcho-ai/core": ["@honcho-ai/core@github:plastic-labs/honcho-node-core#27ac0a1", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "plastic-labs-honcho-node-core-27ac0a1"],
+    "@honcho-ai/core": ["@honcho-ai/core@1.4.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-pHyUgkiIlf+pMfZJx7NmJ1UH8yOKWZ+vmPRummg3olgstMXApcBrW0bhJTPjHWoGGA+OFYcOPxJBoZKY6VCtMw=="],
 
     "@istanbuljs/load-nyc-config": ["@istanbuljs/load-nyc-config@1.1.0", "", { "dependencies": { "camelcase": "^5.3.1", "find-up": "^4.1.0", "get-package-type": "^0.1.0", "js-yaml": "^3.13.1", "resolve-from": "^5.0.0" } }, "sha512-VjeHSlIzpv/NyD3N0YuHfXOPDIixcA1q2ZV98wsMqcYlPmv2n3Yb2lYP9XMElnaFVXg5A7YLTeLu6V84uQDjmQ=="],
 

@@ -32,7 +32,6 @@ dependencies = [
 ]
 [tool.uv]
 dev-dependencies = [
-    "honcho-ai==1.3.0",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
@@ -43,11 +42,16 @@ dev-dependencies = [
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
-    "honcho-core",
+    "honcho-ai",
+]
+
+[tool.uv.workspace]
+members = [
+    "sdks/python",
 ]
 
 [tool.uv.sources]
-honcho-core = { git = "https://github.com/plastic-labs/honcho-python-core.git", rev = "next" }
+honcho-ai = { workspace = true }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example

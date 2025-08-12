@@ -7,6 +7,12 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[manifest]
+members = [
+    "honcho",
+    "honcho-ai",
+]
+
 [[package]]
 name = "alembic"
 version = "1.16.4"
@@ -853,7 +859,6 @@ dev = [
     { name = "basedpyright" },
     { name = "coverage" },
     { name = "honcho-ai" },
-    { name = "honcho-core" },
     { name = "interrogate" },
     { name = "pre-commit" },
     { name = "py-spy" },
@@ -893,8 +898,7 @@ requires-dist = [
 dev = [
     { name = "basedpyright", specifier = ">=1.29.4" },
     { name = "coverage", specifier = ">=7.6.0" },
-    { name = "honcho-ai", specifier = "==1.3.0" },
-    { name = "honcho-core", git = "https://github.com/plastic-labs/honcho-python-core.git?rev=next" },
+    { name = "honcho-ai", editable = "sdks/python" },
     { name = "interrogate", specifier = ">=1.7.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
     { name = "py-spy", specifier = ">=0.3.14" },
@@ -907,22 +911,33 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "1.3.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.4.0"
+source = { editable = "sdks/python" }
 dependencies = [
     { name = "honcho-core" },
     { name = "httpx" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a3/d3/c882f95637e30124c57a3496ac8221865c2449323f5bd6823009658ce8f7/honcho_ai-1.3.0.tar.gz", hash = "sha256:674440071ae66f3382c7a2355e1c9e8a2c9f0f9482ca0633151d30d42b20ea2c", size = 25042, upload-time = "2025-08-06T21:49:15.655Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dc/f9/0d3c71f4a400da433119eabfb03837a00f1badd31994d578e4fdc9f95c1f/honcho_ai-1.3.0-py3-none-any.whl", hash = "sha256:cb610384956752a8a33f7dee1a01f10b7732c76417b72c87f0d91dea2acd1174", size = 32599, upload-time = "2025-08-06T21:49:14.418Z" },
+
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "honcho-core", specifier = ">=1.4.0" },
+    { name = "httpx", specifier = ">=0.28.0,<1" },
+    { name = "pydantic", specifier = ">=2.0.0,<3" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.3.0"
-source = { git = "https://github.com/plastic-labs/honcho-python-core.git?rev=next#8ea7c3ccae79f3623270d2646d742151d9da9882" }
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -930,6 +945,10 @@ dependencies = [
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/c2/4d3737d5c0a75e2f59f324bed7428a9593c8edfcb7500cf402c46ad7378a/honcho_core-1.4.0.tar.gz", hash = "sha256:b30de9247763c01c3c37ed22b5d04d3c611440dd1983168f3d7d93f2cc0ecf7d", size = 126164, upload-time = "2025-08-12T19:06:54.828Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c1/ac/6eb2e38376736bb1dfd26bbdfd96490bfbb6f0ddcb00b39913e93799e7d8/honcho_core-1.4.0-py3-none-any.whl", hash = "sha256:a84397fd9daf546a04f5458d7233ebd5eeafcb97af75ec60a9327db89abdaf03", size = 117602, upload-time = "2025-08-12T19:06:53.667Z" },
 ]
 
 [[package]]
