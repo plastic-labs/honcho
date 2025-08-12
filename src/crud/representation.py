@@ -1,19 +1,27 @@
 from logging import getLogger
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import exceptions, models, schemas
+from src.config import settings
 from src.crud.peer import get_peer
+from src.utils.shared_models import ObservationDict
 
 logger = getLogger(__name__)
 
+# The collection name for documents that make up a peer's global representation
 GLOBAL_REPRESENTATION_COLLECTION_NAME = "global_representation"
 
+# The key for the working representation in the session peer's internal_metadata
 WORKING_REPRESENTATION_METADATA_KEY = "working_representation"
-# Remove in 2.3.0?
+
+# Old working representation key--remove in 2.3.0?
 WORKING_REPRESENTATION_LEGACY_METADATA_KEY = "global_representation"
+
+
+Observation = str | ObservationDict
 
 
 async def get_peer_card(
@@ -23,12 +31,12 @@ async def get_peer_card(
     Get peer card from internal_metadata.
 
     Args:
+        db: Database session
         workspace_name: Name of the workspace
         peer_name: Name of the peer
 
     Returns:
-        Peer card for the peer
-        (None if the peer does not exist or if the peer card has not been created yet)
+        The peer's card text if present, otherwise None (also None if peer not found).
     """
     try:
         peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
@@ -38,7 +46,7 @@ async def get_peer_card(
 
 
 async def set_peer_card(
-    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: str | None
+    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: str
 ) -> None:
     """
     Set peer card for a peer.
@@ -143,10 +151,15 @@ async def get_working_representation_data(
     if not peer_metadata:
         return None
 
-    # Try new prefixed key first, then fallback to legacy keys
     working_rep_data = peer_metadata.get(metadata_key)
     if working_rep_data:
-        return working_rep_data
+        return cast(dict[str, Any] | str, working_rep_data)
+
+    # Try legacy key--remove in 2.3.0?
+    if observer_name == observed_name:
+        working_rep_data = peer_metadata.get(WORKING_REPRESENTATION_LEGACY_METADATA_KEY)
+        if working_rep_data:
+            return cast(dict[str, Any] | str, working_rep_data)
 
     return None
 
@@ -156,7 +169,8 @@ def _format_observations_by_level(final_observations: dict[str, Any]) -> str:
     formatted_sections: list[str] = []
 
     for level in ["explicit", "deductive"]:
-        observations: list[Any] = final_observations.get(level, [])
+        observations_raw: Any = final_observations.get(level, [])
+        observations: list[Any] = cast(list[Any], observations_raw or [])
         if observations:
             formatted_sections.append(f"{level.upper()} OBSERVATIONS:")
             formatted_sections.extend(_format_observation_list(observations))
@@ -165,7 +179,7 @@ def _format_observations_by_level(final_observations: dict[str, Any]) -> str:
     return "\n".join(formatted_sections) if formatted_sections else ""
 
 
-def _format_observation_list(observations: list[dict[str, Any] | str]) -> list[str]:
+def _format_observation_list(observations: list[Observation]) -> list[str]:
     """Format a list of observations into consistent string format."""
     formatted: list[str] = []
     for obs in observations:
@@ -190,6 +204,55 @@ def _format_observation_list(observations: list[dict[str, Any] | str]) -> list[s
     return formatted
 
 
+def _merge_working_representation(
+    existing: dict[str, Any] | str | None, new: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge a new working representation into an existing one.
+
+    - Appends `explicit` and `deductive` observations in that order
+    - Trims each list to the most recent `WORKING_REPRESENTATION_MAX_OBSERVATIONS` entries (FIFO)
+    - Uses the latest `thinking`, `message_id`, and `created_at`
+    """
+    max_observations = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS
+
+    new_final_raw: Any = new.get("final_observations") or {}
+    new_explicit: list[Observation] = cast(
+        list[Observation], (new_final_raw.get("explicit") or [])
+    )
+    new_deductive: list[ObservationDict] = cast(
+        list[ObservationDict], (new_final_raw.get("deductive") or [])
+    )
+
+    existing_explicit: list[Observation] = []
+    existing_deductive: list[ObservationDict] = []
+    if isinstance(existing, dict):
+        existing_final_raw: Any = existing.get("final_observations") or {}
+        existing_explicit = cast(
+            list[Observation], (existing_final_raw.get("explicit") or [])
+        )
+        existing_deductive = cast(
+            list[ObservationDict], (existing_final_raw.get("deductive") or [])
+        )
+
+    merged_explicit: list[Observation] = existing_explicit + new_explicit
+    merged_deductive: list[ObservationDict] = existing_deductive + new_deductive
+
+    if len(merged_explicit) > max_observations:
+        merged_explicit = merged_explicit[-max_observations:]
+    if len(merged_deductive) > max_observations:
+        merged_deductive = merged_deductive[-max_observations:]
+
+    return {
+        "final_observations": {
+            "explicit": merged_explicit,
+            "thinking": cast(str | None, new_final_raw.get("thinking")),
+            "deductive": merged_deductive,
+        },
+        "message_id": cast(str | None, new.get("message_id")),
+        "created_at": cast(str | None, new.get("created_at")),
+    }
+
+
 async def set_working_representation(
     db: AsyncSession,
     representation: str | dict[str, Any],
@@ -201,13 +264,19 @@ async def set_working_representation(
     """
     Set working representation for observer/observed relationship.
 
+    If the provided representation is structured (dict with `final_observations`),
+    append new observations to the existing ones for both `explicit` and `deductive`
+    kinds, update `message_id` and `created_at`, and cap each observations list to
+    the most recent `WORKING_REPRESENTATION_MAX_OBSERVATIONS` items (FIFO trimming
+    of oldest entries).
+
     Args:
         db: Database session
         representation: Working representation data (string or structured dict)
         workspace_name: Name of the workspace
         observer_name: Name of the peer doing the observing
         observed_name: Name of the peer being observed (required for explicit global/local)
-        session_name: Optional session name (None for peer-level metadata)
+        session_name: Name of the session
     """
     # Determine metadata key based on observer/observed relationship
     if observer_name == observed_name:
@@ -217,6 +286,26 @@ async def set_working_representation(
             observer=observer_name, observed=observed_name
         )
 
+    merged_value: str | dict[str, Any] = representation
+    if isinstance(representation, dict):
+        try:
+            existing = await get_working_representation_data(
+                db=db,
+                workspace_name=workspace_name,
+                observer_name=observer_name,
+                observed_name=observed_name,
+                session_name=session_name,
+            )
+            merged_value = _merge_working_representation(
+                existing,
+                representation,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to merge working representation; storing as provided"
+            )
+            merged_value = representation
+
     stmt = (
         update(models.SessionPeer)
         .where(models.SessionPeer.workspace_name == workspace_name)
@@ -224,7 +313,7 @@ async def set_working_representation(
         .where(models.SessionPeer.session_name == session_name)
         .values(
             internal_metadata=models.SessionPeer.internal_metadata.op("||")(
-                {metadata_key: representation}
+                {metadata_key: merged_value}
             )
         )
     )

@@ -122,6 +122,9 @@ async def process_representation_task(
     )
 
     # instantiate embedding store from collection
+    # if the sender is also the target, we're handling a global representation task.
+    # otherwise, we're handling a directional representation task where the sender is
+    # being observed by the target.
     collection_name = (
         crud.construct_collection_name(
             observer=payload.target_name, observed=payload.sender_name
