@@ -9,13 +9,12 @@ from src.deriver.queue_manager import QueueManager
 class TestQueueProcessing:
     """Test suite for queue processing functionality"""
 
-    async def test_get_available_work_units(
+    async def test_get_and_claim_work_units(
         self,
-        db_session: AsyncSession,
         sample_queue_items: list[models.QueueItem],
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ):
-        """Test that get_available_work_units correctly identifies unprocessed work"""
+        """Test that get_and_claim_work_units correctly identifies unprocessed work"""
         session, _peers = sample_session_with_peers  # pyright: ignore[reportUnusedVariable]
 
         # Verify we have queue items from our test setup
@@ -25,7 +24,7 @@ class TestQueueProcessing:
         queue_manager = QueueManager()
 
         # Get available work units
-        work_units = await queue_manager.get_available_work_units(db_session)
+        work_units = await queue_manager.get_and_claim_work_units()
 
         # Should have some work units available (may include items from other tests)
         assert len(work_units) > 0
@@ -35,7 +34,7 @@ class TestQueueProcessing:
             assert isinstance(work_unit, str)
             assert work_unit.split(":")[0] in ["representation", "summary"]
 
-        # The test is mainly verifying that get_available_work_units works without errors
+        # The test is mainly verifying that get_and_claim_work_units works without errors
         # and returns properly structured work unit key strings
 
     async def test_work_unit_claiming(
@@ -51,7 +50,7 @@ class TestQueueProcessing:
         queue_manager = QueueManager()
 
         # Get available work units
-        work_units = await queue_manager.get_available_work_units(db_session)
+        work_units = await queue_manager.get_and_claim_work_units()
         assert len(work_units) > 0
 
         # Claim a work unit by creating an ActiveQueueSession entry
@@ -63,7 +62,7 @@ class TestQueueProcessing:
         await db_session.commit()
 
         # Get available work units again - the claimed one should not be available
-        remaining_work_units = await queue_manager.get_available_work_units(db_session)
+        remaining_work_units = await queue_manager.get_and_claim_work_units()
 
         # The claimed work unit should not be in the remaining list
         assert work_unit not in remaining_work_units
@@ -71,7 +70,6 @@ class TestQueueProcessing:
 
     async def test_stale_work_unit_cleanup(
         self,
-        db_session: AsyncSession,
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ):
         """Test that stale work units are cleaned up properly"""
@@ -82,12 +80,12 @@ class TestQueueProcessing:
 
         # datetime.now(timezone.utc) - timedelta(minutes=10)
 
-        # We'll test this by checking that the cleanup logic works in get_available_work_units
+        # We'll test this by checking that the cleanup logic works in get_and_claim_work_units
         # which is called by the queue manager during normal operation
         queue_manager = QueueManager()
 
         # Get available work units - this should clean up stale entries
-        work_units = await queue_manager.get_available_work_units(db_session)
+        work_units = await queue_manager.get_and_claim_work_units()
 
         # This test ensures the cleanup logic doesn't break, though we don't have stale entries yet
         assert isinstance(work_units, list)
