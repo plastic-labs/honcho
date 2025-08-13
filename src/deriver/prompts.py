@@ -13,6 +13,7 @@ from mirascope import prompt_template
 
 @prompt_template()
 def critical_analysis_prompt(
+    peer_id: str,
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
@@ -23,6 +24,7 @@ def critical_analysis_prompt(
     Generate the critical analysis prompt for the deriver.
 
     Args:
+        peer_id (str): The ID of the user being analyzed.
         peer_card (list[str] | None): The bio card of the user being analyzed.
         message_created_at (datetime.datetime): Timestamp of the message.
         working_representation (str | None): Current user understanding context.
@@ -37,6 +39,7 @@ def critical_analysis_prompt(
         f"""
 The user's known biographical information:
 <peer_card>
+Peer ID: {peer_id}
 {chr(10).join(peer_card)}
 </peer_card>
 """

@@ -63,6 +63,7 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
     retry_attempts=3,
 )
 async def critical_analysis_call(
+    peer_id: str,
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
@@ -70,6 +71,7 @@ async def critical_analysis_call(
     new_turn: str,
 ):
     return critical_analysis_prompt(
+        peer_id=peer_id,
         peer_card=peer_card,
         message_created_at=message_created_at,
         working_representation=working_representation,
@@ -328,6 +330,7 @@ class CertaintyReasoner:
 
         try:
             response_obj = await critical_analysis_call(
+                peer_id=self.ctx.sender_name,
                 peer_card=speaker_peer_card,
                 message_created_at=self.ctx.created_at,
                 working_representation=formatted_working_representation,
