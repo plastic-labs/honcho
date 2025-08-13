@@ -512,7 +512,10 @@ def mock_tracked_db(db_session: AsyncSession):
     async def mock_tracked_db_context(_: str | None = None):
         yield db_session
 
-    with patch("src.dependencies.tracked_db", mock_tracked_db_context):
+    with (
+        patch("src.dependencies.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
+    ):
         yield
 
 

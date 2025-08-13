@@ -8,8 +8,7 @@ from logging import getLogger
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import delete, insert, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -117,37 +116,73 @@ class QueueManager:
     # Polling and Scheduling #
     ##########################
 
-    async def get_available_work_units(self, db: AsyncSession) -> Sequence[str]:
+    async def get_and_claim_work_units(self) -> Sequence[str]:
         """
         Get available work units that aren't being processed.
         Returns a list of work unit keys.
         """
-        # Clean up stale work units
-        five_minutes_ago = datetime.now(timezone.utc) - timedelta(
-            minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
-        )
-        await db.execute(
-            delete(models.ActiveQueueSession).where(
-                models.ActiveQueueSession.last_updated < five_minutes_ago
+        claimed_units: list[str] = []
+
+        async with tracked_db("get_available_work_units") as db:
+            # Clean up stale work units
+            five_minutes_ago = datetime.now(timezone.utc) - timedelta(
+                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
             )
+            await db.execute(
+                delete(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.last_updated < five_minutes_ago
+                )
+            )
+
+            # Get number of available workers
+            limit: int = max(0, self.workers - len(self.owned_work_units))
+
+            query = (
+                select(models.QueueItem.work_unit_key)
+                .outerjoin(
+                    models.ActiveQueueSession,
+                    models.QueueItem.work_unit_key
+                    == models.ActiveQueueSession.work_unit_key,
+                )
+                .where(~models.QueueItem.processed)
+                .where(models.QueueItem.work_unit_key.isnot(None))
+                .where(models.ActiveQueueSession.work_unit_key.is_(None))
+                .distinct()
+                .limit(limit)
+            )
+
+            result = await db.execute(query)
+            available_units = result.scalars().all()
+            if not available_units:
+                await db.commit()
+                return []
+
+            claimed_units = await self.claim_work_units(db, available_units)
+            await db.commit()
+
+            for work_unit in claimed_units:
+                self.track_work_unit(work_unit)
+
+            return claimed_units
+
+    async def claim_work_units(
+        self, db: AsyncSession, work_unit_keys: Sequence[str]
+    ) -> list[str]:
+        from sqlalchemy.dialects.postgresql import insert
+
+        values = [{"work_unit_key": key} for key in work_unit_keys]
+
+        stmt = (
+            insert(models.ActiveQueueSession)
+            .values(values)
+            .on_conflict_do_nothing()
+            .returning(models.ActiveQueueSession.work_unit_key)
         )
 
-        query = (
-            select(models.QueueItem.work_unit_key)
-            .outerjoin(
-                models.ActiveQueueSession,
-                models.QueueItem.work_unit_key
-                == models.ActiveQueueSession.work_unit_key,
-            )
-            .where(~models.QueueItem.processed)
-            .where(models.QueueItem.work_unit_key.isnot(None))
-            .where(models.ActiveQueueSession.work_unit_key.is_(None))
-            .distinct()
-            .limit(self.workers)
-        )
-
-        result = await db.execute(query)
-        return result.scalars().all()
+        result = await db.execute(stmt)
+        claimed_units = result.scalars().all()
+        logger.debug(f"Claimed {len(claimed_units)} work units")
+        return list(claimed_units)
 
     async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
@@ -166,55 +201,27 @@ class QueueManager:
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     continue
 
-                # Use the dependency for transaction safety
-                async with tracked_db("queue_polling_loop") as db:
-                    try:
-                        new_work_units = await self.get_available_work_units(db)
-
-                        if new_work_units and not self.shutdown_event.is_set():
-                            for work_unit in new_work_units:
-                                try:
-                                    # Try to claim the work unit using work_unit_key
-                                    await db.execute(
-                                        insert(models.ActiveQueueSession).values(
-                                            work_unit_key=work_unit
-                                        )
-                                    )
-                                    await db.commit()
-
-                                    # Track this work unit
-                                    self.track_work_unit(work_unit)
-                                    logger.debug(
-                                        f"Claimed work unit {work_unit} for processing"
-                                    )
-
-                                    # Create a new task for processing this work unit
-                                    if not self.shutdown_event.is_set():
-                                        task: Task[None] = asyncio.create_task(
-                                            self.process_work_unit(work_unit)
-                                        )
-                                        self.add_task(task)
-
-                                except IntegrityError:
-                                    # Rollback the failed transaction to clear the error state
-                                    await db.rollback()
-                                    logger.debug(
-                                        f"Failed to claim work unit {work_unit}, already owned by another worker"
-                                    )
-                            # If we couldn't claim any work units, avoid tight loop
-                        else:
-                            self.queue_empty_flag.set()
-                            await asyncio.sleep(
-                                settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
-                            )
-                    except Exception as e:
-                        logger.exception("Error in polling loop")
-                        if settings.SENTRY.ENABLED:
-                            sentry_sdk.capture_exception(e)
-                        # Note: rollback is handled by tracked_db dependency
+                try:
+                    new_work_units = await self.get_and_claim_work_units()
+                    if new_work_units:
+                        for work_unit in new_work_units:
+                            # Create a new task for processing this work unit
+                            if not self.shutdown_event.is_set():
+                                task: Task[None] = asyncio.create_task(
+                                    self.process_work_unit(work_unit)
+                                )
+                                self.add_task(task)
+                    else:
+                        self.queue_empty_flag.set()
                         await asyncio.sleep(
                             settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS
                         )
+                except Exception as e:
+                    logger.exception("Error in polling loop")
+                    if settings.SENTRY.ENABLED:
+                        sentry_sdk.capture_exception(e)
+                    # Note: rollback is handled by tracked_db dependency
+                    await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
         finally:
             logger.info("Polling loop stopped")
 
@@ -227,13 +234,12 @@ class QueueManager:
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
         async with (
-            self.semaphore,
-            tracked_db("queue_process_work_unit") as db,
+            self.semaphore
         ):  # Hold the semaphore for the entire work unit duration
             message_count = 0
             try:
                 while not self.shutdown_event.is_set():
-                    message = await self.get_next_message(db, work_unit_key)
+                    message = await self.get_next_message(work_unit_key)
                     if not message:
                         logger.debug(f"No more messages for work unit {work_unit_key}")
                         break
@@ -263,15 +269,22 @@ class QueueManager:
                             sentry_sdk.capture_exception(e)
 
                     # Prevent malformed messages from stalling queue indefinitely
-                    message.processed = True
+                    async with tracked_db("process_message") as db:
+                        await db.execute(
+                            update(models.QueueItem)
+                            .where(models.QueueItem.id == message.id)
+                            .values(processed=True)
+                        )
 
-                    # Update last_updated timestamp to show this work unit is still being processed
-                    await db.execute(
-                        update(models.ActiveQueueSession)
-                        .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
-                        .values(last_updated=func.now())
-                    )
-                    await db.commit()
+                        await db.execute(
+                            update(models.ActiveQueueSession)
+                            .where(
+                                models.ActiveQueueSession.work_unit_key == work_unit_key
+                            )
+                            .values(last_updated=func.now())
+                        )
+
+                        await db.commit()
 
                     if self.shutdown_event.is_set():
                         logger.debug(
@@ -286,15 +299,10 @@ class QueueManager:
             finally:
                 # Remove work unit from active_queue_sessions when done
                 logger.debug(f"Removing work unit {work_unit_key} from active sessions")
-                delete_result = await db.execute(
-                    delete(models.ActiveQueueSession).where(
-                        models.ActiveQueueSession.work_unit_key == work_unit_key
-                    )
-                )
-                await db.commit()
+                removed = await self._cleanup_work_unit(work_unit_key)
 
-                # Only publish webhook if we actually removed an active session
-                if delete_result.rowcount > 0 and message_count > 0:
+                if removed and message_count > 0:
+                    # Only publish webhook if we actually removed an active session
                     try:
                         from src.deriver.utils import parse_work_unit_key
                         from src.webhooks.events import (
@@ -330,20 +338,32 @@ class QueueManager:
                 self.untrack_work_unit(work_unit_key)
 
     @sentry_sdk.trace
-    async def get_next_message(
-        self, db: AsyncSession, work_unit_key: str
-    ) -> QueueItem | None:
+    async def get_next_message(self, work_unit_key: str) -> QueueItem | None:
         """Get the next unprocessed message for a specific work unit."""
+        async with tracked_db("get_next_message") as db:
+            query = (
+                select(models.QueueItem)
+                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .where(~models.QueueItem.processed)
+                .order_by(models.QueueItem.id)
+                .limit(1)
+            )
+            result = await db.execute(query)
+            message = result.scalar_one_or_none()
+            # Important: commit to avoid tracked_db's rollback expiring the instance
+            # We rely on expire_on_commit=False to keep attributes accessible post-close
+            await db.commit()
+            return message
 
-        query = (
-            select(models.QueueItem)
-            .where(models.QueueItem.work_unit_key == work_unit_key)
-            .where(~models.QueueItem.processed)
-            .order_by(models.QueueItem.id)
-            .limit(1)
-        )
-        result = await db.execute(query)
-        return result.scalar_one_or_none()
+    async def _cleanup_work_unit(self, work_unit_key: str) -> bool:
+        async with tracked_db("cleanup_work_unit") as db:
+            result = await db.execute(
+                delete(models.ActiveQueueSession).where(
+                    models.ActiveQueueSession.work_unit_key == work_unit_key
+                )
+            )
+            await db.commit()
+            return result.rowcount > 0
 
 
 async def main():
