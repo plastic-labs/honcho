@@ -80,7 +80,7 @@ def create_jwt(params: JWTParams) -> str:
     )
 
 
-async def verify_jwt(token: str) -> JWTParams:
+def verify_jwt(token: str) -> JWTParams:
     """Verify a JWT and return the decoded parameters."""
 
     params = JWTParams()
@@ -169,7 +169,7 @@ async def auth(
         logger.warning("No access token provided")
         raise AuthenticationException("No access token provided")
 
-    jwt_params = await verify_jwt(credentials.credentials)
+    jwt_params = verify_jwt(credentials.credentials)
 
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:
