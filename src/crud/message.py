@@ -2,7 +2,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
@@ -233,7 +233,9 @@ async def get_messages_id_range(
         models.Message.session_name == session_name,
     ]
     if end_id:
-        base_conditions.append(models.Message.id.between(start_id, end_id))
+        base_conditions.append(
+            and_(models.Message.id >= start_id, models.Message.id < end_id)
+        )
     else:
         base_conditions.append(models.Message.id >= start_id)
 
