@@ -551,24 +551,6 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
     except ValueError:
         pass
 
-    # Try timezone-aware formats with explicit timezone info
-    timezone_aware_formats = [
-        "%Y-%m-%dT%H:%M:%SZ",  # 2024-01-01T12:00:00Z (UTC)
-        "%Y-%m-%dT%H:%M:%S.%fZ",  # 2024-01-01T12:00:00.123456Z (UTC)
-        "%Y-%m-%dT%H:%M:%S%z",  # 2024-01-01T12:00:00+00:00
-        "%Y-%m-%dT%H:%M:%S.%f%z",  # 2024-01-01T12:00:00.123456+00:00
-    ]
-
-    for fmt in timezone_aware_formats:
-        try:
-            parsed = datetime.datetime.strptime(value, fmt)
-            # Convert Z suffix to UTC timezone if needed
-            if fmt.endswith("Z") and parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
-            return parsed
-        except ValueError:
-            continue
-
     # Fallback to naive formats (assume UTC timezone for compatibility)
     naive_formats = [
         "%Y-%m-%dT%H:%M:%S",  # 2024-01-01T12:00:00 (ISO format, assume UTC)

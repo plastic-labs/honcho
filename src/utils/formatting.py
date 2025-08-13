@@ -63,7 +63,7 @@ def parse_datetime_iso(iso_string: str) -> datetime:
 
     This function handles the fact that Python's fromisoformat() doesn't
     directly support the 'Z' suffix, which is the standard ISO 8601 way
-    to represent UTC timezone.
+    to represent UTC timezone. It will always return a timezone-aware datetime object.
 
     Args:
         iso_string: ISO 8601 formatted datetime string
@@ -78,8 +78,12 @@ def parse_datetime_iso(iso_string: str) -> datetime:
         datetime.datetime(2023, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
     """
     # Convert Z format to +00:00 format for Python's fromisoformat
-    normalized_string = iso_string.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized_string)
+    if iso_string.endswith("Z"):
+        iso_string = iso_string.replace("Z", "+00:00")
+    if iso_string.endswith("+00:00"):
+        return datetime.fromisoformat(iso_string)
+    else:
+        return datetime.fromisoformat(iso_string + "+00:00")
 
 
 @runtime_checkable
