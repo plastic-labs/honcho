@@ -533,8 +533,8 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
     """
     Safely validate and parse a datetime string to prevent SQL injection.
 
-    This function attempts to parse the datetime string using multiple common formats
-    to ensure it's a valid datetime before allowing it to be used in SQL queries.
+    This function prioritizes timezone-aware datetime formats and uses the
+    consistent parse_datetime_iso utility for proper timezone handling.
 
     Args:
         value: String value to validate as datetime
@@ -545,28 +545,46 @@ def _validate_datetime_string(value: str) -> datetime.datetime | None:
     # Strip whitespace
     value = value.strip()
 
-    # Try to parse with various common datetime formats
-    datetime_formats = [
-        "%Y-%m-%d %H:%M:%S",  # 2024-01-01 12:00:00
-        "%Y-%m-%d %H:%M:%S.%f",  # 2024-01-01 12:00:00.123456
-        "%Y-%m-%dT%H:%M:%S",  # 2024-01-01T12:00:00 (ISO format)
-        "%Y-%m-%dT%H:%M:%S.%f",  # 2024-01-01T12:00:00.123456
-        "%Y-%m-%dT%H:%M:%SZ",  # 2024-01-01T12:00:00Z (UTC)
-        "%Y-%m-%dT%H:%M:%S.%fZ",  # 2024-01-01T12:00:00.123456Z
-        "%Y-%m-%d",  # 2024-01-01
-    ]
-
-    for fmt in datetime_formats:
-        try:
-            return datetime.datetime.strptime(value, fmt)
-        except ValueError:
-            continue
-
-    # Try fromisoformat as a fallback (Python 3.7+) with Z format support
+    # First try the standard ISO format with timezone info using our utility
     try:
         return parse_datetime_iso(value)
     except ValueError:
         pass
+
+    # Try timezone-aware formats with explicit timezone info
+    timezone_aware_formats = [
+        "%Y-%m-%dT%H:%M:%SZ",  # 2024-01-01T12:00:00Z (UTC)
+        "%Y-%m-%dT%H:%M:%S.%fZ",  # 2024-01-01T12:00:00.123456Z (UTC)
+        "%Y-%m-%dT%H:%M:%S%z",  # 2024-01-01T12:00:00+00:00
+        "%Y-%m-%dT%H:%M:%S.%f%z",  # 2024-01-01T12:00:00.123456+00:00
+    ]
+
+    for fmt in timezone_aware_formats:
+        try:
+            parsed = datetime.datetime.strptime(value, fmt)
+            # Convert Z suffix to UTC timezone if needed
+            if fmt.endswith("Z") and parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=datetime.timezone.utc)
+            return parsed
+        except ValueError:
+            continue
+
+    # Fallback to naive formats (assume UTC timezone for compatibility)
+    naive_formats = [
+        "%Y-%m-%dT%H:%M:%S",  # 2024-01-01T12:00:00 (ISO format, assume UTC)
+        "%Y-%m-%dT%H:%M:%S.%f",  # 2024-01-01T12:00:00.123456 (assume UTC)
+        "%Y-%m-%d %H:%M:%S",  # 2024-01-01 12:00:00 (assume UTC)
+        "%Y-%m-%d %H:%M:%S.%f",  # 2024-01-01 12:00:00.123456 (assume UTC)
+        "%Y-%m-%d",  # 2024-01-01 (assume UTC, start of day)
+    ]
+
+    for fmt in naive_formats:
+        try:
+            parsed = datetime.datetime.strptime(value, fmt)
+            # Assume UTC timezone for naive datetimes
+            return parsed.replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
 
     # Return None for invalid datetime - let the caller handle the error
     return None

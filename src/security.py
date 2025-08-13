@@ -8,7 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from src.config import settings
-from src.utils.formatting import utc_now_iso
+from src.utils.formatting import parse_datetime_iso, utc_now_iso
 
 from .exceptions import AuthenticationException
 
@@ -94,12 +94,11 @@ async def verify_jwt(token: str) -> JWTParams:
             params.t = decoded["t"]
         if "exp" in decoded:
             params.exp = decoded["exp"]
-            if (
-                params.exp
-                and datetime.datetime.fromisoformat(params.exp)
-                < datetime.datetime.now()
-            ):
-                raise AuthenticationException("JWT expired")
+            if params.exp:
+                exp_time = parse_datetime_iso(params.exp)
+                current_time = datetime.datetime.now(datetime.timezone.utc)
+                if exp_time < current_time:
+                    raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
         if "w" in decoded:
