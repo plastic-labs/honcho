@@ -21,8 +21,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - `get_context` endpoint returns detailed `Summary` object rather than just
   summary content
 - Working representations use a FIFO queue structure to maintain facts rather
-  than a full re-rewrite
-- `filter` keyword to `filters`
+  than a full rewrite
+- Optimized deriver enqueue by prefetching message sequence numbers (eliminates N+1 queries)
 
 ### Fixed
 
@@ -32,8 +32,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Queue manager to schedule work based on available works rather than total
   number of workers
 - Queue manager to use atomic db transactions rather than long lived transaction
-  for lifecycle of worker
-- timestamp formats unified to ISO 8601 across codebase
+  for the worker lifecycle
+- Timestamp formats unified to ISO 8601 across the codebase
 
 ## [2.2.0] — 2025-08-07
 
