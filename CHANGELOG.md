@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Deriver uses `get_context` internally to prevent context window limit errors
 - Embedding store will truncate context when querying documents to prevent embedding
   token limit errors
+- Queue manager to schedule work based on available works rather than total
+  number of workers
+- Queue manager to use atomic db transactions rather than long lived transaction
+  for lifecycle of worker
+- timestamp formats unified to ISO 8601 across codebase
 
 ## [2.2.0] — 2025-08-07
 
