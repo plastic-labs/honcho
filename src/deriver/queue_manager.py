@@ -192,8 +192,6 @@ class QueueManager:
                     await asyncio.sleep(settings.DERIVER.POLLING_SLEEP_INTERVAL_SECONDS)
                     continue
 
-                    # Use the dependency for transaction safety
-
                 try:
                     new_work_units = await self.get_and_claim_work_units()
                     if new_work_units:
