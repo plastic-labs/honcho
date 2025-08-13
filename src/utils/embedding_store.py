@@ -242,7 +242,7 @@ class EmbeddingStore:
                         workspace_name=self.workspace_name,
                         peer_name=self.peer_name,
                         collection_name=self.collection_name,
-                        query=query,
+                        query=self._build_truncated_query(query, ""),
                         max_distance=max_distance,
                         top_k=top_k,
                     )
@@ -341,16 +341,19 @@ class EmbeddingStore:
                     context_tokens[-available_context_tokens:]
                 )
                 return f"{query_prefix}{query}{context_prefix}{truncated_context}"
+            else:
+                # No room left for context; keep full query intact
+                return f"{query_prefix}{query}"
 
         # Query itself is too long - truncate it
         available_query_tokens = max_tokens - prefix_tokens
         if available_query_tokens > 0:
-            # Keep the beginning of the query (more important than the end)
-            truncated_query = encoding.decode(query_tokens[:available_query_tokens])
+            # Keep the end (recency) of the query
+            truncated_query = encoding.decode(query_tokens[-available_query_tokens:])
             return f"{query_prefix}{truncated_query}"
 
         # Pathological case - just return what we can
-        logger.warning(f"Token limit too restrictive: {max_tokens}")
+        logger.warning("Token limit too restrictive: %s", max_tokens)
         return encoding.decode(query_tokens[:max_tokens])
 
     async def _query_documents_for_level(
