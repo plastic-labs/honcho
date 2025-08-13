@@ -31,16 +31,21 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         ### Added
 
         - `getSummaries` endpoint to get all available summaries for a session directly
+        - Peer Card feature to improve context for deriver and dialectic
 
         ### Changed
 
         - Session Peer limit to be based on observers instead, renamed config value to
           `SESSION_OBSERVERS_LIMIT`
-        - Deriver uses `get_context` internally to prevent context window limit errors
         - `Messages` can take a custom timestamp for the `created_at` field, defaulting
           to the current time
         - `get_context` endpoint returns detailed `Summary` object rather than just
           summary content
+        - `filter` keyword to `filters`
+
+        ### Fixed
+
+        - Deriver uses `get_context` internally to prevent context window limit errors
         </Update>
 
         <Update label="v2.2.0">
@@ -259,6 +264,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         ### Added
 
         - getSummaries API returning structured summaries
+        - Webhook support
 
         ### Changed
 
@@ -305,6 +311,7 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         ### Added
 
         - getSummaries API returning structured summaries
+        - Webhook support
 
         ### Changed
 

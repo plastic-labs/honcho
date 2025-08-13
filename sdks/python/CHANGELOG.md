@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - getSummaries API returning structured summaries
+- Webhook support
 
 ### Changed
 
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 - Summaries are now included in `toOpenAI` and `toAnthropic` functions
 - `SessionContext.__len__` now counts the summary in its total
+- `filter` keyword changed to `filters`
 
 ### Fixed
 

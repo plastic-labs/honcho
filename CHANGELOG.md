@@ -10,16 +10,23 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - `getSummaries` endpoint to get all available summaries for a session directly
+- Peer Card feature to improve context for deriver and dialectic
 
 ### Changed
 
 - Session Peer limit to be based on observers instead, renamed config value to
   `SESSION_OBSERVERS_LIMIT`
-- Deriver uses `get_context` internally to prevent context window limit errors
 - `Messages` can take a custom timestamp for the `created_at` field, defaulting
   to the current time
 - `get_context` endpoint returns detailed `Summary` object rather than just
   summary content
+- Working representations use a FIFO queue structure to maintain facts rather
+  than a full re-rewrite
+- `filter` keyword to `filters`
+
+### Fixed
+
+- Deriver uses `get_context` internally to prevent context window limit errors
 
 ## [2.2.0] — 2025-08-07
 
