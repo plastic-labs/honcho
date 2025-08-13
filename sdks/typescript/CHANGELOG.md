@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Added
 
 - getSummaries API returning structured summaries
+- Webhook support
 
 ### Changed
 

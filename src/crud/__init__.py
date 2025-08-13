@@ -5,6 +5,7 @@ from .message import (
     create_messages,
     get_message,
     get_message_seq_in_session,
+    get_message_seqs_in_session_batch,
     get_messages,
     get_messages_id_range,
     update_message,
@@ -61,6 +62,7 @@ __all__ = [
     "get_messages_id_range",
     "get_message",
     "get_message_seq_in_session",
+    "get_message_seqs_in_session_batch",
     "update_message",
     # Peer
     "get_or_create_peers",

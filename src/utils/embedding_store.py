@@ -242,7 +242,7 @@ class EmbeddingStore:
                         workspace_name=self.workspace_name,
                         peer_name=self.peer_name,
                         collection_name=self.collection_name,
-                        query=query,
+                        query=self._build_truncated_query(query, ""),
                         max_distance=max_distance,
                         top_k=top_k,
                     )
@@ -293,6 +293,69 @@ class EmbeddingStore:
 
         return context
 
+    def _build_truncated_query(
+        self,
+        query: str,
+        conversation_context: str = "",
+        max_tokens: int | None = None,
+    ) -> str:
+        """Build a query that fits within token limits with clear priorities.
+
+        Args:
+            query: The search query
+            conversation_context: Optional conversation context to include
+            max_tokens: Maximum tokens allowed (defaults to setting with buffer)
+
+        Returns:
+            Truncated query string that fits within token limits
+        """
+        max_tokens = max_tokens or (settings.MAX_EMBEDDING_TOKENS - 100)
+        encoding = embedding_client.encoding
+
+        # Pre-calculate all token counts once
+        query_prefix = "Current message: "
+        context_prefix = "\nContext: "
+
+        prefix_tokens = len(encoding.encode(query_prefix))
+        context_prefix_tokens = len(encoding.encode(context_prefix))
+        query_tokens = encoding.encode(query)
+
+        # Simple case: query alone fits
+        if prefix_tokens + len(query_tokens) <= max_tokens:
+            if not conversation_context:
+                return f"{query_prefix}{query}"
+
+            # Try to add context
+            context_tokens = encoding.encode(conversation_context)
+            total_without_context = (
+                prefix_tokens + len(query_tokens) + context_prefix_tokens
+            )
+
+            if total_without_context + len(context_tokens) <= max_tokens:
+                return f"{query_prefix}{query}{context_prefix}{conversation_context}"
+
+            # Truncate context to fit
+            available_context_tokens = max_tokens - total_without_context
+            if available_context_tokens > 0:
+                truncated_context = encoding.decode(
+                    context_tokens[-available_context_tokens:]
+                )
+                return f"{query_prefix}{query}{context_prefix}{truncated_context}"
+            else:
+                # No room left for context; keep full query intact
+                return f"{query_prefix}{query}"
+
+        # Query itself is too long - truncate it
+        available_query_tokens = max_tokens - prefix_tokens
+        if available_query_tokens > 0:
+            # Keep the end (recency) of the query
+            truncated_query = encoding.decode(query_tokens[-available_query_tokens:])
+            return f"{query_prefix}{truncated_query}"
+
+        # Pathological case - just return what we can
+        logger.warning("Token limit too restrictive: %s", max_tokens)
+        return encoding.decode(query_tokens[:max_tokens])
+
     async def _query_documents_for_level(
         self,
         db: AsyncSession,
@@ -303,11 +366,8 @@ class EmbeddingStore:
         count: int,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
-        combined_query: str = (
-            f"Current message: {query}\nContext: {conversation_context}"
-            if conversation_context
-            else query
-        )
+        # Construct the combined query with truncation to prevent token limit errors
+        combined_query = self._build_truncated_query(query, conversation_context)
 
         documents = await crud.query_documents(
             db,

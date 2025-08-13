@@ -276,6 +276,53 @@ async def get_message_seq_in_session(
     return count + 1
 
 
+async def get_message_seqs_in_session_batch(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    message_ids: list[int],
+) -> dict[int, int]:
+    """
+    Get the sequence numbers for multiple messages within a session in a single query.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        message_ids: List of message primary key IDs
+
+    Returns:
+        Dictionary mapping message_id to sequence number (1-indexed).
+        If a given ID does not exist in the specified session, its value will be 0.
+        Note: duplicate IDs in the input are de-duplicated in the query and the
+        resulting mapping will contain a single entry per unique message_id.
+    """
+    if not message_ids:
+        return {}
+
+    unique_ids = list(set(message_ids))
+
+    # Rank all messages in the session, then select only the ones we care about
+    ranked = (
+        select(
+            models.Message.id.label("id"),
+            func.row_number().over(order_by=models.Message.id).label("seq"),
+        )
+        .where(
+            models.Message.workspace_name == workspace_name,
+            models.Message.session_name == session_name,
+        )
+        .subquery()
+    )
+    stmt = select(ranked.c.id, ranked.c.seq).where(ranked.c.id.in_(unique_ids))
+    result = await db.execute(stmt)
+    rows = result.all()
+    id_to_position = {row[0]: int(row[1]) for row in rows}
+
+    # Return positions for requested IDs; 0 for any missing/out-of-session IDs
+    return {msg_id: id_to_position.get(msg_id, 0) for msg_id in message_ids}
+
+
 async def get_message(
     db: AsyncSession,
     workspace_name: str,
