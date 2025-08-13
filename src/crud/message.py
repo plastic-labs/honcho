@@ -276,6 +276,62 @@ async def get_message_seq_in_session(
     return count + 1
 
 
+async def get_message_seqs_in_session_batch(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    message_ids: list[int],
+) -> dict[int, int]:
+    """
+    Get the sequence numbers for multiple messages within a session in a single query.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        message_ids: List of message primary key IDs
+
+    Returns:
+        Dictionary mapping message_id to sequence number (1-indexed)
+    """
+    if not message_ids:
+        return {}
+
+    # Use a window function to get the row number for each message
+    stmt = (
+        select(
+            models.Message.id,
+            func.row_number().over(order_by=models.Message.id).label("seq"),
+        )
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.session_name == session_name)
+        .where(models.Message.id.in_(message_ids))
+    )
+
+    result = await db.execute(stmt)
+    _ = result.all()  # Consume the result but we don't need it for this approach
+
+    # For each message_id, we need to count how many messages came before it
+    # We'll do this efficiently by getting all message IDs up to the max ID we care about
+    max_id = max(message_ids)
+    count_stmt = (
+        select(models.Message.id)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.session_name == session_name)
+        .where(models.Message.id <= max_id)
+        .order_by(models.Message.id)
+    )
+
+    count_result = await db.execute(count_stmt)
+    all_ids = [row[0] for row in count_result.all()]
+
+    # Create a mapping of message_id to its position (1-indexed)
+    id_to_position = {msg_id: idx + 1 for idx, msg_id in enumerate(all_ids)}
+
+    # Return only the positions for the requested message_ids
+    return {msg_id: id_to_position.get(msg_id, 0) for msg_id in message_ids}
+
+
 async def get_message(
     db: AsyncSession,
     workspace_name: str,

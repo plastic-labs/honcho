@@ -17,25 +17,43 @@ class TestEnqueueFunction:
     """Test suite for the enqueue function's internal logic"""
 
     # Helper methods
-    def create_sample_payload(
+    async def create_sample_payload(
         self,
+        db_session: AsyncSession,
         workspace_name: str = "test_workspace",
         session_name: str | None = "test_session",
         peer_name: str = "test_peer",
         count: int = 1,
-    ):
-        """Create sample payload for testing"""
+    ) -> list[dict[str, Any]]:
+        """Create real messages in database and return payload with actual IDs"""
+        messages: list[models.Message] = []
+        for i in range(count):
+            message = models.Message(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=peer_name,
+                content=f"Test message {i}",
+                public_id=generate_nanoid(),
+                token_count=10,
+                h_metadata={"test": f"value_{i}"},
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Return payload with real message IDs
         return [
             {
                 "workspace_name": workspace_name,
                 "session_name": session_name,
-                "message_id": i + 1,
-                "content": f"Test message {i}",
-                "metadata": {"test": f"value_{i}"},
+                "message_id": msg.id,
+                "content": msg.content,
+                "metadata": msg.h_metadata,
                 "peer_name": peer_name,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": msg.created_at,
             }
-            for i in range(count)
+            for msg in messages
         ]
 
     async def count_queue_items(self, db_session: AsyncSession):
@@ -67,7 +85,7 @@ class TestEnqueueFunction:
         db_session: AsyncSession,
         sample_data: tuple[Workspace, Peer],
     ):
-        """Test that deriver disabled sessions skip enqueue"""
+        """Test that deriver disabled sessions skip representation but allows summary"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
 
         test_workspace, test_peer = sample_data
@@ -81,7 +99,8 @@ class TestEnqueueFunction:
         db_session.add(test_session)
         await db_session.commit()
 
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer.name,
@@ -91,7 +110,12 @@ class TestEnqueueFunction:
         await enqueue(payload)
         final_count = await self.count_queue_items(db_session)
 
-        assert final_count == initial_count
+        # When deriver is disabled, only summary records should be created (if applicable)
+        # Since this is message 1, and 1 % 20 != 0 and 1 % 60 != 0, no summary should be created
+        # No representation records should be created either (deriver disabled)
+        assert (
+            final_count == initial_count
+        ), f"Expected no queue items, but got {final_count - initial_count}"
 
     @pytest.mark.asyncio
     @patch("src.deriver.enqueue.tracked_db")
@@ -115,7 +139,8 @@ class TestEnqueueFunction:
         )
         await db_session.commit()
 
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer.name,
@@ -171,7 +196,8 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         NUM_MESSAGES = 3
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer1.name,
@@ -249,7 +275,8 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         NUM_MESSAGES = 3
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer1.name,
@@ -342,7 +369,8 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         NUM_MESSAGES = 3
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer1.name,
@@ -426,7 +454,8 @@ class TestEnqueueFunction:
 
         await db_session.commit()
 
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer.name,
@@ -477,13 +506,15 @@ class TestEnqueueFunction:
         )
         await db_session.commit()
 
-        payload1 = self.create_sample_payload(
+        payload1 = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=test_peer1.name,
         )
 
-        payload2 = self.create_sample_payload(
+        payload2 = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=additional_sender_peer.name,
@@ -578,7 +609,6 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         # Simulate sender leaving the session by setting left_at
-        from datetime import datetime, timezone
 
         session_peer_result = await db_session.execute(
             select(models.SessionPeer).where(
@@ -592,7 +622,8 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         # Create message payload from the peer who left
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=sender_peer.name,
@@ -679,7 +710,6 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         # Simulate one observer leaving the session
-        from datetime import datetime, timezone
 
         session_peer_result = await db_session.execute(
             select(models.SessionPeer).where(
@@ -693,7 +723,8 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         # Create message payload
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=sender_peer.name,
@@ -730,7 +761,7 @@ class TestEnqueueFunction:
         """Test get_effective_observe_me handles missing sender configuration gracefully"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
 
-        test_workspace, _existing_peer = sample_data
+        test_workspace, existing_peer = sample_data
 
         # Create observer peer
         observer_peer = models.Peer(
@@ -753,11 +784,11 @@ class TestEnqueueFunction:
 
         # Create message from peer NOT in the session configuration
         # This simulates the race condition where a peer left after sending
-        unknown_sender = str(generate_nanoid())
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
-            peer_name=unknown_sender,
+            peer_name=existing_peer.name,
         )
 
         initial_count = await self.count_queue_items(db_session)
@@ -776,12 +807,12 @@ class TestEnqueueFunction:
 
         expected_payloads = [
             {
-                "sender_name": unknown_sender,
-                "target_name": unknown_sender,
+                "sender_name": existing_peer.name,
+                "target_name": existing_peer.name,
                 "task_type": "representation",
             },
             {
-                "sender_name": unknown_sender,
+                "sender_name": existing_peer.name,
                 "target_name": observer_peer.name,
                 "task_type": "representation",
             },
@@ -861,7 +892,6 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         # Mark some peers as having left the session
-        from datetime import datetime, timezone
 
         for peer_name in [inactive_observer.name, inactive_non_observer.name]:
             session_peer_result = await db_session.execute(
@@ -876,7 +906,8 @@ class TestEnqueueFunction:
         await db_session.commit()
 
         # Create message payload from sender
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=sender_peer.name,
@@ -1045,25 +1076,43 @@ class TestAdvancedEnqueueEdgeCases:
     """Test advanced edge cases for the enqueue system with race conditions"""
 
     # Helper methods
-    def create_sample_payload(
+    async def create_sample_payload(
         self,
+        db_session: AsyncSession,
         workspace_name: str = "test_workspace",
         session_name: str | None = "test_session",
         peer_name: str = "test_peer",
         count: int = 1,
-    ):
-        """Create sample payload for testing"""
+    ) -> list[dict[str, Any]]:
+        """Create real messages in database and return payload with actual IDs"""
+        messages: list[models.Message] = []
+        for i in range(count):
+            message = models.Message(
+                workspace_name=workspace_name,
+                session_name=session_name,
+                peer_name=peer_name,
+                content=f"Test message {i}",
+                public_id=generate_nanoid(),
+                token_count=10,
+                h_metadata={"test": f"value_{i}"},
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Return payload with real message IDs
         return [
             {
                 "workspace_name": workspace_name,
                 "session_name": session_name,
-                "message_id": i + 1,
-                "content": f"Test message {i}",
-                "metadata": {"test": f"value_{i}"},
+                "message_id": msg.id,
+                "content": msg.content,
+                "metadata": msg.h_metadata,
                 "peer_name": peer_name,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": msg.created_at,
             }
-            for i in range(count)
+            for msg in messages
         ]
 
     async def count_queue_items(self, db_session: AsyncSession):
@@ -1109,7 +1158,6 @@ class TestAdvancedEnqueueEdgeCases:
         await db_session.commit()
 
         # Mark all observers as having left
-        from datetime import datetime, timezone
 
         for peer_name in [observer1.name, observer2.name]:
             session_peer_result = await db_session.execute(
@@ -1124,7 +1172,8 @@ class TestAdvancedEnqueueEdgeCases:
         await db_session.commit()
 
         # Create message payload
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=sender_peer.name,
@@ -1180,7 +1229,6 @@ class TestAdvancedEnqueueEdgeCases:
         await db_session.commit()
 
         # Mark both as having left (observer left first, then sender)
-        from datetime import datetime, timezone
 
         base_time = datetime.now(timezone.utc)
 
@@ -1209,7 +1257,8 @@ class TestAdvancedEnqueueEdgeCases:
         await db_session.commit()
 
         # Create message payload from sender who left
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
             peer_name=sender_peer.name,
@@ -1244,7 +1293,7 @@ class TestAdvancedEnqueueEdgeCases:
         """Test handling message from peer who was never in the session"""
         mock_tracked_db.return_value.__aenter__.return_value = db_session
 
-        test_workspace, _existing_peer = sample_data
+        test_workspace, existing_peer = sample_data
 
         observer_peer = models.Peer(
             workspace_name=test_workspace.name, name=str(generate_nanoid())
@@ -1265,11 +1314,11 @@ class TestAdvancedEnqueueEdgeCases:
         await db_session.commit()
 
         # Create message from peer who was NEVER in the session
-        never_joined_peer = str(generate_nanoid())
-        payload = self.create_sample_payload(
+        payload = await self.create_sample_payload(
+            db_session,
             workspace_name=test_workspace.name,
             session_name=test_session.name,
-            peer_name=never_joined_peer,
+            peer_name=existing_peer.name,
         )
 
         initial_count = await self.count_queue_items(db_session)
@@ -1288,12 +1337,12 @@ class TestAdvancedEnqueueEdgeCases:
 
         expected_payloads = [
             {
-                "sender_name": never_joined_peer,
-                "target_name": never_joined_peer,
+                "sender_name": existing_peer.name,
+                "target_name": existing_peer.name,
                 "task_type": "representation",
             },
             {
-                "sender_name": never_joined_peer,
+                "sender_name": existing_peer.name,
                 "target_name": observer_peer.name,
                 "task_type": "representation",
             },
