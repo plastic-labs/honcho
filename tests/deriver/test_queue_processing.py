@@ -91,6 +91,7 @@ class TestQueueProcessing:
     @pytest.mark.asyncio
     async def test_claim_work_unit_conflict_returns_false(
         self,
+        db_session: AsyncSession,
         sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
     ) -> None:
         # Pre-create an active session for a key
@@ -99,9 +100,9 @@ class TestQueueProcessing:
         assert len(claimed) > 0
         key = claimed[0]
 
-        # Trying to claim the same key again via the API should return False (handled IntegrityError)
-        claimed_again = await queue_manager.claim_work_unit(key)
-        assert claimed_again is False
+        # Trying to claim the same key again via the API should return empty list
+        claimed_again = await queue_manager.claim_work_units(db_session, [key])
+        assert claimed_again == []
 
     @pytest.mark.asyncio
     async def test_get_next_message_orders_and_filters_simple(

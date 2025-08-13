@@ -8,8 +8,8 @@ from logging import getLogger
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import delete, insert, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src import exceptions
@@ -135,7 +135,7 @@ class QueueManager:
             )
 
             # Get number of available workers
-            limit: int = self.workers - len(self.owned_work_units)
+            limit: int = max(0, self.workers - len(self.owned_work_units))
 
             query = (
                 select(models.QueueItem.work_unit_key)
@@ -153,30 +153,36 @@ class QueueManager:
 
             result = await db.execute(query)
             available_units = result.scalars().all()
-            await db.commit()  # close the transaction
+            if not available_units:
+                await db.commit()
+                return []
 
-        for work_unit in available_units:
-            if await self.claim_work_unit(work_unit):
-                claimed_units.append(work_unit)
+            claimed_units = await self.claim_work_units(db, available_units)
+            await db.commit()
+
+            for work_unit in claimed_units:
                 self.track_work_unit(work_unit)
 
-        return claimed_units
+            return claimed_units
 
-    async def claim_work_unit(self, work_unit_key: str) -> bool:
-        async with tracked_db("claim_work_unit") as db:
-            try:
-                await db.execute(
-                    insert(models.ActiveQueueSession).values(
-                        work_unit_key=work_unit_key
-                    )
-                )
-                await db.commit()
-                logger.debug(f"Claimed work unit {work_unit_key}")
-                return True
-            except IntegrityError:
-                await db.rollback()
-                logger.debug(f"Failed to claim work unit {work_unit_key}.")
-                return False
+    async def claim_work_units(
+        self, db: AsyncSession, work_unit_keys: Sequence[str]
+    ) -> list[str]:
+        from sqlalchemy.dialects.postgresql import insert
+
+        values = [{"work_unit_key": key} for key in work_unit_keys]
+
+        stmt = (
+            insert(models.ActiveQueueSession)
+            .values(values)
+            .on_conflict_do_nothing()
+            .returning(models.ActiveQueueSession.work_unit_key)
+        )
+
+        result = await db.execute(stmt)
+        claimed_units = result.scalars().all()
+        logger.debug(f"Claimed {len(claimed_units)} work units")
+        return list(claimed_units)
 
     async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
