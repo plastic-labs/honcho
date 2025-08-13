@@ -99,7 +99,7 @@ def parse_datetime_iso(iso_string: str) -> datetime:
         raise ValueError("Invalid input: empty after stripping whitespace")
 
     # Handle Z suffix (convert to +00:00)
-    if iso_string.endswith("Z"):
+    if iso_string.endswith(("Z", "z")):
         iso_string = iso_string[:-1] + "+00:00"
 
     try:

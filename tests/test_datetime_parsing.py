@@ -531,16 +531,3 @@ class TestErrorHandlingAndRecovery:
             if isinstance(error_case, str) or error_case is None:
                 result = _validate_datetime_string(error_case or "")
                 assert result is None
-
-
-# Async test placeholder for integration with the actual API
-class TestAPIIntegration:
-    """Test datetime parsing in the context of actual API calls."""
-
-    # These would require the full test client and database setup
-    # Placeholder for integration tests that would test:
-    # - API filter endpoints with various datetime formats
-    # - JWT authentication with expiration times
-    # - Message creation with timestamps
-    # - Error responses for invalid datetime inputs
-    pass
