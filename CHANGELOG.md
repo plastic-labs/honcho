@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Queue manager to use atomic db transactions rather than long lived transaction
   for the worker lifecycle
 - Timestamp formats unified to ISO 8601 across the codebase
+- Internal get_context method's cutoff value is exclusive now
 
 ## [2.2.0] — 2025-08-07
 
