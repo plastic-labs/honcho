@@ -67,7 +67,7 @@ async def critical_analysis_call(
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
-    history: str,
+    history: str | None,
     new_turn: str,
 ):
     return critical_analysis_prompt(
@@ -117,14 +117,17 @@ async def process_representation_task(
     logger.debug("Starting insight extraction for user message: %s", payload.message_id)
 
     # Use get_session_context_formatted with configurable token limit
-    formatted_history = await summarizer.get_session_context_formatted(
-        db,
-        payload.workspace_name,
-        payload.session_name,
-        token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-        cutoff=payload.message_id,
-        include_summary=True,
-    )
+    if payload.message_id > 0:
+        formatted_history = await summarizer.get_session_context_formatted(
+            db,
+            payload.workspace_name,
+            payload.session_name,
+            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
+            cutoff=payload.message_id - 1,
+            include_summary=True,
+        )
+    else:
+        formatted_history = None
 
     # instantiate embedding store from collection
     # if the sender is also the target, we're handling a global representation task.
@@ -199,7 +202,7 @@ async def process_representation_task(
         # No existing working representation, use global search
         working_representation = await embedding_store.get_relevant_observations(
             query=payload.content,
-            conversation_context=formatted_history,
+            conversation_context=formatted_history or "",
             for_reasoning=True,
         )
 
@@ -296,7 +299,7 @@ class CertaintyReasoner:
     async def derive_new_insights(
         self,
         working_representation: ReasoningResponseWithThinking,
-        history: str,
+        history: str | None,
         speaker_peer_card: list[str] | None,
     ) -> ReasoningResponseWithThinking:
         """
@@ -406,7 +409,7 @@ class CertaintyReasoner:
         self,
         db: AsyncSession,
         working_representation: ReasoningResponseWithThinking,
-        history: str,
+        history: str | None,
         speaker_peer_card: list[str] | None,
     ) -> ReasoningResponseWithThinking:
         """

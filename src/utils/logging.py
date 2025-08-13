@@ -115,7 +115,7 @@ def format_reasoning_response_as_markdown(
 
 def format_reasoning_inputs_as_markdown(
     context: ReasoningResponseWithThinking | None,
-    history: str,
+    history: str | None,
     new_turn: str,
     message_created_at: datetime.datetime,
 ) -> str:

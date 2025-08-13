@@ -17,7 +17,7 @@ def critical_analysis_prompt(
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
-    history: str,
+    history: str | None,
     new_turn: str,
 ) -> str:
     """
@@ -28,7 +28,7 @@ def critical_analysis_prompt(
         peer_card (list[str] | None): The bio card of the user being analyzed.
         message_created_at (datetime.datetime): Timestamp of the message.
         working_representation (str | None): Current user understanding context.
-        history (str): Recent conversation history.
+        history (str | None): Recent conversation history.
         new_turn (str): New conversation turn to analyze.
 
     Returns:
@@ -55,6 +55,17 @@ The current user understanding:
 </current_context>
 """
         if working_representation is not None
+        else ""
+    )
+
+    history_section = (
+        f"""
+Recent conversation history for context:
+<history>
+{history}
+</history>
+"""
+        if history is not None
         else ""
     )
 
@@ -89,10 +100,7 @@ Here are strict definitions for the reasoning modes you are to employ:
 
 {working_representation_section}
 
-Recent conversation history for context:
-<history>
-{history}
-</history>
+{history_section}
 
 New conversation turn to analyze:
 <new_turn>
