@@ -59,11 +59,10 @@ def utc_now_iso() -> str:
 
 def parse_datetime_iso(iso_string: str) -> datetime:
     """
-    Parse ISO 8601 datetime string, handling both Z and +00:00 UTC formats.
+    Parse ISO 8601 datetime string, handling various timezone formats.
 
-    This function handles the fact that Python's fromisoformat() doesn't
-    directly support the 'Z' suffix, which is the standard ISO 8601 way
-    to represent UTC timezone.
+    This function properly handles Z suffix, timezone offsets, and naive timestamps.
+    It validates input and always returns a timezone-aware datetime object.
 
     Args:
         iso_string: ISO 8601 formatted datetime string
@@ -71,15 +70,49 @@ def parse_datetime_iso(iso_string: str) -> datetime:
     Returns:
         datetime object with timezone information
 
+    Raises:
+        ValueError: If the input string is invalid or contains suspicious content
+
     Example:
         >>> parse_datetime_iso('2023-01-01T12:00:00Z')
         datetime.datetime(2023, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
-        >>> parse_datetime_iso('2023-01-01T12:00:00+00:00')
-        datetime.datetime(2023, 1, 1, 12, 0, tzinfo=datetime.timezone.utc)
+        >>> parse_datetime_iso('2023-01-01T12:00:00+05:00')
+        datetime.datetime(2023, 1, 1, 12, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=18000)))
     """
-    # Convert Z format to +00:00 format for Python's fromisoformat
-    normalized_string = iso_string.replace("Z", "+00:00")
-    return datetime.fromisoformat(normalized_string)
+    # Input validation - ensure type and reject suspicious content
+    if not iso_string:
+        raise ValueError("Invalid input: must be a non-empty string")
+
+    iso_string = str(iso_string)
+
+    # Security check - reject strings with null bytes or suspicious characters
+    if "\x00" in iso_string or "\r" in iso_string or "\n" in iso_string:
+        raise ValueError("Invalid input: contains null bytes or line breaks")
+
+    # Check for non-printable unicode characters that could be used for attacks
+    if any(ord(c) < 32 and c not in "\t" for c in iso_string):
+        raise ValueError("Invalid input: contains non-printable characters")
+
+    # Strip whitespace
+    iso_string = iso_string.strip()
+    if not iso_string:
+        raise ValueError("Invalid input: empty after stripping whitespace")
+
+    # Handle Z suffix (convert to +00:00)
+    if iso_string.endswith(("Z", "z")):
+        iso_string = iso_string[:-1] + "+00:00"
+
+    try:
+        # Try parsing with timezone info first
+        result = datetime.fromisoformat(iso_string)
+
+        # If no timezone info, assume UTC
+        if result.tzinfo is None:
+            result = result.replace(tzinfo=timezone.utc)
+
+        return result
+    except ValueError as e:
+        raise ValueError(f"Invalid ISO 8601 datetime format: {e}") from e
 
 
 @runtime_checkable

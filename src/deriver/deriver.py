@@ -16,6 +16,7 @@ from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import (
     REASONING_LEVELS,
+    extract_observation_content,
     find_new_observations,
     format_context_for_prompt,
     format_new_turn_with_timestamp,
@@ -451,7 +452,7 @@ class CertaintyReasoner:
             update_peer_card_start = time.perf_counter()
             # flatten new observations by level into a list
             new_observations = [
-                observation
+                extract_observation_content(observation)
                 for level in new_observations_by_level.values()
                 for observation in level
             ]

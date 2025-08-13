@@ -4,7 +4,7 @@ Shared Pydantic models used by both dialectic and deriver modules.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, Field
@@ -147,7 +147,7 @@ class ObservationContext(BaseModel):
             obs = Observation(
                 content=conclusion,
                 metadata=explicit_metadata,
-                created_at=datetime.now(),
+                created_at=datetime.now(timezone.utc),
             )
             context.add_observation(obs, ReasoningLevel.EXPLICIT)
 
@@ -169,7 +169,7 @@ class ObservationContext(BaseModel):
                 obs = Observation(
                     content=structured_obs.conclusion,
                     metadata=deductive_metadata,
-                    created_at=datetime.now(),
+                    created_at=datetime.now(timezone.utc),
                 )
                 context.add_observation(obs, level)
 
