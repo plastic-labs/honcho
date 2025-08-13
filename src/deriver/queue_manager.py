@@ -134,6 +134,9 @@ class QueueManager:
                 )
             )
 
+            # Get number of available workers
+            limit: int = self.workers - len(self.owned_work_units)
+
             query = (
                 select(models.QueueItem.work_unit_key)
                 .outerjoin(
@@ -145,7 +148,7 @@ class QueueManager:
                 .where(models.QueueItem.work_unit_key.isnot(None))
                 .where(models.ActiveQueueSession.work_unit_key.is_(None))
                 .distinct()
-                .limit(self.workers)
+                .limit(limit)
             )
 
             result = await db.execute(query)
