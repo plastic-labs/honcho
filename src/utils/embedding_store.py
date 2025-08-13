@@ -303,11 +303,35 @@ class EmbeddingStore:
         count: int,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
-        combined_query: str = (
-            f"Current message: {query}\nContext: {conversation_context}"
-            if conversation_context
-            else query
-        )
+        # Construct the combined query with truncation to prevent token limit errors
+        combined_query: str = query
+        if conversation_context:
+            # Reserve tokens for the main query and formatting
+            query_prefix = "Current message: "
+            context_prefix = "\nContext: "
+            reserved_tokens = len(
+                embedding_client.encoding.encode(query_prefix + query + context_prefix)
+            )
+
+            # Calculate available tokens for context (leave some buffer)
+            max_tokens = settings.MAX_EMBEDDING_TOKENS - 100  # Buffer for safety
+            available_for_context = max_tokens - reserved_tokens
+
+            if available_for_context > 0:
+                # Truncate context if needed
+                context_tokens = embedding_client.encoding.encode(conversation_context)
+                if len(context_tokens) > available_for_context:
+                    # Truncate from the beginning to keep recent context
+                    truncated_tokens = context_tokens[-available_for_context:]
+                    truncated_context = embedding_client.encoding.decode(
+                        truncated_tokens
+                    )
+                    combined_query = f"{query_prefix}{query}{context_prefix}[truncated] {truncated_context}"
+                else:
+                    combined_query = (
+                        f"{query_prefix}{query}{context_prefix}{conversation_context}"
+                    )
+            # If no space for context, just use the query
 
         documents = await crud.query_documents(
             db,

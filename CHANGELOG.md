@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Fixed
 
 - Deriver uses `get_context` internally to prevent context window limit errors
+- Embedding store will truncate context when querying documents to prevent embedding
+  token limit errors
 
 ## [2.2.0] — 2025-08-07
 
