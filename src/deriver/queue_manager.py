@@ -343,7 +343,11 @@ class QueueManager:
                 .limit(1)
             )
             result = await db.execute(query)
-            return result.scalar_one_or_none()
+            message = result.scalar_one_or_none()
+            # Important: commit to avoid tracked_db's rollback expiring the instance
+            # We rely on expire_on_commit=False to keep attributes accessible post-close
+            await db.commit()
+            return message
 
     async def _cleanup_work_unit(self, work_unit_key: str) -> bool:
         async with tracked_db("cleanup_work_unit") as db:
