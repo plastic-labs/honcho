@@ -146,12 +146,13 @@ async def process_representation_task(
             collection_name,
             payload.sender_name,
         )
+        collection_name_loaded = collection.name
 
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
         workspace_name=payload.workspace_name,
         peer_name=payload.sender_name,
-        collection_name=collection.name,
+        collection_name=collection_name_loaded,
     )
 
     # Create reasoner instance
