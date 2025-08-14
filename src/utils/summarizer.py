@@ -174,7 +174,6 @@ Produce as thorough a summary as possible in {output_words} words or less.
 
 
 async def summarize_if_needed(
-    db: AsyncSession,
     workspace_name: str,
     session_name: str,
     message_id: int,
@@ -187,7 +186,6 @@ async def summarize_if_needed(
     without assuming any relationship between their thresholds.
 
     Args:
-        db: Database session
         workspace_name: The workspace name
         session_name: The session name
         message_id: The message ID
@@ -239,35 +237,36 @@ async def summarize_if_needed(
             return_exceptions=True,
         )
     else:
-        # If only one summary needs to be created, run them individually
-        if should_create_long:
-            await _create_and_save_summary(
-                db,
-                workspace_name,
-                session_name,
-                message_id,
-                SummaryType.LONG,
-            )
-            logger.info(
-                "Saved long summary for session %s covering up to message %s (%s in session)",
-                session_name,
-                message_id,
-                message_seq_in_session,
-            )
-        elif should_create_short:
-            await _create_and_save_summary(
-                db,
-                workspace_name,
-                session_name,
-                message_id,
-                SummaryType.SHORT,
-            )
-            logger.info(
-                "Saved short summary for session %s covering up to message %s (%s in session)",
-                session_name,
-                message_id,
-                message_seq_in_session,
-            )
+        async with tracked_db("create_summary") as db:
+            # If only one summary needs to be created, run them individually
+            if should_create_long:
+                await _create_and_save_summary(
+                    db,
+                    workspace_name,
+                    session_name,
+                    message_id,
+                    SummaryType.LONG,
+                )
+                logger.info(
+                    "Saved long summary for session %s covering up to message %s (%s in session)",
+                    session_name,
+                    message_id,
+                    message_seq_in_session,
+                )
+            elif should_create_short:
+                await _create_and_save_summary(
+                    db,
+                    workspace_name,
+                    session_name,
+                    message_id,
+                    SummaryType.SHORT,
+                )
+                logger.info(
+                    "Saved short summary for session %s covering up to message %s (%s in session)",
+                    session_name,
+                    message_id,
+                    message_seq_in_session,
+                )
 
 
 async def _create_and_save_summary(

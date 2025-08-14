@@ -6,11 +6,11 @@ from typing import Any
 
 import sentry_sdk
 from langfuse.decorators import langfuse_context
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, exceptions
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
+from src.dependencies import tracked_db
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
@@ -105,7 +105,6 @@ async def peer_card_call(
 @conditional_observe
 @sentry_sdk.trace
 async def process_representation_task(
-    db: AsyncSession,
     payload: RepresentationPayload,
 ) -> None:
     """
@@ -117,14 +116,15 @@ async def process_representation_task(
     logger.debug("Starting insight extraction for user message: %s", payload.message_id)
 
     # Use get_session_context_formatted with configurable token limit
-    formatted_history = await summarizer.get_session_context_formatted(
-        db,
-        payload.workspace_name,
-        payload.session_name,
-        token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-        cutoff=payload.message_id,
-        include_summary=True,
-    )
+    async with tracked_db("deriver.get_session_context") as db:
+        formatted_history = await summarizer.get_session_context_formatted(
+            db,
+            payload.workspace_name,
+            payload.session_name,
+            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
+            cutoff=payload.message_id,
+            include_summary=True,
+        )
 
     # instantiate embedding store from collection
     # if the sender is also the target, we're handling a global representation task.
@@ -139,12 +139,13 @@ async def process_representation_task(
     )
 
     # get_or_create_collection already handles IntegrityError with rollback and a retry
-    collection = await crud.get_or_create_collection(
-        db,
-        payload.workspace_name,
-        collection_name,
-        payload.sender_name,
-    )
+    async with tracked_db("deriver.get_or_create_collection") as db:
+        collection = await crud.get_or_create_collection(
+            db,
+            payload.workspace_name,
+            collection_name,
+            payload.sender_name,
+        )
 
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
@@ -157,15 +158,16 @@ async def process_representation_task(
     reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payload)
 
     # Check for existing working representation first, fall back to global search
-    working_rep_data: (
-        dict[str, Any] | str | None
-    ) = await crud.get_working_representation_data(
-        db,
-        payload.workspace_name,
-        payload.target_name,
-        payload.sender_name,
-        payload.session_name,
-    )
+    async with tracked_db("deriver.get_working_representation_data") as db:
+        working_rep_data: (
+            dict[str, Any] | str | None
+        ) = await crud.get_working_representation_data(
+            db,
+            payload.workspace_name,
+            payload.target_name,
+            payload.sender_name,
+            payload.session_name,
+        )
 
     # Time context preparation
     context_prep_start = time.perf_counter()
@@ -222,9 +224,10 @@ async def process_representation_task(
 
     # We currently only use Peer Cards in Honcho-level representation derivation.
     if payload.sender_name == payload.target_name:
-        sender_peer_card: list[str] | None = await crud.get_peer_card(
-            db, payload.workspace_name, payload.sender_name
-        )
+        async with tracked_db("deriver.get_peer_card") as db:
+            sender_peer_card: list[str] | None = await crud.get_peer_card(
+                db, payload.workspace_name, payload.sender_name
+            )
         if sender_peer_card is None:
             logger.warning("No peer card found for %s", payload.sender_name)
         else:
@@ -235,7 +238,6 @@ async def process_representation_task(
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
-        db,
         working_representation,
         formatted_history,
         sender_peer_card,
@@ -250,7 +252,7 @@ async def process_representation_task(
     log_observations_tree(final_obs_dict)
 
     # Always save working representation to peer for dialectic access
-    await save_working_representation_to_peer(db, payload, final_observations)
+    await save_working_representation_to_peer(payload, final_observations)
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -404,7 +406,6 @@ class CertaintyReasoner:
     @sentry_sdk.trace
     async def reason(
         self,
-        db: AsyncSession,
         working_representation: ReasoningResponseWithThinking,
         history: str,
         speaker_peer_card: list[str] | None,
@@ -460,7 +461,7 @@ class CertaintyReasoner:
                 for observation in level
             ]
             if new_observations:
-                await self._update_peer_card(db, speaker_peer_card, new_observations)
+                await self._update_peer_card(speaker_peer_card, new_observations)
             update_peer_card_duration = (
                 time.perf_counter() - update_peer_card_start
             ) * 1000
@@ -539,7 +540,6 @@ class CertaintyReasoner:
     @sentry_sdk.trace
     async def _update_peer_card(
         self,
-        db: AsyncSession,
         old_peer_card: list[str] | None,
         new_observations: list[str],
     ) -> None:
@@ -554,9 +554,10 @@ class CertaintyReasoner:
                 logger.info("No changes to peer card")
                 return
             logger.info("New peer card: %s", new_peer_card)
-            await crud.set_peer_card(
-                db, self.ctx.workspace_name, self.ctx.sender_name, new_peer_card
-            )
+            async with tracked_db("deriver.update_peer_card") as db:
+                await crud.set_peer_card(
+                    db, self.ctx.workspace_name, self.ctx.sender_name, new_peer_card
+                )
         except Exception as e:
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
@@ -592,7 +593,6 @@ def observation_context_to_reasoning_response(
 
 @sentry_sdk.trace
 async def save_working_representation_to_peer(
-    db: AsyncSession,
     payload: RepresentationPayload,
     final_observations: ReasoningResponseWithThinking,
 ) -> None:
@@ -617,11 +617,12 @@ async def save_working_representation_to_peer(
         "created_at": utc_now_iso(),
     }
 
-    await crud.set_working_representation(
-        db,
-        working_rep_data,
-        payload.workspace_name,
-        payload.target_name,
-        payload.sender_name,
-        payload.session_name,
-    )
+    async with tracked_db("deriver.save_working_representation") as db:
+        await crud.set_working_representation(
+            db,
+            working_rep_data,
+            payload.workspace_name,
+            payload.target_name,
+            payload.sender_name,
+            payload.session_name,
+        )

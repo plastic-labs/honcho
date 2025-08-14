@@ -5,7 +5,6 @@ import sentry_sdk
 from langfuse.decorators import langfuse_context
 from pydantic import ValidationError
 from rich.console import Console
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.dependencies import tracked_db
@@ -53,28 +52,26 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
             }
         )
 
-    # Open a DB session only for the duration of the processing call
-    async with tracked_db("deriver") as db:
-        if task_type == "summary":
-            try:
-                validated = SummaryPayload(**payload)
-            except ValidationError as e:
-                logger.error(
-                    "Invalid summary payload received: %s. Payload: %s", str(e), payload
-                )
-                raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await process_summary_task(db, validated)
-        elif task_type == "representation":
-            try:
-                validated = RepresentationPayload(**payload)
-            except ValidationError as e:
-                logger.error(
-                    "Invalid representation payload received: %s. Payload: %s",
-                    str(e),
-                    payload,
-                )
-                raise ValueError(f"Invalid payload structure: {str(e)}") from e
-            await deriver.process_representation_task(db, validated)
+    if task_type == "summary":
+        try:
+            validated = SummaryPayload(**payload)
+        except ValidationError as e:
+            logger.error(
+                "Invalid summary payload received: %s. Payload: %s", str(e), payload
+            )
+            raise ValueError(f"Invalid payload structure: {str(e)}") from e
+        await process_summary_task(validated)
+    elif task_type == "representation":
+        try:
+            validated = RepresentationPayload(**payload)
+        except ValidationError as e:
+            logger.error(
+                "Invalid representation payload received: %s. Payload: %s",
+                str(e),
+                payload,
+            )
+            raise ValueError(f"Invalid payload structure: {str(e)}") from e
+        await deriver.process_representation_task(validated)
 
 
 @sentry_sdk.trace
@@ -87,14 +84,12 @@ async def process_webhook(
 
 @sentry_sdk.trace
 async def process_summary_task(
-    db: AsyncSession,
     payload: SummaryPayload,
 ) -> None:
     """
     Process a summary task by generating summaries if needed.
     """
     await summarizer.summarize_if_needed(
-        db,
         payload.workspace_name,
         payload.session_name,
         payload.message_id,
