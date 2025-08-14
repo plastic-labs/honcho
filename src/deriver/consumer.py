@@ -44,15 +44,13 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await process_webhook(validated)
         logger.debug("Finished processing webhook %s", validated.event_type)
-
-    if settings.LANGFUSE_PUBLIC_KEY:
-        langfuse_context.update_current_trace(
-            metadata={
-                "critical_analysis_model": settings.DERIVER.MODEL,
-            }
-        )
-
-    if task_type == "summary":
+    elif task_type == "summary":
+        if settings.LANGFUSE_PUBLIC_KEY:
+            langfuse_context.update_current_trace(  # type: ignore
+                metadata={
+                    "critical_analysis_model": settings.DERIVER.MODEL,
+                }
+            )
         try:
             validated = SummaryPayload(**payload)
         except ValidationError as e:
@@ -62,6 +60,13 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await process_summary_task(validated)
     elif task_type == "representation":
+        if settings.LANGFUSE_PUBLIC_KEY:
+            langfuse_context.update_current_trace(
+                metadata={
+                    "critical_analysis_model": settings.DERIVER.MODEL,
+                }
+            )
+
         try:
             validated = RepresentationPayload(**payload)
         except ValidationError as e:
@@ -72,6 +77,8 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await deriver.process_representation_task(validated)
+    else:
+        raise ValueError(f"Invalid task type: {task_type}")
 
 
 @sentry_sdk.trace
