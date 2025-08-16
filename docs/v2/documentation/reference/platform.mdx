@@ -16,7 +16,7 @@ and start building with Honcho.
 ## 1. Go to [app.honcho.dev](https://app.honcho.dev)
 
 Create an account to start using Honcho. If a teammate already uses Honcho, ask
-them to invite you to their organization; otherwise, you’ll see a banner
+them to invite you to their organization; otherwise, you'll see a banner
 prompting you to create a new one.
 
 <Frame>
@@ -24,87 +24,97 @@ prompting you to create a new one.
 </Frame>
 
 Once you've created an organization, you'll be taken to the dashboard and see
-the welcome page.
+the **Get Started** page with integration guidance and links to documentation.
 
 <img src="/images/app-screenshots/get-started-copy.png" alt="Honcho Dashboard Getting Started"/>
 
 Each organization has dedicated infrastructure running to isolate your
 workloads. Until you activate a subscription under the
 [Billing](https://app.honcho.dev/billing) page, the infrastructure will be
-deactivated. You can check the status of your instance by going to the
-[Status](https://app.honcho.dev/status) page.
+deactivated.
 
-<img src="/images/app-screenshots/no-subscription-status.png" alt="Honcho Status Page with No Subscription" />
+## 2. Activate your Honcho instance
 
-## **2. Set up billing to activate your Honcho instance**
+Navigate to the [Billing](https://app.honcho.dev/billing) page to activate your subscription. Your Honcho instance provisions automatically, and you can monitor the deployment on the [Instance Status](https://app.honcho.dev/status) page until all systems show a green check mark.
 
-Once you activate your subscription, your Honcho instance provisions
-automatically, and you can watch the status page until all systems show a green
-check mark.
+<img src="/images/app-screenshots/status-page.png" alt="Instance Status Page" />
+
+The **Performance** page provides comprehensive monitoring with usage metrics, health analytics, API response times, and endpoint usage across all your AI applications.
 
 <img src="/images/app-screenshots/performance-analytics.png" alt="Performance Analytics Dashboard" />
 
-Here you can monitor your Honcho instance health, usage metrics, and
-performance analytics. See request volume, API response times, and endpoint
-usage across all your AI applications.
+You can also upgrade Honcho when new versions are made available directly from the status page.
 
-You can also upgrade Honcho when new versions are made available.
+<img src="/images/app-screenshots/upgrade-honcho.png" alt="Upgrade Honcho" />
 
-## **3. Manage API Keys**
-Create and manage API keys for different environments. You can create
-admin-level keys that have access to the entire Honcho instance or scope keys
-to restrict access to `Workspaces`, `Peers`, or `Sessions`.
+## 3. Manage API Keys
+The [API Keys](https://app.honcho.dev/api-keys) page allows you to create and manage authentication tokens for different environments. You can create admin-level keys with full instance access or scope keys to specific `Workspaces`, `Peers`, or `Sessions`.
 
 <img src="/images/app-screenshots/api-keys.png" alt="API Key Management Dashboard" />
 
-## **4. Test with API Playground**
-Use our Postman-like API playground to test queries, explore endpoints, and
-validate your integration. Send requests directly to your Honcho instance and
-see real-time responses with full request/response logging.
+## 4. Test with API Playground
+The [API Playground](https://app.honcho.dev/playground) provides a Postman-like interface to test queries, explore endpoints, and validate your integration. Send requests directly to your Honcho instance with real-time responses and full request/response logging.
 
 <img src="/images/app-screenshots/api-playground.png" alt="API Playground Interface" />
 
-## **5. Create a Workspace**
-On the explore page, you can see and interact with the data stored in your
-Honcho instance. You can create `Workspaces`, `Peers`, `Sessions`, and `Messages`.
+## 5. Workspace Management
+The [Workspace](https://app.honcho.dev/workspace) page provides comprehensive workspace management where you can create workspaces and edit their metadata. Each `Workspace` serves as a container for organizing your AI application data.
 
-<img src="/images/app-screenshots/explore-honcho.png" alt="Explore Honcho Page" />
+<img src="/images/app-screenshots/explore-honcho.png" alt="Workspace Management Page" />
 
-## **6. Peers & Sessions Management**
-Click into a `Workspace` to open up the `Workspace` dashboard. Here you can create
-`Peers` and `Sessions`, use the Dialectic API and add `Messages` to your `Peer`
-representations. Utilize your ability to search across all `Messages` in a
-`Workspace`.
+Click into any workspace to access detailed views with `Peers` and `Sessions`. Here you can quickly create `Peers` or `Sessions` and add or remove `Peers` to any particular `Session`. Click into any entity to navigate to the respective [Sessions](https://app.honcho.dev/sessions) or [Peers](https://app.honcho.dev/peers) dashboards for cross-workspace management.
 
 <img src="/images/app-screenshots/workspace-dash.png" alt="Workspace Dashboard Overview" />
 
+## 6. Sessions Management
+The dedicated [Sessions](https://app.honcho.dev/sessions) page provides a comprehensive interface for managing all sessions across workspaces. Features include:
 
-## **7. Peer Utilities & Chat Endpoint**
-Select a `Peer` to open its utilities. From here you can search that `Peer`'s
-`Messages`, view participating `Sessions`, or edit its metadata.
+<img src="/images/app-screenshots/session-dash.png" alt="Sessions Management Page" />
 
-The Chat Endpoint allows you to send a query through the Honcho API to get
-information about the `Peer`'s representation. If you include the `Session` ID,
-the query will be scoped to `Messages` and the representation of a `Peer`
-within that `Session`.
-
-<Frame>
-<img src="/images/app-screenshots/peer-utilities.png" alt="Peer Utilities Dashboard" width="400" />
-</Frame>
-
-
-## **8. Session Dashboard & Get Context**
-From the workspace dashboard, navigate to a `Session` to find options to add `Peers`, view `Messages`, and search across all `Messages` for a particular session.
-
-Use the **Get Context** feature to quickly generate output that fits into your
-LLM’s context window. Get a subset of messages with an optional summary
-based on the token count you input. The [Session Context](../../guides/get-context) guide goes over how to use this in your agents
-
-<img src="/images/app-screenshots/session-dash.png" alt="Session Dashboard Overview" />
+- **Cross-workspace session overview** with filtering
+- **Session creation and management** with metadata editing
+- **View or Add Messages** within sessions
+- **Get Context** feature for generating LLM-ready context with customizable token limits
+- **Peer assignment** to sessions
+- **Advanced search** across session messages
 
 <Frame>
-<img src="/images/app-screenshots/create-message.png" alt="Create Message Interface" width="400" />
+<img src="/images/app-screenshots/create-message.png" alt="Message Creation Interface" width="400" />
 </Frame>
+
+Use the **Get Context** feature to quickly generate output optimized for your LLM's context window, with optional summarization based on your specified token count.
+
+<img src="/images/app-screenshots/get-context.png" alt="Get Context" />
+
+## 7. Peers Management
+The [Peers](https://app.honcho.dev/peers) page offers dedicated peer management across all workspaces with advanced utilities:
+
+- **Cross-workspace peer overview** with comprehensive filtering
+- **Message search** across all sessions for a particular peer
+- **Peer configuration and metadata management** including [Session-Peer Configuration](/v2/documentation/reference/session-peer-configurations)
+- **Dialectic Chat** to query peer representations
+
+
+<img src="/images/app-screenshots/peer-utilities.png" alt="Peer Management Dashboard" />
+
+
+The Chat Endpoint allows you to query peer representations directly, with optional session scoping for context-aware responses.
+
+<img src="/images/app-screenshots/chat-endpoint.png" alt="Chat Endpoint" />
+
+## 8. Webhook Integration
+The [Webhooks](https://app.honcho.dev/webhooks) page enables Webhook creation and management.
+<img src="/images/app-screenshots/webhooks-page.png" alt="Webhooks Dashboard" />
+
+## 9. Organization Member Access
+The [Members](https://app.honcho.dev/members) page provides organization administration:
+
+- **Member invitation** with role-based permissions
+- **Role management** (admin/member) with permission controls
+- **Member removal** and access management
+- **Organization overview** with member activity
+
+<img src="/images/app-screenshots/members-page.png" alt="Members Dashboard" />
 
 
 ## Go Further
