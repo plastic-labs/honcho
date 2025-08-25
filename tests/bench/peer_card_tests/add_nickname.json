@@ -1,0 +1,11 @@
+{
+  "name": "add_nickname",
+  "old_peer_card": "Name: Daniel\nLocation: Austin\nOccupation: Graphic Designer",
+  "new_observations": [
+    "Daniel's nickname is Dan the Man."
+  ],
+  "expected_facts": [
+    "Name: Daniel",
+    "Nickname: Dan the Man"
+  ]
+}

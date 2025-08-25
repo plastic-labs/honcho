@@ -14,6 +14,7 @@ from src.exceptions import (
 )
 from src.security import JWTParams, require_auth
 from src.utils import summarizer
+from src.utils.search import search
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ async def get_or_create_session(
     Get a specific session in a workspace.
 
     If session_id is provided as a query parameter, it verifies the session is in the workspace.
-    Otherwise, it uses the session_id from the JWT token for verification.
+    Otherwise, it uses the session_id from the JWT for verification.
     """
     # Verify JWT has access to the requested resource
     if not jwt_params.ad and jwt_params.w is not None and jwt_params.w != workspace_id:
@@ -85,8 +86,8 @@ async def get_sessions(
     """Get All Sessions in a Workspace"""
     filter_param = None
 
-    if options and hasattr(options, "filter") and options.filter:
-        filter_param = options.filter
+    if options and hasattr(options, "filters") and options.filters:
+        filter_param = options.filters
         if filter_param == {}:  # Explicitly check for empty dict
             filter_param = None
 
@@ -370,91 +371,85 @@ async def get_session_context(
     session_id: str = Path(..., description="ID of the session"),
     tokens: int | None = Query(
         None,
-        description="Number of tokens to use for the context. Includes summary if set to true",
+        le=config.settings.GET_CONTEXT_MAX_TOKENS,
+        description=f"Number of tokens to use for the context. Includes summary if set to true. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
-    summary: bool = Query(
-        True,
+    *,
+    include_summary: bool = Query(
+        default=True,
         description="Whether or not to include a summary *if* one is available for the session",
-    ),
-    force_new: bool = Query(
-        False,
-        description="Whether or not the included summary should be generated on-the-fly in order to exhaustively cover the session history. The summary flag must be true for this to take effect.",
+        alias="summary",
     ),
     db: AsyncSession = db,
 ):
     """
-    Produce a context object from the session. The caller provides a token limit which the entire context must fit into.
-    To do this, we allocate 40% of the token limit to the summary, and 60% to recent messages -- as many as can fit.
-    If the caller does not want a summary, we allocate all the tokens to recent messages.
-    The default token limit if not provided is 2048.
+    Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.
+    If not provided, the context will be exhaustive (within configured max tokens). To do this, we allocate 40% of the token limit
+    to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
+    this. If the caller does not want a summary, we allocate all the tokens to recent messages.
     """
-    token_limit = tokens or config.settings.GET_CONTEXT_DEFAULT_MAX_TOKENS
+    token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
 
-    summary_content = ""
-    messages_tokens = token_limit
-
-    if summary:
-        if force_new:
-            logger.warning("Exhaustive summary requested -- not currently available")
-
-        summary_tokens_limit = token_limit * 0.4
-
-        latest_long_summary, latest_short_summary = await summarizer.get_both_summaries(
-            db,
-            workspace_name=workspace_id,
-            session_name=session_id,
-        )
-
-        long_len = latest_long_summary["token_count"] if latest_long_summary else 0
-        short_len = latest_short_summary["token_count"] if latest_short_summary else 0
-
-        # The goal is to return the longest summary that fits within the token limit
-        # Sometimes (rarely) the short summary can be longer than the long summary,
-        # so we need to check for that and return the longer one.
-
-        if (
-            latest_long_summary
-            and latest_long_summary["token_count"] <= summary_tokens_limit
-            and long_len > short_len
-        ):
-            summary_content = latest_long_summary["content"]
-            messages_tokens = token_limit - latest_long_summary["token_count"]
-        elif (
-            latest_short_summary
-            and latest_short_summary["token_count"] <= summary_tokens_limit
-            and short_len > 0
-        ):
-            summary_content = latest_short_summary["content"]
-            messages_tokens = token_limit - latest_short_summary["token_count"]
-        else:
-            logger.warning(
-                "No summary available for get_context, returning empty string. long_summary_len: %s, short_summary_len: %s",
-                long_len,
-                short_len,
-            )
-            summary_content = ""
-
-    # Get the recent messages to return verbatim
-    messages_stmt = await crud.get_messages(
+    # Use the shared get_session_context function from summarizer
+    summary_obj, messages = await summarizer.get_session_context(
+        db,
         workspace_name=workspace_id,
         session_name=session_id,
-        token_limit=messages_tokens,
+        token_limit=token_limit,
+        include_summary=include_summary,
     )
-    result = await db.execute(messages_stmt)
-    messages = list(result.scalars().all())
-
-    logger.info(f"Retrieved {len(messages)} recent messages for verbatim return")
 
     return schemas.SessionContext(
         name=session_id,
         messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
-        summary=summary_content,
+        summary=summary_obj,
+    )
+
+
+@router.get(
+    "/{session_id}/summaries",
+    response_model=schemas.SessionSummaries,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
+    ],
+)
+async def get_session_summaries(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    session_id: str = Path(..., description="ID of the session"),
+    db: AsyncSession = db,
+) -> schemas.SessionSummaries:
+    """
+    Get available summaries for a session.
+
+    Returns both short and long summaries if available, including metadata like
+    the message ID they cover up to, creation timestamp, and token count.
+    """
+    # Reuse the logic from get_context to get both summaries
+    short_summary, long_summary = await summarizer.get_both_summaries(
+        db,
+        workspace_name=workspace_id,
+        session_name=session_id,
+    )
+
+    # Convert the internal Summary TypedDict to our Pydantic schema
+    short_summary_schema = None
+    if short_summary:
+        short_summary_schema = summarizer.to_schema_summary(short_summary)
+
+    long_summary_schema = None
+    if long_summary:
+        long_summary_schema = summarizer.to_schema_summary(long_summary)
+
+    return schemas.SessionSummaries(
+        name=session_id,
+        short_summary=short_summary_schema,
+        long_summary=long_summary_schema,
     )
 
 
 @router.post(
     "/{session_id}/search",
-    response_model=Page[schemas.Message],
+    response_model=list[schemas.Message],
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", session_name="session_id"))
     ],
@@ -462,19 +457,19 @@ async def get_session_context(
 async def search_session(
     workspace_id: str = Path(..., description="ID of the workspace"),
     session_id: str = Path(..., description="ID of the session"),
-    search: schemas.MessageSearchOptions = Body(
-        ..., description="Message search parameters "
+    body: schemas.MessageSearchOptions = Body(
+        ..., description="Message search parameters"
     ),
     db: AsyncSession = db,
 ):
     """Search a Session"""
-    query, semantic = search.query, search.semantic
-
-    stmt = await crud.search(
-        query,
-        workspace_name=workspace_id,
-        session_name=session_id,
-        semantic=semantic,
+    # take user-provided filter and add workspace_id and session_id to it
+    filters = body.filters or {}
+    filters["workspace_id"] = workspace_id
+    filters["session_id"] = session_id
+    return await search(
+        db,
+        body.query,
+        filters=filters,
+        limit=body.limit,
     )
-
-    return await apaginate(db, stmt)

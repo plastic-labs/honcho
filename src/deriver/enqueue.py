@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, schemas
 from src.config import settings
 from src.dependencies import tracked_db
+from src.deriver.utils import get_work_unit_key
 from src.exceptions import ValidationException
 from src.models import QueueItem
 
@@ -82,6 +83,12 @@ async def handle_session(
         db_session, workspace_name, session_name
     )
 
+    # Get all message IDs to fetch sequences in batch
+    message_ids = [msg["message_id"] for msg in payload]
+    message_seq_map = await crud.get_message_seqs_in_session_batch(
+        db_session, workspace_name, session_name, message_ids
+    )
+
     queue_records: list[dict[str, Any]] = []
 
     for message in payload:
@@ -92,6 +99,7 @@ async def handle_session(
                 peers_with_configuration,
                 session.id,
                 deriver_disabled=deriver_disabled,
+                message_seq_map=message_seq_map,
             )
         )
 
@@ -118,7 +126,11 @@ async def get_peers_with_configuration(
     peers_with_configuration_result = await db_session.execute(configuration_query)
     peers_with_configuration_list = peers_with_configuration_result.all()
     return {
-        row.peer_name: [row.peer_configuration, row.session_peer_configuration]
+        row.peer_name: [
+            row.peer_configuration,
+            row.session_peer_configuration,
+            row.is_active,
+        ]
         for row in peers_with_configuration_list
     }
 
@@ -148,8 +160,12 @@ def create_representation_record(
         task_type="representation",
     )
     return {
+        "work_unit_key": get_work_unit_key(
+            task_type="representation", payload=processed_payload
+        ),
         "payload": processed_payload,
         "session_id": session_id,
+        "task_type": "representation",
     }
 
 
@@ -176,8 +192,12 @@ def create_summary_record(
         message_seq_in_session=message_seq_in_session,
     )
     return {
+        "work_unit_key": get_work_unit_key(
+            task_type="summary", payload=processed_payload
+        ),
         "payload": processed_payload,
         "session_id": session_id,
+        "task_type": "summary",
     }
 
 
@@ -194,7 +214,10 @@ def get_effective_observe_me(
     Returns:
         True if observe_me is enabled, False otherwise
     """
-    configuration = peers_with_configuration[sender_name]
+    # If the sender is not in peers_with_configuration, they left after sending a message.
+    # We'll use the default behavior of observing the sender by instantiating the default
+    # peer-level and session-level configs.
+    configuration: list[Any] = peers_with_configuration.get(sender_name, [{}, {}])
     sender_session_peer_config = (
         schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
     )
@@ -219,6 +242,7 @@ async def generate_queue_records(
     session_id: str,
     *,
     deriver_disabled: bool,
+    message_seq_map: dict[int, int] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Process a single message and generate queue records based on configurations.
@@ -229,18 +253,24 @@ async def generate_queue_records(
         deriver_disabled: Whether deriver is disabled for the session
         peers_with_configuration: Dictionary of peer configurations
         session_id: Session ID
+        message_seq_map: Optional pre-fetched mapping of message_id to sequence number
 
     Returns:
         List of queue records for this message
     """
     sender_name = message["peer_name"]
     message_id: int = message["message_id"]
-    message_seq_in_session: int = await crud.get_message_seq_in_session(
-        db_session,
-        workspace_name=message["workspace_name"],
-        session_name=message["session_name"],
-        message_id=message_id,
-    )
+
+    # Use pre-fetched sequence if available, otherwise fall back to individual query
+    if message_seq_map and message_id in message_seq_map:
+        message_seq_in_session = message_seq_map[message_id]
+    else:
+        message_seq_in_session = await crud.get_message_seq_in_session(
+            db_session,
+            workspace_name=message["workspace_name"],
+            session_name=message["session_name"],
+            message_id=message_id,
+        )
 
     records: list[dict[str, Any]] = []
 
@@ -272,6 +302,10 @@ async def generate_queue_records(
 
         for peer_name, configuration in peers_with_configuration.items():
             if peer_name == sender_name:
+                continue
+
+            # If the observer peer has left the session, we don't need to enqueue a representation task for them.
+            if not configuration[2]:
                 continue
 
             session_peer_config = (

@@ -1,0 +1,24 @@
+{
+  "name": "chitchat_only_no_change",
+  "old_peer_card": "Name: Jordan\nAge: 33\nLocation: Denver\nOccupation: Product Manager\nInterests: skiing, trail running",
+  "new_observations": [
+    "The meeting could have been an email.",
+    "The user's day is hectic.",
+    "It is Monday."
+  ],
+  "expected_facts": [
+    "Name: Jordan",
+    "Age: 33",
+    "Location: Denver",
+    "Occupation: Product Manager",
+    "Interests: skiing",
+    "Interests: trail running"
+  ],
+  "forbidden_facts": [
+    "Interests: meetings",
+    "Occupation: Executive Assistant",
+    "Location: Boulder",
+    "Day: hectic",
+    "Today is Monday"
+  ]
+}

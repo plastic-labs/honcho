@@ -8,6 +8,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from src.config import settings
+from src.utils.formatting import parse_datetime_iso, utc_now_iso
 
 from .exceptions import AuthenticationException
 
@@ -54,7 +55,7 @@ class JWTParams(BaseModel):
     `s`: (string) session name
     """
 
-    t: str = datetime.datetime.now().isoformat()
+    t: str = utc_now_iso()
     exp: str | None = None
     ad: bool | None = None
     w: str | None = None
@@ -70,7 +71,7 @@ def create_admin_jwt() -> str:
 
 
 def create_jwt(params: JWTParams) -> str:
-    """Create a JWT token from the given parameters."""
+    """Create a JWT from the given parameters."""
     payload = {k: v for k, v in params.__dict__.items() if v is not None}
     if not settings.AUTH.JWT_SECRET:
         raise ValueError("AUTH_JWT_SECRET is not set, cannot create JWT.")
@@ -79,8 +80,8 @@ def create_jwt(params: JWTParams) -> str:
     )
 
 
-async def verify_jwt(token: str) -> JWTParams:
-    """Verify a JWT token and return the decoded parameters."""
+def verify_jwt(token: str) -> JWTParams:
+    """Verify a JWT and return the decoded parameters."""
 
     params = JWTParams()
     try:
@@ -93,12 +94,11 @@ async def verify_jwt(token: str) -> JWTParams:
             params.t = decoded["t"]
         if "exp" in decoded:
             params.exp = decoded["exp"]
-            if (
-                params.exp
-                and datetime.datetime.fromisoformat(params.exp)
-                < datetime.datetime.now()
-            ):
-                raise AuthenticationException("JWT expired")
+            if params.exp:
+                exp_time = parse_datetime_iso(params.exp)
+                current_time = datetime.datetime.now(datetime.timezone.utc)
+                if exp_time < current_time:
+                    raise AuthenticationException("JWT expired")
         if "ad" in decoded:
             params.ad = decoded["ad"]
         if "w" in decoded:
@@ -169,7 +169,7 @@ async def auth(
         logger.warning("No access token provided")
         raise AuthenticationException("No access token provided")
 
-    jwt_params = await verify_jwt(credentials.credentials)
+    jwt_params = verify_jwt(credentials.credentials)
 
     # based on api operation, verify api key based on that key's permissions
     if jwt_params.ad:

@@ -1,6 +1,5 @@
 from typing import Any
 
-import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
@@ -119,8 +118,8 @@ def test_create_session_with_all_optional_params(
 def test_create_session_with_too_many_peers(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    caplog: pytest.LogCaptureFixture,
 ):
+    """Test that creating a session with too many observers fails"""
     test_workspace, test_peer = sample_data
     # create 10 peers
     peer_names = [test_peer.name]
@@ -133,7 +132,7 @@ def test_create_session_with_too_many_peers(
         assert response.status_code == 200
         peer_names.append(peer_name)
 
-    # create session with 11 peers
+    # Test 1: Create session with 11 non-observers should succeed
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
         json={
@@ -141,12 +140,25 @@ def test_create_session_with_too_many_peers(
             "peer_names": {peer_name: {} for peer_name in peer_names},
         },
     )
-    assert response.status_code == 422
-    assert "Failed to get or create session" in caplog.text
+    assert response.status_code == 200  # Should succeed since no observers
+
+    # Test 2: Try to create session with 11 observers (exceeds limit)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": str(generate_nanoid()),
+            "peer_names": {
+                peer_name: {"observe_others": True} for peer_name in peer_names
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert "11 observers" in response.json()["detail"]
+    assert "Maximum allowed is 10 observers" in response.json()["detail"]
 
     session_response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"id": "test_session"}},
+        json={"filters": {"id": "test_session"}},
     )
     assert session_response.status_code == 200
     assert len(session_response.json()["items"]) == 0
@@ -186,7 +198,7 @@ def test_get_sessions(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert data["workspace_id"] == test_workspace.name
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"metadata": {"test_key": "test_value"}}},
+        json={"filters": {"metadata": {"test_key": "test_value"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -203,7 +215,7 @@ def test_get_sessions_with_empty_filter(
     test_workspace, _ = sample_data
 
     response = client.post(
-        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filter": {}}
+        f"/v2/workspaces/{test_workspace.name}/sessions/list", json={"filters": {}}
     )
     assert response.status_code == 200
     data = response.json()
@@ -356,7 +368,7 @@ def test_delete_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Check that session is marked as inactive
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/list",
-        json={"filter": {"is_active": False}},
+        json={"filters": {"is_active": False}},
     )
     data = response.json()
     # Find our session in the inactive sessions
@@ -563,14 +575,14 @@ def test_set_session_peers(client: TestClient, sample_data: tuple[Workspace, Pee
     assert data["items"][0]["id"] == peer2_name
 
 
-def test_set_session_peers_with_limit(
+def test_set_session_peers_with_observer_limit(
     client: TestClient,
     sample_data: tuple[Workspace, Peer],
-    caplog: pytest.LogCaptureFixture,
 ):
+    """Test that session observer limit is enforced based on observe_others setting"""
     test_workspace, test_peer = sample_data
 
-    # Create a test session with multiple peers
+    # Create a test session
     session_id = str(generate_nanoid())
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
@@ -580,9 +592,9 @@ def test_set_session_peers_with_limit(
     )
     assert response.status_code == 200
 
-    # create 10 peers
+    # Create 15 peers (more than the limit of 10 observers)
     peer_names = [test_peer.name]
-    for _ in range(10):
+    for _ in range(14):
         peer_name = str(generate_nanoid())
         response = client.post(
             f"/v2/workspaces/{test_workspace.name}/peers",
@@ -591,14 +603,109 @@ def test_set_session_peers_with_limit(
         assert response.status_code == 200
         peer_names.append(peer_name)
 
-    # set peers with 11 peers (as a dict of peer_name: {})
-    peers_dict: dict[str, dict[Any, Any]] = {peer_name: {} for peer_name in peer_names}
+    # Test 1: Adding 15 peers with observe_others=False should succeed
+    peers_dict_no_observers: dict[str, dict[str, Any]] = {
+        peer_name: {"observe_others": False} for peer_name in peer_names
+    }
     response = client.put(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
-        json=peers_dict,
+        json=peers_dict_no_observers,
     )
-    assert response.status_code == 404
-    assert "Failed to set peers for session" in caplog.text
+    assert response.status_code == 200  # Should succeed since no observers
+
+    # Test 2: Try to set 11 peers with observe_others=True (exceeds limit of 10)
+    peers_dict_all_observers: dict[str, dict[str, Any]] = {
+        peer_name: {"observe_others": True} for peer_name in peer_names[:11]
+    }
+    response = client.put(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=peers_dict_all_observers,
+    )
+    assert response.status_code == 400  # ObserverException
+    assert "11 observers" in response.json()["detail"]
+    assert "Maximum allowed is 10 observers" in response.json()["detail"]
+
+    # Test 3: Set exactly 10 observers should succeed
+    peers_dict_ten_observers: dict[str, dict[str, Any]] = {
+        peer_name: {"observe_others": True} for peer_name in peer_names[:10]
+    }
+    response = client.put(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=peers_dict_ten_observers,
+    )
+    assert response.status_code == 200  # Should succeed with exactly 10 observers
+
+
+def test_update_peer_config_observer_limit(
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test that updating peer config respects observer limits"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    session_id = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={
+            "id": session_id,
+        },
+    )
+    assert response.status_code == 200
+
+    # Create exactly 10 peers and add them as observers
+    peer_names: list[str] = []
+    for i in range(10):
+        peer_name = f"observer_{i}"
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/peers",
+            json={"name": peer_name, "metadata": {}},
+        )
+        assert response.status_code == 200
+        peer_names.append(peer_name)
+
+    # Add all 10 peers as observers
+    peers_dict_observers: dict[str, dict[str, Any]] = {
+        peer_name: {"observe_others": True} for peer_name in peer_names
+    }
+    # Also add the test_peer as non-observer
+    peers_dict_observers[test_peer.name] = {"observe_others": False}
+
+    response = client.put(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers",
+        json=peers_dict_observers,
+    )
+    assert response.status_code == 200  # Should succeed with exactly 10 observers
+
+    # Now try to update test_peer to become an observer (would exceed limit)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{test_peer.name}/config",
+        json={"observe_others": True},
+    )
+    assert response.status_code == 400  # ObserverException
+    assert "11 observers" in response.json()["detail"]
+    assert "Maximum allowed is 10 observers" in response.json()["detail"]
+
+    # Verify that updating a peer that's already an observer still works
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{peer_names[0]}/config",
+        json={"observe_others": True, "observe_me": False},  # Still an observer
+    )
+    assert response.status_code == 200  # Should succeed since count doesn't change
+
+    # Change one observer to non-observer
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{peer_names[0]}/config",
+        json={"observe_others": False},
+    )
+    assert response.status_code == 200
+
+    # Now test_peer can become an observer (9 + 1 = 10)
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/peers/{test_peer.name}/config",
+        json={"observe_others": True},
+    )
+    assert response.status_code == 200  # Should succeed now
 
 
 def test_remove_peers_from_session(
@@ -677,7 +784,7 @@ def test_get_session_context(client: TestClient, sample_data: tuple[Workspace, P
     assert "summary" in data
     assert data["id"] == session_id
     assert isinstance(data["messages"], list)
-    assert data["summary"] == ""  # Default is empty when summary=False
+    assert data["summary"] is None  # No summary available
 
 
 def test_get_session_context_with_summary(
@@ -748,6 +855,55 @@ def test_get_session_context_with_all_params(
     assert "summary" in data
 
 
+def test_get_session_summaries(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+) -> None:
+    """Test getting summaries for a valid session"""
+    test_workspace, test_peer = sample_data
+    session_id = str(generate_nanoid())
+
+    # Create session
+    client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions",
+        json={"id": session_id, "peers": {test_peer.name: {}}},
+    )
+
+    # Get summaries
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/summaries",
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Validate response structure
+    assert "id" in data
+    assert data["id"] == session_id
+    assert "short_summary" in data
+    assert "long_summary" in data
+    # Summaries will be None since they're created asynchronously
+    assert data["short_summary"] is None
+    assert data["long_summary"] is None
+
+
+def test_get_session_summaries_nonexistent_session(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
+) -> None:
+    """Test getting summaries for a non-existent session"""
+    test_workspace, _ = sample_data
+    nonexistent_session_id = str(generate_nanoid())
+
+    # Try to get summaries for non-existent session
+    # Should still return 200 with null summaries
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/summaries",
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == nonexistent_session_id
+    assert data["short_summary"] is None
+    assert data["long_summary"] is None
+
+
 def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer]):
     """Test the session search functionality"""
     test_workspace, test_peer = sample_data
@@ -773,17 +929,13 @@ def test_search_session(client: TestClient, sample_data: tuple[Workspace, Peer])
     # Search with a query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search query"},
+        json={"query": "search query", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_session_empty_query(
@@ -802,14 +954,13 @@ def test_search_session_empty_query(
     # Search with empty query
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": ""},
+        json={"query": "", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should still have proper pagination structure
-    assert "items" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
 def test_search_session_nonexistent(
@@ -821,23 +972,25 @@ def test_search_session_nonexistent(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{nonexistent_session_id}/search",
-        json={"query": "test query"},
+        json={"query": "test query", "limit": 10},
     )
     assert response.status_code == 200
-    assert response.json()["items"] == []
+    data: list[dict[str, Any]] = response.json()
+    assert isinstance(data, list)
+    assert len(data) == 0
 
 
-def test_search_session_with_semantic_search_false(
+def test_search_session_with_messages(
     client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session search with semantic=false"""
+    """Test session search with actual messages"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
     # Create session
     client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Add messages to search through
@@ -851,38 +1004,29 @@ def test_search_session_with_semantic_search_false(
         },
     )
 
-    # Search with semantic=false
+    # Search for content
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search", "semantic": False},
+        json={"query": "search", "limit": 10},
     )
     assert response.status_code == 200
     data = response.json()
 
-    # Response should have pagination structure
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "size" in data
-    assert isinstance(data["items"], list)
+    # Response should be a direct list of messages
+    assert isinstance(data, list)
 
 
-def test_search_session_with_semantic_search_true_disabled(
-    client: TestClient,
-    sample_data: tuple[Workspace, Peer],
-    monkeypatch: pytest.MonkeyPatch,
+def test_search_session_with_limit(
+    client: TestClient, sample_data: tuple[Workspace, Peer]
 ):
-    """Test session search with semantic=true when EMBED_MESSAGES is disabled"""
-    # Override the EMBED_MESSAGES setting to False for this test
-    monkeypatch.setattr("src.config.settings.EMBED_MESSAGES", False)
-
+    """Test session search with custom limit"""
     test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
     # Create session
     client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions",
-        json={"id": session_id, "peer_names": {test_peer.name: {}}},
+        json={"id": session_id, "peers": {test_peer.name: {}}},
     )
 
     # Add messages to search through
@@ -892,19 +1036,19 @@ def test_search_session_with_semantic_search_true_disabled(
             "messages": [
                 {"content": "Search this content", "peer_id": test_peer.name},
                 {"content": "Another message to find", "peer_id": test_peer.name},
+                {"content": "More searchable content", "peer_id": test_peer.name},
             ]
         },
     )
 
-    # Search with semantic=true (should fail if EMBED_MESSAGES is disabled)
+    # Search with custom limit
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/search",
-        json={"query": "search", "semantic": True},
+        json={"query": "search", "limit": 2},
     )
 
-    assert response.status_code == 405
-
-    data = response.json()
-    assert "Semantic search requires EMBED_MESSAGES flag to be enabled" in data.get(
-        "detail", ""
-    )
+    assert response.status_code == 200
+    data: list[dict[str, Any]] = response.json()
+    assert isinstance(data, list)
+    # Should not exceed the limit
+    assert len(data) <= 2

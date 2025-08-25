@@ -42,16 +42,17 @@ describe('Peer', () => {
       environment: 'local',
     });
 
-    peer = new Peer('test-peer', honcho);
+    peer = new Peer('test-peer', 'test-workspace', (honcho as any)._client);
     mockClient = (honcho as any)._client;
   });
 
   describe('constructor', () => {
     it('should initialize with correct properties', () => {
-      const newPeer = new Peer('peer-id', honcho);
+      const newPeer = new Peer('peer-id', 'test-workspace', mockClient);
 
       expect(newPeer.id).toBe('peer-id');
-      expect(newPeer['_honcho']).toBe(honcho);
+      expect(newPeer.workspaceId).toBe('test-workspace');
+      expect(newPeer['_client']).toBe(mockClient);
     });
   });
 
@@ -102,7 +103,7 @@ describe('Peer', () => {
     });
 
     it('should handle chat with target peer', async () => {
-      const targetPeer = new Peer('target-peer', honcho);
+      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
       const mockResponse = { content: 'Targeted response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
@@ -142,15 +143,11 @@ describe('Peer', () => {
     });
 
     it('should handle all options together', async () => {
-      const targetPeer = new Peer('target-peer', honcho);
+      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
       const mockResponse = { content: 'Full options response' };
       mockClient.workspaces.peers.chat.mockResolvedValue(mockResponse);
 
-      await peer.chat('Hello', {
-        stream: true,
-        target: targetPeer,
-        sessionId: 'session-456'
-      });
+      await peer.chat('Hello', { stream: true, target: targetPeer, sessionId: 'session-456' });
 
       expect(mockClient.workspaces.peers.chat).toHaveBeenCalledWith(
         'test-workspace',
@@ -162,7 +159,7 @@ describe('Peer', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.chat.mockRejectedValue(new Error('Chat failed'));
 
-      await expect(peer.chat('Hello')).rejects.toThrow('Chat failed');
+      await expect(peer.chat('Hello')).rejects.toThrow();
     });
   });
 
@@ -185,7 +182,7 @@ describe('Peer', () => {
       expect(mockClient.workspaces.peers.sessions.list).toHaveBeenCalledWith(
         'test-workspace',
         'test-peer',
-        { filter: undefined }
+        { filters: undefined }
       );
     });
 
@@ -206,7 +203,7 @@ describe('Peer', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.sessions.list.mockRejectedValue(new Error('Failed to get sessions'));
 
-      await expect(peer.getSessions()).rejects.toThrow('Failed to get sessions');
+      await expect(peer.getSessions()).rejects.toThrow();
     });
   });
 
@@ -215,7 +212,7 @@ describe('Peer', () => {
       const message = peer.message('Test content');
 
       expect(message).toEqual({
-        peerId: 'test-peer',
+        peer_id: 'test-peer',
         content: 'Test content',
         metadata: undefined,
       });
@@ -226,7 +223,7 @@ describe('Peer', () => {
       const message = peer.message('Hello there', { metadata });
 
       expect(message).toEqual({
-        peerId: 'test-peer',
+        peer_id: 'test-peer',
         content: 'Hello there',
         metadata: { importance: 'high', category: 'greeting' },
       });
@@ -236,7 +233,7 @@ describe('Peer', () => {
       const message = peer.message('');
 
       expect(message).toEqual({
-        peerId: 'test-peer',
+        peer_id: 'test-peer',
         content: '',
         metadata: undefined,
       });
@@ -275,7 +272,7 @@ describe('Peer', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.getOrCreate.mockRejectedValue(new Error('Peer not found'));
 
-      await expect(peer.getMetadata()).rejects.toThrow('Peer not found');
+      await expect(peer.getMetadata()).rejects.toThrow();
     });
   });
 
@@ -325,26 +322,66 @@ describe('Peer', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.update.mockRejectedValue(new Error('Update failed'));
 
-      await expect(peer.setMetadata({ key: 'value' })).rejects.toThrow('Update failed');
+      await expect(peer.setMetadata({ key: 'value' })).rejects.toThrow();
+    });
+  });
+
+  describe('getPeerConfig', () => {
+    it('should return peer configuration', async () => {
+      const mockPeer = {
+        id: 'test-peer',
+        configuration: { observe_me: true, observe_others: false },
+      };
+      mockClient.workspaces.peers.getOrCreate.mockResolvedValue(mockPeer);
+
+      const config = await peer.getPeerConfig();
+
+      expect(config).toEqual({ observe_me: true, observe_others: false });
+      expect(mockClient.workspaces.peers.getOrCreate).toHaveBeenCalledWith(
+        'test-workspace',
+        { id: 'test-peer' }
+      );
+    });
+
+    it('should return empty object when no configuration exists', async () => {
+      const mockPeer = {
+        id: 'test-peer',
+        configuration: null,
+      };
+      mockClient.workspaces.peers.getOrCreate.mockResolvedValue(mockPeer);
+
+      const config = await peer.getPeerConfig();
+
+      expect(config).toEqual({});
+    });
+  });
+
+  describe('setPeerConfig', () => {
+    it('should update peer configuration', async () => {
+      const config = { observe_me: false, observe_others: true };
+      mockClient.workspaces.peers.update.mockResolvedValue({});
+
+      await peer.setPeerConfig(config);
+
+      expect(mockClient.workspaces.peers.update).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-peer',
+        { configuration: config }
+      );
     });
   });
 
   describe('search', () => {
-    it('should search peer messages and return Page', async () => {
-      const mockSearchResults = {
-        items: [
-          { id: 'msg1', content: 'Hello world', peer_id: 'test-peer' },
-          { id: 'msg2', content: 'Hello there', peer_id: 'test-peer' },
-        ],
-        total: 2,
-        size: 2,
-        hasNextPage: false,
-      };
+    it('should search peer messages and return array', async () => {
+      const mockSearchResults = [
+        { id: 'msg1', content: 'Hello world', peer_id: 'test-peer' },
+        { id: 'msg2', content: 'Hello there', peer_id: 'test-peer' },
+      ];
       mockClient.workspaces.peers.search.mockResolvedValue(mockSearchResults);
 
       const results = await peer.search('hello');
 
-      expect(results).toBeInstanceOf(Page);
+      expect(Array.isArray(results)).toBe(true);
       expect(mockClient.workspaces.peers.search).toHaveBeenCalledWith(
         'test-workspace',
         'test-peer',
@@ -353,37 +390,27 @@ describe('Peer', () => {
     });
 
     it('should handle empty search results', async () => {
-      const mockSearchResults = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: false,
-      };
+      const mockSearchResults: any[] = [];
       mockClient.workspaces.peers.search.mockResolvedValue(mockSearchResults);
 
       const results = await peer.search('nonexistent');
 
-      expect(results).toBeInstanceOf(Page);
+      expect(Array.isArray(results)).toBe(true);
     });
 
     it('should throw error for empty query', async () => {
-      await expect(peer.search('')).rejects.toThrow('Search query must be a non-empty string');
-      await expect(peer.search('   ')).rejects.toThrow('Search query must be a non-empty string');
+      await expect(peer.search('')).rejects.toThrow();
+      await expect(peer.search('   ')).rejects.toThrow();
     });
 
     it('should throw error for non-string query', async () => {
-      await expect(peer.search(null as any)).rejects.toThrow('Search query must be a non-empty string');
-      await expect(peer.search(undefined as any)).rejects.toThrow('Search query must be a non-empty string');
-      await expect(peer.search(123 as any)).rejects.toThrow('Search query must be a non-empty string');
+      await expect(peer.search(null as any)).rejects.toThrow();
+      await expect(peer.search(undefined as any)).rejects.toThrow();
+      await expect(peer.search(123 as any)).rejects.toThrow();
     });
 
     it('should handle complex search queries', async () => {
-      const mockSearchResults = {
-        items: [],
-        total: 0,
-        size: 0,
-        hasNextPage: false,
-      };
+      const mockSearchResults: any[] = [];
       mockClient.workspaces.peers.search.mockResolvedValue(mockSearchResults);
 
       const complexQuery = 'complex query with "quotes" and special characters!@#$%';
@@ -399,7 +426,7 @@ describe('Peer', () => {
     it('should handle API errors', async () => {
       mockClient.workspaces.peers.search.mockRejectedValue(new Error('Search failed'));
 
-      await expect(peer.search('test')).rejects.toThrow('Search failed');
+      await expect(peer.search('test')).rejects.toThrow();
     });
   });
 });

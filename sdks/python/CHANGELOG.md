@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.4.0] - 2025-08-12
+
+### Added
+
+- getSummaries API returning structured summaries
+- Webhook support
+
+### Changed
+
+- Messages can take an optional `created_at` value, defaulting to the current
+  time (UTC ISO 8601)
+
+## [1.3.0] - 2025-08-04
+
+### Added
+
+- Added get_peer_config to sessions module
+
+### Changed
+
+- Summaries are now included in `toOpenAI` and `toAnthropic` functions
+- `SessionContext.__len__` now counts the summary in its total
+- `filter` keyword changed to `filters`
+
+### Fixed
+
+- Added missing metadata inputs in many places
+- Better documentation all over
+
 ## [1.2.2] - 2025-07-21
 
 ### Added

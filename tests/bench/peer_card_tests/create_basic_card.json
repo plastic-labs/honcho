@@ -1,0 +1,18 @@
+{
+  "name": "create_basic_card",
+  "old_peer_card": null,
+  "new_observations": [
+    "The user's name is Alice.",
+    "Alice is 29 years old.",
+    "Alice lives in San Francisco.",
+    "Alice works as a Product Manager.",
+    "Alice is interested in climbing and cooking."
+  ],
+  "expected_facts": [
+    "Name: Alice",
+    "Age: 29",
+    "Location: San Francisco",
+    "Occupation: Product Manager",
+    "Interests: climbing, cooking"
+  ]
+}

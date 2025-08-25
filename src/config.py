@@ -54,6 +54,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DERIVER": "deriver",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
+        "WEBHOOK": "webhook",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -174,7 +175,7 @@ class LLMSettings(HonchoSettings):
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
     # General LLM settings
-    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100000)] = 2500
+    DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
 
 class DeriverSettings(HonchoSettings):
@@ -189,13 +190,27 @@ class DeriverSettings(HonchoSettings):
     PROVIDER: Providers = "google"
     MODEL: str = "gemini-2.5-flash"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    # Default number of observations to retrieve for each reasoning level
-    DEDUCTIVE_OBSERVATIONS_COUNT: Annotated[int, Field(default=6, gt=0, le=50)] = 6
-    EXPLICIT_OBSERVATIONS_COUNT: Annotated[int, Field(default=10, gt=0, le=50)] = 10
+    PEER_CARD_PROVIDER: Providers = "openai"
+    PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
+    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
+    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
+        int, Field(default=4000, gt=1000, le=10_000)
+    ] = 4000
+
+    # Context token limit for get_context method
+    CONTEXT_TOKEN_LIMIT: Annotated[int, Field(default=30_000, gt=1000, le=100_000)] = (
+        30_000
+    )
+
+    # Maximum number of observations to store in working representation
+    # This is applied to both explicit and deductive observations
+    WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
+        int, Field(default=100, gt=0, le=500)
+    ] = 100
 
 
 class DialecticSettings(HonchoSettings):
@@ -208,7 +223,7 @@ class DialecticSettings(HonchoSettings):
     QUERY_GENERATION_PROVIDER: Providers = "groq"
     QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
 
     SEMANTIC_SEARCH_TOP_K: Annotated[int, Field(default=10, gt=0, le=100)] = 10
     SEMANTIC_SEARCH_MAX_DISTANCE: Annotated[
@@ -228,12 +243,19 @@ class SummarySettings(HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: Providers = "google"
-    MODEL: str = "gemini-2.5-flash"
-    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10000)] = 1000
-    MAX_TOKENS_LONG: Annotated[int, Field(default=2000, gt=0, le=20000)] = 2000
+    PROVIDER: Providers = "openai"
+    MODEL: str = "gpt-4o-mini-2024-07-18"
+    MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
+    MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000
 
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=512, gt=0, le=2000)] = 512
+
+
+class WebhookSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="WEBHOOK_", extra="ignore")  # pyright: ignore
+
+    SECRET: str | None = None  # Must be set if configuring webhooks
+    MAX_WORKSPACE_LIMIT: int = 10
 
 
 class AppSettings(HonchoSettings):
@@ -244,16 +266,16 @@ class AppSettings(HonchoSettings):
 
     # Application-wide settings
     LOG_LEVEL: str = "INFO"
-    FASTAPI_HOST: str = "0.0.0.0"
-    FASTAPI_PORT: Annotated[int, Field(default=8000, gt=0, le=65535)] = 8000
-    SESSION_PEERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
+    SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
-    GET_CONTEXT_DEFAULT_MAX_TOKENS: Annotated[int, Field(default=2048, gt=0)] = 2048
+    GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
+        100_000
+    )
 
     EMBED_MESSAGES: bool = True
     MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
-    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300000, gt=0)] = (
-        300000
+    MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = (
+        300_000
     )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
@@ -266,6 +288,7 @@ class AppSettings(HonchoSettings):
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
+    WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

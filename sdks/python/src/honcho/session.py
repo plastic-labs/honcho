@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
@@ -10,18 +9,11 @@ from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from .pagination import SyncPage
-from .session_context import SessionContext
+from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
     from .peer import Peer
-
-
-try:
-    env_val = os.getenv("HONCHO_DEFAULT_CONTEXT_TOKENS")
-    _default_context_tokens = int(env_val) if env_val else None
-except (ValueError, TypeError):
-    _default_context_tokens = None
 
 
 class SessionPeerConfig(BaseModel):
@@ -69,6 +61,10 @@ class Session(BaseModel):
             ..., description="Reference to the parent Honcho client instance"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this session. If set, will get/create session immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this session. If set, will get/create session immediately with flags.",
@@ -77,12 +73,17 @@ class Session(BaseModel):
         """
         Initialize a new Session.
 
+        Provided metadata and configuration will overwrite any existing data in those
+        locations if given.
+
         Args:
             session_id: Unique identifier for this session within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent Honcho client instance
-            config:
-                Optional configuration to set for this session. If set, will get/create session immediately with flags.
+            metadata: Optional metadata dictionary to associate with this session.
+            If set, will get/create session immediately with metadata.
+            config: Optional configuration to set for this session.
+            If set, will get/create session immediately with flags.
         """
         super().__init__(
             id=session_id,
@@ -90,11 +91,12 @@ class Session(BaseModel):
         )
         self._client = client
 
-        if config:
+        if config or metadata:
             self._client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
-                configuration=config,
+                configuration=config if config is not None else NOT_GIVEN,
+                metadata=metadata if metadata is not None else NOT_GIVEN,
             )
 
     def add_peers(
@@ -118,13 +120,13 @@ class Session(BaseModel):
 
         Args:
             peers: Peers to add to the session. Can be:
-                   - str: Single peer ID
-                   - Peer: Single Peer object
-                   - List[Union[Peer, str]]: List of Peer objects and/or peer IDs
-                   - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
-                   - tuple[Peer, SessionPeerConfig]: Single Peer object and SessionPeerConfig
-                   - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
-                   - Mixed lists with peers and tuples/lists containing peer+config combinations
+                - str: Single peer ID
+                - Peer: Single Peer object
+                - List[Union[Peer, str]]: List of Peer objects and/or peer IDs
+                - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
+                - tuple[Peer, SessionPeerConfig]: Single Peer object and SessionPeerConfig
+                - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
+                - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
         if not isinstance(peers, list):
             peers = [peers]
@@ -167,13 +169,13 @@ class Session(BaseModel):
 
         Args:
             peers: Peers to set for the session. Can be:
-                  - str: Single peer ID
-                  - Peer: Single Peer object
-                  - List[Union[Peer, str]]: List of Peer objects and/or peer IDs
-                  - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
-                  - tuple[Peer, SessionPeerConfig]: Single Peer object and SessionPeerConfig
-                  - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
-                  - Mixed lists with peers and tuples/lists containing peer+config combinations
+                - str: Single peer ID
+                - Peer: Single Peer object
+                - List[Union[Peer, str]]: List of Peer objects and/or peer IDs
+                - tuple[str, SessionPeerConfig]: Single peer ID and SessionPeerConfig
+                - tuple[Peer, SessionPeerConfig]: Single Peer object and SessionPeerConfig
+                - List[tuple[Union[Peer, str], SessionPeerConfig]]: List of Peer objects and/or peer IDs and SessionPeerConfig
+                - Mixed lists with peers and tuples/lists containing peer+config combinations
         """
         if not isinstance(peers, list):
             peers = [peers]
@@ -335,7 +337,7 @@ class Session(BaseModel):
         messages_page = self._client.workspaces.sessions.messages.list(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            filter=filters,
+            filters=filters,
         )
         return SyncPage(messages_page)
 
@@ -400,35 +402,104 @@ class Session(BaseModel):
 
         Args:
             summary: Whether to include summary information
-            tokens: Maximum number of tokens to include in the context.
-                    Defaults to HONCHO_default_context_tokens env var
+            tokens: Maximum number of tokens to include in the context. Will default
+            to Honcho server configuration if not provided.
 
         Returns:
-            A SessionContext object containing the optimized message history
-            that maximizes conversational context while respecting the token limit
+            A SessionContext object containing the optimized message history and
+            summary, if available, that maximizes conversational context while
+            respecting the token limit
 
         Note:
             Token counting is performed using tiktoken. For models using different
             tokenizers, you may need to adjust the token limit accordingly.
         """
-        if not tokens:
-            tokens = _default_context_tokens
         context = self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            tokens=tokens,
+            tokens=tokens if tokens is not None else NOT_GIVEN,
             summary=summary,
         )
 
+        # Convert the honcho_core summary to our Summary if it exists
+        session_summary = None
+        if context.summary:
+            session_summary = Summary(
+                content=context.summary.content,
+                message_id=context.summary.message_id,
+                summary_type=context.summary.summary_type,
+                created_at=context.summary.created_at,
+                token_count=context.summary.token_count,
+            )
+
         return SessionContext(
-            session_id=self.id, messages=context.messages, summary=context.summary
+            session_id=self.id, messages=context.messages, summary=session_summary
+        )
+
+    def get_summaries(self) -> SessionSummaries:
+        """
+        Get available summaries for this session.
+
+        Makes an API call to retrieve both short and long summaries for this session,
+        if they are available. Summaries are created asynchronously by the backend
+        as messages are added to the session.
+
+        Returns:
+            A SessionSummaries object containing:
+            - id: The session ID
+            - short_summary: The short summary if available, including metadata
+            - long_summary: The long summary if available, including metadata
+
+        Note:
+            Summaries may be None if:
+            - Not enough messages have been added to trigger summary generation
+            - The summary generation is still in progress
+            - Summary generation is disabled for this session
+        """
+        # Use the honcho_core client to get summaries
+        response = self._client.workspaces.sessions.summaries(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+        )
+
+        # Create Summary objects from the response data
+        short_summary = None
+        if response.short_summary:
+            short_summary = Summary(
+                content=response.short_summary.content,
+                message_id=response.short_summary.message_id,
+                summary_type=response.short_summary.summary_type,
+                created_at=response.short_summary.created_at,
+                token_count=response.short_summary.token_count,
+            )
+
+        long_summary = None
+        if response.long_summary:
+            long_summary = Summary(
+                content=response.long_summary.content,
+                message_id=response.long_summary.message_id,
+                summary_type=response.long_summary.summary_type,
+                created_at=response.long_summary.created_at,
+                token_count=response.long_summary.token_count,
+            )
+
+        return SessionSummaries(
+            id=response.id or self.id,
+            short_summary=short_summary,
+            long_summary=long_summary,
         )
 
     @validate_call
     def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
-    ) -> SyncPage[Message]:
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the search"
+        ),
+        limit: int = Field(
+            default=10, ge=1, le=100, description="Number of results to return"
+        ),
+    ) -> list[Message]:
         """
         Search for messages in this session.
 
@@ -436,15 +507,20 @@ class Session(BaseModel):
 
         Args:
             query: The search query to use
+            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+            limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A SyncPage of Message objects representing the search results.
-            Returns an empty page if no messages are found.
+            A list of Message objects representing the search results.
+            Returns an empty list if no messages are found.
         """
-        messages_page = self._client.workspaces.sessions.search(
-            self.id, workspace_id=self.workspace_id, query=query
+        return self._client.workspaces.sessions.search(
+            self.id,
+            workspace_id=self.workspace_id,
+            query=query,
+            filters=filters,
+            limit=limit,
         )
-        return SyncPage(messages_page)
 
     @validate_call
     def upload_file(
@@ -506,7 +582,7 @@ class Session(BaseModel):
         Args:
             peer: Peer to get the working representation of.
             target: Optional target peer to get the representation of. If provided,
-                    queries what `peer` knows about the `target`.
+            queries what `peer` knows about the `target`.
 
         Returns:
             A dictionary containing information about the peer.

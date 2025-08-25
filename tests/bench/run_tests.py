@@ -18,13 +18,14 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
-from honcho import Honcho
-from honcho.session import SessionPeerConfig
+from honcho import AsyncHoncho
+from honcho.async_client.session import SessionPeerConfig
+from typing_extensions import TypedDict
 
 load_dotenv()
 
@@ -60,6 +61,7 @@ class TestResult(TypedDict):
     start_time: float
     end_time: float
     duration_seconds: float
+    output_lines: list[str]
 
 
 class TestRunner:
@@ -71,6 +73,7 @@ class TestRunner:
         self,
         honcho_url: str = "http://localhost:8000",
         anthropic_api_key: str | None = None,
+        timeout_seconds: int | None = None,
     ):
         """
         Initialize the test runner.
@@ -81,6 +84,7 @@ class TestRunner:
         """
         self.honcho_url: str = honcho_url
         self.anthropic_api_key: str | None = anthropic_api_key
+        self.timeout_seconds: int | None = timeout_seconds
 
         # Configure logging
         logging.basicConfig(
@@ -102,6 +106,28 @@ class TestRunner:
                 raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
 
+    def _format_duration(self, total_seconds: float) -> str:
+        """Format a duration in seconds into a human-readable string.
+
+        If the duration is at least one minute, this returns a string in the
+        form "XmYYs" with zero-padded seconds. Otherwise, it returns the
+        duration in seconds with two decimal places, e.g., "12.34s".
+
+        Args:
+            total_seconds: The duration in seconds.
+
+        Returns:
+            A formatted duration string.
+        """
+        minutes = int(total_seconds // 60)
+        if minutes > 0:
+            seconds_rounded = int(round(total_seconds - minutes * 60))
+            if seconds_rounded == 60:
+                minutes += 1
+                seconds_rounded = 0
+            return f"{minutes}m{seconds_rounded:02d}s"
+        return f"{total_seconds:.2f}s"
+
     def load_test_file(self, test_file: Path) -> dict[str, Any]:
         """
         Load a test definition from a JSON file.
@@ -115,7 +141,7 @@ class TestRunner:
         with open(test_file) as f:
             return json.load(f)
 
-    def create_honcho_client(self, workspace_id: str) -> Honcho:
+    async def create_honcho_client(self, workspace_id: str) -> AsyncHoncho:
         """
         Create a Honcho client for a specific workspace.
 
@@ -123,14 +149,16 @@ class TestRunner:
             workspace_id: Workspace ID for the test
 
         Returns:
-            Honcho client instance
+            AsyncHoncho client instance
         """
-        return Honcho(
-            environment="local", workspace_id=workspace_id, base_url=self.honcho_url
+        return AsyncHoncho(
+            environment="local",
+            workspace_id=workspace_id,
+            base_url=self.honcho_url,
         )
 
     async def wait_for_deriver_queue_empty(
-        self, honcho_client: Honcho, session_id: str | None = None
+        self, honcho_client: AsyncHoncho, session_id: str | None = None
     ) -> bool:
         """
         Wait for the deriver queue to be empty.
@@ -142,16 +170,13 @@ class TestRunner:
         Returns:
             True if queue is empty, False if timeout exceeded
         """
-        time.sleep(1)
         try:
-            while True:
-                status = honcho_client.get_deriver_status(session_id=session_id)
-                if (
-                    status.in_progress_work_units == 0
-                    and status.pending_work_units == 0
-                ):
-                    break
-                time.sleep(0.5)
+            await honcho_client.poll_deriver_status(
+                session_id=session_id,
+                timeout=float(self.timeout_seconds)
+                if self.timeout_seconds
+                else 10000.0,
+            )
             return True
         except Exception as e:
             self.logger.warning(f"Error polling deriver status: {e}")
@@ -197,7 +222,7 @@ Evaluate whether the actual response contains the core correct information from 
 """
 
             response = await self.anthropic_client.messages.create(
-                model="claude-3-7-sonnet-20250219",
+                model="claude-sonnet-4-20250514",
                 max_tokens=300,
                 temperature=0.0,
                 system=system_prompt,
@@ -256,14 +281,15 @@ Evaluate whether the actual response contains the core correct information from 
             Test execution results
         """
         test_name = test_file.stem
-        print(f"\033[1mExecuting test {test_name}\033[0m")
+        output_lines: list[str] = []
+        output_lines.append(f"\033[1mExecuting test {test_name}\033[0m")
 
         # Load test definition
         test_def = self.load_test_file(test_file)
 
         # Create workspace for this test
         workspace_id = f"test_{test_name}_{int(time.time())}"
-        honcho_client = self.create_honcho_client(workspace_id)
+        honcho_client = await self.create_honcho_client(workspace_id)
 
         results: TestResult = {
             "test_name": test_name,
@@ -275,6 +301,7 @@ Evaluate whether the actual response contains the core correct information from 
             "start_time": time.time(),
             "end_time": 0.0,
             "duration_seconds": 0.0,
+            "output_lines": output_lines,
         }
 
         try:
@@ -315,13 +342,13 @@ Evaluate whether the actual response contains the core correct information from 
             # Create all peers first
             peers: dict[str, Any] = {}
             for peer_name in all_peers:
-                peers[peer_name] = honcho_client.peer(id=peer_name)
+                peers[peer_name] = await honcho_client.peer(id=peer_name)
 
             for session_name, session_data in sessions.items():
                 # Create session
-                session = honcho_client.session(id=str(session_name))
+                session = await honcho_client.session(id=str(session_name))
 
-                print(f"\n  session: {session_name}")
+                output_lines.append(f"\n  session: {session_name}")
 
                 # Create peer configurations based on requirements
                 peer_configs: list[tuple[Any, SessionPeerConfig]] = []
@@ -333,27 +360,31 @@ Evaluate whether the actual response contains the core correct information from 
                                 observe_me=False, observe_others=True
                             )
                             peer_configs.append((peers[peer_name], config))
-                            print(f"    peer config: {peer_name} -> {config}")
+                            output_lines.append(
+                                f"    peer config: {peer_name} -> {config}"
+                            )
                         else:
                             config = SessionPeerConfig(
                                 observe_me=True, observe_others=True
                             )
                             peer_configs.append((peers[peer_name], config))
-                            print(f"    peer config: {peer_name} -> {config}")
+                            output_lines.append(
+                                f"    peer config: {peer_name} -> {config}"
+                            )
                     elif peer_name in observed_peers:
                         config = SessionPeerConfig(
                             observe_me=True, observe_others=False
                         )
                         peer_configs.append((peers[peer_name], config))
-                        print(f"    peer config: {peer_name} -> {config}")
+                        output_lines.append(f"    peer config: {peer_name} -> {config}")
                     else:
                         config = SessionPeerConfig(
                             observe_me=False, observe_others=False
                         )
                         peer_configs.append((peers[peer_name], config))
-                        print(f"    peer config: {peer_name} -> {config}")
+                        output_lines.append(f"    peer config: {peer_name} -> {config}")
 
-                session.add_peers(peer_configs)
+                await session.add_peers(peer_configs)
 
                 # Add messages to session
                 messages = session_data.get("messages", [])
@@ -364,10 +395,10 @@ Evaluate whether the actual response contains the core correct information from 
                     truncated_content = (
                         content[:140] + "..." if len(content) > 140 else content
                     )
-                    print(f"    {peer_name}: {truncated_content}")
+                    output_lines.append(f"    {peer_name}: {truncated_content}")
 
                 # Add messages to session
-                session.add_messages(
+                await session.add_messages(
                     [peers[msg["peer"]].message(msg["content"]) for msg in messages]
                 )
 
@@ -377,6 +408,9 @@ Evaluate whether the actual response contains the core correct information from 
 
             # Step 2: Execute queries
             all_queries_passed = True
+
+            # sleep so the deriver queue is not checked immediately, before tasks get added
+            await asyncio.sleep(1)
 
             for i, query_data in enumerate(queries):
                 query: str = query_data["query"]
@@ -393,7 +427,7 @@ Evaluate whether the actual response contains the core correct information from 
                     print(f"Deriver queue never emptied for session {session_name}!!!")
                     sys.exit(1)
 
-                print(f"\n  query {i + 1}: {query}")
+                output_lines.append(f"\n  query {i + 1}: {query}")
                 context_parts: list[str] = []
                 if session_name:
                     context_parts.append(f"session: {session_name}")
@@ -402,7 +436,7 @@ Evaluate whether the actual response contains the core correct information from 
                 if target_name:
                     context_parts.append(f"target: {target_name}")
                 if context_parts:
-                    print("    " + ", ".join(context_parts))
+                    output_lines.append("    " + ", ".join(context_parts))
 
                 try:
                     # Determine which peer to use for the query (observer)
@@ -416,20 +450,24 @@ Evaluate whether the actual response contains the core correct information from 
 
                     # Execute chat query
                     if session_name and target_name:
-                        response = query_peer.chat(
-                            query, session_id=session_name, target=peers[target_name]
+                        response_text = await query_peer.chat(
+                            query,
+                            session_id=session_name,
+                            target=peers[target_name],
                         )
                     elif session_name:
-                        response = query_peer.chat(query, session_id=session_name)
+                        response_text = await query_peer.chat(
+                            query, session_id=session_name
+                        )
                     elif target_name:
-                        response = query_peer.chat(query, target=peers[target_name])
+                        response_text = await query_peer.chat(
+                            query, target=peers[target_name]
+                        )
                     else:
-                        response = query_peer.chat(query)
+                        response_text = await query_peer.chat(query)
 
                     actual_response: str = (
-                        response.content
-                        if hasattr(response, "content")
-                        else str(response)
+                        response_text if response_text is not None else ""
                     )
 
                     # Judge the response
@@ -449,22 +487,22 @@ Evaluate whether the actual response contains the core correct information from 
 
                     results["queries_executed"].append(query_result)
 
-                    print(
+                    output_lines.append(
                         "    judgment: \033[1m\033[32mPASS\033[0m"
                         if judgment["passed"]
                         else "    judgment: \033[1m\033[31mFAIL\033[0m"
                     )
                     if not judgment["passed"]:
-                        # if failed, print
-                        print(f"    got response: \033[3m{actual_response}\033[0m")
-                        print(f"    expected: {expected_response}")
+                        output_lines.append(
+                            f"    got response: \033[3m{actual_response}\033[0m"
+                        )
+                        output_lines.append(f"    expected: {expected_response}")
                     else:
-                        # if passed, just log
                         self.logger.info(
                             f"    got response: \033[3m{actual_response}\033[0m"
                         )
                         self.logger.info(f"    expected: {expected_response}")
-                    print(f"    reasoning: {judgment['reasoning']}")
+                    output_lines.append(f"    reasoning: {judgment['reasoning']}")
 
                     # Track if all queries pass
                     if not judgment["passed"]:
@@ -490,36 +528,52 @@ Evaluate whether the actual response contains the core correct information from 
             # Step 3: Execute get_context calls
             get_context_calls = test_def.get("get_context_calls", [])
             for i, get_context_call in enumerate(get_context_calls):
-                print(f"\n  get_context call #{i + 1}")
+                output_lines.append(f"\n  get_context call #{i + 1}")
                 session_name = str(get_context_call["session"])
                 summary = get_context_call["summary"]
-                max_tokens = get_context_call.get("max_tokens")
-                session = honcho_client.session(id=session_name)
+                max_tokens: int | None = get_context_call.get("max_tokens")
+                session = await honcho_client.session(id=session_name)
 
                 # Wait for deriver queue to be empty for this session
                 queue_empty = await self.wait_for_deriver_queue_empty(
                     honcho_client, session_id=session_name
                 )
                 if not queue_empty:
-                    print(f"Deriver queue never emptied for session {session_name}!!!")
+                    output_lines.append(
+                        f"Deriver queue never emptied for session {session_name}!!!"
+                    )
                     sys.exit(1)
 
-                session_context = session.get_context(
+                session_context = await session.get_context(
                     summary=summary, tokens=max_tokens
                 )
 
+                summary_content = ""
+                if session_context.summary:
+                    summary_content = session_context.summary.content
+
                 tokenizer = tiktoken.get_encoding("cl100k_base")
-                summary_tokens = len(tokenizer.encode(session_context.summary))
+                summary_tokens = len(tokenizer.encode(summary_content))
+                output_lines.append(f"    summary: {session_context.summary}")
+
                 got_tokens = summary_tokens
                 for message in session_context.messages:
                     got_tokens += message.token_count
-
-                print(f"    summary: {summary}")
-                print(f"    max tokens: {max_tokens}")
-                print(
+                output_lines.append(f"    max tokens: {max_tokens}")
+                output_lines.append(
                     f"    got token count: {got_tokens} (summary: {summary_tokens}, messages: {got_tokens - summary_tokens} in {len(session_context.messages)} messages)"
                 )
-                if got_tokens > max_tokens:
+                if (
+                    summary
+                    and summary_tokens == 0
+                    and len(session_context.messages) > 20
+                    and max_tokens is None
+                ):
+                    output_lines.append(
+                        "    summary is empty when it should not be, test failed"
+                    )
+                    all_queries_passed = False
+                if max_tokens and got_tokens > max_tokens:
                     all_queries_passed = False
 
             # Determine if test passed (all queries and get_context calls must pass)
@@ -527,8 +581,8 @@ Evaluate whether the actual response contains the core correct information from 
             results["end_time"] = time.time()
             results["duration_seconds"] = results["end_time"] - results["start_time"]
 
-            print(
-                f"\nTest {test_name} completed. Status: {'PASS' if results['passed'] else 'FAIL'} (Duration: {results['duration_seconds']:.2f}s)"
+            output_lines.append(
+                f"\nTest {test_name} completed. Status: {'PASS' if results['passed'] else 'FAIL'} (Duration: {self._format_duration(results['duration_seconds'])})"
             )
 
         except Exception as e:
@@ -537,10 +591,11 @@ Evaluate whether the actual response contains the core correct information from 
             results["passed"] = False
             results["end_time"] = time.time()
             results["duration_seconds"] = results["end_time"] - results["start_time"]
+            output_lines.append(f"Error executing test {test_name}: {e}")
 
         return results
 
-    async def run_all_tests(self, tests_dir: Path) -> list[TestResult]:
+    async def run_all_tests(self, tests_dir: Path) -> tuple[list[TestResult], float]:
         """
         Run all tests in a directory.
 
@@ -553,22 +608,26 @@ Evaluate whether the actual response contains the core correct information from 
         test_files = list(tests_dir.glob("*.json"))
         print(f"found {len(test_files)} test files in {tests_dir}")
 
-        all_results: list[TestResult] = []
+        overall_start = time.time()
+        # Run all tests concurrently
+        results: list[TestResult] = await asyncio.gather(
+            *[self.execute_test(tf) for tf in test_files]
+        )
+        overall_end = time.time()
+        overall_duration = overall_end - overall_start
 
-        for test_file in test_files:
-            result = await self.execute_test(test_file)
-            all_results.append(result)
-
-            # Print summary for this test
+        # Print detailed per-test outputs in order after completion
+        for result in results:
             print(f"\n{'=' * 60}")
-            print(f"Test: {result['test_name']}")
-            print(f"Status: {'PASS' if result['passed'] else 'FAIL'}")
-            print(f"Duration: {result['duration_seconds']:.2f}s")
+            print(f"Executing test {result['test_name']}")
+            print("\n".join(result.get("output_lines", [])))
             print(f"{'=' * 60}\n")
 
-        return all_results
+        return results, overall_duration
 
-    def print_summary(self, results: list[TestResult]) -> None:
+    def print_summary(
+        self, results: list[TestResult], total_elapsed_seconds: float | None = None
+    ) -> None:
         """
         Print a summary of all test results.
 
@@ -582,13 +641,17 @@ Evaluate whether the actual response contains the core correct information from 
         total_tests = len(results)
         passed_tests = sum(1 for r in results if r.get("passed", False))
         failed_tests = total_tests - passed_tests
-        total_test_time = sum(r["duration_seconds"] for r in results)
+        total_test_time = (
+            total_elapsed_seconds
+            if total_elapsed_seconds is not None
+            else sum(r["duration_seconds"] for r in results)
+        )
 
         print(f"Total Tests: {total_tests}")
         print(f"Passed: {passed_tests}")
         print(f"Failed: {failed_tests}")
         print(f"Success Rate: {(passed_tests / total_tests) * 100:.1f}%")
-        print(f"Total Test Time: {total_test_time:.2f}s")
+        print(f"Total Test Time: {self._format_duration(total_test_time)}")
 
         print("\nDetailed Results:")
         print(f"{'Test Name':<20} {'Status':<8} {'Duration':<10} {'Workspace ID':<30}")
@@ -597,7 +660,7 @@ Evaluate whether the actual response contains the core correct information from 
         for result in results:
             test_name = result["test_name"]
             status = "PASS" if result.get("passed", False) else "FAIL"
-            duration = f"{result['duration_seconds']:.2f}s"
+            duration = self._format_duration(result["duration_seconds"])
             workspace = result["workspace_id"]
 
             print(f"{test_name:<20} {status:<8} {duration:<10} {workspace:<30}")
@@ -676,11 +739,16 @@ Examples:
             # Run single test
             test_file_path = args.tests_dir / args.test
             result = await runner.execute_test(test_file_path)
+            # Print detailed output for the single test
+            print(f"\n{'=' * 60}")
+            print(f"Executing test {result['test_name']}")
+            print("\n".join(result.get("output_lines", [])))
+            print(f"{'=' * 60}\n")
             runner.print_summary([result])
         else:
             # Run all tests
-            results = await runner.run_all_tests(args.tests_dir)
-            runner.print_summary(results)
+            results, total_elapsed = await runner.run_all_tests(args.tests_dir)
+            runner.print_summary(results, total_elapsed_seconds=total_elapsed)
 
         return 0
 

@@ -24,6 +24,7 @@ from src.routers import (
     messages,
     peers,
     sessions,
+    webhooks,
     workspaces,
 )
 from src.security import create_admin_jwt
@@ -101,6 +102,7 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Lifespan events are now handled by the respective services
     yield
     await engine.dispose()
 
@@ -115,7 +117,7 @@ app = FastAPI(
     title="Honcho API",
     summary="The Identity Layer for the Agentic World",
     description="""Honcho is a platform for giving agents user-centric memory and social cognition""",
-    version="2.1.1",
+    version="2.3.0",
     contact={
         "name": "Plastic Labs",
         "url": "https://honcho.dev",
@@ -150,6 +152,7 @@ app.include_router(peers.router, prefix="/v2")
 app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
+app.include_router(webhooks.router, prefix="/v2")
 
 
 # Global exception handlers

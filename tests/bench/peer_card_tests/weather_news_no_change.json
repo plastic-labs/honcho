@@ -1,0 +1,21 @@
+{
+  "name": "weather_news_no_change",
+  "old_peer_card": "Name: Ryan\nAge: 36\nLocation: Austin\nOccupation: Engineer\nInterests: guitars, coffee",
+  "new_observations": [
+    "A storm is incoming tonight.",
+    "Election results were discussed.",
+    "Gas prices have increased."
+  ],
+  "expected_facts": [
+    "Name: Ryan",
+    "Age: 36",
+    "Location: Austin",
+    "Occupation: Engineer",
+    "Interests: guitars",
+    "Interests: coffee"
+  ],
+  "forbidden_facts": [
+    "Occupation: Meteorologist",
+    "Occupation: Politician"
+  ]
+}

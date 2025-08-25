@@ -1,6 +1,8 @@
 # pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
+import ipaddress
 from typing import Annotated, Any, Self
+from urllib.parse import urlparse
 
 import tiktoken
 from pydantic import (
@@ -8,6 +10,7 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    field_validator,
     model_validator,
 )
 
@@ -30,7 +33,7 @@ class WorkspaceCreate(WorkspaceBase):
 
 
 class WorkspaceGet(WorkspaceBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class WorkspaceUpdate(WorkspaceBase):
@@ -67,7 +70,7 @@ class PeerCreate(PeerBase):
 
 
 class PeerGet(PeerBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class PeerUpdate(PeerBase):
@@ -114,6 +117,7 @@ class MessageCreate(MessageBase):
     content: Annotated[str, Field(min_length=0, max_length=50000)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
+    created_at: datetime.datetime | None = None
 
     _encoded_message: list[int] = PrivateAttr(default=[])
 
@@ -131,7 +135,7 @@ class MessageCreate(MessageBase):
 
 
 class MessageGet(MessageBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class MessageUpdate(MessageBase):
@@ -197,7 +201,7 @@ class SessionCreate(SessionBase):
 
 
 class SessionGet(SessionBase):
-    filter: dict[str, Any] | None = None
+    filters: dict[str, Any] | None = None
 
 
 class SessionUpdate(SessionBase):
@@ -220,10 +224,38 @@ class Session(SessionBase):
     )
 
 
+class Summary(BaseModel):
+    content: str = Field(description="The summary text")
+    message_id: int = Field(
+        description="The ID of the message that this summary covers up to"
+    )
+    summary_type: str = Field(description="The type of summary (short or long)")
+    created_at: str = Field(
+        description="The timestamp of when the summary was created (ISO format)"
+    )
+    token_count: int = Field(description="The number of tokens in the summary text")
+
+
 class SessionContext(SessionBase):
     name: str = Field(serialization_alias="id")
     messages: list[Message]
-    summary: str
+    summary: Summary | None = Field(
+        default=None, description="The summary if available"
+    )
+
+    model_config = ConfigDict(  # pyright: ignore
+        from_attributes=True, populate_by_name=True
+    )
+
+
+class SessionSummaries(SessionBase):
+    name: str = Field(serialization_alias="id")
+    short_summary: Summary | None = Field(
+        default=None, description="The short summary if available"
+    )
+    long_summary: Summary | None = Field(
+        default=None, description="The long summary if available"
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
@@ -246,9 +278,14 @@ class DocumentUpdate(DocumentBase):
 
 class MessageSearchOptions(BaseModel):
     query: str = Field(..., description="Search query")
-    semantic: bool | None = Field(
-        default=None,
-        description="Whether to explicitly use semantic search to filter the results",
+    filters: dict[str, Any] | None = Field(
+        default=None, description="Filters to scope the search"
+    )
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Number of results to return",
     )
 
 
@@ -346,3 +383,44 @@ class DeriverStatus(BaseModel):
     sessions: dict[str, SessionDeriverStatus] | None = Field(
         default=None, description="Per-session status when not filtered by session"
     )
+
+
+# Webhook endpoint schemas
+class WebhookEndpointBase(BaseModel):
+    pass
+
+
+class WebhookEndpointCreate(WebhookEndpointBase):
+    url: str
+
+    @field_validator("url")
+    @classmethod
+    def validate_webhook_url(cls, v: str) -> str:
+        parsed = urlparse(v)
+
+        if not all([parsed.scheme, parsed.netloc]):
+            raise ValueError("Invalid URL format")
+
+        # Only allow HTTP/HTTPS
+        if parsed.scheme not in ["http", "https"]:
+            raise ValueError("Only HTTP and HTTPS URLs are allowed")
+
+        # Block private/internal addresses
+        if parsed.hostname:
+            try:
+                ip_address = ipaddress.ip_address(parsed.hostname)
+                if ip_address.is_private:
+                    raise ValueError("Private IP addresses are not allowed")
+            except ValueError:  # Not an IP address, might be a hostname
+                pass
+
+        return v
+
+
+class WebhookEndpoint(WebhookEndpointBase):
+    id: str
+    workspace_name: str | None = Field(serialization_alias="workspace_id")
+    url: str
+    created_at: datetime.datetime
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)  # pyright: ignore

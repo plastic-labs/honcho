@@ -169,11 +169,13 @@
         {
             "observer": "alice",
             "query": "What are Alice's favorite numbers?",
+            "session": "session1",
             "expected_response": "7, 74, 12, 8, 2, 3, 14, 24, 37"
         },
         {
             "observer": "bob",
             "query": "What is Bob's favorite number?",
+            "session": "session1",
             "expected_response": "7"
         }
     ],
@@ -186,22 +188,12 @@
         {
             "session": "session1",
             "summary": true,
-            "max_tokens": 100
-        },
-        {
-            "session": "session1",
-            "summary": true,
             "max_tokens": 250
         },
         {
             "session": "session1",
             "summary": true,
             "max_tokens": 500
-        },
-        {
-            "session": "session1",
-            "summary": true,
-            "max_tokens": 800
         },
         {
             "session": "session1",
@@ -217,6 +209,10 @@
             "session": "session1",
             "summary": true,
             "max_tokens": 2500
+        },
+        {
+            "session": "session1",
+            "summary": true
         }
     ]
 }

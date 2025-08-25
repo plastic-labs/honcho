@@ -168,10 +168,13 @@ TYPESCRIPT_VERSION=
             for section in sections:
                 if line.strip() == f"### {section}":
                     # If we have a previous section, decide whether to keep it
-                    if current_section is not None and section_start_idx != -1:
-                        if section_has_content:
-                            # Keep the section
-                            cleaned_lines.extend(lines[section_start_idx:i])
+                    if (
+                        current_section is not None
+                        and section_start_idx != -1
+                        and section_has_content
+                    ):
+                        # Keep the section
+                        cleaned_lines.extend(lines[section_start_idx:i])
                     # Start tracking new section
                     current_section = section
                     section_start_idx = i
@@ -179,15 +182,21 @@ TYPESCRIPT_VERSION=
                     is_section_header = True
                     break
 
-            if not is_section_header and current_section is not None:
-                # Check if this line has content (not empty and not just whitespace)
-                if line.strip() and not line.strip().startswith("#"):
-                    section_has_content = True
+            if (
+                not is_section_header
+                and current_section is not None
+                and line.strip()
+                and not line.strip().startswith("#")
+            ):
+                section_has_content = True
 
         # Handle the last section
-        if current_section is not None and section_start_idx != -1:
-            if section_has_content:
-                cleaned_lines.extend(lines[section_start_idx:])
+        if (
+            current_section is not None
+            and section_start_idx != -1
+            and section_has_content
+        ):
+            cleaned_lines.extend(lines[section_start_idx:])
 
         # If no sections were found, return original
         if not cleaned_lines and "###" not in changelog:
@@ -599,7 +608,7 @@ TYPESCRIPT_VERSION=
             )
 
             # Add new row at the top
-            new_row = f"| v{api_version} (Current) | v{typescript_version} | v{python_version} | Latest release |"
+            new_row = f"| v{api_version} (Current) | v{typescript_version} | v{python_version} |"
 
             # Reconstruct table
             new_table = header + new_row + "\n" + rows + after_table

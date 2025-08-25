@@ -12,6 +12,7 @@ from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.utils.formatting import format_datetime_utc
 from src.utils.logging import conditional_observe
 from src.utils.shared_models import (
     Observation,
@@ -33,39 +34,16 @@ class EmbeddingStore:
         self.workspace_name: str = workspace_name
         self.peer_name: str = peer_name
         self.collection_name: str = collection_name
-        # Initialize observation counts with config defaults
-        self.explicit_observations_count: int = (
-            settings.DERIVER.EXPLICIT_OBSERVATIONS_COUNT
-        )
-        self.deductive_observations_count: int = (
-            settings.DERIVER.DEDUCTIVE_OBSERVATIONS_COUNT
-        )
-
-    def set_observation_counts(
-        self,
-        explicit: int | None = None,
-        deductive: int | None = None,
-    ) -> None:
-        """Set the number of observations to retrieve for each reasoning level.
-
-        Args:
-            explicit: Number of explicit observations to retrieve
-            deductive: Number of deductive observations to retrieve
-        """
-        if explicit is not None:
-            self.explicit_observations_count = explicit
-        if deductive is not None:
-            self.deductive_observations_count = deductive
 
     @conditional_observe
     async def save_unified_observations(
         self,
         observations: list[UnifiedObservation],
+        message_id: int,
+        session_name: str,
+        message_created_at: datetime.datetime,
+        fallback_level: str = "explicit",
         similarity_threshold: float = 0.85,
-        message_id: str | None = None,
-        level: str | None = None,
-        session_name: str | None = None,
-        message_created_at: datetime.datetime | None = None,
     ) -> None:
         """Save UnifiedObservation objects to the collection.
 
@@ -75,11 +53,11 @@ class EmbeddingStore:
 
         Args:
             observations: List of UnifiedObservation objects or strings
-            similarity_threshold: Threshold for considering observations similar
             message_id: Message ID to link with observations
-            level: Reasoning level for the observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
+            fallback_level: Reasoning level for the observations if not provided
+            similarity_threshold: Threshold for considering observations similar
         """
         async with tracked_db("ed_embedding_store.save_unified_observations") as db:
             # Extract conclusions for deduplication and embedding
@@ -126,11 +104,8 @@ class EmbeddingStore:
             # Batch create document objects
             document_objects: list[models.Document] = []
             for obs, embedding in zip(unique_observations, embeddings, strict=True):
-                # Use the observation's own level, fall back to parameter level,
-                # or infer from premises
-                obs_level = obs.level or level
-                if obs_level is None:
-                    obs_level = "deductive" if obs.has_premises else "explicit"
+                # Use the observation's own level or fall back to parameter level
+                obs_level = obs.level or fallback_level
 
                 # Build metadata including premises
                 metadata: dict[str, Any] = {
@@ -138,9 +113,7 @@ class EmbeddingStore:
                     "message_id": message_id,
                     "session_name": session_name,
                     "premises": obs.premises,  # Store premises in metadata
-                    "created_at": message_created_at.isoformat()
-                    if message_created_at
-                    else None,
+                    "created_at": format_datetime_utc(message_created_at),
                 }
 
                 doc = models.Document(
@@ -269,7 +242,7 @@ class EmbeddingStore:
                         workspace_name=self.workspace_name,
                         peer_name=self.peer_name,
                         collection_name=self.collection_name,
-                        query=query,
+                        query=self._build_truncated_query(query, ""),
                         max_distance=max_distance,
                         top_k=top_k,
                     )
@@ -320,6 +293,69 @@ class EmbeddingStore:
 
         return context
 
+    def _build_truncated_query(
+        self,
+        query: str,
+        conversation_context: str = "",
+        max_tokens: int | None = None,
+    ) -> str:
+        """Build a query that fits within token limits with clear priorities.
+
+        Args:
+            query: The search query
+            conversation_context: Optional conversation context to include
+            max_tokens: Maximum tokens allowed (defaults to setting with buffer)
+
+        Returns:
+            Truncated query string that fits within token limits
+        """
+        max_tokens = max_tokens or (settings.MAX_EMBEDDING_TOKENS - 100)
+        encoding = embedding_client.encoding
+
+        # Pre-calculate all token counts once
+        query_prefix = "Current message: "
+        context_prefix = "\nContext: "
+
+        prefix_tokens = len(encoding.encode(query_prefix))
+        context_prefix_tokens = len(encoding.encode(context_prefix))
+        query_tokens = encoding.encode(query)
+
+        # Simple case: query alone fits
+        if prefix_tokens + len(query_tokens) <= max_tokens:
+            if not conversation_context:
+                return f"{query_prefix}{query}"
+
+            # Try to add context
+            context_tokens = encoding.encode(conversation_context)
+            total_without_context = (
+                prefix_tokens + len(query_tokens) + context_prefix_tokens
+            )
+
+            if total_without_context + len(context_tokens) <= max_tokens:
+                return f"{query_prefix}{query}{context_prefix}{conversation_context}"
+
+            # Truncate context to fit
+            available_context_tokens = max_tokens - total_without_context
+            if available_context_tokens > 0:
+                truncated_context = encoding.decode(
+                    context_tokens[-available_context_tokens:]
+                )
+                return f"{query_prefix}{query}{context_prefix}{truncated_context}"
+            else:
+                # No room left for context; keep full query intact
+                return f"{query_prefix}{query}"
+
+        # Query itself is too long - truncate it
+        available_query_tokens = max_tokens - prefix_tokens
+        if available_query_tokens > 0:
+            # Keep the end (recency) of the query
+            truncated_query = encoding.decode(query_tokens[-available_query_tokens:])
+            return f"{query_prefix}{truncated_query}"
+
+        # Pathological case - just return what we can
+        logger.warning("Token limit too restrictive: %s", max_tokens)
+        return encoding.decode(query_tokens[:max_tokens])
+
     async def _query_documents_for_level(
         self,
         db: AsyncSession,
@@ -330,11 +366,8 @@ class EmbeddingStore:
         count: int,
     ) -> list[models.Document]:
         """Query documents for a specific level."""
-        combined_query: str = (
-            f"Current message: {query}\nContext: {conversation_context}"
-            if conversation_context
-            else query
-        )
+        # Construct the combined query with truncation to prevent token limit errors
+        combined_query = self._build_truncated_query(query, conversation_context)
 
         documents = await crud.query_documents(
             db,

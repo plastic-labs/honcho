@@ -1,4 +1,4 @@
-import { Honcho } from '../src';
+import { Honcho, Message } from '../src';
 
 /**
  * Example demonstrating how to get context from a session with summary and token limits.
@@ -15,19 +15,19 @@ async function main() {
 
   console.log('Creating peers...');
   const peers = [
-    honcho.peer('alice'),
-    honcho.peer('bob'),
-    honcho.peer('charlie'),
+    await honcho.peer('alice'),
+    await honcho.peer('bob'),
+    await honcho.peer('charlie'),
   ];
 
   // Create a new session
   const sessionId = `context_test_${crypto.randomUUID()}`;
-  const session = honcho.session(sessionId);
+  const session = await honcho.session(sessionId);
   console.log(`Created session: ${sessionId}`);
 
   console.log('Generating random messages...');
   // Generate some random messages from alice, bob, and charlie and add them to the session
-  const messages = [];
+  const messages: Message[] = [];
   for (let i = 0; i < 10; i++) {
     const randomPeer = peers[Math.floor(Math.random() * peers.length)];
     messages.push(

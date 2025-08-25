@@ -1,4 +1,4 @@
-import { Honcho } from '../src';
+import { Honcho, Message } from '../src';
 
 /**
  * Example demonstrating search functionality across different scopes.
@@ -15,16 +15,16 @@ async function main() {
 
   console.log('Creating peers...');
   const peers = [
-    honcho.peer('alice'),
-    honcho.peer('bob'),
-    honcho.peer('charlie'),
+    await honcho.peer('alice'),
+    await honcho.peer('bob'),
+    await honcho.peer('charlie'),
   ];
 
   const alice = peers[0];
 
   // Create a new session
   const sessionId = `search_test_${crypto.randomUUID()}`;
-  const session = honcho.session(sessionId);
+  const session = await honcho.session(sessionId);
   console.log(`Created session: ${sessionId}`);
 
   // Create a message with our special keyword
@@ -34,7 +34,7 @@ async function main() {
 
   console.log('Generating random messages...');
   // Generate some random messages from alice, bob, and charlie and add them to the session
-  const messages = [];
+  const messages: Message[] = [];
   for (let i = 0; i < 10; i++) {
     const randomPeer = peers[Math.floor(Math.random() * peers.length)];
     messages.push(
@@ -48,24 +48,24 @@ async function main() {
   console.log('Searching the session...');
   // Search the session for the special keyword
   const sessionSearchResults = await session.search(keyword);
-  console.log(`Session search returned ${sessionSearchResults.total} results:`);
-  for await (const message of sessionSearchResults) {
+  console.log(`Session search returned ${sessionSearchResults.length} results:`);
+  for (const message of sessionSearchResults) {
     console.log(`  - ${message.content} (from ${message.peer_id})`);
   }
 
   console.log('Searching the workspace...');
   // Search the workspace for the special keyword
   const workspaceSearchResults = await honcho.search(keyword);
-  console.log(`Workspace search returned ${workspaceSearchResults.total} results:`);
-  for await (const message of workspaceSearchResults) {
+  console.log(`Workspace search returned ${workspaceSearchResults.length} results:`);
+  for (const message of workspaceSearchResults) {
     console.log(`  - ${message.content} (from ${message.peer_id})`);
   }
 
   console.log('Searching alice\'s messages...');
   // Search alice's messages for the special keyword
   const aliceSearchResults = await alice.search(keyword);
-  console.log(`Alice search returned ${aliceSearchResults.total} results:`);
-  for await (const message of aliceSearchResults) {
+  console.log(`Alice search returned ${aliceSearchResults.length} results:`);
+  for (const message of aliceSearchResults) {
     console.log(`  - ${message.content} (from ${message.peer_id})`);
   }
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import datetime
 from typing import TYPE_CHECKING
 
 from honcho_core import Honcho as HonchoCore
+from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -47,6 +49,10 @@ class Peer(BaseModel):
             ..., description="Reference to the parent Honcho client instance"
         ),
         *,
+        metadata: dict[str, object] | None = Field(
+            None,
+            description="Optional metadata dictionary to associate with this peer. If set, will get/create peer immediately with metadata.",
+        ),
         config: dict[str, object] | None = Field(
             None,
             description="Optional configuration to set for this peer. If set, will get/create peer immediately with flags.",
@@ -55,21 +61,27 @@ class Peer(BaseModel):
         """
         Initialize a new Peer.
 
+        Provided metadata and configuration will overwrite any existing data in those
+        locations if given.
+
         Args:
             peer_id: Unique identifier for this peer within the workspace
             workspace_id: Workspace ID for scoping operations
             client: Reference to the parent Honcho client instance
+            metadata: Optional metadata dictionary to associate with this peer.
+            If set, will get/create peer immediately with metadata.
             config: Optional configuration to set for this peer.
-                           If set, will get/create peer immediately with flags.
+            If set, will get/create peer immediately with flags.
         """
         super().__init__(id=peer_id, workspace_id=workspace_id)
         self._client = client
 
-        if config:
+        if config or metadata:
             self._client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
-                configuration=config,
+                configuration=config if config is not None else NOT_GIVEN,
+                metadata=metadata if metadata is not None else NOT_GIVEN,
             )
 
     def chat(
@@ -113,7 +125,7 @@ class Peer(BaseModel):
         return response.content
 
     def get_sessions(
-        self, filter: dict[str, object] | None = None
+        self, filters: dict[str, object] | None = None
     ) -> SyncPage[Session]:
         """
         Get all sessions this peer is a member of.
@@ -130,7 +142,7 @@ class Peer(BaseModel):
         sessions_page = self._client.workspaces.peers.sessions.list(
             peer_id=self.id,
             workspace_id=self.workspace_id,
-            filter=filter,
+            filters=filters,
         )
         return SyncPage(
             sessions_page,
@@ -147,6 +159,10 @@ class Peer(BaseModel):
         metadata: dict[str, object] | None = Field(
             None, description="Optional metadata dictionary"
         ),
+        created_at: datetime.datetime | str | None = Field(
+            None,
+            description="Optional created-at timestamp for the message. Accepts a datetime which will be converted to an ISO 8601 string, or a preformatted string.",
+        ),
     ) -> MessageCreateParam:
         """
         Create a MessageCreateParam object attributed to this peer.
@@ -161,7 +177,18 @@ class Peer(BaseModel):
         Returns:
             A new MessageCreateParam object with this peer's ID and the provided content
         """
-        return MessageCreateParam(peer_id=self.id, content=content, metadata=metadata)
+        created_at_str: str | None
+        if isinstance(created_at, datetime.datetime):
+            created_at_str = created_at.isoformat()
+        else:
+            created_at_str = created_at
+
+        return MessageCreateParam(
+            peer_id=self.id,
+            content=content,
+            metadata=metadata,
+            created_at=created_at_str,
+        )
 
     def get_metadata(self) -> dict[str, object]:
         """
@@ -196,7 +223,7 @@ class Peer(BaseModel):
 
         Args:
             metadata: A dictionary of metadata to associate with this peer.
-                      Keys must be strings, values can be any JSON-serializable type
+            Keys must be strings, values can be any JSON-serializable type
         """
         self._client.workspaces.peers.update(
             peer_id=self.id,
@@ -204,11 +231,58 @@ class Peer(BaseModel):
             metadata=metadata,
         )
 
+    def get_peer_config(self) -> dict[str, object]:
+        """
+        Get the current workspace-level configuration for this peer.
+
+        Makes an API call to retrieve configuration associated with this peer.
+        Configuration currently includes one optional flag, `observe_me`.
+
+        Returns:
+            A dictionary containing the peer's configuration
+        """
+        peer = self._client.workspaces.peers.get_or_create(
+            workspace_id=self.workspace_id,
+            id=self.id,
+        )
+        return peer.configuration or {}
+
+    @validate_call
+    def set_peer_config(
+        self,
+        config: dict[str, object] = Field(
+            ..., description="Configuration dictionary to associate with this peer"
+        ),
+    ) -> None:
+        """
+        Set the configuration for this peer. Currently the only supported config
+        value is the `observe_me` flag, which controls whether derivation tasks
+        should be created for this peer's global representation. Default is True.
+
+        Makes an API call to update the configuration associated with this peer.
+        This will overwrite any existing configuration with the provided values.
+
+        Args:
+            config: A dictionary of configuration to associate with this peer.
+            Keys must be strings, values can be any JSON-serializable type
+        """
+        self._client.workspaces.peers.update(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            configuration=config,
+        )
+
     @validate_call
     def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),
-    ) -> SyncPage[Message]:
+        filters: dict[str, object] | None = Field(
+            None, description="Filters to scope the search"
+        ),
+        limit: int = Field(
+            default=10, ge=1, le=100, description="Number of results to return"
+        ),
+    ) -> list[Message]:
         """
         Search across all messages in the workspace with this peer as author.
 
@@ -216,15 +290,20 @@ class Peer(BaseModel):
 
         Args:
             query: The search query to use
+            filters: Filters to scope the search. See [search filters documentation](https://docs.honcho.dev/v2/guides/using-filters).
+            limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A SyncPage of Message objects representing the search results.
-            Returns an empty page if no messages are found.
+            A list of Message objects representing the search results.
+            Returns an empty list if no messages are found.
         """
-        messages_page = self._client.workspaces.peers.search(
-            self.id, workspace_id=self.workspace_id, query=query
+        return self._client.workspaces.peers.search(
+            self.id,
+            workspace_id=self.workspace_id,
+            query=query,
+            filters=filters,
+            limit=limit,
         )
-        return SyncPage(messages_page)
 
     def __repr__(self) -> str:
         """

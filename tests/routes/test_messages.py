@@ -1,3 +1,6 @@
+import datetime
+from unittest.mock import patch
+
 import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
@@ -269,7 +272,7 @@ async def test_get_messages_with_empty_filter(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {}},
+        json={"filters": {}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -302,7 +305,7 @@ async def test_get_messages_with_null_filter(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": None},
+        json={"filters": None},
     )
     assert response.status_code == 200
     data = response.json()
@@ -375,7 +378,7 @@ async def test_get_filtered_messages(
 
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {"metadata": {"key": "value2"}}},
+        json={"filters": {"metadata": {"key": "value2"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -430,7 +433,7 @@ async def test_get_filtered_messages_with_complex_filter(
     # Test old-style filter (backward compatibility)
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
-        json={"filter": {"metadata": {"priority": "high", "category": "technical"}}},
+        json={"filters": {"metadata": {"priority": "high", "category": "technical"}}},
     )
     assert response.status_code == 200
     data = response.json()
@@ -442,7 +445,7 @@ async def test_get_filtered_messages_with_complex_filter(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={
-            "filter": {
+            "filters": {
                 "AND": [
                     {"metadata": {"priority": "high"}},
                     {"metadata": {"category": "technical"}},
@@ -459,7 +462,7 @@ async def test_get_filtered_messages_with_complex_filter(
     response = client.post(
         f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
         json={
-            "filter": {
+            "filters": {
                 "OR": [
                     {"metadata": {"priority": "high"}},
                     {"metadata": {"type": "question"}},
@@ -793,3 +796,345 @@ async def test_create_batch_messages_max_limit(
     assert len(data) == 100
     assert data[0]["content"] == "Message 0"
     assert data[99]["content"] == "Message 99"
+
+
+@pytest.mark.asyncio
+async def test_get_messages_handles_crud_value_error(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that ValueError from CRUD is properly handled in get_messages"""
+    test_workspace, _test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Mock the CRUD function to raise ValueError
+    with patch("src.routers.messages.crud.get_messages") as mock_get:
+        mock_get.side_effect = ValueError("Test CRUD error")
+
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/list",
+            json={},
+        )
+
+        # Should raise ResourceNotFoundException which gets converted to 404
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_message_handles_not_found(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that ResourceNotFoundException is properly handled in get_message"""
+    test_workspace, _ = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Try to get a non-existent message
+    with patch("src.routers.messages.crud.get_message") as mock_get:
+        mock_get.return_value = None
+
+        response = client.get(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/nonexistent"
+        )
+
+        # Should raise ResourceNotFoundException which gets converted to 404
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_update_message_handles_crud_value_error(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that ValueError from CRUD is properly handled in update_message"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session and message
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    test_message = models.Message(
+        session_name=test_session.name,
+        content="Test message",
+        workspace_name=test_workspace.name,
+        peer_name=test_peer.name,
+    )
+    db_session.add(test_message)
+    await db_session.commit()
+
+    # Mock the CRUD function to raise ValueError
+    with patch("src.routers.messages.crud.update_message") as mock_update:
+        mock_update.side_effect = ValueError("Test CRUD error")
+
+        response = client.put(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/{test_message.public_id}",
+            json={"metadata": {"key": "value"}},
+        )
+
+        # Should raise ResourceNotFoundException which gets converted to 404
+        assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_create_messages_with_file_too_large(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test that FileTooLargeError is properly handled in create_messages_with_file"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Create a large file that exceeds the size limit
+    import io
+
+    large_content = b"x" * (10 * 1024 * 1024)  # 10MB file
+    file_data = io.BytesIO(large_content)
+
+    # Mock the settings to make the test deterministic
+    with patch(
+        "src.routers.messages.settings.MAX_FILE_SIZE", 5 * 1024 * 1024
+    ):  # 5MB limit
+        files = {"file": ("large_file.txt", file_data, "text/plain")}
+        form_data = {"peer_id": test_peer.name}
+
+        response = client.post(
+            f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages/upload",
+            files=files,
+            data=form_data,
+        )
+
+        # Should raise FileTooLargeError which gets converted to 413
+        assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_create_message_with_timestamp(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating a message with custom timestamp"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Use a specific timestamp for testing
+    custom_timestamp = datetime.datetime(
+        2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc
+    )
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message with timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": custom_timestamp.isoformat(),
+                    "metadata": {"test": "with_timestamp"},
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message with timestamp"
+    assert message["peer_id"] == test_peer.name
+    assert message["metadata"] == {"test": "with_timestamp"}
+
+    # Verify the created_at field matches our custom timestamp
+    # Pydantic serializes UTC timezone as 'Z' format (ISO 8601 standard)
+    expected_timestamp = "2023-01-01T12:00:00Z"
+    assert message["created_at"] == expected_timestamp
+
+
+@pytest.mark.asyncio
+async def test_create_message_without_timestamp_uses_default(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating a message without timestamp uses default timestamp"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Record time before request
+    before_request = datetime.datetime.now(datetime.timezone.utc)
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message without timestamp",
+                    "peer_id": test_peer.name,
+                    "metadata": {"test": "no_timestamp"},
+                }
+            ]
+        },
+    )
+
+    # Record time after request
+    after_request = datetime.datetime.now(datetime.timezone.utc)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message without timestamp"
+    assert message["peer_id"] == test_peer.name
+    assert message["metadata"] == {"test": "no_timestamp"}
+
+    # Verify the created_at field is between our before/after times
+    message_created_at = datetime.datetime.fromisoformat(
+        message["created_at"].replace("Z", "+00:00")
+    )
+    assert before_request <= message_created_at <= after_request
+
+
+@pytest.mark.asyncio
+async def test_create_batch_messages_with_mixed_timestamps(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating batch messages with some having custom timestamps and others using default"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Use specific timestamps for testing
+    timestamp1 = datetime.datetime(2023, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    timestamp2 = datetime.datetime(2023, 1, 2, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+    # Record time before request for default timestamp
+    before_request = datetime.datetime.now(datetime.timezone.utc)
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Message 1 with timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": timestamp1.isoformat(),
+                    "metadata": {"type": "custom_timestamp"},
+                },
+                {
+                    "content": "Message 2 without timestamp",
+                    "peer_id": test_peer.name,
+                    "metadata": {"type": "default_timestamp"},
+                },
+                {
+                    "content": "Message 3 with timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": timestamp2.isoformat(),
+                    "metadata": {"type": "custom_timestamp"},
+                },
+            ]
+        },
+    )
+
+    after_request = datetime.datetime.now(datetime.timezone.utc)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 3
+
+    # Check first message with custom timestamp
+    assert data[0]["content"] == "Message 1 with timestamp"
+    assert (
+        data[0]["created_at"] == "2023-01-01T12:00:00Z"
+    )  # Pydantic converts to Z format
+    assert data[0]["metadata"] == {"type": "custom_timestamp"}
+
+    # Check second message with default timestamp
+    assert data[1]["content"] == "Message 2 without timestamp"
+    message2_created_at = datetime.datetime.fromisoformat(
+        data[1]["created_at"].replace("Z", "+00:00")
+    )
+    assert before_request <= message2_created_at <= after_request
+    assert data[1]["metadata"] == {"type": "default_timestamp"}
+
+    # Check third message with custom timestamp
+    assert data[2]["content"] == "Message 3 with timestamp"
+    assert (
+        data[2]["created_at"] == "2023-01-02T12:00:00Z"
+    )  # Pydantic converts to Z format
+    assert data[2]["metadata"] == {"type": "custom_timestamp"}
+
+
+@pytest.mark.asyncio
+async def test_create_message_with_null_timestamp(
+    client: TestClient, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+):
+    """Test creating a message with null timestamp uses default"""
+    test_workspace, test_peer = sample_data
+
+    # Create a test session
+    test_session = models.Session(
+        workspace_name=test_workspace.name, name=str(generate_nanoid())
+    )
+    db_session.add(test_session)
+    await db_session.commit()
+
+    # Record time before request
+    before_request = datetime.datetime.now(datetime.timezone.utc)
+
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/sessions/{test_session.name}/messages",
+        json={
+            "messages": [
+                {
+                    "content": "Test message with null timestamp",
+                    "peer_id": test_peer.name,
+                    "created_at": None,
+                    "metadata": {"test": "null_timestamp"},
+                }
+            ]
+        },
+    )
+
+    after_request = datetime.datetime.now(datetime.timezone.utc)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    message = data[0]
+    assert message["content"] == "Test message with null timestamp"
+    assert message["metadata"] == {"test": "null_timestamp"}
+
+    # Verify the created_at field uses default (current time)
+    message_created_at = datetime.datetime.fromisoformat(
+        message["created_at"].replace("Z", "+00:00")
+    )
+    assert before_request <= message_created_at <= after_request

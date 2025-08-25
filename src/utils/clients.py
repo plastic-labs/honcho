@@ -9,6 +9,17 @@ from typing import (
     runtime_checkable,
 )
 
+# --- OpenAI compatibility shim must run BEFORE importing mirascope ---
+# Some versions of the OpenAI SDK do not expose ChatCompletionMessageToolCall
+# at openai.types.chat, but some integrations import it from there at runtime.
+# We defensively define it if missing to avoid import-time failures.
+#
+# We can get rid of this by getting rid of mirascope...
+from openai.types import chat as _openai_chat_types  # type: ignore
+
+if not hasattr(_openai_chat_types, "ChatCompletionMessageToolCall"):
+    _openai_chat_types.ChatCompletionMessageToolCall = object  # pyright: ignore
+
 from anthropic import AsyncAnthropic
 from google import genai
 from groq import AsyncGroq
@@ -113,6 +124,8 @@ def honcho_llm_call(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     max_tokens: int | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
@@ -131,6 +144,8 @@ def honcho_llm_call(
     response_model: type[T],
     json_mode: bool = False,
     max_tokens: int | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
@@ -149,6 +164,8 @@ def honcho_llm_call(
     response_model: None = None,
     json_mode: bool = False,
     max_tokens: int | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
@@ -168,6 +185,8 @@ def honcho_llm_call(
     response_model: None = None,
     json_mode: bool = False,
     max_tokens: int | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
@@ -187,6 +206,8 @@ def honcho_llm_call(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     max_tokens: int | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
@@ -202,6 +223,8 @@ def honcho_llm_call(
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
     max_tokens: int | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
     thinking_budget_tokens: int | None = None,
     enable_retry: bool = True,
     retry_attempts: int = 3,
@@ -227,6 +250,8 @@ def honcho_llm_call(
         response_model: Optional Pydantic model for structured responses
         json_mode: Whether to enable JSON mode (for providers that support it)
         max_tokens: Maximum tokens for the response
+        reasoning_effort: Optional reasoning effort hint passed to OpenAI GPT-5 models only
+        verbosity: Optional verbosity hint passed to OpenAI GPT-5 models only
         thinking_budget_tokens: Budget for thinking tokens (Anthropic only)
         enable_retry: Whether to enable retry logic (default: True)
         retry_attempts: Number of retry attempts (default: 3)
@@ -298,16 +323,27 @@ def honcho_llm_call(
                 }
             if max_tokens:
                 call_params["max_tokens"] = max_tokens
+        elif resolved_provider == "openai" and model and "gpt-5" in model:
+            call_params["max_completion_tokens"] = max_tokens
+            if reasoning_effort is not None:
+                call_params["reasoning_effort"] = reasoning_effort
+            if verbosity is not None:
+                call_params["verbosity"] = verbosity
         else:
             # Other providers just use max_tokens
             if max_tokens:
                 call_params["max_tokens"] = max_tokens
 
-        # Merge with any extra call params
-        # Remove return_call_response from extra_call_params --
-        # that one is just for our type system.
+        # Merge with any user-supplied provider call params
+        # Accept an explicit "extra_call_params" dict kwarg and merge its contents
+        # Do NOT forward the key itself into provider params.
+        # Also drop any wrapper-only flags.
+        user_extra_call_params: dict[str, Any] | None = extra_call_params.pop(
+            "extra_call_params", None
+        )
         extra_call_params.pop("return_call_response", None)
-        call_params.update(extra_call_params)
+        if isinstance(user_extra_call_params, dict):
+            call_params.update(user_extra_call_params)
 
         # Build kwargs for llm.call
         llm_kwargs: dict[str, Any] = {}

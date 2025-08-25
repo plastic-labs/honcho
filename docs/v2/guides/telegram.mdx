@@ -243,7 +243,7 @@ async def dialectic_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         session = honcho_client.session(id=str(update.effective_chat.id))
 
         response = peer.chat(
-            queries=query,
+            query=query,
             session_id=session.id,
         )
 

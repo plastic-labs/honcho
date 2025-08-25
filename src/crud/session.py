@@ -4,12 +4,17 @@ from typing import Any
 from nanoid import generate as generate_nanoid
 from sqlalchemy import Select, case, cast, func, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.types import BigInteger
+from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
 from src.config import settings
-from src.exceptions import ResourceNotFoundException
+from src.exceptions import (
+    ConflictException,
+    ObserverException,
+    ResourceNotFoundException,
+)
 from src.utils.filter import apply_filter
 
 from .peer import get_or_create_peers, get_peer
@@ -18,6 +23,21 @@ from .peer import get_or_create_peers, get_peer
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
+
+
+def count_observers_in_config(
+    peer_configs: dict[str, schemas.SessionPeerConfig],
+) -> int:
+    """
+    Count the number of peers that will be observing others based on their configurations.
+
+    Args:
+        peer_configs: Dictionary of peer names to their session configurations
+
+    Returns:
+        Number of peers that will be observing others
+    """
+    return sum(1 for config in peer_configs.values() if config.observe_others)
 
 
 async def get_sessions(
@@ -38,6 +58,8 @@ async def get_or_create_session(
     db: AsyncSession,
     session: schemas.SessionCreate,
     workspace_name: str,
+    *,
+    _retry: bool = False,
 ) -> models.Session:
     """
     Get or create a session in a workspace with specified peers.
@@ -48,12 +70,13 @@ async def get_or_create_session(
         session: Session creation schema
         workspace_name: Name of the workspace
         peer_names: List of peer names to add to the session
-
+        _retry: Whether to retry the operation
     Returns:
         The created session
 
     Raises:
         ResourceNotFoundException: If the session does not exist and create is false
+        ConflictException: If we fail to get or create the session
     """
 
     stmt = (
@@ -68,13 +91,11 @@ async def get_or_create_session(
 
     # Check if session already exists
     if honcho_session is None:
-        if (
-            session.peer_names
-            and len(session.peer_names) > settings.SESSION_PEERS_LIMIT
-        ):
-            raise ValueError(
-                f"Cannot create session {session.name} with {len(session.peer_names)} peers. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
-            )
+        if session.peer_names:
+            # Count peers that will be observing others
+            observer_count = count_observers_in_config(session.peer_names)
+            if observer_count > settings.SESSION_OBSERVERS_LIMIT:
+                raise ObserverException(session.name, observer_count)
 
         # Get or create workspace to ensure it exists
         await get_or_create_workspace(
@@ -89,9 +110,20 @@ async def get_or_create_session(
             h_metadata=session.metadata or {},
             configuration=session.configuration or {},
         )
-        db.add(honcho_session)
-        # Flush to ensure session exists in DB before adding peers
-        await db.flush()
+        try:
+            db.add(honcho_session)
+            # Flush to ensure session exists in DB before adding peers
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            logger.debug(
+                f"Race condition detected for session: {session.name}, retrying get"
+            )
+            if _retry:
+                raise ConflictException(
+                    f"Unable to create or get session: {session.name}"
+                ) from None
+            return await get_or_create_session(db, session, workspace_name, _retry=True)
     else:
         # Update existing session with metadata and feature flags if provided
         if session.metadata is not None:
@@ -410,28 +442,30 @@ async def get_peers_from_session(
 async def get_session_peer_configuration(
     workspace_name: str,
     session_name: str,
-) -> Select[tuple[str, dict[str, Any], dict[str, Any]]]:
+) -> Select[tuple[str, dict[str, Any], dict[str, Any], bool]]:
     """
-    Get configuration from both SessionPeer and Peer tables for active peers in a session.
+    Get configuration from both SessionPeer and Peer tables for all peers in a session.
+    NOTE: does not filter for active peers. Will return peers that have left the session.
 
     Args:
         workspace_name: Name of the workspace
         session_name: Name of the session
 
     Returns:
-        Select statement returning peer_name, peer_configuration, and session_peer_configuration
+        Select statement returning peer_name, peer_configuration, session_peer_configuration,
+        and a boolean indicating if the peer is currently in the session
     """
-    stmt: Select[tuple[str, dict[str, Any], dict[str, Any]]] = (
+    stmt: Select[tuple[str, dict[str, Any], dict[str, Any], bool]] = (
         select(
             models.Peer.name.label("peer_name"),
             models.Peer.configuration.label("peer_configuration"),
             models.SessionPeer.configuration.label("session_peer_configuration"),
+            (models.SessionPeer.left_at.is_(None)).label("is_active"),
         )
         .join(models.SessionPeer, models.Peer.name == models.SessionPeer.peer_name)
         .where(models.SessionPeer.session_name == session_name)
         .where(models.Peer.workspace_name == workspace_name)
         .where(models.SessionPeer.workspace_name == workspace_name)
-        .where(models.SessionPeer.left_at.is_(None))  # Only active peers
     )
 
     return stmt
@@ -459,11 +493,10 @@ async def set_peers_for_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    # Validate peer limit before making any changes
-    if len(peer_names) > settings.SESSION_PEERS_LIMIT:
-        raise ValueError(
-            f"Cannot set {len(peer_names)} peers for session {session_name}. Maximum allowed is {settings.SESSION_PEERS_LIMIT} peers per session."
-        )
+    # Validate observer limit before making any changes
+    observer_count = count_observers_in_config(peer_names)
+    if observer_count > settings.SESSION_OBSERVERS_LIMIT:
+        raise ObserverException(session_name, observer_count)
 
     # Verify session exists
     stmt = (
@@ -541,20 +574,30 @@ async def _get_or_add_peers_to_session(
         result = await db.execute(select_stmt)
         return list(result.scalars().all())
 
-    # Check current number of active peers and validate limit before upsert
-    current_peers_stmt = select(models.SessionPeer.peer_name).where(
-        models.SessionPeer.session_name == session_name,
-        models.SessionPeer.workspace_name == workspace_name,
-        models.SessionPeer.left_at.is_(None),  # Only active peers
-    )
-    result = await db.execute(current_peers_stmt)
-    existing_peer_names = result.scalars().all()
+    # Only validate observer limit if we're adding peers with observe_others=True
+    new_observer_count = count_observers_in_config(peer_names)
 
-    new_peers = [name for name in peer_names if name not in existing_peer_names]
-    if len(new_peers) + len(existing_peer_names) > settings.SESSION_PEERS_LIMIT:
-        raise ValueError(
-            f"Cannot add {len(new_peers)} peer(s). Session already has {len(existing_peer_names)} peer(s) with {settings.SESSION_PEERS_LIMIT} peers per session."
+    if new_observer_count > 0:
+        # Use a single efficient query to count existing observers not being updated
+        # This uses PostgreSQL's JSONB operators to check the observe_others field directly
+        existing_observers_stmt = select(func.count()).where(
+            models.SessionPeer.session_name == session_name,
+            models.SessionPeer.workspace_name == workspace_name,
+            models.SessionPeer.left_at.is_(None),  # Only active peers
+            models.SessionPeer.peer_name.notin_(
+                peer_names.keys()
+            ),  # Exclude peers being updated
+            models.SessionPeer.configuration["observe_others"].astext.cast(
+                Boolean
+            ),  # Only observers
         )
+        result = await db.execute(existing_observers_stmt)
+        existing_observer_count = result.scalar() or 0
+
+        total_observers = existing_observer_count + new_observer_count
+
+        if total_observers > settings.SESSION_OBSERVERS_LIMIT:
+            raise ObserverException(session_name, total_observers)
 
     # Use upsert to handle both new peers and rejoining peers
     stmt = pg_insert(models.SessionPeer).values(
@@ -653,6 +696,9 @@ async def set_peer_config(
         session_name: Name of the session
         peer_name: Name of the peer
         config: The peer configuration to set
+
+    Raises:
+        ObserverException: If the update would exceed the observer limit
     """
     # First, get the session and peer to ensure they exist
     await get_session(db, session_name, workspace_name)
@@ -667,6 +713,37 @@ async def set_peer_config(
     )
     result = await db.execute(stmt)
     session_peer = result.scalar_one_or_none()
+
+    # Check if this update would exceed observer limits
+    if config.observe_others:
+        # Check if peer is already an observer
+        is_currently_observer = (
+            session_peer.configuration.get("observe_others", False)
+            if session_peer and session_peer.configuration
+            else False
+        )
+
+        # Only need to check limit if peer is becoming a new observer
+        if not is_currently_observer:
+            # Use a single efficient query to count existing observers
+            existing_observers_stmt = select(func.count()).where(
+                models.SessionPeer.session_name == session_name,
+                models.SessionPeer.workspace_name == workspace_name,
+                models.SessionPeer.left_at.is_(None),  # Only active peers
+                models.SessionPeer.peer_name
+                != peer_name,  # Exclude the peer being updated
+                models.SessionPeer.configuration["observe_others"].astext.cast(
+                    Boolean
+                ),  # Only observers
+            )
+            result = await db.execute(existing_observers_stmt)
+            observer_count = result.scalar() or 0
+
+            # Add one for this peer becoming an observer
+            observer_count += 1
+
+            if observer_count > settings.SESSION_OBSERVERS_LIMIT:
+                raise ObserverException(session_name, observer_count)
 
     update_data = config.model_dump(exclude_none=True)
 

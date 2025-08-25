@@ -17,8 +17,9 @@ from mirascope.llm import Stream
 
 from src import crud
 from src.config import settings
+from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
-from src.routers.sessions import get_session_context
+from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.logging import (
@@ -53,7 +54,9 @@ async def dialectic_call(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
+    peer_card: list[str] | None,
     target_name: str | None = None,
+    target_peer_card: list[str] | None = None,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -74,7 +77,9 @@ async def dialectic_call(
         recent_conversation_history,
         additional_context,
         peer_name,
+        peer_card,
         target_name,
+        target_peer_card,
     )
 
     # Pretty print the prompt content
@@ -109,7 +114,9 @@ async def dialectic_stream(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
+    peer_card: list[str] | None,
     target_name: str | None = None,
+    target_peer_card: list[str] | None = None,
 ):
     """
     Make a streaming call to the dialectic model for context synthesis.
@@ -130,7 +137,9 @@ async def dialectic_stream(
         recent_conversation_history,
         additional_context,
         peer_name,
+        peer_card,
         target_name,
+        target_peer_card,
     )
 
     # Pretty print the prompt content
@@ -235,7 +244,7 @@ async def chat(
     embedding_store = EmbeddingStore(
         workspace_name=workspace_name,
         peer_name=target_name if target_name else peer_name,
-        collection_name="global_representation"
+        collection_name=GLOBAL_REPRESENTATION_COLLECTION_NAME
         if not target_name
         else crud.construct_collection_name(observer=peer_name, observed=target_name),
     )
@@ -262,26 +271,16 @@ async def chat(
     # If query is session-scoped, get recent conversation history from that session
     if session_name:
         async with tracked_db("chat.get_session_context") as db:
-            session_context = await get_session_context(
-                workspace_id=workspace_name,
-                session_id=session_name,
-                tokens=context_window_size,
-                summary=True,
-                force_new=False,
-                db=db,
+            recent_conversation_history = (
+                await summarizer.get_session_context_formatted(
+                    db,
+                    workspace_name=workspace_name,
+                    session_name=session_name,
+                    token_limit=context_window_size,
+                    include_summary=True,
+                )
             )
-        logger.info(
-            "Retrieved recent conversation history with %s messages",
-            len(session_context.messages),
-        )
-        recent_conversation_history = f"""
-        <summary>
-        {session_context.summary}
-        </summary>
-        <recent_messages>
-        {session_context.messages}
-        </recent_messages>
-        """
+        logger.info("Retrieved recent conversation history")
     else:
         recent_conversation_history = None
         logger.info("Query is not session-scoped, skipping recent conversation history")
@@ -295,7 +294,20 @@ async def chat(
         "tokens",
     )
 
-    # 4. Dialectic call --------------------------------------------------------
+    # 4. Peer card(s) ----------------------------------------------------------
+    async with tracked_db("chat.get_peer_card") as db:
+        peer_card = await crud.get_peer_card(db, workspace_name, peer_name)
+        if target_name:
+            target_peer_card = await crud.get_peer_card(db, workspace_name, target_name)
+        else:
+            target_peer_card = None
+
+    if target_peer_card:
+        logger.info("Retrieved peer cards:\n%s\n%s", peer_card, target_peer_card)
+    else:
+        logger.info("Retrieved peer card:\n%s", peer_card)
+
+    # 5. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = asyncio.get_event_loop().time()
     if stream:
         return await dialectic_stream(
@@ -304,7 +316,9 @@ async def chat(
             recent_conversation_history,
             additional_context,
             peer_name,
+            peer_card,
             target_name,
+            target_peer_card,
         )
 
     response = await dialectic_call(
@@ -313,7 +327,9 @@ async def chat(
         recent_conversation_history,
         additional_context,
         peer_name,
+        peer_card,
         target_name,
+        target_peer_card,
     )
     dialectic_call_duration = (
         asyncio.get_event_loop().time() - dialectic_call_start_time

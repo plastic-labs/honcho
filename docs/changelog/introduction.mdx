@@ -27,8 +27,69 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 ### Honcho API and SDK Changelogs
 <Tabs>
     <Tab title="Honcho API">
+        <Update label="v2.3.0 (Current)">
+        ### Added
 
-        <Update label="v2.1.1 (Current)">
+        - `getSummaries` endpoint to get all available summaries for a session directly
+        - Peer Card feature to improve context for deriver and dialectic
+
+        ### Changed
+
+        - Session Peer limit to be based on observers instead, renamed config value to
+          `SESSION_OBSERVERS_LIMIT`
+        - `Messages` can take a custom timestamp for the `created_at` field, defaulting
+          to the current time
+        - `get_context` endpoint returns detailed `Summary` object rather than just
+          summary content
+        - Working representations use a FIFO queue structure to maintain facts rather
+          than a full rewrite
+        - Optimized deriver enqueue by prefetching message sequence numbers (eliminates N+1 queries)
+
+        ### Fixed
+
+        - Deriver uses `get_context` internally to prevent context window limit errors
+        - Embedding store will truncate context when querying documents to prevent embedding
+          token limit errors
+        - Queue manager to schedule work based on available works rather than total
+          number of workers
+        - Queue manager to use atomic db transactions rather than long lived transaction
+          for the worker lifecycle
+        - Timestamp formats unified to ISO 8601 across the codebase
+        - Internal get_context method's cutoff value is exclusive now
+        </Update>
+        <Update label="v2.2.0">
+        ### Added
+
+        - Arbitrary filters now available on all search endpoints
+        - Search combines full-text and semantic using reciprocal rank fusion
+        - Webhook support (currently only supports queue_empty and test events, more to come)
+        - Small test harness and custom test format for evaluating Honcho output quality
+        - Added MCP server and documentation for it
+
+        ### Changed
+
+        - Search has 10 results by default, max 100 results
+        - Queue structure generalized to handle more event types
+        - Summarizer now exhaustive by default and tuned for performance
+
+        ### Fixed
+
+        - Resolve race condition for peers that leave a session while sending messages
+        - Added explicit rollback to solve integrity error in queue
+        - Re-introduced Sentry tracing to deriver
+        - Better integrity logic in get_or_create API methods
+        </Update>
+
+
+        <Update label="v2.1.2">
+        ### Fixed
+
+        - Summarizer module to ignore empty summaries and pass appropriate one to get_context
+        - Structured Outputs calls with OpenAI provider to pass strict=True to Pydantic Schema
+        </Update>
+
+
+        <Update label="v2.1.1">
         ### Added
 
         - Test harness for custom Honcho evaluations
@@ -208,7 +269,18 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v1.2.2 (Current)">
+        <Update label="v1.4.0 (Current)">
+        ### Added
+
+        - getSummaries API returning structured summaries
+        - Webhook support
+
+        ### Changed
+
+        - Messages can take an optional `created_at` value, defaulting to the current
+          time (UTC ISO 8601)
+        </Update>
+        <Update label="v1.2.2">
             ### Added
 
             - Filter parameter to various endpoints
@@ -244,7 +316,18 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v1.2.1 (Current)">
+        <Update label="v1.4.0 (Current)">
+        ### Added
+
+        - getSummaries API returning structured summaries
+        - Webhook support
+
+        ### Changed
+
+        - Messages can take an optional `created_at` value, defaulting to the current
+          time (UTC ISO 8601)
+        </Update>
+        <Update label="v1.2.1">
             ### Added
 
             - linting via Biome

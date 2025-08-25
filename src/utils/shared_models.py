@@ -4,11 +4,11 @@ Shared Pydantic models used by both dialectic and deriver modules.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
-from typing import TypedDict
 
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 
 class ReasoningLevel(str, Enum):
@@ -147,7 +147,7 @@ class ObservationContext(BaseModel):
             obs = Observation(
                 content=conclusion,
                 metadata=explicit_metadata,
-                created_at=datetime.now(),
+                created_at=datetime.now(timezone.utc),
             )
             context.add_observation(obs, ReasoningLevel.EXPLICIT)
 
@@ -169,7 +169,7 @@ class ObservationContext(BaseModel):
                 obs = Observation(
                     content=structured_obs.conclusion,
                     metadata=deductive_metadata,
-                    created_at=datetime.now(),
+                    created_at=datetime.now(timezone.utc),
                 )
                 context.add_observation(obs, level)
 
@@ -191,3 +191,15 @@ class ObservationDict(TypedDict, total=False):
     content: str
     premises: list[str]
     created_at: str
+
+
+class PeerCardQuery(BaseModel):
+    """
+    Model for peer card query generation responses.
+
+    Contains the new peer card, or None if there are no new key observations.
+    The notes field is just a place for stupid models to dump useless info.
+    """
+
+    card: list[str] | None
+    notes: str | None

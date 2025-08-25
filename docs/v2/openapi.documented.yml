@@ -7,7 +7,7 @@ info:
     name: Plastic Labs
     url: https://honcho.dev/
     email: hello@plasticlabs.ai
-  version: 2.1.1
+  version: 2.3.0
 servers:
   - url: http://localhost:8000
     description: Local Development Server
@@ -25,7 +25,7 @@ paths:
         Get a Workspace by ID.
 
         If workspace_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-        Otherwise, it uses the workspace_id from the JWT token.
+        Otherwise, it uses the workspace_id from the JWT.
       operationId: get_or_create_workspace_v2_workspaces_post
       requestBody:
         content:
@@ -231,42 +231,23 @@ paths:
             description: ID of the workspace to search
             title: Workspace Id
           description: ID of the workspace to search
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            description: Page number
-            default: 1
-            title: Page
-          description: Page number
-        - name: size
-          in: query
-          required: false
-          schema:
-            type: integer
-            maximum: 100
-            minimum: 1
-            description: Page size
-            default: 50
-            title: Size
-          description: Page size
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: string
-              description: Search query
-              title: Query
+              $ref: '#/components/schemas/MessageSearchOptions'
+              description: 'Message search parameters '
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Message_'
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+                title: Response Search Workspace V2 Workspaces  Workspace Id  Search Post
         '422':
           description: Validation Error
           content:
@@ -282,10 +263,9 @@ paths:
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const message of client.workspaces.search('workspace_id', { body: 'body' })) {
-              console.log(message.id);
-            }
+            const messages = await client.workspaces.search('workspace_id', { query: 'query' });
+
+            console.log(messages);
         - lang: Python
           source: |-
             from honcho_core import Honcho
@@ -293,12 +273,11 @@ paths:
             client = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.search(
+            messages = client.workspaces.search(
                 workspace_id="workspace_id",
-                body="body",
+                query="query",
             )
-            page = page.items[0]
-            print(page.id)
+            print(messages)
   /v2/workspaces/{workspace_id}/deriver/status:
     get:
       tags:
@@ -480,7 +459,7 @@ paths:
         Get a Peer by ID
 
         If peer_id is provided as a query parameter, it uses that (must match JWT workspace_id).
-        Otherwise, it uses the peer_id from the JWT token.
+        Otherwise, it uses the peer_id from the JWT.
       operationId: get_or_create_peer_v2_workspaces__workspace_id__peers_post
       security:
         - HTTPBearer: []
@@ -891,27 +870,6 @@ paths:
             description: ID of the peer
             title: Peer Id
           description: ID of the peer
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            description: Page number
-            default: 1
-            title: Page
-          description: Page number
-        - name: size
-          in: query
-          required: false
-          schema:
-            type: integer
-            maximum: 100
-            minimum: 1
-            description: Page size
-            default: 50
-            title: Size
-          description: Page size
       requestBody:
         required: true
         content:
@@ -925,7 +883,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Message_'
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+                title: Response Search Peer V2 Workspaces  Workspace Id  Peers  Peer Id  Search Post
         '422':
           description: Validation Error
           content:
@@ -943,12 +904,11 @@ paths:
             });
 
 
-            // Automatically fetches more pages as needed.
+            const messages = await client.workspaces.peers.search('workspace_id', 'peer_id', { query: 'query'
+            });
 
-            for await (const message of client.workspaces.peers.search('workspace_id', 'peer_id', { query:
-            'query' })) {
-              console.log(message.id);
-            }
+
+            console.log(messages);
         - lang: Python
           source: |-
             from honcho_core import Honcho
@@ -956,13 +916,12 @@ paths:
             client = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.peers.search(
+            messages = client.workspaces.peers.search(
                 peer_id="peer_id",
                 workspace_id="workspace_id",
                 query="query",
             )
-            page = page.items[0]
-            print(page.id)
+            print(messages)
   /v2/workspaces/{workspace_id}/sessions:
     post:
       tags:
@@ -972,7 +931,7 @@ paths:
         Get a specific session in a workspace.
 
         If session_id is provided as a query parameter, it verifies the session is in the workspace.
-        Otherwise, it uses the session_id from the JWT token for verification.
+        Otherwise, it uses the session_id from the JWT for verification.
       operationId: get_or_create_session_v2_workspaces__workspace_id__sessions_post
       security:
         - HTTPBearer: []
@@ -1699,20 +1658,20 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: >-
+          source: |-
             import Honcho from '@honcho-ai/core';
-
 
             const client = new Honcho({
               apiKey: 'My API Key',
             });
 
+            const sessionPeerConfig = await client.workspaces.sessions.peers.getConfig(
+              'workspace_id',
+              'session_id',
+              'peer_id',
+            );
 
-            const response = await client.workspaces.sessions.peers.getConfig('workspace_id', 'session_id',
-            'peer_id');
-
-
-            console.log(response.observe_me);
+            console.log(sessionPeerConfig.observe_me);
         - lang: Python
           source: |-
             from honcho_core import Honcho
@@ -1720,12 +1679,12 @@ paths:
             client = Honcho(
                 api_key="My API Key",
             )
-            response = client.workspaces.sessions.peers.get_config(
+            session_peer_config = client.workspaces.sessions.peers.get_config(
                 peer_id="peer_id",
                 workspace_id="workspace_id",
                 session_id="session_id",
             )
-            print(response.observe_me)
+            print(session_peer_config.observe_me)
     post:
       tags:
         - sessions
@@ -1814,15 +1773,16 @@ paths:
         - sessions
       summary: Get Session Context
       description: >-
-        Produce a context object from the session. The caller provides a token limit which the entire context
-        must fit into.
+        Produce a context object from the session. The caller provides an optional token limit which the
+        entire context must fit into.
 
-        To do this, we allocate 40% of the token limit to the summary, and 60% to recent messages -- as many
-        as can fit.
+        If not provided, the context will be exhaustive (within configured max tokens). To do this, we
+        allocate 40% of the token limit
 
-        If the caller does not want a summary, we allocate all the tokens to recent messages.
+        to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually
+        take up less space than
 
-        The default token limit if not provided is 2048. (TODO: make this configurable)
+        this. If the caller does not want a summary, we allocate all the tokens to recent messages.
       operationId: get_session_context_v2_workspaces__workspace_id__sessions__session_id__context_get
       security:
         - HTTPBearer: []
@@ -1850,19 +1810,24 @@ paths:
           schema:
             anyOf:
               - type: integer
+                maximum: 100000
               - type: 'null'
-            description: Number of tokens to use for the context. Includes summary if set to true
+            description: >-
+              Number of tokens to use for the context. Includes summary if set to true. If not provided, the
+              context will be exhaustive (within 100000 tokens)
             title: Tokens
-          description: Number of tokens to use for the context. Includes summary if set to true
+          description: >-
+            Number of tokens to use for the context. Includes summary if set to true. If not provided, the
+            context will be exhaustive (within 100000 tokens)
         - name: summary
           in: query
           required: false
           schema:
             type: boolean
-            description: Whether to summarize the session history prior to the cutoff message
-            default: false
+            description: Whether or not to include a summary *if* one is available for the session
+            default: true
             title: Summary
-          description: Whether to summarize the session history prior to the cutoff message
+          description: Whether or not to include a summary *if* one is available for the session
       responses:
         '200':
           description: Successful Response
@@ -1900,6 +1865,74 @@ paths:
                 workspace_id="workspace_id",
             )
             print(response.id)
+  /v2/workspaces/{workspace_id}/sessions/{session_id}/summaries:
+    get:
+      tags:
+        - sessions
+      summary: Get Session Summaries
+      description: |-
+        Get available summaries for a session.
+
+        Returns both short and long summaries if available, including metadata like
+        the message ID they cover up to, creation timestamp, and token count.
+      operationId: get_session_summaries_v2_workspaces__workspace_id__sessions__session_id__summaries_get
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: ID of the workspace
+            title: Workspace Id
+          description: ID of the workspace
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: ID of the session
+            title: Session Id
+          description: ID of the session
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionSummaries'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+            const response = await client.workspaces.sessions.summaries('workspace_id', 'session_id');
+
+            console.log(response.id);
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            response = client.workspaces.sessions.summaries(
+                session_id="session_id",
+                workspace_id="workspace_id",
+            )
+            print(response.id)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/search:
     post:
       tags:
@@ -1927,41 +1960,23 @@ paths:
             description: ID of the session
             title: Session Id
           description: ID of the session
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            description: Page number
-            default: 1
-            title: Page
-          description: Page number
-        - name: size
-          in: query
-          required: false
-          schema:
-            type: integer
-            maximum: 100
-            minimum: 1
-            description: Page size
-            default: 50
-            title: Size
-          description: Page size
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/MessageSearchOptions'
-              description: 'Message search parameters '
+              description: Message search parameters
       responses:
         '200':
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Message_'
+                type: array
+                items:
+                  $ref: '#/components/schemas/Message'
+                title: Response Search Session V2 Workspaces  Workspace Id  Sessions  Session Id  Search Post
         '422':
           description: Validation Error
           content:
@@ -1970,19 +1985,20 @@ paths:
                 $ref: '#/components/schemas/HTTPValidationError'
       x-codeSamples:
         - lang: JavaScript
-          source: |-
+          source: >-
             import Honcho from '@honcho-ai/core';
+
 
             const client = new Honcho({
               apiKey: 'My API Key',
             });
 
-            // Automatically fetches more pages as needed.
-            for await (const message of client.workspaces.sessions.search('workspace_id', 'session_id', {
-              query: 'query',
-            })) {
-              console.log(message.id);
-            }
+
+            const messages = await client.workspaces.sessions.search('workspace_id', 'session_id', { query:
+            'query' });
+
+
+            console.log(messages);
         - lang: Python
           source: |-
             from honcho_core import Honcho
@@ -1990,13 +2006,12 @@ paths:
             client = Honcho(
                 api_key="My API Key",
             )
-            page = client.workspaces.sessions.search(
+            messages = client.workspaces.sessions.search(
                 session_id="session_id",
                 workspace_id="workspace_id",
                 query="query",
             )
-            page = page.items[0]
-            print(page.id)
+            print(messages)
   /v2/workspaces/{workspace_id}/sessions/{session_id}/messages/:
     post:
       tags:
@@ -2114,7 +2129,7 @@ paths:
                 items:
                   $ref: '#/components/schemas/Message'
                 title: >-
-                  Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id 
+                  Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id
                   Messages Upload Post
         '422':
           description: Validation Error
@@ -2505,6 +2520,267 @@ paths:
             )
             key = client.keys.create()
             print(key)
+  /v2/workspaces/{workspace_id}/webhooks:
+    post:
+      tags:
+        - webhooks
+      summary: Get Or Create Webhook Endpoint
+      description: Get or create a webhook endpoint URL.
+      operationId: get_or_create_webhook_endpoint_v2_workspaces__workspace_id__webhooks_post
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Workspace ID
+            title: Workspace Id
+          description: Workspace ID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookEndpointCreate'
+              description: Webhook endpoint parameters
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookEndpoint'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: >-
+            import Honcho from '@honcho-ai/core';
+
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+
+            const webhookEndpoint = await client.workspaces.webhooks.getOrCreate('workspace_id', { url: 'url'
+            });
+
+
+            console.log(webhookEndpoint.id);
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            webhook_endpoint = client.workspaces.webhooks.get_or_create(
+                workspace_id="workspace_id",
+                url="url",
+            )
+            print(webhook_endpoint.id)
+    get:
+      tags:
+        - webhooks
+      summary: List Webhook Endpoints
+      description: List all webhook endpoints, optionally filtered by workspace.
+      operationId: list_webhook_endpoints_v2_workspaces__workspace_id__webhooks_get
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Workspace ID
+            title: Workspace Id
+          description: Workspace ID
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            description: Page number
+            default: 1
+            title: Page
+          description: Page number
+        - name: size
+          in: query
+          required: false
+          schema:
+            type: integer
+            maximum: 100
+            minimum: 1
+            description: Page size
+            default: 50
+            title: Size
+          description: Page size
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Page_WebhookEndpoint_'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+            // Automatically fetches more pages as needed.
+            for await (const webhookEndpoint of client.workspaces.webhooks.list('workspace_id')) {
+              console.log(webhookEndpoint.id);
+            }
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            page = client.workspaces.webhooks.list(
+                workspace_id="workspace_id",
+            )
+            page = page.items[0]
+            print(page.id)
+  /v2/workspaces/{workspace_id}/webhooks/{endpoint_id}:
+    delete:
+      tags:
+        - webhooks
+      summary: Delete Webhook Endpoint
+      description: Delete a specific webhook endpoint.
+      operationId: delete_webhook_endpoint_v2_workspaces__workspace_id__webhooks__endpoint_id__delete
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Workspace ID
+            title: Workspace Id
+          description: Workspace ID
+        - name: endpoint_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Webhook endpoint ID
+            title: Endpoint Id
+          description: Webhook endpoint ID
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+            const webhook = await client.workspaces.webhooks.delete('workspace_id', 'endpoint_id');
+
+            console.log(webhook);
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            webhook = client.workspaces.webhooks.delete(
+                endpoint_id="endpoint_id",
+                workspace_id="workspace_id",
+            )
+            print(webhook)
+  /v2/workspaces/{workspace_id}/webhooks/test:
+    get:
+      tags:
+        - webhooks
+      summary: Test Emit
+      description: Test publishing a webhook event.
+      operationId: test_emit_v2_workspaces__workspace_id__webhooks_test_get
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: Workspace ID
+            title: Workspace Id
+          description: Workspace ID
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+            const response = await client.workspaces.webhooks.testEmit('workspace_id');
+
+            console.log(response);
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            response = client.workspaces.webhooks.test_emit(
+                "workspace_id",
+            )
+            print(response)
 components:
   schemas:
     Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post:
@@ -2612,9 +2888,7 @@ components:
           type: string
           title: Peer Id
         session_id:
-          anyOf:
-            - type: string
-            - type: 'null'
+          type: string
           title: Session Id
         metadata:
           additionalProperties: true
@@ -2670,6 +2944,12 @@ components:
               type: object
             - type: 'null'
           title: Metadata
+        created_at:
+          anyOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+          title: Created At
       type: object
       required:
         - content
@@ -2677,12 +2957,12 @@ components:
       title: MessageCreate
     MessageGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
             - type: 'null'
-          title: Filter
+          title: Filters
       type: object
       title: MessageGet
     MessageSearchOptions:
@@ -2691,12 +2971,20 @@ components:
           type: string
           title: Query
           description: Search query
-        semantic:
+        filters:
           anyOf:
-            - type: boolean
+            - additionalProperties: true
+              type: object
             - type: 'null'
-          title: Semantic
-          description: Whether to explicitly use semantic search to filter the results
+          title: Filters
+          description: Filters to scope the search
+        limit:
+          type: integer
+          maximum: 100
+          minimum: 1
+          title: Limit
+          description: Number of results to return
+          default: 10
       type: object
       required:
         - query
@@ -2798,6 +3086,35 @@ components:
         - page
         - size
       title: Page[Session]
+    Page_WebhookEndpoint_:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/WebhookEndpoint'
+          type: array
+          title: Items
+        total:
+          type: integer
+          minimum: 0
+          title: Total
+        page:
+          type: integer
+          minimum: 1
+          title: Page
+        size:
+          type: integer
+          minimum: 1
+          title: Size
+        pages:
+          type: integer
+          minimum: 0
+          title: Pages
+      type: object
+      required:
+        - items
+        - page
+        - size
+      title: Page[WebhookEndpoint]
     Page_Workspace_:
       properties:
         items:
@@ -2879,12 +3196,12 @@ components:
       title: PeerCreate
     PeerGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
             - type: 'null'
-          title: Filter
+          title: Filters
       type: object
       title: PeerGet
     PeerRepresentationGet:
@@ -2960,13 +3277,14 @@ components:
           type: array
           title: Messages
         summary:
-          type: string
-          title: Summary
+          anyOf:
+            - $ref: '#/components/schemas/Summary'
+            - type: 'null'
+          description: The summary if available
       type: object
       required:
         - id
         - messages
-        - summary
       title: SessionContext
     SessionCreate:
       properties:
@@ -3032,12 +3350,12 @@ components:
       title: SessionDeriverStatus
     SessionGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
             - type: 'null'
-          title: Filter
+          title: Filters
       type: object
       title: SessionGet
     SessionPeerConfig:
@@ -3059,6 +3377,25 @@ components:
             representation of this peer
       type: object
       title: SessionPeerConfig
+    SessionSummaries:
+      properties:
+        id:
+          type: string
+          title: Id
+        short_summary:
+          anyOf:
+            - $ref: '#/components/schemas/Summary'
+            - type: 'null'
+          description: The short summary if available
+        long_summary:
+          anyOf:
+            - $ref: '#/components/schemas/Summary'
+            - type: 'null'
+          description: The long summary if available
+      type: object
+      required:
+        - id
+      title: SessionSummaries
     SessionUpdate:
       properties:
         metadata:
@@ -3075,6 +3412,36 @@ components:
           title: Configuration
       type: object
       title: SessionUpdate
+    Summary:
+      properties:
+        content:
+          type: string
+          title: Content
+          description: The summary text
+        message_id:
+          type: integer
+          title: Message Id
+          description: The ID of the message that this summary covers up to
+        summary_type:
+          type: string
+          title: Summary Type
+          description: The type of summary (short or long)
+        created_at:
+          type: string
+          title: Created At
+          description: The timestamp of when the summary was created (ISO format)
+        token_count:
+          type: integer
+          title: Token Count
+          description: The number of tokens in the summary text
+      type: object
+      required:
+        - content
+        - message_id
+        - summary_type
+        - created_at
+        - token_count
+      title: Summary
     ValidationError:
       properties:
         loc:
@@ -3096,6 +3463,39 @@ components:
         - msg
         - type
       title: ValidationError
+    WebhookEndpoint:
+      properties:
+        id:
+          type: string
+          title: Id
+        workspace_id:
+          anyOf:
+            - type: string
+            - type: 'null'
+          title: Workspace Id
+        url:
+          type: string
+          title: Url
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+        - id
+        - workspace_id
+        - url
+        - created_at
+      title: WebhookEndpoint
+    WebhookEndpointCreate:
+      properties:
+        url:
+          type: string
+          title: Url
+      type: object
+      required:
+        - url
+      title: WebhookEndpointCreate
     Workspace:
       properties:
         id:
@@ -3142,12 +3542,12 @@ components:
       title: WorkspaceCreate
     WorkspaceGet:
       properties:
-        filter:
+        filters:
           anyOf:
             - additionalProperties: true
               type: object
             - type: 'null'
-          title: Filter
+          title: Filters
       type: object
       title: WorkspaceGet
     WorkspaceUpdate:

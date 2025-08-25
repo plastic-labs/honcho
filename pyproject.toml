@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.1.1"
+version = "2.3.0"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -22,17 +22,16 @@ dependencies = [
     "alembic>=1.14.0",
     "pyjwt>=2.10.0",
     "tiktoken>=0.9.0",
-    "mirascope[anthropic,google,groq,langfuse]>=1.25.1",
-    "openai>=1.91.0",
+    "mirascope[anthropic,google,groq,langfuse]>=1.25.5",
+    "openai>=1.99.7",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "google-generativeai>=0.8.5",
     "pdfplumber>=0.11.7",
+    "typing-extensions>=4.11.0",
 ]
 [tool.uv]
 dev-dependencies = [
-    "honcho-core>=1.2.0",
-    "honcho-ai>=1.2.1",
     "pytest>=8.2.2",
     "sqlalchemy-utils>=0.41.2",
     "pytest-asyncio>=0.23.7",
@@ -43,7 +42,16 @@ dev-dependencies = [
     "basedpyright>=1.29.4",
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
+    "honcho-ai",
 ]
+
+[tool.uv.workspace]
+members = [
+    "sdks/python",
+]
+
+[tool.uv.sources]
+honcho-ai = { workspace = true }
 
 [tool.ruff.lint]
 # from https://docs.astral.sh/ruff/linter/#rule-selection example

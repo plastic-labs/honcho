@@ -1,0 +1,26 @@
+{
+  "name": "large_card_no_change",
+  "old_peer_card": "Name: Isabella\nAge: 28\nLocation: San Francisco\nOccupation: Software Engineer\nCompany: TechNova\nEducation: B.S. Computer Science, Stanford\nInterests: hiking, photography, baking, climbing, yoga\nLanguages: English, Spanish\nDislikes: cilantro\nFavorite Foods: sushi, ramen\nFavorite Music: jazz\nPets: Dog named Luna\nNickname: Izzy",
+  "new_observations": [
+    "It is a foggy morning in the city.",
+    "Traffic is heavy.",
+    "The Warriors game last night was intense.",
+    "The user feels casual."
+  ],
+  "expected_facts": [
+    "Name: Isabella",
+    "Age: 28",
+    "Location: San Francisco",
+    "Occupation: Software Engineer",
+    "Interests: hiking",
+    "Interests: photography",
+    "Languages: Spanish",
+    "Nickname: Izzy",
+    "Pets: Dog named Luna"
+  ],
+  "forbidden_facts": [
+    "Interests: basketball",
+    "Location: Oakland",
+    "Age: 29"
+  ]
+}

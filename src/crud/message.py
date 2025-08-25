@@ -2,18 +2,54 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
 from src.config import settings
 from src.embedding_client import embedding_client
-from src.exceptions import DisabledException, ValidationException
 from src.utils.filter import apply_filter
 
 from .session import get_or_create_session
 
 logger = getLogger(__name__)
+
+
+def _apply_token_limit(
+    base_conditions: list[ColumnElement[Any]], token_limit: int
+) -> Select[tuple[models.Message]]:
+    """
+    Helper function to apply token limit logic to a message query.
+
+    Creates a subquery that calculates running sum of tokens for most recent messages
+    and returns a select statement that joins with this subquery to limit results
+    based on token count.
+
+    Args:
+        base_conditions: List of conditions to apply to the base query
+        token_limit: Maximum number of tokens to include in the messages
+
+    Returns:
+        Select statement with token limit applied
+    """
+    # Create a subquery that calculates running sum of tokens for most recent messages
+    token_subquery = (
+        select(
+            models.Message.id,
+            func.sum(models.Message.token_count)
+            .over(order_by=models.Message.id.desc())
+            .label("running_token_sum"),
+        )
+        .where(*base_conditions)
+        .subquery()
+    )
+
+    # Select Message objects where running sum doesn't exceed token_limit
+    return (
+        select(models.Message)
+        .join(token_subquery, models.Message.id == token_subquery.c.id)
+        .where(token_subquery.c.running_token_sum <= token_limit)
+    )
 
 
 async def create_messages(
@@ -53,6 +89,7 @@ async def create_messages(
             workspace_name=workspace_name,
             public_id=generate_nanoid(),
             token_count=len(message.encoded_message),
+            created_at=message.created_at,  # Use provided created_at if available
         )
         message_objects.append(message_obj)
 
@@ -142,25 +179,8 @@ async def get_messages(
         else:
             stmt = stmt.order_by(models.Message.id.asc())
     elif token_limit is not None:
-        # Apply token limit logic
-        # Create a subquery that calculates running sum of tokens for most recent messages
-        token_subquery = (
-            select(
-                models.Message.id,
-                func.sum(models.Message.token_count)
-                .over(order_by=models.Message.id.desc())
-                .label("running_token_sum"),
-            )
-            .where(*base_conditions)
-            .subquery()
-        )
-
-        # Select Message objects where running sum doesn't exceed token_limit
-        stmt = (
-            select(models.Message)
-            .join(token_subquery, models.Message.id == token_subquery.c.id)
-            .where(token_subquery.c.running_token_sum <= token_limit)
-        )
+        # Apply token limit logic using helper function
+        stmt = _apply_token_limit(base_conditions, token_limit)
         stmt = apply_filter(stmt, models.Message, filters)
 
         # Apply final ordering based on reverse parameter
@@ -186,13 +206,14 @@ async def get_messages_id_range(
     session_name: str,
     start_id: int = 0,
     end_id: int | None = None,
+    token_limit: int | None = None,
 ) -> list[models.Message]:
     """
     Get messages from a session by primary key ID range.
     If end_id is not provided, all messages after and including start_id will be returned.
     If start_id is not provided, start will be beginning of session.
 
-    Note: list is *inclusive* of the end_id message.
+    Note: list is *inclusive* of the end_id message and start_id message.
 
     Args:
         db: Database session
@@ -206,17 +227,24 @@ async def get_messages_id_range(
     """
     if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 0)):
         return []
-    stmt = (
-        select(models.Message)
-        .where(
-            models.Message.workspace_name == workspace_name,
-        )
-        .where(models.Message.session_name == session_name)
-    )
+
+    base_conditions = [
+        models.Message.workspace_name == workspace_name,
+        models.Message.session_name == session_name,
+    ]
     if end_id:
-        stmt = stmt.where(models.Message.id.between(start_id, end_id))
+        base_conditions.append(
+            and_(models.Message.id >= start_id, models.Message.id < end_id)
+        )
     else:
-        stmt = stmt.where(models.Message.id >= start_id)
+        base_conditions.append(models.Message.id >= start_id)
+
+    if token_limit:
+        # Apply token limit logic using helper function
+        stmt = _apply_token_limit(base_conditions, token_limit)
+        stmt = stmt.order_by(models.Message.id)
+    else:
+        stmt = select(models.Message).where(*base_conditions)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -248,6 +276,53 @@ async def get_message_seq_in_session(
     result = await db.execute(stmt)
     count = result.scalar() or 0
     return count + 1
+
+
+async def get_message_seqs_in_session_batch(
+    db: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    message_ids: list[int],
+) -> dict[int, int]:
+    """
+    Get the sequence numbers for multiple messages within a session in a single query.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        session_name: Name of the session
+        message_ids: List of message primary key IDs
+
+    Returns:
+        Dictionary mapping message_id to sequence number (1-indexed).
+        If a given ID does not exist in the specified session, its value will be 0.
+        Note: duplicate IDs in the input are de-duplicated in the query and the
+        resulting mapping will contain a single entry per unique message_id.
+    """
+    if not message_ids:
+        return {}
+
+    unique_ids = list(set(message_ids))
+
+    # Rank all messages in the session, then select only the ones we care about
+    ranked = (
+        select(
+            models.Message.id.label("id"),
+            func.row_number().over(order_by=models.Message.id).label("seq"),
+        )
+        .where(
+            models.Message.workspace_name == workspace_name,
+            models.Message.session_name == session_name,
+        )
+        .subquery()
+    )
+    stmt = select(ranked.c.id, ranked.c.seq).where(ranked.c.id.in_(unique_ids))
+    result = await db.execute(stmt)
+    rows = result.all()
+    id_to_position = {row[0]: int(row[1]) for row in rows}
+
+    # Return positions for requested IDs; 0 for any missing/out-of-session IDs
+    return {msg_id: id_to_position.get(msg_id, 0) for msg_id in message_ids}
 
 
 async def get_message(
@@ -288,141 +363,3 @@ async def update_message(
     await db.commit()
     # await db.refresh(honcho_message)
     return honcho_message
-
-
-async def search(
-    query: str,
-    *,
-    workspace_name: str,
-    session_name: str | None = None,
-    peer_name: str | None = None,
-    semantic: bool | None = None,
-) -> Select[tuple[models.Message]]:
-    """
-    Search across message content using a hybrid approach:
-    - Uses semantic search if embed_messages is set, else fall back to full text
-    - Uses PostgreSQL full text search for natural language queries
-    - Falls back to exact string matching for queries with special characters
-    - Optionally uses semantic search with embeddings
-
-    If a session or peer is provided, the search will be scoped to that
-    session or peer. Otherwise, it will search across all messages in the workspace.
-
-    Args:
-        query: Search query to match against message content
-        workspace_name: Name of the workspace
-        session_name: Optional name of the session
-        peer_name: Optional name of the peer
-        semantic: Optional boolean to configure semantic search:
-            - None: try semantic search if embed_messages is set, else fall back to full text
-            - True: try semantic search if embed_messages is set, else throw error
-            - False: use full text search
-
-    Returns:
-        List of messages that match the search query, ordered by relevance
-    """
-    import re
-
-    from sqlalchemy import func, or_
-
-    # Base query conditions
-    base_conditions = [models.Message.workspace_name == workspace_name]
-
-    should_use_semantic_search = False  # Default to full text search
-
-    if semantic is None:
-        # Try semantic search if embed_messages is set, else fall back to full text
-        should_use_semantic_search = settings.EMBED_MESSAGES
-    elif semantic is True:
-        # Try semantic search if embed_messages is set, else throw error
-        if settings.EMBED_MESSAGES:
-            should_use_semantic_search = True
-        else:
-            raise DisabledException(
-                "Semantic search requires EMBED_MESSAGES flag to be enabled"
-            )
-
-    if should_use_semantic_search:
-        # Generate embedding for the search query
-        try:
-            embedding_query = await embedding_client.embed(query)
-        except ValueError as e:
-            raise ValidationException(
-                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
-            ) from e
-
-        # Use cosine distance for semantic search on MessageEmbedding table
-        # Join with Message table to get the actual message data
-        base_query = (
-            select(models.Message)
-            .join(
-                models.MessageEmbedding,
-                models.Message.public_id == models.MessageEmbedding.message_id,
-            )
-            .where(models.MessageEmbedding.workspace_name == workspace_name)
-            .order_by(
-                models.MessageEmbedding.embedding.cosine_distance(embedding_query)
-            )
-        )
-
-        if session_name is not None:
-            stmt = base_query.where(
-                models.MessageEmbedding.session_name == session_name
-            )
-        elif peer_name is not None:
-            stmt = base_query.where(models.MessageEmbedding.peer_name == peer_name)
-        else:
-            stmt = base_query
-
-    else:
-        # Check if query contains special characters that FTS might not handle well
-        has_special_chars = bool(
-            re.search(r'[~`!@#$%^&*()_+=\[\]{};\':"\\|,.<>/?-]', query)
-        )
-
-        if has_special_chars:
-            # For queries with special characters, use exact string matching (ILIKE)
-            # This ensures we can find exact matches like "~special-uuid~"
-            search_condition = models.Message.content.ilike(f"%{query}%")
-
-            base_query = (
-                select(models.Message)
-                .where(*base_conditions, search_condition)
-                .order_by(models.Message.created_at.desc())
-            )
-        else:
-            # For natural language queries, use full text search with ranking
-            fts_condition = func.to_tsvector("english", models.Message.content).op(
-                "@@"
-            )(func.plainto_tsquery("english", query))
-
-            # Combine FTS with ILIKE as fallback for better coverage
-            combined_condition = or_(
-                fts_condition, models.Message.content.ilike(f"%{query}%")
-            )
-
-            base_query = (
-                select(models.Message)
-                .where(*base_conditions, combined_condition)
-                .order_by(
-                    # Order by FTS relevance first, then by creation time
-                    func.coalesce(
-                        func.ts_rank(
-                            func.to_tsvector("english", models.Message.content),
-                            func.plainto_tsquery("english", query),
-                        ),
-                        0,
-                    ).desc(),
-                    models.Message.created_at.desc(),
-                )
-            )
-
-        # Add additional filters based on parameters
-        if session_name is not None:
-            stmt = base_query.where(models.Message.session_name == session_name)
-        elif peer_name is not None:
-            stmt = base_query.where(models.Message.peer_name == peer_name)
-        else:
-            stmt = base_query
-
-    return stmt

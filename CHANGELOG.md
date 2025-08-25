@@ -5,7 +5,68 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [2.1.1] - 2025-07-23
+## [2.3.0] — 2025-08-14
+
+### Added
+
+- `getSummaries` endpoint to get all available summaries for a session directly
+- Peer Card feature to improve context for deriver and dialectic
+
+### Changed
+
+- Session Peer limit to be based on observers instead, renamed config value to
+  `SESSION_OBSERVERS_LIMIT`
+- `Messages` can take a custom timestamp for the `created_at` field, defaulting
+  to the current time
+- `get_context` endpoint returns detailed `Summary` object rather than just
+  summary content
+- Working representations use a FIFO queue structure to maintain facts rather
+  than a full rewrite
+- Optimized deriver enqueue by prefetching message sequence numbers (eliminates N+1 queries)
+
+### Fixed
+
+- Deriver uses `get_context` internally to prevent context window limit errors
+- Embedding store will truncate context when querying documents to prevent embedding
+  token limit errors
+- Queue manager to schedule work based on available works rather than total
+  number of workers
+- Queue manager to use atomic db transactions rather than long lived transaction
+  for the worker lifecycle
+- Timestamp formats unified to ISO 8601 across the codebase
+- Internal get_context method's cutoff value is exclusive now
+
+## [2.2.0] — 2025-08-07
+
+### Added
+
+- Arbitrary filters now available on all search endpoints
+- Search combines full-text and semantic using reciprocal rank fusion
+- Webhook support (currently only supports queue_empty and test events, more to come)
+- Small test harness and custom test format for evaluating Honcho output quality
+- Added MCP server and documentation for it
+
+### Changed
+
+- Search has 10 results by default, max 100 results
+- Queue structure generalized to handle more event types
+- Summarizer now exhaustive by default and tuned for performance
+
+### Fixed
+
+- Resolve race condition for peers that leave a session while sending messages
+- Added explicit rollback to solve integrity error in queue
+- Re-introduced Sentry tracing to deriver
+- Better integrity logic in get_or_create API methods
+
+## [2.1.2] — 2025-07-30
+
+### Fixed
+
+- Summarizer module to ignore empty summaries and pass appropriate one to get_context
+- Structured Outputs calls with OpenAI provider to pass strict=True to Pydantic Schema
+
+## [2.1.1] — 2025-07-23
 
 ### Added
 
@@ -28,7 +89,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Refactor summarization for performance and code clarity
 - Refactor queue payloads for clarity
 
-## [2.1.0] - 2025-07-17
+## [2.1.0] — 2025-07-17
 
 ### Added
 

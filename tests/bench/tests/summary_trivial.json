@@ -175,11 +175,6 @@
         {
             "session": "session1",
             "summary": true,
-            "max_tokens": 100
-        },
-        {
-            "session": "session1",
-            "summary": true,
             "max_tokens": 250
         },
         {
@@ -190,22 +185,16 @@
         {
             "session": "session1",
             "summary": true,
-            "max_tokens": 800
-        },
-        {
-            "session": "session1",
-            "summary": true,
             "max_tokens": 1000
         },
         {
             "session": "session1",
             "summary": true,
-            "max_tokens": 1200
+            "max_tokens": 2500
         },
         {
             "session": "session1",
-            "summary": true,
-            "max_tokens": 2500
+            "summary": true
         }
     ]
 }

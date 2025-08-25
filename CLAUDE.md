@@ -1,3 +1,7 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 # Honcho Overview
 
 ## What is Honcho?
@@ -40,7 +44,7 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 - **Peers**: Create, list, update, chat (dialectic), messages, representation
 - **Sessions**: Create, list, update, delete, clone, manage peers, get context
 - **Messages**: Create (batch up to 100), list, get, update
-- **Keys**: Create scoped JWT tokens
+- **Keys**: Create scoped JWTs
 
 ### Key Features
 
@@ -100,28 +104,64 @@ All API routes follow the pattern: `/v1/{resource}/{id}/{action}`
 
 ```
 src/
-├── main.py          # FastAPI app setup with middleware and exception handlers
-├── models.py        # SQLAlchemy ORM models with proper type annotations
-├── schemas.py       # Pydantic validation schemas for API
-├── crud.py          # Database operations
-├── dependencies.py  # Dependency injection (DB sessions)
-├── exceptions.py    # Custom exception types
-├── security.py      # JWT authentication
-├── agent.py         # Dialectic API implementation
-├── routers/         # API endpoints
+├── main.py              # FastAPI app setup with middleware and exception handlers
+├── models.py            # SQLAlchemy ORM models with proper type annotations
+├── schemas.py           # Pydantic validation schemas for API
+├── config.py            # Configuration management
+├── db.py                # Database connection and session management
+├── dependencies.py      # Dependency injection (DB sessions)
+├── exceptions.py        # Custom exception types
+├── security.py          # JWT authentication
+├── embedding_client.py  # Embedding service client
+├── crud/                # Database operations
+│   ├── __init__.py
+│   ├── collection.py    # Collection CRUD operations
+│   ├── deriver.py       # Deriver-related CRUD operations
+│   ├── document.py      # Document CRUD operations
+│   ├── message.py       # Message CRUD operations
+│   ├── peer.py          # Peer CRUD operations
+│   ├── representation.py # Representation CRUD operations
+│   ├── session.py       # Session CRUD operations
+│   ├── webhook.py       # Webhook CRUD operations
+│   └── workspace.py     # Workspace CRUD operations
+├── dialectic/           # Dialectic API implementation
+│   ├── __init__.py
+│   ├── chat.py          # Chat functionality
+│   ├── prompts.py       # Prompt templates
+│   └── utils.py         # Dialectic utilities
+├── routers/             # API endpoints
 │   ├── workspaces.py
 │   ├── peers.py
 │   ├── sessions.py
 │   ├── messages.py
-│   └── keys.py
-├── deriver/         # Background processing system
-│   ├── consumer.py  # Message processing logic
-│   ├── queue.py     # Queue management
-│   └── tom/         # Theory of Mind implementations
-└── utils/           # Utilities
-    ├── history.py   # Session history management
-    ├── cache.py     # Caching utilities
-    └── model_client.py # LLM client abstraction
+│   ├── keys.py
+│   └── webhooks.py      # Webhook endpoints
+├── deriver/             # Background processing system
+│   ├── __init__.py
+│   ├── __main__.py      # Deriver entry point
+│   ├── consumer.py      # Message consumer
+│   ├── deriver.py       # Main deriver logic
+│   ├── enqueue.py       # Queue operations
+│   ├── prompts.py       # Deriver prompts
+│   ├── queue_manager.py # Queue management
+│   ├── queue_payload.py # Queue payload schemas
+│   └── utils.py         # Deriver utilities
+├── utils/               # Utilities
+│   ├── __init__.py
+│   ├── clients.py       # LLM client abstraction
+│   ├── embedding_store.py # Vector storage management
+│   ├── files.py         # File handling utilities
+│   ├── filter.py        # Query filtering utilities
+│   ├── formatting.py    # Message formatting utilities
+│   ├── logging.py       # Logging configuration
+│   ├── search.py        # Search functionality
+│   ├── shared_models.py # Shared data models
+│   ├── summarizer.py    # Session summarization
+│   └── types.py         # Type definitions
+└── webhooks/            # Webhook system
+    ├── events.py        # Webhook event definitions
+    ├── webhook_delivery.py # Webhook delivery logic
+    └── README.md        # Webhook documentation
 ```
 
 - Tests in pytest with fixtures in tests/conftest.py
@@ -142,7 +182,7 @@ src/
 2. **Flexible Theory of Mind**: Pluggable ToM implementations (conversational, single_prompt, long_term)
 3. **Background Processing**: Async queue system for expensive operations
 4. **Provider Abstraction**: Model client supports multiple LLM providers
-5. **Scoped Authentication**: JWT tokens can be scoped to workspace, peer, or session level
+5. **Scoped Authentication**: JWTs can be scoped to workspace, peer, or session level
 6. **Batch Operations**: Support for bulk message creation (up to 100 messages)
 7. **Session History**: Two-tier summarization (short every 20 messages, long every 60)
 

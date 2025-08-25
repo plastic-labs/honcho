@@ -378,6 +378,132 @@ def mock_mirascope_functions():
 
 
 @pytest.fixture(autouse=True)
+def mock_honcho_llm_call():
+    """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from src.utils.shared_models import (
+        DeductiveObservation,
+        ReasoningResponse,
+        ReasoningResponseWithThinking,
+        SemanticQueries,
+    )
+
+    def create_mock_response(
+        response_model: Any = None,
+        stream: bool = False,
+        return_call_response: bool = False,
+    ) -> Any:
+        """Create a mock response based on the expected return type"""
+        if stream:
+            # For streaming responses, return an async mock
+            mock_stream = AsyncMock()
+            mock_stream.__aiter__.return_value = iter([])
+            return mock_stream
+        elif response_model:
+            # For structured responses, create appropriate mock objects
+            if getattr(response_model, "__name__", "") == "ReasoningResponse":
+                mock_response = MagicMock(spec=ReasoningResponse)
+                mock_response.explicit = ["Test explicit observation"]
+                mock_response.deductive = [
+                    DeductiveObservation(
+                        conclusion="Test deductive conclusion",
+                        premises=["Test premise 1", "Test premise 2"],
+                    )
+                ]
+                # Add the _response attribute that contains thinking (used in the actual code)
+                mock_response._response = MagicMock()
+                mock_response._response.thinking = "Test thinking content"
+                return mock_response
+            elif (
+                getattr(response_model, "__name__", "")
+                == "ReasoningResponseWithThinking"
+            ):
+                mock_response = MagicMock(spec=ReasoningResponseWithThinking)
+                mock_response.thinking = "Test thinking content"
+                mock_response.explicit = ["Test explicit observation"]
+                mock_response.deductive = [
+                    DeductiveObservation(
+                        conclusion="Test deductive conclusion",
+                        premises=["Test premise 1", "Test premise 2"],
+                    )
+                ]
+                return mock_response
+            elif getattr(response_model, "__name__", "") == "SemanticQueries":
+                return SemanticQueries(queries=["test query 1", "test query 2"])
+            else:
+                # Generic response model mock
+                mock_response = MagicMock(spec=response_model)
+                # Set some default attributes for common use cases
+                if hasattr(mock_response, "content"):
+                    mock_response.content = "Test response content"
+                return mock_response
+        elif return_call_response:
+            # For CallResponse objects, create a mock with content and usage
+            mock_response = MagicMock()
+            mock_response.content = "Test response content"
+            mock_response.usage = MagicMock()
+            mock_response.usage.input_tokens = 100
+            mock_response.usage.output_tokens = 50
+            return mock_response
+        else:
+            # For string responses, return a simple string
+            return "Test response content"
+
+    # Patch the honcho_llm_call decorator to prevent actual LLM calls at module level
+    original_decorator = None
+    try:
+        import src.utils.clients
+
+        original_decorator = src.utils.clients.honcho_llm_call
+        src.utils.clients.honcho_llm_call = lambda *args, **kwargs: lambda func: func  # pyright: ignore[reportUnknownLambdaType]
+    except ImportError:
+        pass
+
+    def decorator_factory(*args: Any, **kwargs: Any) -> Callable[..., Any]:  # pyright: ignore[reportUnusedParameter]
+        """Factory function that creates the mock decorator"""
+
+        def mock_llm_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def async_wrapper(*func_args: Any, **func_kwargs: Any) -> Any:  # pyright: ignore[reportUnusedParameter]
+                # Create and return appropriate mock response
+                return create_mock_response(
+                    response_model=kwargs.get("response_model"),
+                    stream=kwargs.get("stream", False),
+                    return_call_response=kwargs.get("return_call_response", False),
+                )
+
+            def sync_wrapper(*func_args: Any, **func_kwargs: Any) -> Any:  # pyright: ignore[reportUnusedParameter]
+                # Create and return appropriate mock response
+                return create_mock_response(
+                    response_model=kwargs.get("response_model"),
+                    stream=kwargs.get("stream", False),
+                    return_call_response=kwargs.get("return_call_response", False),
+                )
+
+            # Check if the original function is async
+            import inspect
+
+            if inspect.iscoroutinefunction(func):
+                return async_wrapper
+            else:
+                return sync_wrapper
+
+        return mock_llm_decorator
+
+    with patch("src.utils.clients.honcho_llm_call", side_effect=decorator_factory):
+        yield decorator_factory
+
+    # Restore the original decorator
+    if original_decorator:
+        try:
+            import src.utils.clients
+
+            src.utils.clients.honcho_llm_call = original_decorator
+        except ImportError:
+            pass
+
+
+@pytest.fixture(autouse=True)
 def mock_tracked_db(db_session: AsyncSession):
     """Mock tracked_db to use the test database session"""
     from contextlib import asynccontextmanager
@@ -386,7 +512,10 @@ def mock_tracked_db(db_session: AsyncSession):
     async def mock_tracked_db_context(_: str | None = None):
         yield db_session
 
-    with patch("src.dependencies.tracked_db", mock_tracked_db_context):
+    with (
+        patch("src.dependencies.tracked_db", mock_tracked_db_context),
+        patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
+    ):
         yield
 
 

@@ -10,7 +10,9 @@ def dialectic_prompt(
     recent_conversation_history: str | None,
     additional_context: str | None,
     peer_name: str,
+    peer_card: list[str] | None,
     target_name: str | None = None,
+    target_peer_card: list[str] | None = None,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
@@ -24,14 +26,30 @@ def dialectic_prompt(
     Returns:
         Formatted prompt string for the dialectic model
     """
-    query_target = (
-        f"user {peer_name}'s understanding of {target_name}"
-        if target_name
-        else f"user {peer_name}"
-    )
+
+    if target_name:
+        query_target = f"""The query is about user {peer_name}'s understanding of {target_name}.
+
+The user's known biographical information:
+{chr(10).join(peer_card) if peer_card else "(none)"}
+
+The target's known biographical information:
+{chr(10).join(target_peer_card) if target_peer_card else "(none)"}
+
+If the user's name or nickname is known, exclusively refer to them by that name.
+If the target's name or nickname is known, exclusively refer to them by that name.
+"""
+    else:
+        query_target = f"""The query is about user {peer_name}.
+
+The user's known biographical information:
+{chr(10).join(peer_card) if peer_card else "(none)"}
+
+If the user's name or nickname is known, exclusively refer to them by that name.
+"""
+
     return c(
         f"""
-The query is about {query_target}.
 You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.
 
 ## INPUT STRUCTURE
@@ -55,6 +73,8 @@ Provide a natural language response that:
 3. References the reasoning types and evidence strength when relevant
 4. Maintains appropriate confidence levels based on conclusion types
 5. Flags any limitations or gaps in available information
+
+{query_target}
 
 <recent_conversation_history>
 {recent_conversation_history}

@@ -1,6 +1,6 @@
 import datetime
 from logging import getLogger
-from typing import Any, final
+from typing import Any, Literal, final
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -83,6 +83,7 @@ class Workspace(Base):
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
     name: Mapped[str] = mapped_column(TEXT, index=True, unique=True)
     peers = relationship("Peer", back_populates="workspace")
+    webhook_endpoints = relationship("WebhookEndpoint", back_populates="workspace")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -358,6 +359,9 @@ class Document(Base):
     )
 
 
+TaskType = Literal["webhook", "summary", "representation"]
+
+
 @final
 class QueueItem(Base):
     __tablename__: str = "queue"
@@ -367,8 +371,14 @@ class QueueItem(Base):
     session_id: Mapped[str] = mapped_column(
         ForeignKey("sessions.id"), index=True, nullable=True
     )
+    work_unit_key: Mapped[str] = mapped_column(TEXT, nullable=False)
+
+    task_type: Mapped[TaskType] = mapped_column(TEXT, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    def __repr__(self) -> str:
+        return f"QueueItem(id={self.id}, session_id={self.session_id}, work_unit_key={self.work_unit_key}, task_type={self.task_type}, payload={self.payload}, processed={self.processed})"
 
 
 @final
@@ -376,25 +386,35 @@ class ActiveQueueSession(Base):
     __tablename__: str = "active_queue_sessions"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    session_id: Mapped[str | None] = mapped_column(
-        ForeignKey("sessions.id"), nullable=True
-    )
-    sender_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    target_name: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    task_type: Mapped[str] = mapped_column(TEXT)
+
+    work_unit_key: Mapped[str] = mapped_column(TEXT, unique=True, index=True)
+
     last_updated: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=func.now(), onupdate=func.now()
     )
 
-    __table_args__ = (
-        UniqueConstraint(
-            "session_id",
-            "sender_name",
-            "target_name",
-            "task_type",
-            name="unique_active_queue_session",
-        ),
+
+@final
+class WebhookEndpoint(Base):
+    __tablename__: str = "webhook_endpoints"
+    id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    workspace_name: Mapped[str] = mapped_column(
+        ForeignKey("workspaces.name"), index=True, nullable=False
     )
+    url: Mapped[str] = mapped_column(TEXT, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now()
+    )
+
+    workspace = relationship("Workspace", back_populates="webhook_endpoints")
+
+    __table_args__ = (
+        CheckConstraint("length(url) <= 2048", name="webhook_endpoint_url_length"),
+        Index("idx_webhook_endpoints_workspace_lookup", "workspace_name"),
+    )
+
+    def __repr__(self) -> str:
+        return f"WebhookEndpoint(id={self.id}, workspace_name={self.workspace_name}, url={self.url})"
 
 
 @final

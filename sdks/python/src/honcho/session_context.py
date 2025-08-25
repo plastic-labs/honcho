@@ -9,6 +9,34 @@ if TYPE_CHECKING:
     from .peer import Peer
 
 
+class Summary(BaseModel):
+    """Represents a summary of a session's conversation."""
+
+    content: str = Field(..., description="The summary text")
+    message_id: int = Field(
+        ..., description="The ID of the message that this summary covers up to"
+    )
+    summary_type: str = Field(..., description="The type of summary (short or long)")
+    created_at: str = Field(
+        ..., description="The timestamp of when the summary was created (ISO format)"
+    )
+    token_count: int = Field(
+        ..., description="The number of tokens in the summary text"
+    )
+
+
+class SessionSummaries(BaseModel):
+    """Contains both short and long summaries for a session."""
+
+    id: str = Field(..., description="The session ID")
+    short_summary: Summary | None = Field(
+        None, description="The short summary if available"
+    )
+    long_summary: Summary | None = Field(
+        None, description="The long summary if available"
+    )
+
+
 class SessionContext(BaseModel):
     """
     Represents the context of a session containing a curated list of messages.
@@ -27,8 +55,8 @@ class SessionContext(BaseModel):
     messages: list[Message] = Field(
         ..., description="List of Message objects to include in the context"
     )
-    summary: str = Field(
-        ..., description="Summary of the session history prior to the message cutoff"
+    summary: Summary | None = Field(
+        None, description="Summary of the session history prior to the message cutoff"
     )
 
     @validate_call
@@ -40,8 +68,8 @@ class SessionContext(BaseModel):
         messages: list[Message] = Field(
             ..., description="List of Message objects to include in the context"
         ),
-        summary: str = Field(
-            ...,
+        summary: Summary | None = Field(
+            None,
             description="Summary of the session history prior to the message cutoff",
         ),
     ) -> None:
@@ -50,6 +78,7 @@ class SessionContext(BaseModel):
 
         Args:
             messages: List of Message objects to include in the context
+            summary: Optional Summary object containing summary information
         """
         super().__init__(
             session_id=session_id,
@@ -61,18 +90,18 @@ class SessionContext(BaseModel):
         self,
         *,
         assistant: str | Peer,
-    ) -> list[dict[str, object]]:
+    ) -> list[dict[str, str]]:
         """
         Convert the context to OpenAI-compatible message format.
 
-        Transforms the message history into the format expected by OpenAI's
-        Chat Completions API, with proper role assignments based on the
+        Transforms the message history and summary into the format expected by
+        OpenAI's Chat Completions API, with proper role assignments based on the
         assistant's identity.
 
         Args:
             assistant: The assistant peer (Peer object or peer ID string) to use
-                       for determining message roles. Messages from this peer will
-                       be marked as "assistant", others as "user"
+            for determining message roles. Messages from this peer will be marked
+            as "assistant", others as "user"
 
         Returns:
             A list of dictionaries in OpenAI format, where each dictionary contains
@@ -80,26 +109,33 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        return [
+        messages = [
             {
                 "role": "assistant" if message.peer_id == assistant_id else "user",
+                "name": message.peer_id,
                 "content": message.content,
             }
             for message in self.messages
         ]
 
+        if self.summary:
+            summary_message = {
+                "role": "system",
+                "content": f"<summary>{self.summary.content}</summary>",
+            }
+            return [summary_message, *messages]
+        return messages
+
     def to_anthropic(
         self,
         *,
         assistant: str | Peer,
-    ) -> list[dict[str, object]]:
+    ) -> list[dict[str, str]]:
         """
         Convert the context to Anthropic-compatible message format.
 
         Transforms the message history into the format expected by Anthropic's
-        Claude API. TODO: Anthropic requires messages to alternate between
-        user and assistant roles, so this method may need to handle role
-        consolidation or filtering in the future.
+        Claude API, with proper role assignments based on the assistant's identity.
 
         Args:
             assistant: The assistant peer (Peer object or peer ID string) to use
@@ -116,13 +152,26 @@ class SessionContext(BaseModel):
         """
 
         assistant_id = assistant if isinstance(assistant, str) else assistant.id
-        return [
+        messages = [
             {
-                "role": "assistant" if message.peer_id == assistant_id else "user",
+                "role": "assistant",
                 "content": message.content,
+            }
+            if message.peer_id == assistant_id
+            else {
+                "role": "user",
+                "content": f"{message.peer_id}: {message.content}",
             }
             for message in self.messages
         ]
+
+        if self.summary:
+            summary_message = {
+                "role": "user",
+                "content": f"<summary>{self.summary.content}</summary>",
+            }
+            return [summary_message, *messages]
+        return messages
 
     def __len__(self) -> int:
         """
@@ -131,7 +180,7 @@ class SessionContext(BaseModel):
         Returns:
             The number of messages in this context
         """
-        return len(self.messages)
+        return len(self.messages) + (1 if self.summary else 0)
 
     def __repr__(self) -> str:
         """
@@ -140,4 +189,4 @@ class SessionContext(BaseModel):
         Returns:
             A string representation suitable for debugging
         """
-        return f"SessionContext(messages={len(self.messages)})"
+        return f"SessionContext(messages={len(self.messages)}, summary={'present' if self.summary else 'None'})"
