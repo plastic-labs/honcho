@@ -347,7 +347,7 @@ async def update_message(
     workspace_name: str,
     session_name: str,
     message_id: str,
-) -> bool:
+) -> models.Message:
     honcho_message = await get_message(
         db,
         workspace_name=workspace_name,

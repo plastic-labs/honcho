@@ -88,6 +88,18 @@ export const MessageMetadataSchema = z
   .optional()
 
 /**
+ * Schema for message metadata update (required, not optional).
+ */
+export const MessageMetadataUpdateSchema = z.record(z.string(), z.unknown())
+
+/**
+ * Schema for message ID validation.
+ */
+export const MessageIdSchema = z
+  .string()
+  .min(1, 'Message ID must be a non-empty string')
+
+/**
  * Schema for message creation.
  */
 export const MessageCreateSchema = z.object({
