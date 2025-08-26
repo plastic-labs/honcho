@@ -73,11 +73,11 @@ import { Honcho } from "@honcho-ai/sdk";
 const honcho = new Honcho({});
 
 // Create peers
-const alice = honcho.peer("alice");
-const assistant = honcho.peer("assistant");
+const alice = await honcho.peer("alice");
+const assistant = await honcho.peer("assistant");
 
 // Create a session for conversation
-const session = honcho.session("conversation-1");
+const session = await honcho.session("conversation-1");
 
 // Add messages to conversation
 await session.addMessages([
@@ -210,10 +210,10 @@ workspaces = honcho.get_workspaces()
 
 ```typescript TypeScript
 // Get or create a peer
-const peer = honcho.peer(id);
+const peer = await honcho.peer(id);
 
 // Get or create a session
-const session = honcho.session(id);
+const session = await honcho.session(id);
 
 // List all peers in workspace (returns Page<Peer>)
 const peers = await honcho.getPeers();
@@ -281,9 +281,9 @@ alice.set_metadata(metadata)
 ```
 
 ```typescript TypeScript
-// Create peers (lazy creation - no API call yet)
-const alice = honcho.peer("alice");
-const assistant = honcho.peer("assistant");
+// Create peers (returns Promise<Peer>)
+const alice = await honcho.peer("alice");
+const assistant = await honcho.peer("assistant");
 
 // Peer properties
 console.log(`Peer ID: ${alice.id}`);
@@ -299,7 +299,7 @@ const sessionResponse = await alice.chat("What happened in session-1?", {
 const streamResponse = await alice.chat("Tell me a story", { stream: true });
 
 // Add content to a session with a peer
-const session = honcho.session("session-1");
+const session = await honcho.session("session-1");
 await session.addMessages([
   alice.message("I love TypeScript programming"),
   alice.message("Today I learned about async programming"),
@@ -374,8 +374,8 @@ metadata = session.get_metadata()
 ```
 
 ```typescript TypeScript
-// Create session (like peers, lazy creation)
-const session = honcho.session("conversation-1");
+// Create session (returns Promise<Session>)
+const session = await honcho.session("conversation-1");
 
 // Session properties
 console.log(`Session ID: ${session.id}`);
@@ -500,11 +500,13 @@ moderator_view = moderator.chat("What feedback am I getting?", session_id=group_
 
 ```typescript TypeScript
 // Create multiple peers
-const users = Array.from({ length: 5 }, (_, i) => honcho.peer(`user-${i}`));
-const moderator = honcho.peer("moderator");
+const users = await Promise.all(
+  Array.from({ length: 5 }, (_, i) => honcho.peer(`user-${i}`))
+);
+const moderator = await honcho.peer("moderator");
 
 // Create group session
-const groupChat = honcho.session("group-discussion");
+const groupChat = await honcho.session("group-discussion");
 await groupChat.addPeers([...users, moderator]);
 
 // Add messages from different peers
@@ -687,12 +689,12 @@ support_agent = honcho.peer(f"agent-{agent_id}")
 
 ```typescript TypeScript
 // Peers and sessions are lightweight - create as needed
-const alice = honcho.peer("alice");
-const session = honcho.session("chat-1");
+const alice = await honcho.peer("alice");
+const session = await honcho.session("chat-1");
 
 // Use descriptive IDs for better debugging
-const userSession = honcho.session(`user-${userId}-support-${ticketId}`);
-const supportAgent = honcho.peer(`agent-${agentId}`);
+const userSession = await honcho.session(`user-${userId}-support-${ticketId}`);
+const supportAgent = await honcho.peer(`agent-${agentId}`);
 ```
 </CodeGroup>
 
@@ -711,8 +713,10 @@ context = session.get_context(tokens=1500)  # Limit context size
 ```
 
 ```typescript TypeScript
-// Lazy creation - no API calls until needed
-const peers = Array.from({ length: 100 }, (_, i) => honcho.peer(`user-${i}`)); // Fast
+// Create multiple peers (returns Promise<Peer>[])
+const peers = await Promise.all(
+  Array.from({ length: 100 }, (_, i) => honcho.peer(`user-${i}`))
+);
 
 // Batch operations when possible
 await session.addMessages(

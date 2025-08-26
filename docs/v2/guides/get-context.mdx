@@ -233,9 +233,9 @@ import { Honcho } from "@honcho-ai/sdk";
     const openai = new OpenAI();
 
     // Set up conversation
-    const session = honcho.session("support-chat");
-    const user = honcho.peer("user-123");
-    const assistant = honcho.peer("support-bot");
+    const session = await honcho.session("support-chat");
+    const user = await honcho.peer("user-123");
+    const assistant = await honcho.peer("support-bot");
 
     // Add conversation history
     await session.addMessages([

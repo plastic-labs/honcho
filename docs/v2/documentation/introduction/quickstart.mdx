@@ -51,18 +51,22 @@ pnpm add @honcho-ai/sdk
 
 ## 2. Initialize the Client
 
+The Honcho client is the main entry point for interacting with Honcho's API. By default, it uses the demo environment and a default workspace.
+
+### Demo Environment (Default)
+
 <CodeGroup>
 ```python Python
 from honcho import Honcho
 
-# Initialize client (uses demo environment)
+# Initialize client (uses demo environment and default workspace)
 client = Honcho()
 
-# To override and use production:
-# client = Honcho(
-#     api_key="your-api-key",
-#     environment="production"
-# )
+# Demo environment: create your own workspace using a nanoid or uuid
+# otherwise it could be difficult to retrieve your message data via API
+client = Honcho(
+    workspace="your-workspace-id"
+)
 ```
 
 ```typescript TypeScript
@@ -71,11 +75,39 @@ import { Honcho } from '@honcho-ai/sdk';
 // Initialize client (uses demo environment)
 const client = new Honcho({});
 
-// To override and use production:
-// const client = new Honcho({
-//     apiKey: "your-api-key",
-//     environment: "production"
-// });
+// Demo environment: create your own workspace using a nanoid or uuid
+// otherwise it could be difficult to retrieve your data via API
+const client = new Honcho({
+    workspace: "your-workspace-id"
+})
+```
+</CodeGroup>
+
+### Production Environment
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Production environment with API key
+client = Honcho(
+    api_key="your-api-key",
+    environment="production",
+    # Create a workspace, otherwise set to "default"
+    # workspace="your-workspace-id"
+)
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Production environment with API key
+const client = new Honcho({
+    apiKey: "your-api-key",
+    environment: "production",
+    // Create a workspace, otherwise set to "default"
+    // workspace: "your-workspace-id"
+});
 ```
 </CodeGroup>
 
@@ -90,8 +122,8 @@ bob = client.peer("bob")
 ```
 
 ```typescript TypeScript
-const alice = client.peer("alice")
-const bob = client.peer("bob")
+const alice = await client.peer("alice")
+const bob = await client.peer("bob")
 ```
 </CodeGroup>
 
@@ -106,8 +138,8 @@ session.add_peers([alice, bob])
 ```
 
 ```typescript TypeScript
-const session = client.session("session_1")
-session.addPeers([alice, bob])
+const session = await client.session("session_1")
+await session.addPeers([alice, bob])
 ```
 </CodeGroup>
 
@@ -128,7 +160,7 @@ session.add_messages([
 ```
 
 ```typescript TypeScript
-session.addMessages([
+await session.addMessages([
     alice.message("Hi Bob, how are you?"),
     bob.message("I'm good, thank you!"),
     alice.message("What are you doing today after work?"),

@@ -59,9 +59,9 @@ import { Honcho } from "@honcho-ai/sdk";
 const honcho = new Honcho({});
 
 // Create peers and session
-const user = honcho.peer("user-123");
-const assistant = honcho.peer("ai-assistant");
-const session = honcho.session("support-conversation");
+const user = await honcho.peer("user-123");
+const assistant = await honcho.peer("ai-assistant");
+const session = await honcho.session("support-conversation");
 
 // Add conversation to trigger representation generation
 await session.addMessages([
