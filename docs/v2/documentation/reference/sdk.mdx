@@ -739,7 +739,7 @@ context = session.get_context(tokens=1500)  # Limit context size
 ```
 
 ```typescript TypeScript
-// Create multiple peers (returns Promise<Peer>[])
+// Lazy creation - no API calls until needed
 const peers = await Promise.all(
   Array.from({ length: 100 }, (_, i) => honcho.peer(`user-${i}`))
 );
