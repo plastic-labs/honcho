@@ -133,6 +133,7 @@ def create_queue_payload() -> Callable[..., Any]:
             "workspace_name": message.workspace_name,
             "session_name": message.session_name,
             "message_id": message.id,
+            "message_public_id": message.public_id,
             "content": message.content,
             "created_at": message.created_at or datetime.now(timezone.utc),
         }
