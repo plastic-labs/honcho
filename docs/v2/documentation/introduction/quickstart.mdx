@@ -19,9 +19,11 @@ For production-level use, Honcho offers two powerful ways to leverage ambient pe
 
 Have your project use Honcho's ambient personalization capabilities in just a few steps. No signup required!
 
-<Note>
-This quickstart uses the demo server at https://demo.honcho.dev
-</Note>
+<Info>
+Without configuration, the SDK defaults to the demo server. For production use:
+1. Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys)
+2. Set `environment="production"` and provide your `api_key`
+</Info>
 
 ## 1. Install the SDK
 
@@ -53,15 +55,27 @@ pnpm add @honcho-ai/sdk
 ```python Python
 from honcho import Honcho
 
-# Initialize client (using the demo environment)
+# Initialize client (uses demo environment)
 client = Honcho()
+
+# To override and use production:
+# client = Honcho(
+#     api_key="your-api-key",
+#     environment="production"
+# )
 ```
 
 ```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
 
-// Initialize client (using the demo environment)
-const client = new Honcho();
+// Initialize client (uses demo environment)
+const client = new Honcho({});
+
+// To override and use production:
+// const client = new Honcho({
+//     apiKey: "your-api-key",
+//     environment: "production"
+// });
 ```
 </CodeGroup>
 
