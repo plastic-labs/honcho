@@ -64,24 +64,14 @@ from honcho import Honcho
 # Initialize client (uses demo environment and default workspace)
 client = Honcho()
 
-# Demo environment: create your own workspace using a nanoid or uuid
-# otherwise it could be difficult to retrieve your message data via API
-client = Honcho(
-    workspace="your-workspace-id"
-)
 ```
 
 ```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
 
-// Initialize client (uses demo environment)
+// Initialize client (uses demo environment and default workspace)
 const client = new Honcho({});
 
-// Demo environment: create your own workspace using a nanoid or uuid
-// otherwise it could be difficult to retrieve your data via API
-const client = new Honcho({
-    workspace: "your-workspace-id"
-})
 ```
 </CodeGroup>
 
@@ -89,11 +79,12 @@ const client = new Honcho({
 
 <CodeGroup>
 ```python Python
+import os
 from honcho import Honcho
 
 # Production environment with API key
 client = Honcho(
-    api_key="your-api-key",
+    api_key=os.environ["HONCHO_API_KEY"],
     environment="production",
     # Create a workspace, otherwise set to "default"
     # workspace="your-workspace-id"
@@ -105,7 +96,7 @@ import { Honcho } from '@honcho-ai/sdk';
 
 // Production environment with API key
 const client = new Honcho({
-    apiKey: "your-api-key",
+    apiKey: process.env.HONCHO_API_KEY!,
     environment: "production",
     // Create a workspace, otherwise set to "default"
     // workspace: "your-workspace-id"
