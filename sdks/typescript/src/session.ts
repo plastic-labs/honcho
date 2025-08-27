@@ -12,6 +12,8 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
+  MessageIdSchema,
+  MessageMetadataUpdateSchema,
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -393,6 +395,35 @@ export class Session {
   }
 
   /**
+   * Update metadata for a specific message in this session.
+   *
+   * Makes an API call to update the metadata associated with a message.
+   * This will overwrite any existing metadata with the provided values.
+   * Metadata is useful for storing custom attributes, configuration, or
+   * contextual information about the session.
+
+   * @param messageId - ID of the message to update
+   * @param metadata - A dictionary of metadata to associate with the message.
+   *                   Keys must be strings, values can be any JSON-serializable type
+   * @returns Promise resolving to the updated Message object
+   */
+  async setMessageMetadata(
+    messageId: string,
+    metadata: Record<string, unknown>
+  ): Promise<Message> {
+    const validatedMessageId = MessageIdSchema.parse(messageId)
+    const validatedMetadata = MessageMetadataUpdateSchema.parse(metadata)
+    return await this._client.workspaces.sessions.messages.update(
+      this.workspaceId,
+      this.id,
+      validatedMessageId,
+      {
+        metadata: validatedMetadata,
+      }
+    )
+  }
+
+  /**
    * Get metadata for this session.
    *
    * Makes an API call to retrieve the current metadata associated with this session.
@@ -425,6 +456,16 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       metadata,
     })
+  }
+
+  /**
+   * Delete this session.
+   *
+   * Makes an API call to mark this session as inactive. The session and its
+   * messages will no longer be accessible through normal operations.
+   */
+  async delete(): Promise<void> {
+    await this._client.workspaces.sessions.delete(this.workspaceId, this.id)
   }
 
   /**

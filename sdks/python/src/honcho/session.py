@@ -341,6 +341,37 @@ class Session(BaseModel):
         )
         return SyncPage(messages_page)
 
+    @validate_call
+    def set_message_metadata(
+        self,
+        message_id: str = Field(
+            ..., min_length=1, description="ID of the message to update"
+        ),
+        metadata: dict[str, object] = Field(
+            ..., description="Metadata dictionary to associate with the message"
+        ),
+    ) -> Message:
+        """
+        Update metadata for a specific message in this session.
+
+        Makes an API call to update the metadata associated with a message.
+        This will overwrite any existing metadata with the provided values.
+
+        Args:
+            message_id: ID of the message to update
+            metadata: A dictionary of metadata to associate with the message.
+                     Keys must be strings, values can be any JSON-serializable type
+
+        Returns:
+            The updated Message object
+        """
+        return self._client.workspaces.sessions.messages.update(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+            message_id=message_id,
+            metadata=metadata,
+        )
+
     def get_metadata(self) -> dict[str, object]:
         """
         Get metadata for this session.
@@ -381,6 +412,18 @@ class Session(BaseModel):
             session_id=self.id,
             workspace_id=self.workspace_id,
             metadata=metadata,
+        )
+
+    def delete(self) -> None:
+        """
+        Delete this session.
+
+        Makes an API call to mark this session as inactive. The session and its
+        messages will no longer be accessible through normal operations.
+        """
+        self._client.workspaces.sessions.delete(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
         )
 
     @validate_call

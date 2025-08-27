@@ -269,7 +269,13 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="Python SDK">
         [Python SDK](https://pypi.org/project/honcho-ai/)
-        <Update label="v1.4.0 (Current)">
+        <Update label="v1.4.1 (Current)">
+        ### Added
+
+        - Sessions can be deleted
+        - Message metadata can be updated
+        </Update>
+        <Update label="v1.4.0">
         ### Added
 
         - getSummaries API returning structured summaries
@@ -279,6 +285,22 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
         - Messages can take an optional `created_at` value, defaulting to the current
           time (UTC ISO 8601)
+        </Update>
+        <Update label="v1.3.0">
+        ### Added
+
+        - Added get_peer_config to sessions module
+
+        ### Changed
+
+        - Summaries are now included in `toOpenAI` and `toAnthropic` functions
+        - `SessionContext.__len__` now counts the summary in its total
+        - `filter` keyword changed to `filters`
+
+        ### Fixed
+
+        - Added missing metadata inputs in many places
+        - Better documentation all over
         </Update>
         <Update label="v1.2.2">
             ### Added
@@ -316,7 +338,13 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
     <Tab title="TypeScript SDK">
         [TypeScript SDK](https://www.npmjs.com/package/@honcho-ai/sdk)
-        <Update label="v1.4.0 (Current)">
+        <Update label="v1.4.1 (Current)">
+        ### Added
+
+        - Sessions can be deleted
+        - Message metadata can be updated
+        </Update>
+        <Update label="v1.4.0">
         ### Added
 
         - getSummaries API returning structured summaries
@@ -326,6 +354,22 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
 
         - Messages can take an optional `created_at` value, defaulting to the current
           time (UTC ISO 8601)
+        </Update>
+        <Update label="v1.3.0">
+        ### Added
+
+        - Added getPeerConfig to Session object
+
+        ### Changed
+
+        - Summaries are now included in `toOpenAI` and `toAnthropic` functions
+        - `SessionContext.__len__` now counts the summary in its total
+        - `filter` keyword changed to `filters`
+
+        ### Fixed
+
+        - Added missing metadata inputs in many places
+        - Better documentation all over
         </Update>
         <Update label="v1.2.1">
             ### Added

@@ -297,3 +297,111 @@ async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, s
         assert isinstance(peer, Peer)
         session.add_messages([peer.message("test message for working rep")])
         _working_rep = session.working_rep(peer)
+
+
+@pytest.mark.asyncio
+async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]):
+    """
+    Tests deleting a session.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-delete")
+        assert isinstance(session, AsyncSession)
+
+        # Add a peer to make the session exist
+        user = await honcho_client.peer(id="user-delete")
+        await session.add_peers([user])
+
+        # Delete should not raise an exception
+        await session.delete()
+
+        all_sessions_page = await honcho_client.get_sessions({"is_active": True})
+        all_sessions = all_sessions_page.items
+        all_session_ids = [s.id for s in all_sessions]
+        assert "test-session-delete" not in all_session_ids
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-delete")
+        assert isinstance(session, Session)
+
+        # Add a peer to make the session exist
+        user = honcho_client.peer(id="user-delete")
+        session.add_peers([user])
+
+        # Delete should not raise an exception
+        session.delete()
+
+        all_sessions_page = honcho_client.get_sessions({"is_active": True})
+        all_sessions = list(all_sessions_page)
+        all_session_ids = [s.id for s in all_sessions]
+        assert "test-session-delete" not in all_session_ids
+
+
+@pytest.mark.asyncio
+async def test_session_set_message_metadata(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests updating message metadata in a session.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-set-meta")
+        assert isinstance(session, AsyncSession)
+        user = await honcho_client.peer(id="user-set-meta")
+        assert isinstance(user, AsyncPeer)
+
+        # Add a message first and get its ID
+        await session.add_messages(
+            [
+                user.message(
+                    "Test message for metadata update", metadata={"priority": "low"}
+                )
+            ]
+        )
+
+        # Get the message to get its actual ID
+        messages_page = await session.get_messages()
+        messages = messages_page.items
+        assert len(messages) > 0
+        message_id = messages[0].id
+
+        # Update metadata
+        updated_message = await session.set_message_metadata(
+            message_id=message_id, metadata={"priority": "high", "category": "test"}
+        )
+
+        assert updated_message.metadata == {"priority": "high", "category": "test"}
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-set-meta")
+        assert isinstance(session, Session)
+        user = honcho_client.peer(id="user-set-meta")
+        assert isinstance(user, Peer)
+
+        # Add a message first and get its ID
+        session.add_messages(
+            [
+                user.message(
+                    "Test message for metadata update", metadata={"priority": "low"}
+                )
+            ]
+        )
+
+        # Get the message to get its actual ID
+        messages_page = session.get_messages()
+        messages = list(messages_page)
+        assert len(messages) > 0
+        message_id = messages[0].id
+
+        # Update metadata
+        updated_message = session.set_message_metadata(
+            message_id=message_id, metadata={"priority": "high", "category": "test"}
+        )
+
+        assert updated_message.metadata == {"priority": "high", "category": "test"}

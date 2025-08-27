@@ -101,5 +101,6 @@ async def process_summary_task(
         payload.session_name,
         payload.message_id,
         payload.message_seq_in_session,
+        payload.message_public_id,
     )
     log_performance_metrics(f"summary_{payload.workspace_name}_{payload.message_id}")

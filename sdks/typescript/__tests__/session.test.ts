@@ -1,8 +1,8 @@
-import { Session } from '../src/session';
-import { Peer } from '../src/peer';
-import { Page } from '../src/pagination';
-import { SessionContext } from '../src/session_context';
 import { Honcho } from '../src/client';
+import { Page } from '../src/pagination';
+import { Peer } from '../src/peer';
+import { Session } from '../src/session';
+import { SessionContext } from '../src/session_context';
 
 // Mock the @honcho-ai/core module
 jest.mock('@honcho-ai/core', () => {
@@ -21,9 +21,11 @@ jest.mock('@honcho-ai/core', () => {
           create: jest.fn(),
           list: jest.fn(),
           upload: jest.fn(),
+          update: jest.fn(),
         },
         getOrCreate: jest.fn(),
         update: jest.fn(),
+        delete: jest.fn(),
         getContext: jest.fn(),
         search: jest.fn(),
       },
@@ -888,6 +890,51 @@ describe('Session', () => {
       mockClient.workspaces.peers.workingRepresentation.mockRejectedValue(new Error('Failed to get working representation'));
 
       await expect(session.workingRep('peer1')).rejects.toThrow();
+    });
+  });
+
+  describe('delete', () => {
+    it('should delete the session', async () => {
+      mockClient.workspaces.sessions.delete.mockResolvedValue({});
+
+      await session.delete();
+
+      expect(mockClient.workspaces.sessions.delete).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session'
+      );
+    });
+
+    it('should handle API errors', async () => {
+      mockClient.workspaces.sessions.delete.mockRejectedValue(new Error('Failed to delete session'));
+
+      await expect(session.delete()).rejects.toThrow('Failed to delete session');
+    });
+  });
+
+  describe('setMessageMetadata', () => {
+    it('should update message metadata successfully', async () => {
+      const messageId = 'msg-123';
+      const metadata = { priority: 'high', category: 'greeting' };
+      const mockUpdatedMessage = {
+        id: messageId,
+        content: 'Hello world',
+        metadata: metadata,
+        peer_id: 'peer1',
+        session_id: 'test-session',
+        created_at: '2025-01-01T00:00:00Z',
+      };
+      mockClient.workspaces.sessions.messages.update.mockResolvedValue(mockUpdatedMessage);
+
+      const result = await session.setMessageMetadata(messageId, metadata);
+
+      expect(result).toEqual(mockUpdatedMessage);
+      expect(mockClient.workspaces.sessions.messages.update).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-session',
+        messageId,
+        { metadata }
+      );
     });
   });
 });
