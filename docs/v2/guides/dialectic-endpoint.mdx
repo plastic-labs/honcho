@@ -38,7 +38,7 @@ session = honcho.session("demo-session")
 import { Honcho } from '@honcho-ai/sdk';
 
 // use the default workspace
-const honcho = new Honcho();
+const honcho = new Honcho({});
 
 // get/create a peer
 const peer = await honcho.peer('demo-user');

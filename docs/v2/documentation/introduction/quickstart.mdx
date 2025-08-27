@@ -19,9 +19,13 @@ For production-level use, Honcho offers two powerful ways to leverage ambient pe
 
 Have your project use Honcho's ambient personalization capabilities in just a few steps. No signup required!
 
-<Note>
-This quickstart uses the demo server at https://demo.honcho.dev
-</Note>
+<Info>
+By default, the SDK uses the demo server hosted at demo.honcho.dev. The demo server is meant for quick experimentation and the data is cleared on a regular basis. Do not use for production applications.
+
+For production use:
+1. Get your API key at [app.honcho.dev/api-keys](https://app.honcho.dev/api-keys)
+2. Set `environment="production"` and provide your `api_key`
+</Info>
 
 ## 1. Install the SDK
 
@@ -49,19 +53,63 @@ pnpm add @honcho-ai/sdk
 
 ## 2. Initialize the Client
 
+The Honcho client is the main entry point for interacting with Honcho's API. By default, it uses the demo environment and a default workspace.
+
+### Demo Environment (Default)
+
 <CodeGroup>
 ```python Python
 from honcho import Honcho
 
-# Initialize client (using the demo environment)
+# Initialize client (uses demo environment and default workspace)
 client = Honcho()
+
+# Demo environment: create your own workspace using a nanoid or uuid
+# otherwise it could be difficult to retrieve your message data via API
+client = Honcho(
+    workspace="your-workspace-id"
+)
 ```
 
 ```typescript TypeScript
 import { Honcho } from '@honcho-ai/sdk';
 
-// Initialize client (using the demo environment)
-const client = new Honcho();
+// Initialize client (uses demo environment)
+const client = new Honcho({});
+
+// Demo environment: create your own workspace using a nanoid or uuid
+// otherwise it could be difficult to retrieve your data via API
+const client = new Honcho({
+    workspace: "your-workspace-id"
+})
+```
+</CodeGroup>
+
+### Production Environment
+
+<CodeGroup>
+```python Python
+from honcho import Honcho
+
+# Production environment with API key
+client = Honcho(
+    api_key="your-api-key",
+    environment="production",
+    # Create a workspace, otherwise set to "default"
+    # workspace="your-workspace-id"
+)
+```
+
+```typescript TypeScript
+import { Honcho } from '@honcho-ai/sdk';
+
+// Production environment with API key
+const client = new Honcho({
+    apiKey: "your-api-key",
+    environment: "production",
+    // Create a workspace, otherwise set to "default"
+    // workspace: "your-workspace-id"
+});
 ```
 </CodeGroup>
 
@@ -76,8 +124,8 @@ bob = client.peer("bob")
 ```
 
 ```typescript TypeScript
-const alice = client.peer("alice")
-const bob = client.peer("bob")
+const alice = await client.peer("alice")
+const bob = await client.peer("bob")
 ```
 </CodeGroup>
 
@@ -92,8 +140,8 @@ session.add_peers([alice, bob])
 ```
 
 ```typescript TypeScript
-const session = client.session("session_1")
-session.addPeers([alice, bob])
+const session = await client.session("session_1")
+await session.addPeers([alice, bob])
 ```
 </CodeGroup>
 
@@ -114,7 +162,7 @@ session.add_messages([
 ```
 
 ```typescript TypeScript
-session.addMessages([
+await session.addMessages([
     alice.message("Hi Bob, how are you?"),
     bob.message("I'm good, thank you!"),
     alice.message("What are you doing today after work?"),

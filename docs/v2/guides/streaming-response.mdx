@@ -50,7 +50,7 @@ import { Honcho } from '@honcho-ai/sdk';
 
 (async () => {
     // Initialize client (using the default workspace)
-    const honcho = new Honcho();
+    const honcho = new Honcho({});
 
     // Create or get peers
     const user = await honcho.peer('demo-user');
@@ -178,7 +178,7 @@ import { Honcho } from '@honcho-ai/sdk';
 (async () => {
     async function restaurantRecommendationChat() {
       // Initialize client
-      const honcho = new Honcho();
+      const honcho = new Honcho({});
 
       // Create peers
       const user = await honcho.peer('food-lover');

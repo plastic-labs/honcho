@@ -151,6 +151,25 @@ results = my_peer.search("budget planning", filters={"session_id": my_session.id
 ```
 </CodeGroup>
 
+The search results return an array of message objects with the following structure:
+
+```json
+{
+  "items": [
+    {
+      "id": "<string>",
+      "content": "<string>",
+      "peer_id": "<string>",
+      "session_id": "<string>",
+      "metadata": {},
+      "created_at": "2023-11-07T05:31:56Z",
+      "workspace_id": "<string>",
+      "token_count": 123
+    }
+  ]
+}
+```
+
 ### Filter results by time range
 
 <CodeGroup>
