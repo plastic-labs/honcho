@@ -14,13 +14,13 @@
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 
-Honcho is an AI-Native memory libary for building agents with perfect memory and
+Honcho is an AI-Native memory library for building agents with perfect memory and
 social cognition.
 
-It provides [SOTA
+It provides [state-of-the-art
 memory](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR) and
-then goes beyond simple storage by reasoning about the the stored data to build
-rich psychological profiles of each user in your system
+then goes beyond simple storage by reasoning about the stored data to build
+rich psychological profiles of each user in your system.
 
 Use it to build
 
@@ -35,7 +35,7 @@ With Honcho you can easily setup your applications workflow, save your
 interaction history, then leverage generated insights to inform the behavior of
 your agents
 
-> Additional typescript examples are available on our [docs](https://docs.honcho.dev)
+> Typescript examples are available in our [docs](https://docs.honcho.dev)
 
 1. Install the SDK
 
@@ -53,7 +53,7 @@ from honcho import Honcho
 
 ####### Storing Data in Honcho
 
-# 1. Initialize your Honcho client, by default will use a workspace name of "default"  on the demo server
+# 1. Initialize your Honcho client, by default SDK will use the demo environment and workspace named "default"
 honcho = Honcho(environment="demo", workspace_id="my-app-testing")
 
 # 2.. Initialize Peers
@@ -62,11 +62,11 @@ tutor = honcho.peer("tutor")
 
 # 3. Make a Session and send messages
 
-session =  honcho.session("session-1")
+session = honcho.session("session-1")
 
 session.add_messages(
-  alice.message("Hey there can you help me with my math homework")
-  tutor.message("Absolutely send me your first problem!")
+  alice.message("Hey there can you help me with my math homework"),
+  tutor.message("Absolutely send me your first problem!"),
   .
   .
   .
@@ -77,34 +77,36 @@ session.add_messages(
 
 ```python
 
-### 1. Using the Dialectic API to ask questions about your users in natural language
+### 1. Use the Dialectic API to ask questions about your users in natural language
 response = alice.chat("What learning styles does the user respond to best?")
 
 ### 2. Use Get context to get most recent messages and summaries to continue a conversation
-context = session.get_context(summary=True, 10000)
+context = session.get_context(summary=True, tokens=10000)
 
 # Convert to a format to send to OpenAI and get the next message
 openai_messages = context.to_openai_messages(assistant=tutor)
 
-response = openai.chat.completion.create(
+from openai import OpenAI
+
+response = openai.OpenAI().chat.completions.create(
   model="gpt-4",
   messages=openai_messages
 )
 
 ### 3. Search for similar messages
-results = alice.search("Match Homework")
+results = alice.search("Math Homework")
 
 ### 4. Get a cached working representation of a Peer for the Session
 alice_representation = session.working_rep("alice")
 
 ```
 
-This is a simple example of how you can use Honcho to build a chat bot and
-leverage insights to personalize the agent's behavior. Honcho
+This is a simple example of how you can use Honcho to build a chatbot and
+leverage insights to personalize the agent's behavior.
 
-Sign up on [honcho.dev](https://app.honcho.dev) to get started with a Managed version of Honcho
+Sign up at [app.honcho.dev](https://app.honcho.dev) to get started with a managed version of Honcho.
 
-Learn more about ways to use Honcho on our [developer docs](https://docs.honcho.dev)
+Learn more ways to use Honcho on our [developer docs](https://docs.honcho.dev).
 
 Read about the design philosophy and history of the project on our [blog](https://blog.plasticlabs.ai/).
 
@@ -558,12 +560,12 @@ The reasoning functionality of Honcho is built on top of the Storage service. As
 reason about peer psychology to derive facts about them and store them
 in reserved `Collections`.
 
-The system uses a sophisticated processing pipeline:
+A high level summary of the pipeline is as follows:
 
-1. Messages are created via API
-2. Enqueued for background processing including:
-   - `representaattion`: Update peer's theory of mind
-   - `summary`: Create session summaries
+1. Messages are created via the API
+2. Derivation Tasks are enqueued for background processing including:
+   - `representation`: To update theory-of-mind representations of `Peers`
+   - `summary`: To create summaries of `Sessions`
 3. Session-based queue processing ensures proper ordering
 4. Results are stored internally
 
@@ -576,18 +578,19 @@ serve the needs of any given application.
 
 #### Get Context
 
-In long running conversations with an LLM the context window can fill up quite
-quickly. To address this design problem, honcho provides a `get_context`
-endpoint that will return the a combination of messages and summaries from a
-session up to a provided number of tokens.
+In long-running conversations with an LLM, the context window can fill up
+quickly. To address this, Honcho provides a `get_context`
+endpoint that returns a combination of messages and summaries from a
+session, up to a provided token limit.
 
 Make use of this to keep sessions going endlessly.
 
 #### Search
 
-There are several search endpoints that let developers query for messages at the
+There are several search endpoints that let developers query messages at the
 `Workspace`, `Session`, or `Peer` level using a hybrid search strategy.
-Additionally, requests can include a set of advanced filters to further refine
+
+Requests can include advanced filters to further refine
 the results.
 
 #### Dialectic API
@@ -610,9 +613,9 @@ API include:
 
 #### Working Representations
 
-For low latency use cases or to get a quick cached representation of a `Peer`
-Honcho provides access to a `get_working_representation` endpoint that will
-return a static document with insights about a `Peer` in the context of a
+For low-latency use cases,
+Honcho provides access to a `get_working_representation` endpoint that
+returns a static document with insights about a `Peer` in the context of a
 particular session.
 
 Use this to quickly add context to a prompt without having to wait for an LLM

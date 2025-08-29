@@ -67,12 +67,12 @@ preferences, and mental models.
 ### Retrieval
 
 Once data is stored and generated within Honcho, the API exposes several
-different ways to retreive and use those insights.
+different ways to retrieve and use those insights.
 
 **[Dialectic API](../guides/dialectic-endpoint)**: This is the
-flagship endpoint that allows developes to send natural language queries to
+flagship endpoint that allows developers to send natural language queries to
 Honcho to chat with the representation of each user in your system to get
-dynamic in-context actionable insights.
+dynamic, in-context actionable insights.
 
 Example Queries
 - "What's the best way to explain technical concepts to this user?"
@@ -81,13 +81,12 @@ Example Queries
 - "How does this user prefer to receive feedback?"
 - "What are this user's core values based on our conversations?"
 
-**[Get Context](../guides/get-context)**: This endpoint allows you to abstract
-away context window constraints and continuously retrieve the most relevant
-recent data from a conversation. Simply enter a token count and Honcho will
-return the a combination of summaries and messages that provide context on a
-session. Use this for creating endless sessions. We carefully crafted our
-summaries to provide the most [coverage of a session
-possible](../core-concepts/summarizer).
+**[Get Context](../guides/get-context)**: This endpoint abstracts context window
+constraints and continuously retrieves the most relevant and recent data from a
+conversation. Provide a token budget and Honcho will rturn a combination of
+summaries and messages that pvoide session context. Use this for creating
+long-running conversations. We crafted our summaries to provide the most
+[coverage of a session possible](../core-concepts/summarizer).
 
 **[Search](../guides/search)**: This endpoint allows you to search across Honcho
 for relevant messages either at the workspace, peer, or session level. This
@@ -95,8 +94,8 @@ endpoint uses a hybrid search strategy that combines text search and cosine
 similarity.
 
 **[Working Representations](../guides/working-rep)**: Get a cached, snapshot
-view of a user, in-context of a session. Instead of waiting for a llm to
-synethesize an incontext response via the dialectic endpoint, use this endpoint
+view of a user in the context of a session. Instead of waiting for a LLM to
+synthesize an in-context response via the Dialectic endpoint, use this endpoint
 to get recent insights about a user you can plug into your context window.
 
 ## Ideal For
