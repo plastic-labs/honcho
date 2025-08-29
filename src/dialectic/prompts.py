@@ -13,7 +13,7 @@ def dialectic_prompt(
     peer_card: list[str] | None,
     target_name: str | None = None,
     target_peer_card: list[str] | None = None,
-    system_injection: str | None = None,
+    system_injection: str | '',
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
