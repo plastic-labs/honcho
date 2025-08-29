@@ -64,7 +64,9 @@ session =  honcho.session("session-1")
 session.add_messages(
   alice.message("Hey there can you help me with my math homework")
   tutor.message("Absolutely send me your first problem!")
-  #... continued conversation
+  .
+  .
+  .
 )
 ```
 
@@ -72,12 +74,10 @@ session.add_messages(
 
 ```python
 
-### 1. Using the Dialectic API to ask natural language queries
-
+### 1. Using the Dialectic API to ask questions about your users in natural language
 response = alice.chat("What learning styles does the user respond to best?")
 
 ### 2. Use Get context to get most recent messages and summaries to continue a conversation
-
 context = session.get_context(summary=True, 10000)
 
 # Convert to a format to send to OpenAI and get the next message
@@ -89,11 +89,9 @@ response = openai.chat.completion.create(
 )
 
 ### 3. Search for similar messages
-
 results = alice.search("Match Homework")
 
 ### 4. Get a cached working representation of a Peer for the Session
-
 alice_representation = session.working_rep("alice")
 
 ```
