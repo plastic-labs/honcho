@@ -29,10 +29,13 @@ Use it to build
 - Agents with rich identity that evolve over time
 - Multi-agent systems with complex social dynamics
 
-## Getting Started
+## TL;DR - Getting Started
 
-> This section is shown in Python, with Typescript examples available on our
-> [docs](https://docs.honcho.dev)
+With Honcho you can easily setup your applications workflow, save your
+interaction history, then leverage generated insights to inform the behavior of
+your agents
+
+> Additional typescript examples are available on our [docs](https://docs.honcho.dev)
 
 1. Install the SDK
 
@@ -120,7 +123,8 @@ Read about the design philosophy and history of the project on our [blog](https:
   - [Example](#example)
 - [Architecture](#architecture)
   - [Storage](#storage)
-  - [Reasoning & Insights](#reasoning--insights)
+  - [Reasoning](#reasoning)
+  - [Retrieving Data & Insights](#retrieving-data--insights)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -547,26 +551,48 @@ representations of peers.
 
 As stated before a `Document` is vector embedded data stored in a `Collection`.
 
-### Reasoning & Insights
+### Reasoning
 
-The Insight functionality of Honcho is built on top of the Storage service. As
+The reasoning functionality of Honcho is built on top of the Storage service. As
 `Messages` and `Sessions` are created for `Peers`, Honcho will asynchronously
 reason about peer psychology to derive facts about them and store them
 in reserved `Collections`.
 
-The system uses a sophisticated message processing pipeline:
+The system uses a sophisticated processing pipeline:
 
 1. Messages are created via API
 2. Enqueued for background processing including:
-   - `representation`: Update peer's theory of mind
+   - `representaattion`: Update peer's theory of mind
    - `summary`: Create session summaries
 3. Session-based queue processing ensures proper ordering
-4. Results are stored internally in the vector database
+4. Results are stored internally
 
 To read more about how this works read our [Research Paper](https://arxiv.org/abs/2310.06983)
 
-Developers can then leverage these insights in their application to better
-serve peer needs. The primary interface for using these insights is through
+### Retrieving Data & Insights
+
+Honcho exposes several different ways to retrieve data from the system to best
+serve the needs of any given application.
+
+#### Get Context
+
+In long running conversations with an LLM the context window can fill up quite
+quickly. To address this design problem, honcho provides a `get_context`
+endpoint that will return the a combination of messages and summaries from a
+session up to a provided number of tokens.
+
+Make use of this to keep sessions going endlessly.
+
+#### Search
+
+There are several search endpoints that let developers query for messages at the
+`Workspace`, `Session`, or `Peer` level using a hybrid search strategy.
+Additionally, requests can include a set of advanced filters to further refine
+the results.
+
+#### Dialectic API
+
+The flagship interface for using these insights is through
 the [Dialectic Endpoint](https://blog.plasticlabs.ai/blog/Introducing-Honcho's-Dialectic-API).
 
 This is a regular API endpoint (`/peers/{peer_id}/chat`) that takes natural language requests to get data
@@ -581,6 +607,16 @@ API include:
 - Asking Honcho to hydrate a prompt with data about the `Peer`s behavior
 - Asking Honcho for a 2nd opinion or approach about how to respond to the Peer
 - Getting personalized responses that incorporate long-term facts and context
+
+#### Working Representations
+
+For low latency use cases or to get a quick cached representation of a `Peer`
+Honcho provides access to a `get_working_representation` endpoint that will
+return a static document with insights about a `Peer` in the context of a
+particular session.
+
+Use this to quickly add context to a prompt without having to wait for an LLM
+response.
 
 ## Contributing
 
