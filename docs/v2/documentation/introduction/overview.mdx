@@ -47,23 +47,32 @@ Designed for developers and agents alike:
 
 ## How It Works
 
-Honcho operates through two integrated layers:
+### Storage
+
+Developers use Honcho to store information about their users and application via
+two integrated layers:
 
 <img src="/images/basic_honcho_flowchart.png" alt="Basic Honcho Flowchart" />
 
 **Memory Layer**: Captures all user interactions - messages, preferences, and
-behavioral patterns - in a user-centric data model that scales from individual
-conversations to complex multi-agent scenarios. This also queues up messages for the insights layer to process.
+behavioral patterns - in a peer-centric data model that scales from individual
+conversations to complex multi-agent scenarios. This also queues up messages for
+the reasoning layer to process.
 
-**Insights Layer**: Continuously analyzes stored interactions to build
+**Reasoning Layer**: Continuously analyzes stored interactions to build
 psychological profiles using [theory of mind](glossary#theory-of-mind)
 inference, extracting patterns about communication style, decision-making
 preferences, and mental models.
 
-Agents access this understanding through the [dialectic
-endpoint](../core-concepts/architecture#dialectic-api) - a natural language API
-where they can ask specific questions about users and receive actionable
-insights.
+### Retrieval
+
+Once data is stored and generated within Honcho, the API exposes several
+different ways to retreive and use those insights.
+
+**[Dialectic API](../guides/dialectic-endpoint)**: This is the
+flagship endpoint that allows developes to send natural language queries to
+Honcho to chat with the representation of each user in your system to get
+dynamic in-context actionable insights.
 
 Example Queries
 - "What's the best way to explain technical concepts to this user?"
@@ -71,6 +80,24 @@ Example Queries
 - "What time of day is this user most engaged?"
 - "How does this user prefer to receive feedback?"
 - "What are this user's core values based on our conversations?"
+
+**[Get Context](../guides/get-context)**: This endpoint allows you to abstract
+away context window constraints and continuously retrieve the most relevant
+recent data from a conversation. Simply enter a token count and Honcho will
+return the a combination of summaries and messages that provide context on a
+session. Use this for creating endless sessions. We carefully crafted our
+summaries to provide the most [coverage of a session
+possible](../core-concepts/summarizer).
+
+**[Search](../guides/search)**: This endpoint allows you to search across Honcho
+for relevant messages either at the workspace, peer, or session level. This
+endpoint uses a hybrid search strategy that combines text search and cosine
+similarity.
+
+**[Working Representations](../guides/working-rep)**: Get a cached, snapshot
+view of a user, in-context of a session. Instead of waiting for a llm to
+synethesize an incontext response via the dialectic endpoint, use this endpoint
+to get recent insights about a user you can plug into your context window.
 
 ## Ideal For
 
