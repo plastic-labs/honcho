@@ -1,6 +1,8 @@
 <!-- markdownlint-disable MD033 -->
 <div align="center">
-  <img src="assets/honcho.svg" alt="Honcho" width="400">
+  <a href="https://app.honcho.dev" target="_blank">
+    <img src="assets/honcho.svg" alt="Honcho" width="400">
+  </a>
 </div>
 <!-- markdownlint-enable MD033 -->
 
@@ -32,12 +34,16 @@ Use it to build
 > This section is shown in Python, with Typescript examples available on our
 > [docs](https://docs.honcho.dev)
 
+1. Install the SDK
+
 ```bash
 # Python
 pip install honcho-ai
 uv add honcho-ai
 poetry add honcho-ai
 ```
+
+2. Setup your `Workspace`, `Peers`, `Session`, and send `Messages`
 
 ```python
 from honcho import Honcho
@@ -60,8 +66,11 @@ session.add_messages(
   tutor.message("Absolutely send me your first problem!")
   #... continued conversation
 )
+```
 
-###### Retrieving insights from Honcho
+3. Leverage insights from Honcho to inform your agent's behavior
+
+```python
 
 ### 1. Using the Dialectic API to ask natural language queries
 
@@ -79,34 +88,13 @@ response = openai.chat.completion.create(
   messages=openai_messages
 )
 
-session.add_messages(tutor.message(response.choices[0].message.content))
-
 ### 3. Search for similar messages
 
 results = alice.search("Match Homework")
 
-for result in results:
-  print(result)
-
 ### 4. Get a cached working representation of a Peer for the Session
 
 alice_representation = session.working_rep("alice")
-
-prompt = {
-    "role": "user",
-    "content": f"""
-                Given this context on the Alice:
-                {alice_representation}
-
-                Can you help answer the next question?
-                """
-}
-
-response = openai.chat.completion.create(
-  model="gpt-4",
-  messages=prompt
-)
-
 
 ```
 
