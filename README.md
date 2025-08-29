@@ -14,12 +14,12 @@
 [![Discord](https://img.shields.io/discord/1016845111637839922?style=flat&logo=discord&logoColor=23ffffff&label=Plastic%20Labs&labelColor=235865F2)](https://discord.gg/plasticlabs)
 [![arXiv](https://img.shields.io/badge/arXiv-2310.06983-b31b1b.svg)](https://arxiv.org/abs/2310.06983)
 
-Honcho is an AI-Native memory library for building agents with perfect memory and
+Honcho is an AI-native memory library for building agents with perfect memory and
 social cognition.
 
 It provides [state-of-the-art
 memory](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR) and
-then goes beyond simple storage by reasoning about the stored data to build
+then goes beyond storage by reasoning about the stored data to build
 rich psychological profiles of each user in your system.
 
 Use it to build
@@ -31,8 +31,8 @@ Use it to build
 
 ## TL;DR - Getting Started
 
-With Honcho you can easily setup your applications workflow, save your
-interaction history, then leverage generated insights to inform the behavior of
+With Honcho you can easily setup your application's workflow, save your
+interaction history, and leverage generated insights to inform the behavior of
 your agents
 
 > Typescript examples are available in our [docs](https://docs.honcho.dev)
@@ -87,8 +87,8 @@ context = session.get_context(summary=True, tokens=10000)
 openai_messages = context.to_openai_messages(assistant=tutor)
 
 from openai import OpenAI
-
-response = openai.OpenAI().chat.completions.create(
+client = Openai()
+response = client.chat.completions.create(
   model="gpt-4",
   messages=openai_messages
 )
@@ -583,7 +583,7 @@ quickly. To address this, Honcho provides a `get_context`
 endpoint that returns a combination of messages and summaries from a
 session, up to a provided token limit.
 
-Make use of this to keep sessions going endlessly.
+Use this to keep sessions going indefinitely.
 
 #### Search
 
