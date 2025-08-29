@@ -57,6 +57,7 @@ async def dialectic_call(
     peer_card: list[str] | None,
     target_name: str | None = None,
     target_peer_card: list[str] | None = None,
+    system_injection: str | None,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -80,6 +81,7 @@ async def dialectic_call(
         peer_card,
         target_name,
         target_peer_card,
+        system_injection,
     )
 
     # Pretty print the prompt content
@@ -117,6 +119,7 @@ async def dialectic_stream(
     peer_card: list[str] | None,
     target_name: str | None = None,
     target_peer_card: list[str] | None = None,
+    system_injection: str | None,
 ):
     """
     Make a streaming call to the dialectic model for context synthesis.
@@ -140,6 +143,7 @@ async def dialectic_stream(
         peer_card,
         target_name,
         target_peer_card,
+        system_injection,
     )
 
     # Pretty print the prompt content
