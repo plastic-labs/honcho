@@ -141,23 +141,22 @@ def build_peer_card_caller(
         "openai" if candidate.provider == "custom" else candidate.provider
     )
 
-    @honcho_llm_call(
-        provider=cast(Any, resolved_provider),
-        model=candidate.model,
-        track_name="Peer Card Call",
-        response_model=PeerCardQuery,
-        json_mode=True,
-        max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
-        reasoning_effort="minimal",
-        enable_retry=True,
-        retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
-    )
     async def call(old_peer_card: list[str] | None, new_observations: list[str]) -> Any:
-        """Return the prompt content for Mirascope to execute as a model call."""
-
-        return peer_card_prompt(
+        prompt = peer_card_prompt(
             old_peer_card=old_peer_card, new_observations=new_observations
         )
+
+        response = await honcho_llm_call(
+            provider=cast(Any, resolved_provider),
+            model=candidate.model,
+            prompt=prompt,
+            max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
+            reasoning_effort="minimal",
+            enable_retry=True,
+            retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
+        )
+
+        return response.content
 
     return call
 

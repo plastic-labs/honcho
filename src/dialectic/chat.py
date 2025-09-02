@@ -9,18 +9,18 @@ historical observations.
 import asyncio
 import logging
 import uuid
+from collections.abc import AsyncIterator
 
 import tiktoken
 from dotenv import load_dotenv
-from langfuse.decorators import langfuse_context
-from mirascope.llm import Stream
+from langfuse import get_client
 
 from src import crud
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
 from src.utils import summarizer
-from src.utils.clients import honcho_llm_call
+from src.utils.clients import HonchoLLMCallStreamChunk, honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.logging import (
     accumulate_metric,
@@ -36,18 +36,10 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Create langfuse client
+lf = get_client()
 
-@honcho_llm_call(
-    provider=settings.DIALECTIC.PROVIDER,
-    model=settings.DIALECTIC.MODEL,
-    track_name="Dialectic Call",
-    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-    thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
-    if settings.DIALECTIC.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-)
+
 async def dialectic_call(
     query: str,
     working_representation: str | None,
@@ -71,7 +63,7 @@ async def dialectic_call(
         Model response
     """
     # Generate the prompt and log it
-    prompt_result = dialectic_prompt(
+    prompt = dialectic_prompt(
         query,
         working_representation,
         recent_conversation_history,
@@ -82,32 +74,26 @@ async def dialectic_call(
         target_peer_card,
     )
 
-    # Pretty print the prompt content
-    if len(prompt_result) > 0:
-        # Extract content from the first BaseMessageParam
-        prompt_content = prompt_result[0].content
-    else:
-        prompt_content = str(prompt_result)
+    response = await honcho_llm_call(
+        provider=settings.DIALECTIC.PROVIDER,
+        model=settings.DIALECTIC.MODEL,
+        prompt=prompt,
+        max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+        track_name="Dialectic Call",
+        thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
+        if settings.DIALECTIC.PROVIDER == "anthropic"
+        else None,
+        enable_retry=True,
+        retry_attempts=3,
+    )
 
     logger.debug("=== DIALECTIC PROMPT ===")
-    logger.debug(prompt_content)
+    logger.debug(prompt)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    return prompt_result
+    return response.content
 
 
-@honcho_llm_call(
-    provider=settings.DIALECTIC.PROVIDER,
-    model=settings.DIALECTIC.MODEL,
-    track_name="Dialectic Stream",
-    max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
-    thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
-    if settings.DIALECTIC.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-    stream=True,
-)
 async def dialectic_stream(
     query: str,
     working_representation: str | None,
@@ -131,7 +117,7 @@ async def dialectic_stream(
         Streaming model response
     """
     # Generate the prompt and log it
-    prompt_result = dialectic_prompt(
+    prompt = dialectic_prompt(
         query,
         working_representation,
         recent_conversation_history,
@@ -142,18 +128,25 @@ async def dialectic_stream(
         target_peer_card,
     )
 
-    # Pretty print the prompt content
-    if len(prompt_result) > 0:
-        # Extract content from the first BaseMessageParam
-        prompt_content = prompt_result[0].content
-    else:
-        prompt_content = str(prompt_result)
+    response = await honcho_llm_call(
+        provider=settings.DIALECTIC.PROVIDER,
+        model=settings.DIALECTIC.MODEL,
+        prompt=prompt,
+        max_tokens=settings.DIALECTIC.MAX_OUTPUT_TOKENS,
+        track_name="Dialectic Stream",
+        thinking_budget_tokens=settings.DIALECTIC.THINKING_BUDGET_TOKENS
+        if settings.DIALECTIC.PROVIDER == "anthropic"
+        else None,
+        enable_retry=True,
+        retry_attempts=3,
+        stream=True,
+    )
 
     logger.debug("=== DIALECTIC PROMPT (STREAM) ===")
-    logger.debug(prompt_content)
+    logger.debug(prompt)
     logger.debug("=== END DIALECTIC PROMPT ===")
 
-    return prompt_result
+    return response
 
 
 async def chat(
@@ -164,7 +157,7 @@ async def chat(
     query: str,
     *,
     stream: bool = False,
-) -> Stream | str:
+) -> str | AsyncIterator[HonchoLLMCallStreamChunk]:
     """
     Chat with the Dialectic API that builds on-demand user representations.
 
@@ -197,7 +190,7 @@ async def chat(
     context_window_size -= len(tokenizer.encode(query))
 
     if settings.LANGFUSE_PUBLIC_KEY:
-        langfuse_context.update_current_trace(
+        lf.update_current_trace(
             metadata={
                 "query_generation_model": settings.DIALECTIC.QUERY_GENERATION_MODEL,
                 "query_generation_provider": settings.DIALECTIC.QUERY_GENERATION_PROVIDER,

@@ -8,10 +8,7 @@ and reasoning tasks.
 import datetime
 from inspect import cleandoc as c
 
-from mirascope import prompt_template
 
-
-@prompt_template()
 def critical_analysis_prompt(
     peer_id: str,
     peer_card: list[str] | None,
@@ -102,7 +99,6 @@ New conversation turn to analyze:
     )
 
 
-@prompt_template()
 def peer_card_prompt(
     old_peer_card: list[str] | None,
     new_observations: list[str],
