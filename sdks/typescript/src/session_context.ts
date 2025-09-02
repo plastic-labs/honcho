@@ -3,7 +3,7 @@ import type { Peer } from './peer'
 
 export interface SummaryData {
   content: string
-  message_id: number
+  message_id: string
   summary_type: string
   created_at: string
   token_count: number
@@ -21,7 +21,7 @@ export class Summary {
   /**
    * The ID of the message that this summary covers up to.
    */
-  readonly messageId: number
+  readonly messageId: string
 
   /**
    * The type of summary (short or long).
