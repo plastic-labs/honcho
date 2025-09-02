@@ -6,6 +6,7 @@ from langfuse.decorators import langfuse_context
 from pydantic import ValidationError
 from rich.console import Console
 
+from src import crud
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver import deriver
@@ -96,6 +97,24 @@ async def process_summary_task(
     """
     Process a summary task by generating summaries if needed.
     """
+    message_public_id = payload.message_public_id
+    # Fetch message public ID if not in payload --> fixes backward compatibility
+    if not message_public_id:
+        logger.debug("Fetching message public ID for message %s", payload.message_id)
+        async with tracked_db("summary_fallback") as db:
+            message = await crud.get_message(
+                db,
+                payload.workspace_name,
+                payload.session_name,
+                message_id=message_public_id,
+            )
+            if message is None:
+                logger.error(
+                    "Failed to fetch message with ID %s for process_summary_task",
+                    payload.message_id,
+                )
+                return
+            message_public_id = message.public_id
     await summarizer.summarize_if_needed(
         payload.workspace_name,
         payload.session_name,
