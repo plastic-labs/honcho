@@ -251,10 +251,10 @@ export class Session {
     const peerIds = Array.isArray(validatedPeers)
       ? validatedPeers.map((p) => (typeof p === 'string' ? p : p.id))
       : [
-          typeof validatedPeers === 'string'
-            ? validatedPeers
-            : validatedPeers.id,
-        ]
+        typeof validatedPeers === 'string'
+          ? validatedPeers
+          : validatedPeers.id,
+      ]
     await this._client.workspaces.sessions.peers.remove(
       this.workspaceId,
       this.id,

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Session delete functionality (`session.delete()`)
 - Message metadata update functionality (`session.setMessageMetadata()`)
 
+### Fixed
+
+- Summary message ID type inconsistency - summaries now return string IDs instead of numeric IDs for consistency with other message references
+
 ## [1.4.0] - 2025-08-12
 
 ### Added

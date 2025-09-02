@@ -123,6 +123,8 @@ def create_payload(
             message_public_id = message.get("message_public_id")
             if not isinstance(message_public_id, str):
                 raise TypeError("Message public ID must be a string")
+            if not message_public_id.strip():
+                raise ValueError("Message public ID cannot be empty or whitespace-only")
 
             validated_payload = SummaryPayload(
                 workspace_name=workspace_name,

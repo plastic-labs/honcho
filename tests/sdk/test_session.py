@@ -300,7 +300,7 @@ async def test_session_working_rep(client_fixture: tuple[Honcho | AsyncHoncho, s
 
 
 @pytest.mark.asyncio
-async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]):
+async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]) -> None:
     """
     Tests deleting a session.
     """
@@ -321,6 +321,7 @@ async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]):
         all_sessions_page = await honcho_client.get_sessions({"is_active": True})
         all_sessions = all_sessions_page.items
         all_session_ids = [s.id for s in all_sessions]
+
         assert "test-session-delete" not in all_session_ids
     else:
         assert isinstance(honcho_client, Honcho)
@@ -337,13 +338,14 @@ async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]):
         all_sessions_page = honcho_client.get_sessions({"is_active": True})
         all_sessions = list(all_sessions_page)
         all_session_ids = [s.id for s in all_sessions]
+
         assert "test-session-delete" not in all_session_ids
 
 
 @pytest.mark.asyncio
 async def test_session_set_message_metadata(
     client_fixture: tuple[Honcho | AsyncHoncho, str],
-):
+) -> None:
     """
     Tests updating message metadata in a session.
     """
@@ -377,6 +379,12 @@ async def test_session_set_message_metadata(
         )
 
         assert updated_message.metadata == {"priority": "high", "category": "test"}
+
+        refetched = await session.get_messages()
+        messages = refetched.items
+        assert len(messages) == 1
+        assert messages[0].metadata == {"priority": "high", "category": "test"}
+
     else:
         assert isinstance(honcho_client, Honcho)
         session = honcho_client.session(id="test-session-set-meta")
@@ -405,3 +413,8 @@ async def test_session_set_message_metadata(
         )
 
         assert updated_message.metadata == {"priority": "high", "category": "test"}
+
+        refetched = session.get_messages()
+        messages = list(refetched)
+        assert len(messages) == 1
+        assert messages[0].metadata == {"priority": "high", "category": "test"}

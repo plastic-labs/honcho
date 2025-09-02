@@ -3,7 +3,7 @@ import type { Peer } from './peer'
 
 export interface SummaryData {
   content: string
-  message_id: number
+  message_id: string
   summary_type: string
   created_at: string
   token_count: number
@@ -21,7 +21,7 @@ export class Summary {
   /**
    * The ID of the message that this summary covers up to.
    */
-  readonly messageId: number
+  readonly messageId: string
 
   /**
    * The type of summary (short or long).
@@ -138,9 +138,9 @@ export class SessionContext {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     const summaryMessage = this.summary
       ? {
-          role: 'system',
-          content: `<summary>${this.summary.content}</summary>`,
-        }
+        role: 'system',
+        content: `<summary>${this.summary.content}</summary>`,
+      }
       : null
     const messages = this.messages.map((message) => ({
       role: message.peer_id === assistantId ? 'assistant' : 'user',
@@ -172,20 +172,20 @@ export class SessionContext {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
     const summaryMessage = this.summary
       ? {
-          role: 'user',
-          content: `<summary>${this.summary.content}</summary>`,
-        }
+        role: 'user',
+        content: `<summary>${this.summary.content}</summary>`,
+      }
       : null
     const messages = this.messages.map((message) =>
       message.peer_id === assistantId
         ? {
-            role: 'assistant',
-            content: message.content,
-          }
+          role: 'assistant',
+          content: message.content,
+        }
         : {
-            role: 'user',
-            content: `${message.peer_id}: ${message.content}`,
-          }
+          role: 'user',
+          content: `${message.peer_id}: ${message.content}`,
+        }
     )
     return summaryMessage ? [summaryMessage, ...messages] : messages
   }
