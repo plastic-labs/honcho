@@ -5,8 +5,9 @@ import sentry_sdk
 from langfuse.decorators import langfuse_context
 from pydantic import ValidationError
 from rich.console import Console
+from sqlalchemy import select
 
-from src import crud
+from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver import deriver
@@ -98,16 +99,20 @@ async def process_summary_task(
     Process a summary task by generating summaries if needed.
     """
     message_public_id = payload.message_public_id
+
     # Fetch message public ID if not in payload --> fixes backward compatibility
     if not message_public_id:
-        logger.debug("Fetching message public ID for message %s", payload.message_id)
+        logger.info("Fetching message public ID for message %s", payload.message_id)
         async with tracked_db("summary_fallback") as db:
-            message = await crud.get_message(
-                db,
-                payload.workspace_name,
-                payload.session_name,
-                message_id=message_public_id,
+            stmt = (
+                select(models.Message)
+                .where(models.Message.workspace_name == payload.workspace_name)
+                .where(models.Message.session_name == payload.session_name)
+                .where(models.Message.id == payload.message_id)
             )
+            result = await db.execute(stmt)
+
+            message = result.scalar_one_or_none()
             if message is None:
                 logger.error(
                     "Failed to fetch message with ID %s for process_summary_task",
@@ -120,6 +125,6 @@ async def process_summary_task(
         payload.session_name,
         payload.message_id,
         payload.message_seq_in_session,
-        payload.message_public_id,
+        message_public_id,
     )
     log_performance_metrics(f"summary_{payload.workspace_name}_{payload.message_id}")
