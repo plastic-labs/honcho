@@ -33,7 +33,7 @@ def conditional_observe(func: Callable[..., Any]) -> Callable[..., Any]:
     """
     if settings.LANGFUSE_PUBLIC_KEY:
         # Import here to avoid circular imports and only import when needed
-        from langfuse import observe
+        from langfuse import observe  # pyright: ignore
 
         return observe()(func)
     else:
