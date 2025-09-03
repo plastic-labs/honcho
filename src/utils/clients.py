@@ -303,6 +303,10 @@ async def honcho_llm_call_inner(
 
     match client:
         case AsyncAnthropic():
+            if response_model:
+                raise NotImplementedError(
+                    "Response model is not supported for Anthropic"
+                )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
@@ -502,6 +506,10 @@ async def _handle_streaming_response(
     """
     match client:
         case AsyncAnthropic():
+            if response_model:
+                raise NotImplementedError(
+                    "Response model is not supported for Anthropic"
+                )
             anthropic_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
