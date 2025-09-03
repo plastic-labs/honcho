@@ -9,8 +9,8 @@ from typing import Any, Generic, Literal, TypeVar, cast, overload
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlock
 from anthropic.types.message import Message as AnthropicMessage
-from google import generativeai
-from google.generativeai.types import GenerateContentResponse
+from google import genai
+from google.genai.types import GenerateContentResponse
 from groq import AsyncGroq
 from langfuse import get_client
 from openai import AsyncOpenAI
@@ -28,7 +28,7 @@ lf = get_client()
 
 CLIENTS: dict[
     SupportedProviders,
-    AsyncAnthropic | AsyncOpenAI | generativeai.GenerativeModel | AsyncGroq,
+    AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
 ] = {}
 
 if settings.LLM.ANTHROPIC_API_KEY:
@@ -48,8 +48,7 @@ if settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
     )
 
 if settings.LLM.GEMINI_API_KEY:
-    generativeai.configure(api_key=settings.LLM.GEMINI_API_KEY)  # pyright: ignore
-    google = generativeai.GenerativeModel()
+    google = genai.client.Client(api_key=settings.LLM.GEMINI_API_KEY)
     CLIENTS["google"] = google
 
 if settings.LLM.GROQ_API_KEY:
@@ -97,129 +96,6 @@ class HonchoLLMCallStreamChunk(BaseModel):
     content: str
     is_done: bool = False
     finish_reasons: list[str] = []
-
-
-async def _handle_streaming_response(
-    client: AsyncAnthropic | AsyncOpenAI | generativeai.GenerativeModel | AsyncGroq,
-    params: dict[str, Any],
-    json_mode: bool,
-    thinking_budget_tokens: int | None,
-) -> AsyncIterator[HonchoLLMCallStreamChunk]:
-    """
-    Handle streaming responses for all supported providers.
-
-    Args:
-        client: The LLM client instance
-        params: Request parameters including stream=True
-        json_mode: Whether to use JSON mode
-        thinking_budget_tokens: Anthropic thinking budget tokens
-
-    Yields:
-        HonchoLLMCallStreamChunk: Individual chunks of the streaming response
-    """
-    match client:
-        case AsyncAnthropic():
-            anthropic_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": list(params["messages"]),
-            }
-            if json_mode:
-                anthropic_params["messages"].append(
-                    {"role": "assistant", "content": "{"}
-                )
-            if thinking_budget_tokens:
-                anthropic_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget_tokens,
-                }
-            async with client.messages.stream(**anthropic_params) as anthropic_stream:
-                async for chunk in anthropic_stream:
-                    if (
-                        chunk.type == "content_block_delta"
-                        and hasattr(chunk, "delta")
-                        and hasattr(chunk.delta, "text")
-                    ):
-                        text_content = getattr(chunk.delta, "text", "")
-                        yield HonchoLLMCallStreamChunk(content=text_content)
-                # Get final message with stop reason
-                final_message = await anthropic_stream.get_final_message()
-                yield HonchoLLMCallStreamChunk(
-                    content="",
-                    is_done=True,
-                    finish_reasons=[final_message.stop_reason]
-                    if final_message.stop_reason
-                    else [],
-                )
-
-        case AsyncOpenAI():
-            openai_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": params["messages"],
-                "stream": True,
-            }
-            if json_mode:
-                openai_params["response_format"] = {"type": "json_object"}
-            openai_stream = await client.chat.completions.create(**openai_params)  # pyright: ignore
-            async for chunk in openai_stream:  # pyright: ignore
-                chunk = cast(ChatCompletionChunk, chunk)
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield HonchoLLMCallStreamChunk(
-                        content=chunk.choices[0].delta.content
-                    )
-                if chunk.choices and chunk.choices[0].finish_reason:
-                    yield HonchoLLMCallStreamChunk(
-                        content="",
-                        is_done=True,
-                        finish_reasons=[chunk.choices[0].finish_reason],
-                    )
-
-        case generativeai.GenerativeModel():
-            client_model = generativeai.GenerativeModel(f"models/{params['model']}")
-            # Note: Gemini streaming API may differ, this is a basic implementation
-            prompt_text = params["messages"][0]["content"] if params["messages"] else ""
-            response = client_model.generate_content(  # pyright: ignore
-                prompt_text,
-                generation_config=generativeai.GenerationConfig(
-                    response_mime_type="application/json" if json_mode else None
-                ),
-                stream=True,
-            )
-            for chunk in response:
-                if chunk.text:
-                    yield HonchoLLMCallStreamChunk(content=chunk.text)
-            # Final chunk
-            yield HonchoLLMCallStreamChunk(
-                content="",
-                is_done=True,
-                finish_reasons=[
-                    "stop"
-                ],  # Gemini doesn't provide detailed finish reasons in streaming
-            )
-
-        case AsyncGroq():
-            groq_params: dict[str, Any] = {
-                "model": params["model"],
-                "max_tokens": params["max_tokens"],
-                "messages": params["messages"],
-                "stream": True,
-            }
-            if json_mode:
-                groq_params["response_format"] = {"type": "json_object"}
-            groq_stream = await client.chat.completions.create(**groq_params)  # pyright: ignore
-            async for chunk in groq_stream:  # pyright: ignore
-                chunk = cast(ChatCompletionChunk, chunk)
-                if chunk.choices and chunk.choices[0].delta.content:
-                    yield HonchoLLMCallStreamChunk(
-                        content=chunk.choices[0].delta.content
-                    )
-                if chunk.choices and chunk.choices[0].finish_reason:
-                    yield HonchoLLMCallStreamChunk(
-                        content="",
-                        is_done=True,
-                        finish_reasons=[chunk.choices[0].finish_reason],
-                    )
 
 
 @overload
@@ -419,7 +295,7 @@ async def honcho_llm_call_inner(
     if stream:
         # Return async generator for streaming responses
         return _handle_streaming_response(
-            client, params, json_mode, thinking_budget_tokens
+            client, params, json_mode, thinking_budget_tokens, response_model
         )
 
     # Remove stream parameter for non-streaming calls as some providers don't accept it
@@ -509,42 +385,80 @@ async def honcho_llm_call_inner(
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                 )
-        case generativeai.GenerativeModel():
-            client_model = generativeai.GenerativeModel(f"models/{model}")
-            gemini_response: GenerateContentResponse = client_model.generate_content(  # pyright: ignore
-                prompt,
-                generation_config=generativeai.GenerationConfig(
-                    response_mime_type="application/json" if json_mode else None
-                ),
-            )
+        case genai.Client():
+            if response_model is None:
+                gemini_response: GenerateContentResponse = (
+                    client.models.generate_content(
+                        model=model,
+                        contents=prompt,
+                        config={
+                            "response_mime_type": "application/json"
+                            if json_mode
+                            else None,
+                        },
+                    )
+                )
 
-            # Safely extract response data
-            text_content = gemini_response.text if gemini_response.text else ""
-            token_count = (
-                gemini_response.candidates[0].token_count
-                if gemini_response.candidates
-                else 0
-            )
-            finish_reason = (
-                gemini_response.candidates[0].finish_reason.name
-                if gemini_response.candidates
-                and gemini_response.candidates[0].finish_reason
-                else "stop"
-            )
+                # Safely extract response data
+                text_content = gemini_response.text if gemini_response.text else ""
+                token_count = (
+                    gemini_response.candidates[0].token_count or 0
+                    if gemini_response.candidates
+                    else 0
+                )
+                finish_reason = (
+                    gemini_response.candidates[0].finish_reason.name
+                    if gemini_response.candidates
+                    and gemini_response.candidates[0].finish_reason
+                    else "stop"
+                )
 
-            return HonchoLLMCallResponse(
-                content=text_content,
-                output_tokens=token_count,
-                finish_reasons=[finish_reason],
-            )
+                return HonchoLLMCallResponse(
+                    content=text_content,
+                    output_tokens=token_count,
+                    finish_reasons=[finish_reason],
+                )
+
+            else:
+                gemini_response = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": response_model,
+                    },
+                )
+
+                token_count = (
+                    gemini_response.candidates[0].token_count or 0
+                    if gemini_response.candidates
+                    else 0
+                )
+                finish_reason = (
+                    gemini_response.candidates[0].finish_reason.name
+                    if gemini_response.candidates
+                    and gemini_response.candidates[0].finish_reason
+                    else "stop"
+                )
+
+                return HonchoLLMCallResponse(
+                    content=gemini_response.parsed,
+                    output_tokens=token_count,
+                    finish_reasons=[finish_reason],
+                )
+
         case AsyncGroq():
             groq_params: dict[str, Any] = {
                 "model": params["model"],
                 "max_tokens": params["max_tokens"],
                 "messages": params["messages"],
             }
-            if json_mode:
+
+            if response_model:
+                groq_params["response_format"] = response_model
+            elif json_mode:
                 groq_params["response_format"] = {"type": "json_object"}
+
             response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                 **groq_params
             )
@@ -560,6 +474,169 @@ async def honcho_llm_call_inner(
                 output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[finish_reason] if finish_reason else [],
             )
+
+
+async def _handle_streaming_response(
+    client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
+    params: dict[str, Any],
+    json_mode: bool,
+    thinking_budget_tokens: int | None,
+    response_model: type[BaseModel] | None = None,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"] | None = None,
+    verbosity: Literal["low", "medium", "high"] | None = None,
+) -> AsyncIterator[HonchoLLMCallStreamChunk]:
+    """
+    Handle streaming responses for all supported providers.
+
+    Args:
+        client: The LLM client instance
+        params: Request parameters including stream=True
+        json_mode: Whether to use JSON mode
+        thinking_budget_tokens: Anthropic thinking budget tokens
+        response_model: Pydantic model for structured output
+        reasoning_effort: OpenAI reasoning effort level (GPT-5 only)
+        verbosity: OpenAI verbosity level (GPT-5 only)
+
+    Yields:
+        HonchoLLMCallStreamChunk: Individual chunks of the streaming response
+    """
+    match client:
+        case AsyncAnthropic():
+            anthropic_params: dict[str, Any] = {
+                "model": params["model"],
+                "max_tokens": params["max_tokens"],
+                "messages": list(params["messages"]),
+            }
+            if json_mode:
+                anthropic_params["messages"].append(
+                    {"role": "assistant", "content": "{"}
+                )
+            if thinking_budget_tokens:
+                anthropic_params["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": thinking_budget_tokens,
+                }
+            async with client.messages.stream(**anthropic_params) as anthropic_stream:
+                async for chunk in anthropic_stream:
+                    if (
+                        chunk.type == "content_block_delta"
+                        and hasattr(chunk, "delta")
+                        and hasattr(chunk.delta, "text")
+                    ):
+                        text_content = getattr(chunk.delta, "text", "")
+                        yield HonchoLLMCallStreamChunk(content=text_content)
+                final_message = await anthropic_stream.get_final_message()
+                yield HonchoLLMCallStreamChunk(
+                    content="",
+                    is_done=True,
+                    finish_reasons=[final_message.stop_reason]
+                    if final_message.stop_reason
+                    else [],
+                )
+
+        case AsyncOpenAI():
+            openai_params: dict[str, Any] = {
+                "model": params["model"],
+                "messages": params["messages"],
+                "stream": True,
+            }
+
+            model_name = params["model"]
+            if "gpt-5" in model_name:
+                openai_params["max_completion_tokens"] = params["max_tokens"]
+                if reasoning_effort:
+                    openai_params["reasoning_effort"] = reasoning_effort
+                if verbosity:
+                    openai_params["verbosity"] = verbosity
+            else:
+                openai_params["max_tokens"] = params["max_tokens"]
+
+            if response_model:
+                openai_params["response_format"] = response_model
+            elif json_mode:
+                openai_params["response_format"] = {"type": "json_object"}
+
+            openai_stream = await client.chat.completions.create(**openai_params)  # pyright: ignore
+            async for chunk in openai_stream:  # pyright: ignore
+                chunk = cast(ChatCompletionChunk, chunk)
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield HonchoLLMCallStreamChunk(
+                        content=chunk.choices[0].delta.content
+                    )
+                if chunk.choices and chunk.choices[0].finish_reason:
+                    yield HonchoLLMCallStreamChunk(
+                        content="",
+                        is_done=True,
+                        finish_reasons=[chunk.choices[0].finish_reason],
+                    )
+
+        case genai.Client():
+            prompt_text = params["messages"][0]["content"] if params["messages"] else ""
+
+            if response_model is not None:
+                response_stream = client.models.generate_content_stream(
+                    model=params["model"],
+                    contents=prompt_text,
+                    config={
+                        "response_mime_type": "application/json",
+                        "response_schema": response_model,
+                    },
+                )
+            else:
+                response_stream = client.models.generate_content_stream(
+                    model=params["model"],
+                    contents=prompt_text,
+                    config={
+                        "response_mime_type": "application/json" if json_mode else None,
+                    },
+                )
+
+            final_chunk = None
+            for chunk in response_stream:
+                if chunk.text:
+                    yield HonchoLLMCallStreamChunk(content=chunk.text)
+                final_chunk = chunk
+
+            finish_reason = "stop"  # Default fallback
+            if (
+                final_chunk
+                and hasattr(final_chunk, "candidates")
+                and final_chunk.candidates
+                and hasattr(final_chunk.candidates[0], "finish_reason")
+                and final_chunk.candidates[0].finish_reason
+            ):
+                finish_reason = final_chunk.candidates[0].finish_reason.name
+
+            yield HonchoLLMCallStreamChunk(
+                content="", is_done=True, finish_reasons=[finish_reason]
+            )
+
+        case AsyncGroq():
+            groq_params: dict[str, Any] = {
+                "model": params["model"],
+                "max_tokens": params["max_tokens"],
+                "messages": params["messages"],
+                "stream": True,
+            }
+
+            if response_model:
+                groq_params["response_format"] = response_model
+            elif json_mode:
+                groq_params["response_format"] = {"type": "json_object"}
+
+            groq_stream = await client.chat.completions.create(**groq_params)  # pyright: ignore
+            async for chunk in groq_stream:  # pyright: ignore
+                chunk = cast(ChatCompletionChunk, chunk)
+                if chunk.choices and chunk.choices[0].delta.content:
+                    yield HonchoLLMCallStreamChunk(
+                        content=chunk.choices[0].delta.content
+                    )
+                if chunk.choices and chunk.choices[0].finish_reason:
+                    yield HonchoLLMCallStreamChunk(
+                        content="",
+                        is_done=True,
+                        finish_reasons=[chunk.choices[0].finish_reason],
+                    )
 
 
 def retry(
