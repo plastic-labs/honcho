@@ -94,6 +94,6 @@ reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
 reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse", "langfuse.decorators"]
+allowedUntypedLibraries = ["langfuse"]
 reportImplicitOverride = false
 reportImportCycles = false

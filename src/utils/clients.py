@@ -377,15 +377,13 @@ async def honcho_llm_call_inner(
                 response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                     **openai_params
                 )
-                if response.choices[0].message.content is None:  # pyright: ignore
-                    raise ValueError("No content in response")
 
                 # Safely extract usage and finish_reason
                 usage = response.usage  # pyright: ignore
                 finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
                 return HonchoLLMCallResponse(
-                    content=response.choices[0].message.content,  # pyright: ignore
+                    content=response.choices[0].message.content or "",  # pyright: ignore
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                 )

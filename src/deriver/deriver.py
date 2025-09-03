@@ -94,8 +94,6 @@ async def peer_card_call(
         new_observations=new_observations,
     )
 
-    print("huh.")
-    print(f"PeerCardQuery: {PeerCardQuery.model_json_schema()}")
     response = await honcho_llm_call(
         provider=settings.DERIVER.PEER_CARD_PROVIDER,
         model=settings.DERIVER.PEER_CARD_MODEL,
