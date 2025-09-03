@@ -687,7 +687,7 @@ describe('Session', () => {
         ],
         summary: {
           content: 'Conversation summary',
-          message_id: 10,
+          message_id: '10',
           summary_type: 'short',
           created_at: '2024-01-01T00:00:00Z',
           token_count: 100
@@ -699,7 +699,13 @@ describe('Session', () => {
 
       expect(context).toBeInstanceOf(SessionContext);
       expect(context.sessionId).toBe('test-session');
-      expect(context.messages).toEqual(mockContext.messages);
+      expect(context.messages).toHaveLength(2);
+      expect(context.messages[0].id).toBe('msg1');
+      expect(context.messages[0].content).toBe('Hello');
+      expect(context.messages[0].peer_id).toBe('peer1');
+      expect(context.messages[1].id).toBe('msg2');
+      expect(context.messages[1].content).toBe('Hi there');
+      expect(context.messages[1].peer_id).toBe('peer2');
       expect(context.summary?.content).toBe('Conversation summary');
       expect(mockClient.workspaces.sessions.getContext).toHaveBeenCalledWith(
         'test-workspace',
@@ -804,7 +810,10 @@ describe('Session', () => {
 
       const messages = await session.uploadFile(mockFile, 'peer1');
 
-      expect(messages).toEqual(mockMessages);
+      expect(messages).toHaveLength(1);
+      expect(messages[0].id).toBe('msg1');
+      expect(messages[0].content).toBe('test content');
+      expect(messages[0].peer_id).toBe('peer1');
       expect(mockClient.workspaces.sessions.messages.upload).toHaveBeenCalledWith(
         'test-workspace',
         'test-session',
@@ -909,32 +918,6 @@ describe('Session', () => {
       mockClient.workspaces.sessions.delete.mockRejectedValue(new Error('Failed to delete session'));
 
       await expect(session.delete()).rejects.toThrow('Failed to delete session');
-    });
-  });
-
-  describe('setMessageMetadata', () => {
-    it('should update message metadata successfully', async () => {
-      const messageId = 'msg-123';
-      const metadata = { priority: 'high', category: 'greeting' };
-      const mockUpdatedMessage = {
-        id: messageId,
-        content: 'Hello world',
-        metadata: metadata,
-        peer_id: 'peer1',
-        session_id: 'test-session',
-        created_at: '2025-01-01T00:00:00Z',
-      };
-      mockClient.workspaces.sessions.messages.update.mockResolvedValue(mockUpdatedMessage);
-
-      const result = await session.setMessageMetadata(messageId, metadata);
-
-      expect(result).toEqual(mockUpdatedMessage);
-      expect(mockClient.workspaces.sessions.messages.update).toHaveBeenCalledWith(
-        'test-workspace',
-        'test-session',
-        messageId,
-        { metadata }
-      );
     });
   });
 });

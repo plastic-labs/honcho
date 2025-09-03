@@ -1,6 +1,6 @@
 import type HonchoCore from '@honcho-ai/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import type { Uploadable } from '@honcho-ai/core/src/uploads'
+import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
@@ -12,8 +12,6 @@ import {
   LimitSchema,
   type MessageAddition,
   MessageAdditionSchema,
-  MessageIdSchema,
-  MessageMetadataUpdateSchema,
   type PeerAddition,
   PeerAdditionSchema,
   type PeerRemoval,
@@ -391,36 +389,7 @@ export class Session {
       this.id,
       validatedFilter
     )
-    return new Page(messagesPage)
-  }
-
-  /**
-   * Update metadata for a specific message in this session.
-   *
-   * Makes an API call to update the metadata associated with a message.
-   * This will overwrite any existing metadata with the provided values.
-   * Metadata is useful for storing custom attributes, configuration, or
-   * contextual information about the session.
-
-   * @param messageId - ID of the message to update
-   * @param metadata - A dictionary of metadata to associate with the message.
-   *                   Keys must be strings, values can be any JSON-serializable type
-   * @returns Promise resolving to the updated Message object
-   */
-  async setMessageMetadata(
-    messageId: string,
-    metadata: Record<string, unknown>
-  ): Promise<Message> {
-    const validatedMessageId = MessageIdSchema.parse(messageId)
-    const validatedMetadata = MessageMetadataUpdateSchema.parse(metadata)
-    return await this._client.workspaces.sessions.messages.update(
-      this.workspaceId,
-      this.id,
-      validatedMessageId,
-      {
-        metadata: validatedMetadata,
-      }
-    )
+    return new Page(messagesPage, (msg) => Message.fromCore(msg, this._client))
   }
 
   /**
@@ -506,7 +475,10 @@ export class Session {
     )
     // Convert the summary response to Summary object if present
     const summary = context.summary ? new Summary(context.summary) : null
-    return new SessionContext(this.id, context.messages, summary)
+    const messages = context.messages.map((msg) =>
+      Message.fromCore(msg, this._client)
+    )
+    return new SessionContext(this.id, messages, summary)
   }
 
   /**
@@ -562,7 +534,7 @@ export class Session {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.sessions.search(
+    const response = await this._client.workspaces.sessions.search(
       this.workspaceId,
       this.id,
       {
@@ -571,6 +543,7 @@ export class Session {
         limit: validatedLimit,
       }
     )
+    return response.map((msg) => Message.fromCore(msg, this._client))
   }
 
   /**
@@ -610,7 +583,7 @@ export class Session {
       }
     )
 
-    return response
+    return response.map((msg) => Message.fromCore(msg, this._client))
   }
 
   /**

@@ -5,11 +5,11 @@ from typing import TYPE_CHECKING, Any
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from ..session_context import SessionContext, SessionSummaries, Summary
 from ..utils import prepare_file_for_upload
+from .message import AsyncMessage
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
@@ -327,7 +327,7 @@ class AsyncSession(BaseModel):
         await self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            messages=[MessageCreateParam(**message) for message in messages],
+            messages=messages,
         )
 
     @validate_call
@@ -337,7 +337,7 @@ class AsyncSession(BaseModel):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
-    ) -> AsyncPage[Message]:
+    ) -> AsyncPage[AsyncMessage]:
         """
         Get messages from this session with optional filtering.
 
@@ -352,7 +352,7 @@ class AsyncSession(BaseModel):
                     - timestamp_end: Filter messages before a specific timestamp
 
         Returns:
-            An async paginated list of Message objects matching the specified criteria, ordered by
+            An async paginated list of AsyncMessage objects matching the specified criteria, ordered by
             creation time (most recent first)
         """
         messages_page = await self._client.workspaces.sessions.messages.list(
@@ -360,37 +360,9 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             filters=filters,
         )
-        return AsyncPage(messages_page)
 
-    @validate_call
-    async def set_message_metadata(
-        self,
-        message_id: str = Field(
-            ..., min_length=1, description="ID of the message to update"
-        ),
-        metadata: dict[str, object] = Field(
-            ..., description="Metadata dictionary to associate with the message"
-        ),
-    ) -> Message:
-        """
-        Update metadata for a specific message in this session.
-
-        Makes an async API call to update the metadata associated with a message.
-        This will overwrite any existing metadata with the provided values.
-
-        Args:
-            message_id: ID of the message to update
-            metadata: A dictionary of metadata to associate with the message.
-                     Keys must be strings, values can be any JSON-serializable type
-
-        Returns:
-            The updated Message object
-        """
-        return await self._client.workspaces.sessions.messages.update(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            message_id=message_id,
-            metadata=metadata,
+        return AsyncPage(
+            messages_page, lambda msg: AsyncMessage.from_core(msg, self._client)
         )
 
     async def get_metadata(self) -> dict[str, object]:
@@ -561,7 +533,7 @@ class AsyncSession(BaseModel):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[AsyncMessage]:
         """
         Search for messages in this session.
 
@@ -573,16 +545,17 @@ class AsyncSession(BaseModel):
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A list of Message objects representing the search results.
+            A list of AsyncMessage objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return await self._client.workspaces.sessions.search(
+        response = await self._client.workspaces.sessions.search(
             self.id,
             workspace_id=self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [AsyncMessage.from_core(msg, self._client) for msg in response]
 
     @validate_call
     async def upload_file(
@@ -592,7 +565,7 @@ class AsyncSession(BaseModel):
             description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
         ),
         peer_id: str = Field(..., description="ID of the peer creating the messages"),
-    ) -> list[Message]:
+    ) -> list[AsyncMessage]:
         """
         Upload file to create message(s) in this session.
 
@@ -611,7 +584,7 @@ class AsyncSession(BaseModel):
             peer_id: ID of the peer who will be attributed as the creator of the messages
 
         Returns:
-            A list of Message objects representing the created messages
+            A list of AsyncMessage objects representing the created messages
 
         Note:
             Supported file types include PDFs, text files, and JSON documents.
@@ -630,7 +603,7 @@ class AsyncSession(BaseModel):
             peer_id=peer_id,
         )
 
-        return [Message.model_validate(msg) for msg in response]
+        return [AsyncMessage.from_core(msg, self._client) for msg in response]
 
     async def working_rep(
         self,

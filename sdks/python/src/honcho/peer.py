@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .message import Message
 from .pagination import SyncPage
 
 if TYPE_CHECKING:
@@ -297,13 +297,14 @@ class Peer(BaseModel):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.peers.search(
+        response = self._client.workspaces.peers.search(
             self.id,
             workspace_id=self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [Message.from_core(msg, self._client) for msg in response]
 
     def __repr__(self) -> str:
         """

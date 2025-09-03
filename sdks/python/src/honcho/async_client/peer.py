@@ -6,9 +6,9 @@ from typing import TYPE_CHECKING
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .message import AsyncMessage
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
@@ -299,7 +299,7 @@ class AsyncPeer(BaseModel):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[AsyncMessage]:
         """
         Search across all messages in the workspace with this peer as author.
 
@@ -311,16 +311,17 @@ class AsyncPeer(BaseModel):
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A list of Message objects representing the search results.
+            A list of AsyncMessage objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return await self._client.workspaces.peers.search(
+        response = await self._client.workspaces.peers.search(
             self.id,
             workspace_id=self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [AsyncMessage.from_core(msg, self._client) for msg in response]
 
     def __repr__(self) -> str:
         """

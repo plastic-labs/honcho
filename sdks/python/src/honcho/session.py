@@ -5,9 +5,9 @@ from typing import TYPE_CHECKING, Any
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
 from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .message import Message
 from .pagination import SyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
@@ -33,7 +33,7 @@ class Session(BaseModel):
 
     Sessions are scoped to a set of peers and contain messages/content.
     They create bidirectional relationships between peers and provide
-    a context for multi-party conversations and interactions.
+    a context for multi-party coon'nversations and interactions.
 
     Attributes:
         id: Unique identifier for this session
@@ -306,7 +306,7 @@ class Session(BaseModel):
         self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            messages=[MessageCreateParam(**message) for message in messages],
+            messages=messages,
         )
 
     @validate_call
@@ -339,38 +339,7 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             filters=filters,
         )
-        return SyncPage(messages_page)
-
-    @validate_call
-    def set_message_metadata(
-        self,
-        message_id: str = Field(
-            ..., min_length=1, description="ID of the message to update"
-        ),
-        metadata: dict[str, object] = Field(
-            ..., description="Metadata dictionary to associate with the message"
-        ),
-    ) -> Message:
-        """
-        Update metadata for a specific message in this session.
-
-        Makes an API call to update the metadata associated with a message.
-        This will overwrite any existing metadata with the provided values.
-
-        Args:
-            message_id: ID of the message to update
-            metadata: A dictionary of metadata to associate with the message.
-                     Keys must be strings, values can be any JSON-serializable type
-
-        Returns:
-            The updated Message object
-        """
-        return self._client.workspaces.sessions.messages.update(
-            session_id=self.id,
-            workspace_id=self.workspace_id,
-            message_id=message_id,
-            metadata=metadata,
-        )
+        return SyncPage(messages_page, lambda msg: Message.from_core(msg, self._client))
 
     def get_metadata(self) -> dict[str, object]:
         """
@@ -557,13 +526,14 @@ class Session(BaseModel):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.sessions.search(
+        response = self._client.workspaces.sessions.search(
             self.id,
             workspace_id=self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [Message.from_core(msg, self._client) for msg in response]
 
     @validate_call
     def upload_file(
@@ -611,7 +581,7 @@ class Session(BaseModel):
             peer_id=peer_id,
         )
 
-        return [Message.model_validate(msg) for msg in response]
+        return [Message.from_core(msg, self._client) for msg in response]
 
     def working_rep(
         self,

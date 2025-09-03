@@ -1,8 +1,8 @@
 import { Honcho } from '../src/client'
+import { Page } from '../src/pagination'
 import { Peer } from '../src/peer'
 import { Session } from '../src/session'
 import { SessionContext } from '../src/session_context'
-import { Page } from '../src/pagination'
 
 // Mock the @honcho-ai/core module
 let mockWorkspacesApi: any
@@ -138,7 +138,13 @@ describe('Honcho SDK Integration Tests', () => {
       const context = await session.getContext()
       expect(context).toBeInstanceOf(SessionContext)
       expect(context.sessionId).toBe('chat-session')
-      expect(context.messages).toEqual(mockMessages)
+      expect(context.messages).toHaveLength(2)
+      expect(context.messages[0].id).toBe('msg1')
+      expect(context.messages[0].content).toBe('Hello')
+      expect(context.messages[0].peer_id).toBe('user')
+      expect(context.messages[1].id).toBe('msg2')
+      expect(context.messages[1].content).toBe('Hi there!')
+      expect(context.messages[1].peer_id).toBe('assistant')
       expect(context.summary?.content).toBe('Friendly greeting')
 
       // Step 6: Convert context to different formats
@@ -434,7 +440,7 @@ describe('Honcho SDK Integration Tests', () => {
         messages: [{ id: 'msg1', content: 'Hello', peer_id: 'typed-peer' }],
         summary: {
           content: 'Test summary',
-          message_id: 1,
+          message_id: '1',
           summary_type: 'short',
           created_at: '2024-01-01T00:00:00Z',
           token_count: 20,

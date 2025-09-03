@@ -9,8 +9,9 @@ import httpx
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types import DeriverStatus
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
+
+from honcho.async_client.message import AsyncMessage
 
 from .pagination import AsyncPage
 from .peer import AsyncPeer
@@ -345,7 +346,7 @@ class AsyncHoncho(BaseModel):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[AsyncMessage]:
         """
         Search for messages in the current workspace.
 
@@ -357,15 +358,16 @@ class AsyncHoncho(BaseModel):
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A list of Message objects representing the search results.
+            A list of AsyncMessage objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return await self._client.workspaces.search(
+        response = await self._client.workspaces.search(
             self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [AsyncMessage.from_core(msg, self._client) for msg in response]
 
     @validate_call
     async def get_deriver_status(
