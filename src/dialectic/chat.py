@@ -296,9 +296,11 @@ async def chat(
 
     # 4. Peer card(s) ----------------------------------------------------------
     async with tracked_db("chat.get_peer_card") as db:
-        peer_card = await crud.get_peer_card(db, workspace_name, peer_name)
+        peer_card = await crud.get_peer_card(db, workspace_name, peer_name, peer_name)
         if target_name:
-            target_peer_card = await crud.get_peer_card(db, workspace_name, target_name)
+            target_peer_card = await crud.get_peer_card(
+                db, workspace_name, target_name, peer_name
+            )
         else:
             target_peer_card = None
 
