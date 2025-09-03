@@ -115,28 +115,15 @@ class Peer(BaseModel):
             Response string containing the answer to the query, or None if no
             relevant information is available
         """
-        # Prepare chat arguments
-        chat_args = {
-            "peer_id": self.id,
-            "workspace_id": self.workspace_id,
-            "query": query,
-            "stream": stream,
-            "target": str(target.id) if isinstance(target, Peer) else target,
-            "session_id": session_id,
-        }
-        
-        # Add system_prompt if provided and client supports it
-        if system_prompt is not None and system_prompt != "":
-            try:
-                # Try to include system_prompt parameter
-                chat_args["system_prompt"] = system_prompt
-                response = self._client.workspaces.peers.chat(**chat_args)
-            except TypeError:
-                # Fallback if client doesn't support system_prompt yet
-                chat_args.pop("system_prompt", None)
-                response = self._client.workspaces.peers.chat(**chat_args)
-        else:
-            response = self._client.workspaces.peers.chat(**chat_args)
+        response = self._client.workspaces.peers.chat(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            query=query,
+            stream=stream,
+            target=str(target.id) if isinstance(target, Peer) else target,
+            session_id=session_id,
+            system_prompt=system_prompt,
+        )
         if response.content in ("", None, "None"):
             return None
         return response.content
