@@ -4,7 +4,7 @@ import inspect
 import time
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
-from typing import Any, Literal, cast, overload
+from typing import Any, Generic, Literal, TypeVar, cast, overload
 
 from anthropic import AsyncAnthropic
 from anthropic.types import TextBlock
@@ -20,6 +20,9 @@ from sentry_sdk.ai.monitoring import ai_track
 
 from src.config import settings
 from src.utils.types import SupportedProviders
+
+T = TypeVar("T")
+M = TypeVar("M", bound=BaseModel)
 
 lf = get_client()
 
@@ -65,8 +68,18 @@ for provider_name, provider_value in SELECTED_PROVIDERS:
         raise ValueError(f"Missing client for {provider_name}: {provider_value}")
 
 
-class HonchoLLMCallResponse(BaseModel):
-    content: str
+class HonchoLLMCallResponse(BaseModel, Generic[T]):
+    """
+    Response object for LLM calls.
+
+    Args:
+        content: The response content. When a response_model is provided, this will be
+                the parsed object of that type. Otherwise, it will be a string.
+        output_tokens: Number of tokens generated in the response.
+        finish_reasons: List of finish reasons for the response.
+    """
+
+    content: T
     output_tokens: int
     finish_reasons: list[str]
 
@@ -216,7 +229,8 @@ async def honcho_llm_call(
     prompt: str,
     max_tokens: int,
     track_name: str | None = None,
-    response_model: type[BaseModel] | None = None,
+    *,
+    response_model: type[M],
     json_mode: bool = False,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
@@ -225,7 +239,26 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: Literal[False] = False,
-) -> HonchoLLMCallResponse: ...
+) -> HonchoLLMCallResponse[M]: ...
+
+
+@overload
+async def honcho_llm_call(
+    provider: SupportedProviders,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    track_name: str | None = None,
+    response_model: None = None,
+    json_mode: bool = False,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    | None = None,  # OpenAI only
+    verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
+    thinking_budget_tokens: int | None = None,
+    enable_retry: bool = True,
+    retry_attempts: int = 3,
+    stream: Literal[False] = False,
+) -> HonchoLLMCallResponse[str]: ...
 
 
 @overload
@@ -262,7 +295,7 @@ async def honcho_llm_call(
     enable_retry: bool = True,
     retry_attempts: int = 3,
     stream: bool = False,
-) -> HonchoLLMCallResponse | AsyncIterator[HonchoLLMCallStreamChunk]:
+) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     client = CLIENTS.get(provider)
     if not client:
         raise ValueError(f"Missing client for {provider}")
@@ -318,14 +351,14 @@ async def honcho_llm_call_inner(
     model: str,
     prompt: str,
     max_tokens: int,
-    _response_model: type[BaseModel] | None = None,
+    response_model: type[M],
     json_mode: bool = False,
-    _reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
-    _verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
+    verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: Literal[False] = False,
-) -> HonchoLLMCallResponse: ...
+) -> HonchoLLMCallResponse[M]: ...
 
 
 @overload
@@ -334,11 +367,27 @@ async def honcho_llm_call_inner(
     model: str,
     prompt: str,
     max_tokens: int,
-    _response_model: type[BaseModel] | None = None,
+    response_model: None = None,
     json_mode: bool = False,
-    _reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
-    _verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
+    verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
+    thinking_budget_tokens: int | None = None,  # Anthropic only
+    stream: Literal[False] = False,
+) -> HonchoLLMCallResponse[str]: ...
+
+
+@overload
+async def honcho_llm_call_inner(
+    provider: SupportedProviders,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    response_model: type[BaseModel] | None = None,
+    json_mode: bool = False,
+    reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    | None = None,  # OpenAI only
+    verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: Literal[True] = ...,
 ) -> AsyncIterator[HonchoLLMCallStreamChunk]: ...
@@ -349,14 +398,14 @@ async def honcho_llm_call_inner(
     model: str,
     prompt: str,
     max_tokens: int,
-    _response_model: type[BaseModel] | None = None,
+    response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
-    _reasoning_effort: Literal["low", "medium", "high", "minimal"]
+    reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
-    _verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
+    verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
     thinking_budget_tokens: int | None = None,  # Anthropic only
     stream: bool = False,
-) -> HonchoLLMCallResponse | AsyncIterator[HonchoLLMCallStreamChunk]:
+) -> HonchoLLMCallResponse[Any] | AsyncIterator[HonchoLLMCallStreamChunk]:
     # has already been validated by honcho_llm_call
     client = CLIENTS[provider]
 
@@ -413,26 +462,53 @@ async def honcho_llm_call_inner(
         case AsyncOpenAI():
             openai_params: dict[str, Any] = {
                 "model": params["model"],
-                "max_tokens": params["max_tokens"],
                 "messages": params["messages"],
             }
+            if "gpt-5" in model:
+                openai_params["max_completion_tokens"] = params["max_tokens"]
+                if reasoning_effort:
+                    openai_params["reasoning_effort"] = reasoning_effort
+                if verbosity:
+                    openai_params["verbosity"] = verbosity
+            else:
+                openai_params["max_tokens"] = params["max_tokens"]
             if json_mode:
                 openai_params["response_format"] = {"type": "json_object"}
-            response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
-                **openai_params
-            )
-            if response.choices[0].message.content is None:  # pyright: ignore
-                raise ValueError("No content in response")
+            if response_model:
+                openai_params["response_format"] = response_model
+                response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
+                    **openai_params
+                )
+                # Extract the parsed object for structured output
+                parsed_content = response.choices[0].message.parsed
+                if parsed_content is None:
+                    raise ValueError("No parsed content in structured response")
 
-            # Safely extract usage and finish_reason
-            usage = response.usage  # pyright: ignore
-            finish_reason = response.choices[0].finish_reason  # pyright: ignore
+                # Safely extract usage and finish_reason
+                usage = response.usage
+                finish_reason = response.choices[0].finish_reason
 
-            return HonchoLLMCallResponse(
-                content=response.choices[0].message.content,  # pyright: ignore
-                output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                finish_reasons=[finish_reason] if finish_reason else [],
-            )
+                return HonchoLLMCallResponse(
+                    content=parsed_content,
+                    output_tokens=usage.completion_tokens if usage else 0,
+                    finish_reasons=[finish_reason] if finish_reason else [],
+                )
+            else:
+                response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
+                    **openai_params
+                )
+                if response.choices[0].message.content is None:  # pyright: ignore
+                    raise ValueError("No content in response")
+
+                # Safely extract usage and finish_reason
+                usage = response.usage  # pyright: ignore
+                finish_reason = response.choices[0].finish_reason  # pyright: ignore
+
+                return HonchoLLMCallResponse(
+                    content=response.choices[0].message.content,  # pyright: ignore
+                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    finish_reasons=[finish_reason] if finish_reason else [],
+                )
         case generativeai.GenerativeModel():
             client_model = generativeai.GenerativeModel(f"models/{model}")
             gemini_response: GenerateContentResponse = client_model.generate_content(  # pyright: ignore
