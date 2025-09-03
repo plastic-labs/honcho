@@ -13,6 +13,7 @@ def dialectic_prompt(
     peer_card: list[str] | None,
     target_name: str | None = None,
     target_peer_card: list[str] | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
@@ -51,6 +52,7 @@ If the user's name or nickname is known, exclusively refer to them by that name.
     return c(
         f"""
 You are a context synthesis agent that operates as a natural language API for AI applications. Your role is to analyze application queries about users and synthesize relevant conclusions into coherent, actionable insights that directly address what the application needs to know.
+{system_prompt if system_prompt else ""}
 
 ## INPUT STRUCTURE
 

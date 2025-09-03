@@ -301,6 +301,12 @@ class DialecticOptions(BaseModel):
         str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
     ]
     stream: bool = False
+    system_prompt: str | None = Field(
+        None,
+        description="Optional system prompt to provide additional instructions or context to the model",
+        min_length=1,
+        max_length=10000,
+    )
 
 
 class DialecticResponse(BaseModel):

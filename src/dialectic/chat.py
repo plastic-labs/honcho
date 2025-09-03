@@ -57,6 +57,7 @@ async def dialectic_call(
     peer_card: list[str] | None,
     target_name: str | None = None,
     target_peer_card: list[str] | None = None,
+    system_prompt: str | None = None,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -80,6 +81,7 @@ async def dialectic_call(
         peer_card,
         target_name,
         target_peer_card,
+        system_prompt,
     )
 
     # Pretty print the prompt content
@@ -117,6 +119,7 @@ async def dialectic_stream(
     peer_card: list[str] | None,
     target_name: str | None = None,
     target_peer_card: list[str] | None = None,
+    system_prompt: str | None = None,
 ):
     """
     Make a streaming call to the dialectic model for context synthesis.
@@ -140,6 +143,7 @@ async def dialectic_stream(
         peer_card,
         target_name,
         target_peer_card,
+        system_prompt,
     )
 
     # Pretty print the prompt content
@@ -164,6 +168,7 @@ async def chat(
     query: str,
     *,
     stream: bool = False,
+    system_prompt: str | None = None,
 ) -> Stream | str:
     """
     Chat with the Dialectic API that builds on-demand user representations.
@@ -319,6 +324,7 @@ async def chat(
             peer_card,
             target_name,
             target_peer_card,
+            system_prompt,
         )
 
     response = await dialectic_call(
@@ -330,6 +336,7 @@ async def chat(
         peer_card,
         target_name,
         target_peer_card,
+        system_prompt,
     )
     dialectic_call_duration = (
         asyncio.get_event_loop().time() - dialectic_call_start_time
