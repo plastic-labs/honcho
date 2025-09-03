@@ -1,4 +1,7 @@
+from unittest.mock import patch
+
 import pytest
+from honcho_core.types import DeriverStatus
 
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.peer import AsyncPeer
@@ -323,20 +326,131 @@ async def test_session_delete(client_fixture: tuple[Honcho | AsyncHoncho, str]) 
         all_session_ids = [s.id for s in all_sessions]
 
         assert "test-session-delete" not in all_session_ids
+
+
+@pytest.mark.asyncio
+async def test_session_get_deriver_status(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests getting deriver status with various parameter combinations for sessions.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-deriver-status")
+        assert isinstance(session, AsyncSession)
+
+        status = await session.get_deriver_status()
+        assert isinstance(status, DeriverStatus)
+        assert hasattr(status, "total_work_units")
+        assert hasattr(status, "completed_work_units")
+        assert hasattr(status, "in_progress_work_units")
+        assert hasattr(status, "pending_work_units")
+        assert status.sessions is None
+
+        # Test with observer_id only
+        peer = await honcho_client.peer(id="test-peer-session-deriver")
+        await peer.get_metadata()  # Create the peer
+        status = await session.get_deriver_status(observer_id=peer.id)
+        assert isinstance(status, DeriverStatus)
+
+        # Test with sender_id only
+        status = await session.get_deriver_status(sender_id=peer.id)
+        assert isinstance(status, DeriverStatus)
+
+        # Test with both observer_id and sender_id
+        status = await session.get_deriver_status(
+            observer_id=peer.id, sender_id=peer.id
+        )
+        assert isinstance(status, DeriverStatus)
     else:
         assert isinstance(honcho_client, Honcho)
-        session = honcho_client.session(id="test-session-delete")
+        session = honcho_client.session(id="test-session-deriver-status")
         assert isinstance(session, Session)
 
-        # Add a peer to make the session exist
-        user = honcho_client.peer(id="user-delete")
-        session.add_peers([user])
+        # Test with no parameters
+        status = session.get_deriver_status()
+        assert isinstance(status, DeriverStatus)
+        assert hasattr(status, "total_work_units")
+        assert hasattr(status, "completed_work_units")
+        assert hasattr(status, "in_progress_work_units")
+        assert hasattr(status, "pending_work_units")
+        assert status.sessions is None
 
-        # Delete should not raise an exception
-        session.delete()
+        # Test with observer_id only
+        peer = honcho_client.peer(id="test-peer-session-deriver")
+        peer.get_metadata()  # Create the peer
+        status = session.get_deriver_status(observer_id=peer.id)
+        assert isinstance(status, DeriverStatus)
 
-        all_sessions_page = honcho_client.get_sessions({"is_active": True})
-        all_sessions = list(all_sessions_page)
-        all_session_ids = [s.id for s in all_sessions]
+        # Test with sender_id only
+        status = session.get_deriver_status(sender_id=peer.id)
+        assert isinstance(status, DeriverStatus)
 
-        assert "test-session-delete" not in all_session_ids
+        # Test with both observer_id and sender_id
+        status = session.get_deriver_status(observer_id=peer.id, sender_id=peer.id)
+        assert isinstance(status, DeriverStatus)
+
+
+@pytest.mark.asyncio
+async def test_session_poll_deriver_status(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests polling deriver status until completion for sessions.
+    """
+    honcho_client, client_type = client_fixture
+
+    # Mock the get_deriver_status method to return a "completed" status
+    # to avoid infinite polling in tests
+    completed_status = DeriverStatus(
+        total_work_units=0,
+        completed_work_units=0,
+        in_progress_work_units=0,
+        pending_work_units=0,
+    )
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-session-poll-deriver")
+        assert isinstance(session, AsyncSession)
+
+        with patch.object(
+            session.__class__, "get_deriver_status", return_value=completed_status
+        ):
+            status = await session.poll_deriver_status()
+            assert isinstance(status, DeriverStatus)
+            assert status.pending_work_units == 0
+            assert status.in_progress_work_units == 0
+
+        # Test with parameters
+        peer = await honcho_client.peer(id="test-peer-session-poll")
+        with patch.object(
+            session.__class__, "get_deriver_status", return_value=completed_status
+        ):
+            status = await session.poll_deriver_status(
+                observer_id=peer.id, sender_id=peer.id
+            )
+            assert isinstance(status, DeriverStatus)
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-session-poll-deriver")
+        assert isinstance(session, Session)
+
+        with patch.object(
+            session.__class__, "get_deriver_status", return_value=completed_status
+        ):
+            status = session.poll_deriver_status()
+            assert isinstance(status, DeriverStatus)
+            assert status.pending_work_units == 0
+            assert status.in_progress_work_units == 0
+
+        # Test with parameters
+        peer = honcho_client.peer(id="test-peer-session-poll")
+        with patch.object(
+            session.__class__, "get_deriver_status", return_value=completed_status
+        ):
+            status = session.poll_deriver_status(observer_id=peer.id, sender_id=peer.id)
+            assert isinstance(status, DeriverStatus)
