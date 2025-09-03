@@ -81,7 +81,7 @@ async def create_short_summary(
     messages: list[models.Message],
     input_tokens: int,
     previous_summary: str | None = None,
-):
+) -> HonchoLLMCallResponse[str]:
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
     # so we ask the agent to produce a word count roughly equal to either the input, or the max
@@ -130,7 +130,7 @@ Produce as thorough a summary as possible in {output_words} words or less.
 async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
-):
+) -> HonchoLLMCallResponse[str]:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
@@ -347,7 +347,7 @@ async def _create_summary(
         A full summary of the conversation up to the last message
     """
 
-    response: HonchoLLMCallResponse | None = None
+    response: HonchoLLMCallResponse[str] | None = None
     try:
         if summary_type == SummaryType.SHORT:
             response = await create_short_summary(

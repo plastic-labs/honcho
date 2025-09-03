@@ -151,9 +151,11 @@ def build_peer_card_caller(
             model=candidate.model,
             prompt=prompt,
             max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
+            response_model=PeerCardQuery,
+            json_mode=True,
             reasoning_effort="minimal",
             enable_retry=True,
-            retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
+            retry_attempts=3,
         )
 
         return response.content

@@ -229,7 +229,9 @@ def _format_observations(
     return "\n".join(parts).strip()
 
 
-async def generate_semantic_queries(query: str, target_peer_name: str):
+async def generate_semantic_queries(
+    query: str, target_peer_name: str
+) -> SemanticQueries:
     """Generate semantic search queries for observation retrieval."""
     prompt = query_generation_prompt(query, target_peer_name)
     response = await honcho_llm_call(
@@ -241,4 +243,4 @@ async def generate_semantic_queries(query: str, target_peer_name: str):
         enable_retry=True,
         retry_attempts=3,
     )
-    return json.loads(response.content)
+    return response.content
