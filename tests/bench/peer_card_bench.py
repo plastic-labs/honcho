@@ -324,7 +324,7 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
                 case.old_peer_card, case.new_observations
             )
             new_card = card.card
-            if new_card is None:
+            if new_card is None or new_card == []:
                 new_card = case.old_peer_card or []
             judgment = await judge_response(anthropic, case, new_card)
             return case, {"card": card, "judgment": judgment}

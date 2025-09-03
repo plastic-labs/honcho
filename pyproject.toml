@@ -27,7 +27,7 @@ dependencies = [
     "openai>=1.99.7",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
-    "google-generativeai>=0.8.5",
+    "google-genai>=1.32.0",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
 ]
