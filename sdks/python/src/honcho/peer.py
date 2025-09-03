@@ -122,7 +122,6 @@ class Peer(BaseModel):
             stream=stream,
             target=str(target.id) if isinstance(target, Peer) else target,
             session_id=session_id,
-            system_prompt=system_prompt,
         )
         if response.content in ("", None, "None"):
             return None
