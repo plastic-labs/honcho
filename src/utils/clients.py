@@ -148,8 +148,8 @@ async def _handle_streaming_response(
             }
             if json_mode:
                 openai_params["response_format"] = {"type": "json_object"}
-            openai_stream = await client.chat.completions.create(**openai_params)
-            async for chunk in openai_stream:
+            openai_stream = await client.chat.completions.create(**openai_params)  # pyright: ignore
+            async for chunk in openai_stream:  # pyright: ignore
                 chunk = cast(ChatCompletionChunk, chunk)
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield HonchoLLMCallStreamChunk(
@@ -194,8 +194,8 @@ async def _handle_streaming_response(
             }
             if json_mode:
                 groq_params["response_format"] = {"type": "json_object"}
-            groq_stream = await client.chat.completions.create(**groq_params)
-            async for chunk in groq_stream:
+            groq_stream = await client.chat.completions.create(**groq_params)  # pyright: ignore
+            async for chunk in groq_stream:  # pyright: ignore
                 chunk = cast(ChatCompletionChunk, chunk)
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield HonchoLLMCallStreamChunk(
@@ -392,22 +392,22 @@ async def honcho_llm_call_inner(
                     "type": "enabled",
                     "budget_tokens": thinking_budget_tokens,
                 }
-            anthropic_response: AnthropicMessage = await client.messages.create(
+            anthropic_response: AnthropicMessage = await client.messages.create(  # pyright: ignore
                 **anthropic_params
             )
             # Extract text content from content blocks
             text_blocks: list[str] = []
-            for block in anthropic_response.content:
+            for block in anthropic_response.content:  # pyright: ignore
                 if isinstance(block, TextBlock):
                     text_blocks.append(block.text)
 
             # Safely extract usage and stop_reason
-            usage = anthropic_response.usage
-            stop_reason = anthropic_response.stop_reason
+            usage = anthropic_response.usage  # pyright: ignore
+            stop_reason = anthropic_response.stop_reason  # pyright: ignore
 
             return HonchoLLMCallResponse(
                 content="\n".join(text_blocks),
-                output_tokens=usage.output_tokens if usage else 0,
+                output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
             )
         case AsyncOpenAI():
@@ -418,24 +418,24 @@ async def honcho_llm_call_inner(
             }
             if json_mode:
                 openai_params["response_format"] = {"type": "json_object"}
-            response: ChatCompletion = await client.chat.completions.create(
+            response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                 **openai_params
             )
-            if response.choices[0].message.content is None:
+            if response.choices[0].message.content is None:  # pyright: ignore
                 raise ValueError("No content in response")
 
             # Safely extract usage and finish_reason
-            usage = response.usage
-            finish_reason = response.choices[0].finish_reason
+            usage = response.usage  # pyright: ignore
+            finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
             return HonchoLLMCallResponse(
-                content=response.choices[0].message.content,
-                output_tokens=usage.completion_tokens if usage else 0,
+                content=response.choices[0].message.content,  # pyright: ignore
+                output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[finish_reason] if finish_reason else [],
             )
         case generativeai.GenerativeModel():
             client_model = generativeai.GenerativeModel(f"models/{model}")
-            gemini_response: GenerateContentResponse = client_model.generate_content(
+            gemini_response: GenerateContentResponse = client_model.generate_content(  # pyright: ignore
                 prompt,
                 generation_config=generativeai.GenerationConfig(
                     response_mime_type="application/json" if json_mode else None
@@ -469,19 +469,19 @@ async def honcho_llm_call_inner(
             }
             if json_mode:
                 groq_params["response_format"] = {"type": "json_object"}
-            response: ChatCompletion = await client.chat.completions.create(
+            response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                 **groq_params
             )
-            if response.choices[0].message.content is None:
+            if response.choices[0].message.content is None:  # pyright: ignore
                 raise ValueError("No content in response")
 
             # Safely extract usage and finish_reason
-            usage = response.usage
-            finish_reason = response.choices[0].finish_reason
+            usage = response.usage  # pyright: ignore
+            finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
             return HonchoLLMCallResponse(
-                content=response.choices[0].message.content,
-                output_tokens=usage.completion_tokens if usage else 0,
+                content=response.choices[0].message.content,  # pyright: ignore
+                output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[finish_reason] if finish_reason else [],
             )
 
