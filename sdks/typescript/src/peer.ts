@@ -61,6 +61,8 @@ export class Peer {
    *                 querying the peer's global representation
    * @param sessionId - Optional session ID to scope the query to a specific session.
    *                    If provided, only information from that session is considered
+   * @param systemPrompt - Optional system prompt instructions to add to the context
+   *                       for the dialectic model (max 5000 characters)
    * @returns Promise resolving to response string containing the answer to the query,
    *          or null if no relevant information is available
    */
@@ -70,6 +72,7 @@ export class Peer {
       stream?: boolean
       target?: string | Peer
       sessionId?: string
+      systemPrompt?: string
     }
   ): Promise<string | null> {
     const chatParams = ChatQuerySchema.parse({
@@ -77,20 +80,48 @@ export class Peer {
       stream: options?.stream,
       target: options?.target,
       sessionId: options?.sessionId,
+      systemPrompt: options?.systemPrompt,
     })
+    // Prepare chat arguments
+    const chatArgs: any = {
+      query: chatParams.query,
+      stream: chatParams.stream,
+      target: chatParams.target
+        ? typeof chatParams.target === 'string'
+          ? chatParams.target
+          : chatParams.target.id
+        : undefined,
+      session_id: chatParams.sessionId,
+    }
+
+    // Add system_prompt if provided and client supports it
+    if (chatParams.systemPrompt && chatParams.systemPrompt.trim() !== '') {
+      try {
+        // Try to include system_prompt parameter
+        chatArgs.system_prompt = chatParams.systemPrompt
+        const response = await this._client.workspaces.peers.chat(
+          this.workspaceId,
+          this.id,
+          chatArgs
+        )
+        if (!response.content || response.content === 'None') {
+          return null
+        }
+        return response.content
+      } catch (error: any) {
+        // Fallback if client doesn't support system_prompt yet
+        if (error?.message?.includes('system_prompt') || error?.name === 'TypeError') {
+          delete chatArgs.system_prompt
+        } else {
+          throw error
+        }
+      }
+    }
+
     const response = await this._client.workspaces.peers.chat(
       this.workspaceId,
       this.id,
-      {
-        query: chatParams.query,
-        stream: chatParams.stream,
-        target: chatParams.target
-          ? typeof chatParams.target === 'string'
-            ? chatParams.target
-            : chatParams.target.id
-          : undefined,
-        session_id: chatParams.sessionId,
-      }
+      chatArgs
     )
     if (!response.content || response.content === 'None') {
       return null

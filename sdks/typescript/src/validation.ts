@@ -114,6 +114,13 @@ export const SearchQuerySchema = z
 export const FilterSchema = z.record(z.string(), z.unknown()).optional()
 
 /**
+ * Schema for system prompt validation.
+ */
+export const SystemPromptSchema = z
+  .string()
+  .max(5000, 'System prompt must be 5000 characters or less')
+
+/**
  * Schema for chat query parameters.
  */
 export const ChatQuerySchema = z.object({
@@ -121,6 +128,7 @@ export const ChatQuerySchema = z.object({
   stream: z.boolean().optional(),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   sessionId: z.string().optional(),
+  systemPrompt: SystemPromptSchema.optional(),
 })
 
 /**
@@ -250,6 +258,7 @@ export type SessionConfig = z.infer<typeof SessionConfigSchema>
 export type SessionPeerConfig = z.infer<typeof SessionPeerConfigSchema>
 export type MessageCreate = z.infer<typeof MessageCreateSchema>
 export type Filters = z.infer<typeof FilterSchema>
+export type SystemPrompt = z.infer<typeof SystemPromptSchema>
 export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>
 export type DeriverStatusOptions = z.infer<typeof DeriverStatusOptionsSchema>

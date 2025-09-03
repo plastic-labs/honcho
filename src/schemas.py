@@ -300,6 +300,12 @@ class DialecticOptions(BaseModel):
     query: Annotated[
         str, Field(min_length=1, max_length=10000, description="Dialectic API Prompt")
     ]
+    system_prompt: Annotated[
+        str, Field(min_length=0, max_length=5000, description="Dialectic API System Prompt Injection")
+    ] = Field(
+        default="",
+        description="Optional system prompt instructions to add to the context for the dialectic model",
+    )
     stream: bool = False
 
 

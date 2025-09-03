@@ -168,6 +168,7 @@ async def chat(
     query: str,
     *,
     stream: bool = False,
+    system_prompt: str | None = None,
 ) -> Stream | str:
     """
     Chat with the Dialectic API that builds on-demand user representations.
@@ -185,6 +186,7 @@ async def chat(
         session_name: Optional session name for scoping
         query: Input Dialectic Query
         stream: Whether to stream the response
+        system_prompt: Optional system prompt to inject into the dialectic context
 
     Returns:
         Dialectic response (streaming or complete)
@@ -323,6 +325,7 @@ async def chat(
             peer_card,
             target_name,
             target_peer_card,
+            system_prompt,
         )
 
     response = await dialectic_call(
@@ -334,6 +337,7 @@ async def chat(
         peer_card,
         target_name,
         target_peer_card,
+        system_prompt,
     )
     dialectic_call_duration = (
         asyncio.get_event_loop().time() - dialectic_call_start_time

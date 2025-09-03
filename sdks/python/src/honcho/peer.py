@@ -91,6 +91,7 @@ class Peer(BaseModel):
         stream: bool = False,
         target: str | Peer | None = None,
         session_id: str | None = None,
+        system_prompt: str | None = None,
     ) -> str | None:
         """
         Query the peer's representation with a natural language question.
@@ -107,19 +108,35 @@ class Peer(BaseModel):
                     querying the peer's global representation
             session_id: Optional session ID to scope the query to a specific session.
                         If provided, only information from that session is considered
+            system_prompt: Optional system prompt instructions to add to the context
+                           for the dialectic model.
 
         Returns:
             Response string containing the answer to the query, or None if no
             relevant information is available
         """
-        response = self._client.workspaces.peers.chat(
-            peer_id=self.id,
-            workspace_id=self.workspace_id,
-            query=query,
-            stream=stream,
-            target=str(target.id) if isinstance(target, Peer) else target,
-            session_id=session_id,
-        )
+        # Prepare chat arguments
+        chat_args = {
+            "peer_id": self.id,
+            "workspace_id": self.workspace_id,
+            "query": query,
+            "stream": stream,
+            "target": str(target.id) if isinstance(target, Peer) else target,
+            "session_id": session_id,
+        }
+        
+        # Add system_prompt if provided and client supports it
+        if system_prompt is not None and system_prompt != "":
+            try:
+                # Try to include system_prompt parameter
+                chat_args["system_prompt"] = system_prompt
+                response = self._client.workspaces.peers.chat(**chat_args)
+            except TypeError:
+                # Fallback if client doesn't support system_prompt yet
+                chat_args.pop("system_prompt", None)
+                response = self._client.workspaces.peers.chat(**chat_args)
+        else:
+            response = self._client.workspaces.peers.chat(**chat_args)
         if response.content in ("", None, "None"):
             return None
         return response.content
