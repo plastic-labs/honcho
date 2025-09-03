@@ -91,7 +91,6 @@ class Peer(BaseModel):
         stream: bool = False,
         target: str | Peer | None = None,
         session_id: str | None = None,
-        system_prompt: str | None = None,
     ) -> str | None:
         """
         Query the peer's representation with a natural language question.
