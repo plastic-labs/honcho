@@ -544,14 +544,14 @@ class CertaintyReasoner:
         try:
             response = await peer_card_call(old_peer_card, new_observations)
             new_peer_card = response.card
-            if new_peer_card is None:
+            if not new_peer_card:
                 logger.info("No changes to peer card")
                 return
             # even with a dedicated notes field, we still need to prune notes out of the card
             new_peer_card = [
                 observation
                 for observation in new_peer_card
-                if not observation.startswith("Notes:")
+                if not observation.lower().startswith("notes")
             ]
             logger.info("New peer card: %s", new_peer_card)
             async with tracked_db("deriver.update_peer_card") as db:

@@ -156,6 +156,6 @@ Example 2:
 New observations:
 {chr(10).join(new_observations)}
 
-If there's no new key info, you should return an empty card. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
-    """
+If there's no new key info, set "card" to null (or omit it) to signal no update. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
+    """  # nosec B608 <-- this is a really dumb false positive
     )

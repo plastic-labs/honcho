@@ -38,8 +38,8 @@ async def get_peer_card(
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer described in the peer card
-        observer_name: Name of the observer (optional)
+        observed_name: Peer name of the peer described in the peer card
+        observer_name: Peer name of the observer
 
     Returns:
         The peer's card text if present, otherwise None (also None if peer not found).
@@ -48,9 +48,13 @@ async def get_peer_card(
         peer = await get_peer(
             db, workspace_name, schemas.PeerCreate(name=observer_name)
         )
-        return peer.internal_metadata.get(
-            construct_peer_card_label(observer=observer_name, observed=observed_name),
-            None,
+        return cast(
+            list[str] | None,
+            peer.internal_metadata.get(
+                construct_peer_card_label(
+                    observer=observer_name, observed=observed_name
+                )
+            ),
         )
     except exceptions.ResourceNotFoundException:
         return None
@@ -71,9 +75,9 @@ async def set_peer_card(
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer described in the peer card
+        observed_name: Peer name of the peer described in the peer card
+        observer_name: Peer name of the observer
         peer_card: List of strings to set as the peer card
-        observer_name: Name of the observer (optional)
 
     Raises:
         ResourceNotFoundException: If the peer does not exist
