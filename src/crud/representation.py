@@ -25,31 +25,59 @@ Observation = str | ObservationDict
 
 
 async def get_peer_card(
-    db: AsyncSession, workspace_name: str, peer_name: str
+    db: AsyncSession,
+    workspace_name: str,
+    observed_name: str,
+    observer_name: str,
 ) -> list[str] | None:
     """
     Get peer card from internal_metadata.
 
+    The peer card is returned for the observer/observed relationship.
+
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer
+        observed_name: Peer name of the peer described in the peer card
+        observer_name: Peer name of the observer
 
     Returns:
         The peer's card text if present, otherwise None (also None if peer not found).
     """
     try:
-        peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=peer_name))
-        return peer.internal_metadata.get("peer_card", None)
+        peer = await get_peer(
+            db, workspace_name, schemas.PeerCreate(name=observer_name)
+        )
+        return cast(
+            list[str] | None,
+            peer.internal_metadata.get(
+                construct_peer_card_label(
+                    observer=observer_name, observed=observed_name
+                )
+            ),
+        )
     except exceptions.ResourceNotFoundException:
         return None
 
 
 async def set_peer_card(
-    db: AsyncSession, workspace_name: str, peer_name: str, peer_card: list[str] | None
+    db: AsyncSession,
+    workspace_name: str,
+    observed_name: str,
+    observer_name: str,
+    peer_card: list[str] | None,
 ) -> None:
     """
     Set peer card for a peer.
+
+    If observer_name is provided, the peer card is set for the observer/observed relationship.
+
+    Args:
+        db: Database session
+        workspace_name: Name of the workspace
+        observed_name: Peer name of the peer described in the peer card
+        observer_name: Peer name of the observer
+        peer_card: List of strings to set as the peer card
 
     Raises:
         ResourceNotFoundException: If the peer does not exist
@@ -57,17 +85,21 @@ async def set_peer_card(
     stmt = (
         update(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
-        .where(models.Peer.name == peer_name)
+        .where(models.Peer.name == observer_name)
         .values(
             internal_metadata=models.Peer.internal_metadata.op("||")(
-                {"peer_card": peer_card}
+                {
+                    construct_peer_card_label(
+                        observer=observer_name, observed=observed_name
+                    ): peer_card
+                }
             )
         )
     )
     result = await db.execute(stmt)
     if result.rowcount == 0:
         raise exceptions.ResourceNotFoundException(
-            f"Peer {peer_name} not found in workspace {workspace_name}"
+            f"Peer {observer_name} not found in workspace {workspace_name}"
         )
     await db.commit()
 
@@ -331,3 +363,9 @@ async def set_working_representation(
 
 def construct_collection_name(*, observer: str, observed: str) -> str:
     return f"{observer}_{observed}"
+
+
+def construct_peer_card_label(*, observer: str, observed: str) -> str:
+    if observer == observed:
+        return "peer_card"
+    return f"{observed}_peer_card"
