@@ -27,8 +27,6 @@ Honcho has a hierarchical data model centered around the entities below.
       W[Workspaces] -->|have| P[Peers]
       W -->|have| S[Sessions]
 
-      P -->|have| PM[Messages]
-
       S -->|have| SM[Messages]
 
       P <-.->|many-to-many| S
@@ -36,13 +34,12 @@ Honcho has a hierarchical data model centered around the entities below.
       style W fill:#FF5A7E,stroke:#333,stroke-width:2px,color:#fff
       style P fill:#e1f5fe,stroke:#0277bd,color:#000
       style S fill:#f3e5f5,stroke:#7b1fa2,color:#000
-      style PM fill:#e8f5e9,stroke:#2e7d32,color:#000
       style SM fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
 
 There are `Workspaces` at the top that contain `Peers` and `Sessions`. A `Peer`
-can be part of many `Sessions` and a `Session` can have many `Peers`. Both
-`Sessions` and `Peers` can have `Messages`
+can be part of many `Sessions` and a `Session` can have many `Peers`. `Sessions`
+hold messages that are sent by `Peers`.
 
 ### <Icon icon="building" /> Workspaces
 
@@ -103,14 +100,16 @@ Sessions represent individual conversation threads or interaction contexts betwe
 - Support tickets
 - Meeting transcripts
 - Learning sessions
+- Single-Peer onboarding sessions where data is imported from an external source
 
 ---
 
 ### <Icon icon="envelope" /> Messages
 
 Messages are the fundamental units of interaction within sessions. They may
-also be used at the peer level to ingest information of any kind that is not related to a specific interaction, but provides
-important context for a peer (emails, docs, files, etc.).
+also be used to ingest information of any kind that is not related to a specific interaction, but provides
+important context for a peer (emails, docs, files, etc.). Simple make a session
+with a single peer and structure the data as messages.
 
 **Key Features:**
 - **Rich Content**: Support for text, metadata, and structured data

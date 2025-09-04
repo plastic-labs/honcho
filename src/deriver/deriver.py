@@ -232,25 +232,20 @@ async def process_representation_task(
         "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
     )
 
-    # We currently only use Peer Cards in Honcho-level representation derivation.
-    if payload.sender_name == payload.target_name:
-        async with tracked_db("deriver.get_peer_card") as db:
-            sender_peer_card: list[str] | None = await crud.get_peer_card(
-                db, payload.workspace_name, payload.sender_name
-            )
-        if sender_peer_card is None:
-            logger.warning("No peer card found for %s", payload.sender_name)
-        else:
-            logger.info("Using peer card: %s", sender_peer_card)
+    async with tracked_db("deriver.get_peer_card") as db:
+        speaker_peer_card: list[str] | None = await crud.get_peer_card(
+            db, payload.workspace_name, payload.sender_name, payload.target_name
+        )
+    if speaker_peer_card is None:
+        logger.warning("No peer card found for %s", payload.sender_name)
     else:
-        logger.info("No peer card used for directional representation derivation")
-        sender_peer_card = None
+        logger.info("Using peer card: %s", speaker_peer_card)
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
         working_representation,
         formatted_history,
-        sender_peer_card,
+        speaker_peer_card,
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
@@ -461,26 +456,24 @@ class CertaintyReasoner:
             "ms",
         )
 
-        # Only update peer card if we are in Honcho-level representation derivation.
-        if self.ctx.sender_name == self.ctx.target_name:
-            update_peer_card_start = time.perf_counter()
-            # flatten new observations by level into a list
-            new_observations = [
-                extract_observation_content(observation)
-                for level in new_observations_by_level.values()
-                for observation in level
-            ]
-            if new_observations:
-                await self._update_peer_card(speaker_peer_card, new_observations)
-            update_peer_card_duration = (
-                time.perf_counter() - update_peer_card_start
-            ) * 1000
-            accumulate_metric(
-                f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
-                "update_peer_card",
-                update_peer_card_duration,
-                "ms",
-            )
+        update_peer_card_start = time.perf_counter()
+        # flatten new observations by level into a list
+        new_observations = [
+            extract_observation_content(observation)
+            for level in new_observations_by_level.values()
+            for observation in level
+        ]
+        if new_observations:
+            await self._update_peer_card(speaker_peer_card, new_observations)
+        update_peer_card_duration = (
+            time.perf_counter() - update_peer_card_start
+        ) * 1000
+        accumulate_metric(
+            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
+            "update_peer_card",
+            update_peer_card_duration,
+            "ms",
+        )
 
         return reasoning_response
 
@@ -560,13 +553,23 @@ class CertaintyReasoner:
         try:
             response = await peer_card_call(old_peer_card, new_observations)
             new_peer_card = response.card
-            if new_peer_card is None:
+            if not new_peer_card:
                 logger.info("No changes to peer card")
                 return
+            # even with a dedicated notes field, we still need to prune notes out of the card
+            new_peer_card = [
+                observation
+                for observation in new_peer_card
+                if not observation.lower().startswith("notes")
+            ]
             logger.info("New peer card: %s", new_peer_card)
             async with tracked_db("deriver.update_peer_card") as db:
                 await crud.set_peer_card(
-                    db, self.ctx.workspace_name, self.ctx.sender_name, new_peer_card
+                    db,
+                    self.ctx.workspace_name,
+                    self.ctx.sender_name,
+                    self.ctx.target_name,
+                    new_peer_card,
                 )
         except Exception as e:
             if settings.SENTRY.ENABLED:
