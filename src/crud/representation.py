@@ -33,7 +33,7 @@ async def get_peer_card(
     """
     Get peer card from internal_metadata.
 
-    If observer_name is provided, the peer card is returned for the observer/observed relationship.
+    The peer card is returned for the observer/observed relationship.
 
     Args:
         db: Database session
