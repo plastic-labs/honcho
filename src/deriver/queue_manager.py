@@ -237,7 +237,8 @@ class QueueManager:
             try:
                 while not self.shutdown_event.is_set():
                     candidate_messages = await self.get_message_batch(
-                        work_unit_key, limit=20
+                        work_unit_key,
+                        limit=10,  # hard limit of 10 messages per batch
                     )
                     if not candidate_messages:
                         logger.debug(f"No more messages for work unit {work_unit_key}")
@@ -256,16 +257,13 @@ class QueueManager:
                         max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
 
                         for msg in candidate_messages:
-                            if msg.task_type == "representation":
-                                msg_tokens = msg.token_count or 0
-                                if (
-                                    not messages_to_process
-                                    or token_count + msg_tokens <= max_tokens
-                                ):
-                                    messages_to_process.append(msg)
-                                    token_count += msg_tokens
-                                else:
-                                    break
+                            msg_tokens = msg.token_count or 0
+                            if (
+                                not messages_to_process
+                                or token_count + msg_tokens <= max_tokens
+                            ):
+                                messages_to_process.append(msg)
+                                token_count += msg_tokens
                             else:
                                 break
 
