@@ -14,13 +14,7 @@ from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.utils.formatting import format_datetime_utc
 from src.utils.logging import conditional_observe
-from src.utils.shared_models import (
-    Observation,
-    ObservationContext,
-    ObservationMetadata,
-    ReasoningLevel,
-    UnifiedObservation,
-)
+from src.utils.representation import Representation
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +128,6 @@ class EmbeddingStore:
             await db.commit()
             logger.debug("Batch created %s unified observations", len(document_objects))
 
-    @overload
     async def get_relevant_observations(
         self,
         query: str,
@@ -143,31 +136,7 @@ class EmbeddingStore:
         max_distance: float = 0.3,
         level: str | None = None,
         conversation_context: str = "",
-        for_reasoning: Literal[True],
-    ) -> ObservationContext: ...
-
-    @overload
-    async def get_relevant_observations(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        max_distance: float = 0.3,
-        level: str | None = None,
-        conversation_context: str = "",
-        for_reasoning: Literal[False],
-    ) -> list[models.Document]: ...
-
-    async def get_relevant_observations(
-        self,
-        query: str,
-        *,
-        top_k: int = 5,
-        max_distance: float = 0.3,
-        level: str | None = None,
-        conversation_context: str = "",
-        for_reasoning: bool = False,
-    ) -> list[models.Document] | ObservationContext:
+    ) -> Representation:
         """
         Unified method to get relevant observations with flexible options.
 
@@ -267,14 +236,13 @@ class EmbeddingStore:
         """Get observations formatted for reasoning with ObservationContext."""
         context = ObservationContext()
 
-        for level_name in ["explicit", "deductive"]:
-            count: int = getattr(self, f"{level_name}_observations_count", 5)
-            level_enum = ReasoningLevel(level_name)
+        for level in ReasoningLevel:
+            count: int = getattr(self, f"{level.value}_observations_count", 5)
 
             docs = await self._query_documents_for_level(
                 db,
                 query,
-                level_name,
+                level,
                 conversation_context,
                 max_distance,
                 count,
@@ -290,7 +258,7 @@ class EmbeddingStore:
                         metadata=metadata,
                         created_at=doc.created_at,
                     )
-                    context.add_observation(observation, level_enum)
+                    context.add_observation(observation, level)
                     seen_observations.add(normalized_content)
 
         return context

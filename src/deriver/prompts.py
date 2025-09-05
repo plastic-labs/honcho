@@ -101,7 +101,7 @@ New conversation turn to analyze:
 
 def peer_card_prompt(
     old_peer_card: list[str] | None,
-    new_observations: list[str],
+    new_observations: str,
 ) -> str:
     """
     Generate the peer card prompt for the deriver.
@@ -150,7 +150,7 @@ Example 2:
 {old_peer_card_section}
 
 New observations:
-{chr(10).join(new_observations)}
+{new_observations}
 
 If there's no new key info, set "card" to null (or omit it) to signal no update. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
     """  # nosec B608 <-- this is a really dumb false positive

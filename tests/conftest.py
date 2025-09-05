@@ -378,7 +378,6 @@ def mock_honcho_llm_call():
     from src.utils.shared_models import (
         DeductiveObservation,
         ReasoningResponse,
-        ReasoningResponseWithThinking,
         SemanticQueries,
     )
 
@@ -407,20 +406,6 @@ def mock_honcho_llm_call():
                 # Add the _response attribute that contains thinking (used in the actual code)
                 mock_response._response = MagicMock()
                 mock_response._response.thinking = "Test thinking content"
-                return mock_response
-            elif (
-                getattr(response_model, "__name__", "")
-                == "ReasoningResponseWithThinking"
-            ):
-                mock_response = MagicMock(spec=ReasoningResponseWithThinking)
-                mock_response.thinking = "Test thinking content"
-                mock_response.explicit = ["Test explicit observation"]
-                mock_response.deductive = [
-                    DeductiveObservation(
-                        conclusion="Test deductive conclusion",
-                        premises=["Test premise 1", "Test premise 2"],
-                    )
-                ]
                 return mock_response
             elif getattr(response_model, "__name__", "") == "SemanticQueries":
                 return SemanticQueries(queries=["test query 1", "test query 2"])
