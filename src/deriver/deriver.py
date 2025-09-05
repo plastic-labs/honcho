@@ -102,6 +102,16 @@ async def peer_card_call(
     )
 
 
+@sentry_sdk.trace
+async def process_representation_tasks_batch(
+    payloads: list[RepresentationPayload],  # pyright: ignore[reportUnusedParameter]
+) -> None:
+    """
+    Process a batch of representation tasks.
+    """
+    pass
+
+
 @conditional_observe
 @sentry_sdk.trace
 async def process_representation_task(

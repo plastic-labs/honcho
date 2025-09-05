@@ -212,6 +212,14 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=500)
     ] = 100
 
+    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+        int,
+        Field(
+            default=4096,
+            ge=1,
+        ),
+    ] = 4096
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore

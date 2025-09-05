@@ -150,13 +150,15 @@ class TestQueueProcessing:
         first, second = ordered[0], ordered[1]
 
         qm = QueueManager()
-        nxt = await qm.get_next_message(first.work_unit_key)
+        batch = await qm.get_message_batch(first.work_unit_key, limit=1)
+        nxt = batch[0] if batch else None
         assert nxt is not None and nxt.id == first.id
 
         # Mark first processed, next should be the second
         first.processed = True
         await db_session.commit()
-        nxt2 = await qm.get_next_message(first.work_unit_key)
+        batch2 = await qm.get_message_batch(first.work_unit_key, limit=1)
+        nxt2 = batch2[0] if batch2 else None
         assert nxt2 is not None and nxt2.id == second.id
 
     @pytest.mark.asyncio

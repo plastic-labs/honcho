@@ -8,13 +8,14 @@ from rich.console import Console
 
 from src.config import settings
 from src.dependencies import tracked_db
-from src.deriver import deriver
+from src.deriver.deriver import process_representation_tasks_batch
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
 from src.webhooks import webhook_delivery
 
 from .queue_payload import (
     RepresentationPayload,
+    RepresentationPayloads,
     SummaryPayload,
     WebhookPayload,
 )
@@ -25,25 +26,32 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 console = Console(markup=True)
 
 
-async def process_item(task_type: str, payload: dict[str, Any]) -> None:
-    """Validate an incoming queue payload and dispatch it to the appropriate handler.
+async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) -> None:
+    """Validate incoming queue payloads and dispatch to the appropriate handler.
 
     This function centralizes payload validation using a simple mapping from
-    task type to Pydantic model. After validation, it routes the request to
+    task type to Pydantic model. After validation, routes the request to
     the correct processor without repeating type checks elsewhere.
     """
-    logger.debug("process_item received payload for task type %s", task_type)
+    logger.debug(
+        "process_item received %s payloads for task type %s",
+        len(queue_payloads),
+        task_type,
+    )
 
     if task_type == "webhook":
         try:
-            validated = WebhookPayload(**payload)
+            validated = WebhookPayload(**queue_payloads[0])
         except ValidationError as e:
             logger.error(
-                "Invalid webhook payload received: %s. Payload: %s", str(e), payload
+                "Invalid webhook payload received: %s. Payload: %s",
+                str(e),
+                queue_payloads[0],
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await process_webhook(validated)
         logger.debug("Finished processing webhook %s", validated.event_type)
+
     elif task_type == "summary":
         if settings.LANGFUSE_PUBLIC_KEY:
             langfuse_context.update_current_trace(  # type: ignore
@@ -52,13 +60,16 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
                 }
             )
         try:
-            validated = SummaryPayload(**payload)
+            validated = SummaryPayload(**queue_payloads[0])
         except ValidationError as e:
             logger.error(
-                "Invalid summary payload received: %s. Payload: %s", str(e), payload
+                "Invalid summary payload received: %s. Payload: %s",
+                str(e),
+                queue_payloads[0],
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await process_summary_task(validated)
+
     elif task_type == "representation":
         if settings.LANGFUSE_PUBLIC_KEY:
             langfuse_context.update_current_trace(
@@ -66,17 +77,22 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
                     "critical_analysis_model": settings.DERIVER.MODEL,
                 }
             )
-
         try:
-            validated = RepresentationPayload(**payload)
+            validated_payloads = RepresentationPayloads(
+                payloads=[
+                    RepresentationPayload(**payload) for payload in queue_payloads
+                ]
+            )
         except ValidationError as e:
             logger.error(
-                "Invalid representation payload received: %s. Payload: %s",
+                "Invalid representation payloads received: %s. Payloads: %s",
                 str(e),
-                payload,
+                queue_payloads,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        await deriver.process_representation_task(validated)
+
+        await process_representation_tasks_batch(validated_payloads.payloads)
+
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
