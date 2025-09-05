@@ -34,7 +34,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
     the correct processor without repeating type checks elsewhere.
     """
     logger.debug(
-        "process_item received %s payloads for task type %s",
+        "process_items received %s payloads for task type %s",
         len(queue_payloads),
         task_type,
     )

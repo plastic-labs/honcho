@@ -503,8 +503,9 @@ class CertaintyReasoner:
     @sentry_sdk.trace
     async def _save_new_observations(
         self,
-        original_working_representation: ReasoningResponse,
-        revised_observations: ReasoningResponse,
+        original_working_representation: ReasoningResponse
+        | ReasoningResponseWithThinking,
+        revised_observations: ReasoningResponse | ReasoningResponseWithThinking,
         latest_payload: RepresentationPayload,
     ) -> dict[str, list[str]]:
         """Save only the observations that are new compared to the original context."""

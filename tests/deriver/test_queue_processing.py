@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
+from src.config import settings
 from src.deriver.queue_manager import QueueManager
 
 
@@ -251,7 +252,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create messages with token counts that exceed batch limit
-        # Total: 2000 + 2000 + 3000 = 7000 tokens (> 4096 limit defined in settings)
+        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
         messages = [
             models.Message(
                 id=i,
@@ -261,7 +262,7 @@ class TestQueueProcessing:
                 content=f"Test message {i}",
                 token_count=token_count,
             )
-            for i, token_count in enumerate([2000, 2000, 3000])
+            for i, token_count in enumerate([limit // 2, limit // 2, limit // 2])
         ]
 
         # Create queue items with token counts
@@ -320,8 +321,9 @@ class TestQueueProcessing:
 
         # Should create 2 batches due to token limits
         assert len(processed_batches) == 2
-        assert processed_batches[0]["payload_count"] == 2  # 2000 + 2000
-        assert processed_batches[1]["payload_count"] == 1  # 3000
+        assert processed_batches[0]["payload_count"] == 2
+        assert processed_batches[1]["payload_count"] == 1
+        assert all(b["task_type"] == "representation" for b in processed_batches)
 
     @pytest.mark.asyncio
     async def test_hard_batch_size_limit(
@@ -342,7 +344,7 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content=f"Test message {i}",
-                token_count=100,  # Small tokens to avoid token-based batching
+                token_count=5,  # Small tokens to avoid token-based batching
             )
             for i in range(15)
         ]
@@ -377,6 +379,13 @@ class TestQueueProcessing:
         qm = QueueManager()
         batch = await qm.get_message_batch(queue_items[0].work_unit_key, limit=10)
         assert len(batch) == 10  # Should respect hard limit
+
+        # Mark the first batch as processed
+        await qm.mark_messages_as_processed(batch, queue_items[0].work_unit_key)
+
+        # Get the next batch - should return remaining 5 items
+        next_batch = await qm.get_message_batch(queue_items[0].work_unit_key, limit=10)
+        assert len(next_batch) == 5  # Should return remaining items
 
     @pytest.mark.asyncio
     async def test_single_message_processing(
