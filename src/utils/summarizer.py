@@ -35,19 +35,21 @@ class Summary(TypedDict):
     """
 
     content: str
-    message_id: int
+    message_id: int  # primary key id of the message
     summary_type: str
     created_at: str
     token_count: int
+    message_public_id: str
 
 
 def to_schema_summary(s: Summary) -> schemas.Summary:
     return schemas.Summary(
         content=s["content"],
-        message_id=s["message_id"],
+        message_public_id=s["message_public_id"],
         summary_type=s["summary_type"],
         created_at=s["created_at"],
         token_count=s["token_count"],
+        message_id=s["message_id"],
     )
 
 
@@ -178,6 +180,7 @@ async def summarize_if_needed(
     session_name: str,
     message_id: int,
     message_seq_in_session: int,
+    message_public_id: str,
 ) -> None:
     """
     Create short/long summaries if thresholds met.
@@ -206,6 +209,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_public_id,
                     SummaryType.LONG,
                 )
                 logger.info(
@@ -222,6 +226,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_public_id,
                     SummaryType.SHORT,
                 )
                 logger.info(
@@ -245,6 +250,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_public_id,
                     SummaryType.LONG,
                 )
                 logger.info(
@@ -259,6 +265,7 @@ async def summarize_if_needed(
                     workspace_name,
                     session_name,
                     message_id,
+                    message_public_id,
                     SummaryType.SHORT,
                 )
                 logger.info(
@@ -274,6 +281,7 @@ async def _create_and_save_summary(
     workspace_name: str,
     session_name: str,
     message_id: int,
+    message_public_id: str,
     summary_type: SummaryType,
 ) -> None:
     """
@@ -309,6 +317,7 @@ async def _create_and_save_summary(
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
         input_tokens=input_tokens,
+        message_public_id=message_public_id,
     )
 
     await _save_summary(
@@ -332,6 +341,7 @@ async def _create_summary(
     previous_summary_text: str | None,
     summary_type: SummaryType,
     input_tokens: int,
+    message_public_id: str,
 ) -> Summary:
     """
     Generate a summary of the provided messages using an LLM.
@@ -397,10 +407,11 @@ async def _create_summary(
 
     return Summary(
         content=summary_text,
-        message_id=messages[-1].id if messages else 0,
+        message_public_id=message_public_id,
         summary_type=summary_type.value,
         created_at=utc_now_iso(),
         token_count=summary_tokens,
+        message_id=messages[-1].id if messages else 0,
     )
 
 
@@ -618,6 +629,7 @@ async def get_session_context(
                 summary_type=latest_long_summary["summary_type"],
                 created_at=latest_long_summary["created_at"],
                 token_count=latest_long_summary["token_count"],
+                message_public_id=latest_long_summary["message_public_id"],
             )
             messages_tokens = token_limit - latest_long_summary["token_count"]
             messages_start_id = latest_long_summary["message_id"]
@@ -630,6 +642,7 @@ async def get_session_context(
                 summary_type=latest_short_summary["summary_type"],
                 created_at=latest_short_summary["created_at"],
                 token_count=latest_short_summary["token_count"],
+                message_public_id=latest_short_summary["message_public_id"],
             )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]

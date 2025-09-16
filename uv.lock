@@ -911,7 +911,7 @@ dev = [
 
 [[package]]
 name = "honcho-ai"
-version = "1.4.0"
+version = "1.4.1"
 source = { editable = "sdks/python" }
 dependencies = [
     { name = "honcho-core" },

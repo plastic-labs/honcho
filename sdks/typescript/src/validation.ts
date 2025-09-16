@@ -88,6 +88,18 @@ export const MessageMetadataSchema = z
   .optional()
 
 /**
+ * Schema for message metadata update (required, not optional).
+ */
+export const MessageMetadataUpdateSchema = z.record(z.string(), z.unknown())
+
+/**
+ * Schema for message ID validation.
+ */
+export const MessageIdSchema = z
+  .string()
+  .min(1, 'Message ID must be a non-empty string')
+
+/**
  * Schema for message creation.
  */
 export const MessageCreateSchema = z.object({
@@ -249,6 +261,8 @@ export type SessionMetadata = z.infer<typeof SessionMetadataSchema>
 export type SessionConfig = z.infer<typeof SessionConfigSchema>
 export type SessionPeerConfig = z.infer<typeof SessionPeerConfigSchema>
 export type MessageCreate = z.infer<typeof MessageCreateSchema>
+export type MessageId = z.infer<typeof MessageIdSchema>
+export type MessageMetadataUpdate = z.infer<typeof MessageMetadataUpdateSchema>
 export type Filters = z.infer<typeof FilterSchema>
 export type ChatQuery = z.infer<typeof ChatQuerySchema>
 export type ContextParams = z.infer<typeof ContextParamsSchema>

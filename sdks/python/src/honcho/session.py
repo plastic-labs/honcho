@@ -1,19 +1,24 @@
 from __future__ import annotations
 
+import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
+from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .message import Message
 from .pagination import SyncPage
 from .session_context import SessionContext, SessionSummaries, Summary
 from .utils import prepare_file_for_upload
 
 if TYPE_CHECKING:
     from .peer import Peer
+
+logger = logging.getLogger(__name__)
 
 
 class SessionPeerConfig(BaseModel):
@@ -33,7 +38,7 @@ class Session(BaseModel):
 
     Sessions are scoped to a set of peers and contain messages/content.
     They create bidirectional relationships between peers and provide
-    a context for multi-party conversations and interactions.
+    a context for multi-party coon'nversations and interactions.
 
     Attributes:
         id: Unique identifier for this session
@@ -306,7 +311,7 @@ class Session(BaseModel):
         self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            messages=[MessageCreateParam(**message) for message in messages],
+            messages=messages,
         )
 
     @validate_call
@@ -339,7 +344,7 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             filters=filters,
         )
-        return SyncPage(messages_page)
+        return SyncPage(messages_page, lambda msg: Message.from_core(msg, self._client))
 
     def get_metadata(self) -> dict[str, object]:
         """
@@ -381,6 +386,18 @@ class Session(BaseModel):
             session_id=self.id,
             workspace_id=self.workspace_id,
             metadata=metadata,
+        )
+
+    def delete(self) -> None:
+        """
+        Delete this session.
+
+        Makes an API call to mark this session as inactive. The session and its
+        messages will no longer be accessible through normal operations.
+        """
+        self._client.workspaces.sessions.delete(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
         )
 
     @validate_call
@@ -514,13 +531,14 @@ class Session(BaseModel):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.sessions.search(
+        response = self._client.workspaces.sessions.search(
             self.id,
             workspace_id=self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [Message.from_core(msg, self._client) for msg in response]
 
     @validate_call
     def upload_file(
@@ -568,7 +586,7 @@ class Session(BaseModel):
             peer_id=peer_id,
         )
 
-        return [Message.model_validate(msg) for msg in response]
+        return [Message.from_core(msg, self._client) for msg in response]
 
     def working_rep(
         self,
@@ -595,6 +613,100 @@ class Session(BaseModel):
             session_id=self.id,
             target=str(target.id) if isinstance(target, Peer) else target,
         )
+
+    @validate_call
+    def get_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+    ) -> DeriverStatus:
+        """
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        """
+        return self._client.workspaces.deriver_status(
+            workspace_id=self.workspace_id,
+            observer_id=observer_id,
+            sender_id=sender_id,
+            session_id=self.id,
+        )
+
+    @validate_call
+    def poll_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+        timeout: float = Field(
+            300.0,
+            gt=0,
+            description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
+        ),
+    ) -> DeriverStatus:
+        """
+        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
+        This allows you to guarantee that all messages have been processed by the deriver for
+        use with the dialectic endpoint.
+
+        The polling estimates sleep time by assuming each work unit takes 1 second.
+
+        Args:
+            observer_id: Optional observer ID to scope the status check
+            sender_id: Optional sender ID to scope the status check
+            timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
+
+        Returns:
+            DeriverStatus when all work units are complete
+
+        Raises:
+            TimeoutError: If timeout is exceeded before work units complete
+            Exception: If get_deriver_status fails repeatedly
+        """
+        start_time = time.time()
+
+        while True:
+            try:
+                status = self.get_deriver_status(observer_id, sender_id)
+            except Exception as e:
+                logger.warning(f"Failed to get deriver status: {e}")
+                # Sleep briefly before retrying
+                time.sleep(1)
+
+                # Check timeout after error
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= timeout:
+                    raise TimeoutError(
+                        f"Polling timeout exceeded after {timeout}s. "
+                        + f"Error during status check: {e}"
+                    ) from e
+                continue
+
+            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
+                return status
+
+            # Check timeout before sleeping
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= timeout:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            # Sleep for the expected time to complete all current work units
+            # Assuming each pending and in-progress work unit takes 1 second
+            total_work_units = status.pending_work_units + status.in_progress_work_units
+            sleep_time = max(1, total_work_units)
+
+            # Don't sleep past the timeout
+            remaining_time = timeout - elapsed_time
+            sleep_time = min(sleep_time, remaining_time)
+            if sleep_time <= 0:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            time.sleep(sleep_time)
 
     def __repr__(self) -> str:
         """

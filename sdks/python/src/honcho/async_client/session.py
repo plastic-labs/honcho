@@ -1,19 +1,25 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from typing import TYPE_CHECKING, Any
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import NOT_GIVEN
+from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
 from ..session_context import SessionContext, SessionSummaries, Summary
 from ..utils import prepare_file_for_upload
+from .message import AsyncMessage
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
     from .peer import AsyncPeer
+
+logger = logging.getLogger(__name__)
 
 
 class SessionPeerConfig(BaseModel):
@@ -327,7 +333,7 @@ class AsyncSession(BaseModel):
         await self._client.workspaces.sessions.messages.create(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            messages=[MessageCreateParam(**message) for message in messages],
+            messages=messages,
         )
 
     @validate_call
@@ -337,7 +343,7 @@ class AsyncSession(BaseModel):
         filters: dict[str, object] | None = Field(
             None, description="Dictionary of filter criteria"
         ),
-    ) -> AsyncPage[Message]:
+    ) -> AsyncPage[AsyncMessage]:
         """
         Get messages from this session with optional filtering.
 
@@ -352,7 +358,7 @@ class AsyncSession(BaseModel):
                     - timestamp_end: Filter messages before a specific timestamp
 
         Returns:
-            An async paginated list of Message objects matching the specified criteria, ordered by
+            An async paginated list of AsyncMessage objects matching the specified criteria, ordered by
             creation time (most recent first)
         """
         messages_page = await self._client.workspaces.sessions.messages.list(
@@ -360,7 +366,10 @@ class AsyncSession(BaseModel):
             workspace_id=self.workspace_id,
             filters=filters,
         )
-        return AsyncPage(messages_page)
+
+        return AsyncPage(
+            messages_page, lambda msg: AsyncMessage.from_core(msg, self._client)
+        )
 
     async def get_metadata(self) -> dict[str, object]:
         """
@@ -400,6 +409,18 @@ class AsyncSession(BaseModel):
             session_id=self.id,
             workspace_id=self.workspace_id,
             metadata=metadata,
+        )
+
+    async def delete(self) -> None:
+        """
+        Delete this session.
+
+        Makes an API call to mark this session as inactive. The session and its
+        messages will no longer be accessible through normal operations.
+        """
+        await self._client.workspaces.sessions.delete(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
         )
 
     @validate_call
@@ -518,7 +539,7 @@ class AsyncSession(BaseModel):
         limit: int = Field(
             default=10, ge=1, le=100, description="Number of results to return"
         ),
-    ) -> list[Message]:
+    ) -> list[AsyncMessage]:
         """
         Search for messages in this session.
 
@@ -530,16 +551,17 @@ class AsyncSession(BaseModel):
             limit: Number of results to return (1-100, default: 10)
 
         Returns:
-            A list of Message objects representing the search results.
+            A list of AsyncMessage objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return await self._client.workspaces.sessions.search(
+        response = await self._client.workspaces.sessions.search(
             self.id,
             workspace_id=self.workspace_id,
             query=query,
             filters=filters,
             limit=limit,
         )
+        return [AsyncMessage.from_core(msg, self._client) for msg in response]
 
     @validate_call
     async def upload_file(
@@ -549,7 +571,7 @@ class AsyncSession(BaseModel):
             description="File to upload. Can be a file object, (filename, bytes, content_type) tuple, or (filename, fileobj, content_type) tuple.",
         ),
         peer_id: str = Field(..., description="ID of the peer creating the messages"),
-    ) -> list[Message]:
+    ) -> list[AsyncMessage]:
         """
         Upload file to create message(s) in this session.
 
@@ -568,7 +590,7 @@ class AsyncSession(BaseModel):
             peer_id: ID of the peer who will be attributed as the creator of the messages
 
         Returns:
-            A list of Message objects representing the created messages
+            A list of AsyncMessage objects representing the created messages
 
         Note:
             Supported file types include PDFs, text files, and JSON documents.
@@ -587,7 +609,7 @@ class AsyncSession(BaseModel):
             peer_id=peer_id,
         )
 
-        return [Message.model_validate(msg) for msg in response]
+        return [AsyncMessage.from_core(msg, self._client) for msg in response]
 
     async def working_rep(
         self,
@@ -614,6 +636,100 @@ class AsyncSession(BaseModel):
             session_id=self.id,
             target=str(target.id) if isinstance(target, AsyncPeer) else target,
         )
+
+    @validate_call
+    async def get_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+    ) -> DeriverStatus:
+        """
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        """
+        return await self._client.workspaces.deriver_status(
+            workspace_id=self.workspace_id,
+            observer_id=observer_id,
+            sender_id=sender_id,
+            session_id=self.id,
+        )
+
+    @validate_call
+    async def poll_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+        timeout: float = Field(
+            300.0,
+            gt=0,
+            description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
+        ),
+    ) -> DeriverStatus:
+        """
+        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
+        This allows you to guarantee that all messages have been processed by the deriver for
+        use with the dialectic endpoint.
+
+        The polling estimates sleep time by assuming each work unit takes 1 second.
+
+        Args:
+            observer_id: Optional observer ID to scope the status check
+            sender_id: Optional sender ID to scope the status check
+            timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
+
+        Returns:
+            DeriverStatus when all work units are complete
+
+        Raises:
+            TimeoutError: If timeout is exceeded before work units complete
+            Exception: If get_deriver_status fails repeatedly
+        """
+        start_time = time.time()
+
+        while True:
+            try:
+                status = await self.get_deriver_status(observer_id, sender_id)
+            except Exception as e:
+                logger.warning(f"Failed to get deriver status: {e}")
+                # Sleep briefly before retrying
+                await asyncio.sleep(1)
+
+                # Check timeout after error
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= timeout:
+                    raise TimeoutError(
+                        f"Polling timeout exceeded after {timeout}s. "
+                        + f"Error during status check: {e}"
+                    ) from e
+                continue
+
+            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
+                return status
+
+            # Check timeout before sleeping
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= timeout:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            # Sleep for the expected time to complete all current work units
+            # Assuming each pending and in-progress work unit takes 1 second
+            total_work_units = status.pending_work_units + status.in_progress_work_units
+            sleep_time = max(1, total_work_units)
+
+            # Don't sleep past the timeout
+            remaining_time = timeout - elapsed_time
+            sleep_time = min(sleep_time, remaining_time)
+            if sleep_time <= 0:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            await asyncio.sleep(sleep_time)
 
     def __repr__(self) -> str:
         """

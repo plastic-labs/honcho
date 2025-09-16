@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [1.4.1] - 2025-08-26
+
+### Added
+
+- Session delete functionality (`session.delete()`)
+- Message metadata update functionality (`session.setMessageMetadata()`)
+
+### Fixed
+
+- Summary message ID type inconsistency - summaries now return string IDs instead of numeric IDs
+
 ## [1.4.0] - 2025-08-12
 
 ### Added

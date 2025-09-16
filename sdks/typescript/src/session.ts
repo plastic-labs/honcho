@@ -1,11 +1,14 @@
 import type HonchoCore from '@honcho-ai/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import { DeriverStatus, WorkspaceDeriverStatusParams } from '@honcho-ai/core/src/resources/workspaces/workspaces'
 import type { Uploadable } from '@honcho-ai/core/src/uploads'
+import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { SessionContext, SessionSummaries, Summary } from './session_context'
 import {
   ContextParamsSchema,
+  DeriverStatusOptions,
+  DeriverStatusOptionsSchema,
   FileUploadSchema,
   FilterSchema,
   type Filters,
@@ -249,10 +252,10 @@ export class Session {
     const peerIds = Array.isArray(validatedPeers)
       ? validatedPeers.map((p) => (typeof p === 'string' ? p : p.id))
       : [
-          typeof validatedPeers === 'string'
-            ? validatedPeers
-            : validatedPeers.id,
-        ]
+        typeof validatedPeers === 'string'
+          ? validatedPeers
+          : validatedPeers.id,
+      ]
     await this._client.workspaces.sessions.peers.remove(
       this.workspaceId,
       this.id,
@@ -389,7 +392,7 @@ export class Session {
       this.id,
       validatedFilter
     )
-    return new Page(messagesPage)
+    return new Page(messagesPage, (msg) => Message.fromCore(msg, this._client))
   }
 
   /**
@@ -425,6 +428,16 @@ export class Session {
     await this._client.workspaces.sessions.update(this.workspaceId, this.id, {
       metadata,
     })
+  }
+
+  /**
+   * Delete this session.
+   *
+   * Makes an API call to mark this session as inactive. The session and its
+   * messages will no longer be accessible through normal operations.
+   */
+  async delete(): Promise<void> {
+    await this._client.workspaces.sessions.delete(this.workspaceId, this.id)
   }
 
   /**
@@ -465,7 +478,10 @@ export class Session {
     )
     // Convert the summary response to Summary object if present
     const summary = context.summary ? new Summary(context.summary) : null
-    return new SessionContext(this.id, context.messages, summary)
+    const messages = context.messages.map((msg) =>
+      Message.fromCore(msg, this._client)
+    )
+    return new SessionContext(this.id, messages, summary)
   }
 
   /**
@@ -521,7 +537,7 @@ export class Session {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.sessions.search(
+    const response = await this._client.workspaces.sessions.search(
       this.workspaceId,
       this.id,
       {
@@ -530,6 +546,7 @@ export class Session {
         limit: validatedLimit,
       }
     )
+    return response.map((msg) => Message.fromCore(msg, this._client))
   }
 
   /**
@@ -569,7 +586,109 @@ export class Session {
       }
     )
 
-    return response
+    return response.map((msg) => Message.fromCore(msg, this._client))
+  }
+
+  /**
+   * Get the deriver processing status for this session, optionally scoped to an observer or sender.
+   *
+   * Makes an API call to retrieve the current status of the deriver processing queue.
+   * The deriver is responsible for processing messages and updating peer representations.
+   * This method automatically scopes the status to this session.
+   *
+   * @param options - Configuration options for the status request
+   * @param options.observerId - Optional observer ID to scope the status to
+   * @param options.senderId - Optional sender ID to scope the status to
+   * @returns Promise resolving to the deriver status information including work unit counts
+   */
+  async getDeriverStatus(options?: Omit<DeriverStatusOptions, 'sessionId'>): Promise<{
+    totalWorkUnits: number
+    completedWorkUnits: number
+    inProgressWorkUnits: number
+    pendingWorkUnits: number
+    sessions?: Record<string, DeriverStatus.Sessions>
+  }> {
+    const validatedOptions = options
+      ? DeriverStatusOptionsSchema.parse(options)
+      : undefined
+    const queryParams: WorkspaceDeriverStatusParams = {
+      session_id: this.id, // Always use this session's ID
+    }
+    if (validatedOptions?.observerId)
+      queryParams.observer_id = validatedOptions.observerId
+    if (validatedOptions?.senderId)
+      queryParams.sender_id = validatedOptions.senderId
+
+    const status = await this._client.workspaces.deriverStatus(
+      this.workspaceId,
+      queryParams
+    )
+
+    return {
+      totalWorkUnits: status.total_work_units,
+      completedWorkUnits: status.completed_work_units,
+      inProgressWorkUnits: status.in_progress_work_units,
+      pendingWorkUnits: status.pending_work_units,
+      sessions: status.sessions || undefined,
+    }
+  }
+
+  /**
+   * Poll getDeriverStatus until pending_work_units and in_progress_work_units are both 0.
+   * This allows you to guarantee that all messages have been processed by the deriver for
+   * use with the dialectic endpoint.
+   *
+   * The polling estimates sleep time by assuming each work unit takes 1 second.
+   *
+   * @param options - Configuration options for the status request
+   * @param options.observerId - Optional observer ID to scope the status to
+   * @param options.senderId - Optional sender ID to scope the status to
+   * @param options.timeoutMs - Optional timeout in milliseconds (default: 300000 - 5 minutes)
+   * @returns Promise resolving to the final deriver status when processing is complete
+   * @throws Error if timeout is exceeded before processing completes
+   */
+  async pollDeriverStatus(options?: Omit<DeriverStatusOptions, 'sessionId'>): Promise<{
+    totalWorkUnits: number
+    completedWorkUnits: number
+    inProgressWorkUnits: number
+    pendingWorkUnits: number
+    sessions?: Record<string, DeriverStatus.Sessions>
+  }> {
+    const validatedOptions = options
+      ? DeriverStatusOptionsSchema.parse(options)
+      : undefined
+    const timeoutMs = validatedOptions?.timeoutMs ?? 300000 // Default to 5 minutes
+    const startTime = Date.now()
+
+    while (true) {
+      const status = await this.getDeriverStatus(validatedOptions)
+      if (status.pendingWorkUnits === 0 && status.inProgressWorkUnits === 0) {
+        return status
+      }
+
+      // Check if timeout has been exceeded
+      const elapsedTime = Date.now() - startTime
+      if (elapsedTime >= timeoutMs) {
+        throw new Error(
+          `Polling timeout exceeded after ${timeoutMs}ms. ` +
+          `Current status: ${status.pendingWorkUnits} pending, ${status.inProgressWorkUnits} in progress work units.`
+        )
+      }
+
+      // Sleep for the expected time to complete all current work units
+      // Assuming each pending and in-progress work unit takes 1 second
+      const totalWorkUnits =
+        status.pendingWorkUnits + status.inProgressWorkUnits
+      const sleepMs = Math.max(1000, totalWorkUnits * 1000) // Sleep at least 1 second
+
+      // Ensure we don't sleep past the timeout
+      const remainingTime = timeoutMs - elapsedTime
+      const actualSleepMs = Math.min(sleepMs, remainingTime)
+
+      if (actualSleepMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, actualSleepMs))
+      }
+    }
   }
 
   /**
