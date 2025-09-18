@@ -9,6 +9,7 @@ from sqlalchemy import Integer, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import schemas
+from src.config import settings
 from src.exceptions import FileProcessingError, UnsupportedFileTypeError
 from src.schemas import Message
 
@@ -157,7 +158,7 @@ async def get_file_messages(
 async def process_file_uploads_for_messages(
     file: UploadFile,
     peer_id: str,
-    max_chars: int = 49500,
+    max_chars: int = settings.MAX_MESSAGE_SIZE,
 ) -> list[dict[str, Any]]:
     """
     Process an uploaded file and prepare message creation data.
