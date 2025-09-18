@@ -88,7 +88,10 @@ async def critical_analysis_call(
 async def peer_card_call(
     old_peer_card: list[str] | None,
     new_observations: list[str],
-):
+) -> PeerCardQuery:
+    """
+    Generate peer card prompt, call LLM with response model.
+    """
     prompt = peer_card_prompt(
         old_peer_card=old_peer_card,
         new_observations=new_observations,

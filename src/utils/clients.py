@@ -15,7 +15,7 @@ from groq import AsyncGroq
 from langfuse import get_client
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sentry_sdk.ai.monitoring import ai_track
 
 from src.config import settings
@@ -95,7 +95,7 @@ class HonchoLLMCallStreamChunk(BaseModel):
 
     content: str
     is_done: bool = False
-    finish_reasons: list[str] = []
+    finish_reasons: list[str] = Field(default_factory=list)
 
 
 @overload
@@ -294,7 +294,7 @@ async def honcho_llm_call_inner(
 
     if stream:
         # Return async generator for streaming responses
-        return _handle_streaming_response(
+        return handle_streaming_response(
             client, params, json_mode, thinking_budget_tokens, response_model
         )
 
@@ -478,7 +478,7 @@ async def honcho_llm_call_inner(
             )
 
 
-async def _handle_streaming_response(
+async def handle_streaming_response(
     client: AsyncAnthropic | AsyncOpenAI | genai.Client | AsyncGroq,
     params: dict[str, Any],
     json_mode: bool,
