@@ -327,21 +327,28 @@ def mock_llm_call_functions():
         ) as mock_semantic_queries,
     ):
         # Import the required models for proper mocking
-        from src.utils.shared_models import DeductiveObservation, SemanticQueries
+        from src.utils.representation import (
+            PromptDeductiveObservation,
+            PromptRepresentation,
+        )
+        from src.utils.shared_models import SemanticQueries
 
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
 
         # Mock critical_analysis_call to return a proper object with _response attribute
-        mock_critical_analysis_result = MagicMock()
-        mock_critical_analysis_result.explicit = ["Test explicit observation"]
-        mock_critical_analysis_result.deductive = [
-            DeductiveObservation(
-                conclusion="Test deductive conclusion",
-                premises=["Test premise 1", "Test premise 2"],
+        mock_critical_analysis_result = MagicMock(
+            PromptRepresentation(
+                explicit=["Test explicit observation"],
+                deductive=[
+                    PromptDeductiveObservation(
+                        conclusion="Test deductive conclusion",
+                        premises=["Test premise 1", "Test premise 2"],
+                    )
+                ],
             )
-        ]
+        )
         # Add the _response attribute that contains thinking (used in the actual code)
         mock_response = MagicMock()
         mock_response.thinking = "Test thinking content"
@@ -375,11 +382,11 @@ def mock_honcho_llm_call():
     """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
     from unittest.mock import AsyncMock, MagicMock
 
-    from src.utils.shared_models import (
-        DeductiveObservation,
-        ReasoningResponse,
-        SemanticQueries,
+    from src.utils.representation import (
+        PromptDeductiveObservation,
+        PromptRepresentation,
     )
+    from src.utils.shared_models import SemanticQueries
 
     def create_mock_response(
         response_model: Any = None,
@@ -395,14 +402,17 @@ def mock_honcho_llm_call():
         elif response_model:
             # For structured responses, create appropriate mock objects
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
-                mock_response = MagicMock(spec=ReasoningResponse)
-                mock_response.explicit = ["Test explicit observation"]
-                mock_response.deductive = [
-                    DeductiveObservation(
-                        conclusion="Test deductive conclusion",
-                        premises=["Test premise 1", "Test premise 2"],
+                mock_response = MagicMock(
+                    PromptRepresentation(
+                        explicit=["Test explicit observation"],
+                        deductive=[
+                            PromptDeductiveObservation(
+                                conclusion="Test deductive conclusion",
+                                premises=["Test premise 1", "Test premise 2"],
+                            )
+                        ],
                     )
-                ]
+                )
                 # Add the _response attribute that contains thinking (used in the actual code)
                 mock_response._response = MagicMock()
                 mock_response._response.thinking = "Test thinking content"

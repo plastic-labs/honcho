@@ -20,10 +20,7 @@ from src.utils.logging import (
     log_performance_metrics,
     log_representation,
 )
-from src.utils.representation import (
-    DeductiveObservation,
-    Representation,
-)
+from src.utils.representation import PromptRepresentation, Representation
 from src.utils.shared_models import PeerCardQuery
 
 from .prompts import critical_analysis_prompt, peer_card_prompt
@@ -59,14 +56,14 @@ async def critical_analysis_call(
         max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
         or settings.LLM.DEFAULT_MAX_TOKENS,
         track_name="Critical Analysis Call",
-        response_model=Representation,
+        response_model=PromptRepresentation,
         json_mode=True,
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         enable_retry=True,
         retry_attempts=3,
     )
 
-    return response.content
+    return response.content.to_representation()
 
 
 async def peer_card_call(
@@ -337,7 +334,13 @@ class CertaintyReasoner:
         new_observations = working_representation.diff_representation(
             reasoning_response
         )
-        await self._save_observations(new_observations)
+        if not new_observations.is_empty():
+            await self.embedding_store.save_representation(
+                new_observations,
+                self.ctx.message_id,
+                self.ctx.session_name,
+                self.ctx.created_at,
+            )
         save_observations_duration = (
             time.perf_counter() - save_observations_start
         ) * 1000
@@ -349,7 +352,7 @@ class CertaintyReasoner:
         )
 
         update_peer_card_start = time.perf_counter()
-        if new_observations:
+        if not new_observations.is_empty():
             await self._update_peer_card(speaker_peer_card, new_observations)
         update_peer_card_duration = (
             time.perf_counter() - update_peer_card_start
@@ -362,64 +365,6 @@ class CertaintyReasoner:
         )
 
         return reasoning_response
-
-    @conditional_observe
-    @sentry_sdk.trace
-    async def _save_observations(
-        self,
-        observations: Representation,
-    ) -> dict[str, list[str]]:
-        """
-        Save observations to the embedding store.
-        Usually you should use diff_representation first to get only the new observations.
-        """
-        total_observations_count: int = 0
-
-        for level, new_observations in new_observations_by_level.items():
-            if not new_observations:
-                logger.debug("No new observations to save for %s level", level)
-                continue
-
-            logger.debug("Found %s new %s observations", len(new_observations), level)
-
-            # Convert each observation to UnifiedObservation with proper premises and level
-            for observation in new_observations:
-                if isinstance(observation, DeductiveObservation):
-                    # Create UnifiedObservation with premises from DeductiveObservation
-                    unified_obs = UnifiedObservation(
-                        conclusion=observation.conclusion,
-                        premises=observation.premises,
-                        level=level,
-                    )
-                    all_unified_observations.append(unified_obs)
-                    logger.debug(
-                        "Added %s observation: %s... with %s premises",
-                        level,
-                        observation.conclusion[:50],
-                        len(observation.premises),
-                    )
-
-                else:
-                    # String observations (explicit) have no premises
-                    unified_obs = UnifiedObservation.from_string(
-                        observation, level=level
-                    )
-                    all_unified_observations.append(unified_obs)
-                    logger.debug("Added %s observation: %s...", level, observation[:50])
-
-                total_observations_count += 1
-
-        if all_unified_observations:
-            await self.embedding_store.save_unified_observations(
-                all_unified_observations,
-                self.ctx.message_id,
-                self.ctx.session_name,
-                self.ctx.created_at,
-            )
-        else:
-            logger.debug("No new observations to save")
-
-        return new_observations_by_level
 
     @conditional_observe
     @sentry_sdk.trace

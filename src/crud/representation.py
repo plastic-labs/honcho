@@ -138,7 +138,7 @@ async def get_working_representation(
 
     working_rep_data = peer_internal_metadata.get(metadata_key)
     if working_rep_data:
-        return cast(StoredRepresentation | None, working_rep_data)
+        return StoredRepresentation(**working_rep_data)
 
     logger.warning(
         f"No working representation found for observer: {observer_name}, observed: {observed_name}"
@@ -203,7 +203,7 @@ async def set_working_representation(
         .where(models.SessionPeer.session_name == payload.session_name)
         .values(
             internal_metadata=models.SessionPeer.internal_metadata.op("||")(
-                {metadata_key: new_representation}
+                {metadata_key: new_representation.model_dump(mode="json")}
             )
         )
     )

@@ -63,6 +63,12 @@ class Representation(BaseModel):
         default_factory=list,
     )
 
+    def is_empty(self) -> bool:
+        """
+        Check if the representation is empty.
+        """
+        return len(self.explicit) == 0 and len(self.deductive) == 0
+
     def diff_representation(self, other: "Representation") -> "Representation":
         """
         Given this and another representation, return a new representation with only observations that are unique to the other.
@@ -135,6 +141,61 @@ class Representation(BaseModel):
         return "\n".join(parts)
 
 
+class PromptDeductiveObservation(BaseModel):
+    """
+    The deductive observation format that is used when getting structured output from an LLM.
+    """
+
+    conclusion: str = Field(description="The deductive conclusion")
+    premises: list[str] = Field(description="The premises of the deductive observation")
+
+
+class PromptRepresentation(BaseModel):
+    """
+    The representation format that is used when getting structured output from an LLM.
+    """
+
+    explicit: list[str] = Field(
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        default_factory=list,
+    )
+    deductive: list[PromptDeductiveObservation] = Field(
+        description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
+        default_factory=list,
+    )
+
+    def to_representation(self) -> Representation:
+        """
+        Convert a PromptRepresentation object to a Representation object.
+        """
+        return Representation(
+            explicit=[
+                ExplicitObservation(
+                    content=e, created_at=datetime.now(), message_id="", session_name=""
+                )
+                for e in self.explicit
+            ],
+            deductive=[
+                DeductiveObservation(
+                    created_at=datetime.now(),
+                    message_id="",
+                    session_name="",
+                    conclusion=d.conclusion,
+                    premises=[
+                        ExplicitObservation(
+                            content=p,
+                            created_at=datetime.now(),
+                            message_id="",
+                            session_name="",
+                        )
+                        for p in d.premises
+                    ],
+                )
+                for d in self.deductive
+            ],
+        )
+
+
 class StoredRepresentation(Representation):
     """
     A representation that is stored in the database with its creation timestamp and the ID of the message that triggered its creation.
@@ -147,22 +208,21 @@ class StoredRepresentation(Representation):
         default=settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
     )
 
-    def __init__(self, *args, created_at: datetime, message_id: str, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.created_at = created_at
-        self.message_id = message_id
-
     def add_single_observation(
         self, observation: ExplicitObservation | DeductiveObservation
     ) -> None:
         if isinstance(observation, ExplicitObservation):
             self.explicit.append(observation)
             if self.max_observations:
-                self.explicit = self.explicit[-self.max_observations :]
+                self.explicit: list[ExplicitObservation] = self.explicit[
+                    -self.max_observations :
+                ]
         else:
             self.deductive.append(observation)
             if self.max_observations:
-                self.deductive = self.deductive[-self.max_observations :]
+                self.deductive: list[DeductiveObservation] = self.deductive[
+                    -self.max_observations :
+                ]
 
     def merge_representation(self, other: "Representation"):
         """

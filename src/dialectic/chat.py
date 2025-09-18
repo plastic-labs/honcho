@@ -224,7 +224,7 @@ async def chat(
             "s",
         )
         logger.info("Retrieved working representation:\n%s\n", working_representation)
-        context_window_size -= len(tokenizer.encode(working_representation))
+        context_window_size -= len(tokenizer.encode(str(working_representation)))
     else:
         # For global queries, working representation isn't useful - use historical context instead
         working_representation = None
@@ -245,7 +245,6 @@ async def chat(
         query,
         target_name if target_name else peer_name,
         embedding_store,
-        include_premises=True,
     )
     additional_context_duration = (
         asyncio.get_event_loop().time() - additional_context_start_time
@@ -307,7 +306,7 @@ async def chat(
     if stream:
         return await dialectic_stream(
             query,
-            working_representation,
+            str(working_representation) if working_representation else None,
             recent_conversation_history,
             additional_context,
             peer_name,
@@ -318,7 +317,7 @@ async def chat(
 
     response = await dialectic_call(
         query,
-        working_representation,
+        str(working_representation) if working_representation else None,
         recent_conversation_history,
         additional_context,
         peer_name,

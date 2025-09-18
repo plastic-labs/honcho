@@ -21,7 +21,6 @@ from .representation import (
     construct_collection_name,
     get_peer_card,
     get_working_representation,
-    get_working_representation_data,
     set_peer_card,
     set_working_representation,
 )
@@ -74,7 +73,6 @@ __all__ = [
     "construct_collection_name",
     "get_peer_card",
     "get_working_representation",
-    "get_working_representation_data",
     "set_peer_card",
     "set_working_representation",
     # Session
