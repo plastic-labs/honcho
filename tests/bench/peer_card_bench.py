@@ -22,6 +22,7 @@ import os
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,6 +31,7 @@ from anthropic import AsyncAnthropic
 from src.config import settings
 from src.deriver.prompts import peer_card_prompt
 from src.utils.clients import honcho_llm_call
+from src.utils.representation import ExplicitObservation, Representation
 from src.utils.shared_models import PeerCardQuery
 
 COLOR_GREEN = "\033[32m"
@@ -134,16 +136,18 @@ def deduplicate_preserve_order(items: list[Candidate]) -> list[Candidate]:
 
 def build_peer_card_caller(
     candidate: Candidate,
-) -> Callable[[list[str] | None, list[str]], Coroutine[Any, Any, PeerCardQuery]]:
+) -> Callable[[list[str] | None, Representation], Coroutine[Any, Any, PeerCardQuery]]:
     """Create an async callable that invokes the peer card prompt with a specific provider/model."""
 
     resolved_provider = (
         "openai" if candidate.provider == "custom" else candidate.provider
     )
 
-    async def call(old_peer_card: list[str] | None, new_observations: list[str]) -> Any:
+    async def call(
+        old_peer_card: list[str] | None, new_observations: Representation
+    ) -> Any:
         prompt = peer_card_prompt(
-            old_peer_card=old_peer_card, new_observations=new_observations
+            old_peer_card=old_peer_card, new_observations=str(new_observations)
         )
 
         response = await honcho_llm_call(
@@ -317,11 +321,22 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
         async def run_case(
             case: Case,
             _caller: Callable[
-                [list[str] | None, list[str]], Coroutine[Any, Any, PeerCardQuery]
+                [list[str] | None, Representation], Coroutine[Any, Any, PeerCardQuery]
             ] = caller,
         ) -> tuple[Case, dict[str, Any]]:
             card: PeerCardQuery = await _caller(
-                case.old_peer_card, case.new_observations
+                case.old_peer_card,
+                Representation(
+                    explicit=[
+                        ExplicitObservation(
+                            content=o,
+                            created_at=datetime.now(),
+                            message_id="",
+                            session_name="",
+                        )
+                        for o in case.new_observations
+                    ]
+                ),
             )
             new_card = card.card
             if new_card is None or new_card == []:

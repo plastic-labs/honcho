@@ -93,8 +93,8 @@ class TestDeriverProcessing:
         assert mock_embedding_store is not None
 
         # Verify we can call the mocked methods
-        await mock_embedding_store.save_unified_observations([])
+        await mock_embedding_store.save_representation([])
         mock_embedding_store.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
-        assert mock_embedding_store.save_unified_observations.called  # type: ignore[attr-defined]
+        assert mock_embedding_store.save_representation.called  # type: ignore[attr-defined]
