@@ -3,7 +3,7 @@ import json
 import logging
 from typing import Any
 
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 
 from src.config import settings
 from src.models import Document
@@ -20,6 +20,8 @@ from .prompts import query_generation_prompt
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+lf = get_client()
 
 
 @conditional_observe
@@ -75,7 +77,7 @@ async def get_observations(
         unique_observations = _deduplicate_observations(all_results)
 
         if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_observation(
+            lf.update_current_generation(
                 input={
                     "query": query,
                     "include_premises": include_premises,
@@ -87,7 +89,7 @@ async def get_observations(
                 },
             )
 
-            langfuse_context.update_current_trace(
+            lf.update_current_trace(
                 metadata={
                     "search_queries": search_queries,
                     "observations_retrieved": unique_observations,
@@ -227,13 +229,18 @@ def _format_observations(
     return "\n".join(parts).strip()
 
 
-@honcho_llm_call(
-    provider=settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
-    model=settings.DIALECTIC.QUERY_GENERATION_MODEL,
-    response_model=SemanticQueries,
-    enable_retry=True,
-    retry_attempts=3,
-)
-async def generate_semantic_queries(query: str, target_peer_name: str):
+async def generate_semantic_queries(
+    query: str, target_peer_name: str
+) -> SemanticQueries:
     """Generate semantic search queries for observation retrieval."""
-    return query_generation_prompt(query, target_peer_name)
+    prompt = query_generation_prompt(query, target_peer_name)
+    response = await honcho_llm_call(
+        provider=settings.DIALECTIC.QUERY_GENERATION_PROVIDER,
+        model=settings.DIALECTIC.QUERY_GENERATION_MODEL,
+        prompt=prompt,
+        max_tokens=settings.LLM.DEFAULT_MAX_TOKENS,
+        response_model=SemanticQueries,
+        enable_retry=True,
+        retry_attempts=3,
+    )
+    return response.content

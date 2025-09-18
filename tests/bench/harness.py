@@ -328,6 +328,7 @@ class HonchoHarness:
             # "src.routers.",
             # "src.crud.",
             "google_genai.models",
+            "google.genai.models",
         ]
 
         try:

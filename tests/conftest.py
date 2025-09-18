@@ -257,20 +257,13 @@ async def sample_data(
 def mock_langfuse():
     """Mock Langfuse decorator and context during tests"""
     with (
-        patch("langfuse.decorators.observe") as mock_observe,
-        patch("langfuse.decorators.langfuse_context") as mock_context,
+        patch("langfuse.observe") as mock_observe,
     ):
         # Mock the decorator to just return the function
         def return_value(func: Callable[..., Any]):
             return func
 
         mock_observe.return_value = return_value
-
-        # Mock the context object
-        mock_context_obj = MagicMock()
-        mock_context_obj.update_current_observation = MagicMock()
-        mock_context_obj.update_current_trace = MagicMock()
-        mock_context.return_value = mock_context_obj
 
         # Disable httpx logging during tests
         logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -309,8 +302,8 @@ def mock_openai_embeddings():
 
 
 @pytest.fixture(autouse=True)
-def mock_mirascope_functions():
-    """Mock Mirascope LLM functions to avoid needing API keys during tests"""
+def mock_llm_call_functions():
+    """Mock LLM functions to avoid needing API keys during tests"""
 
     # Create mock responses for different function types
     with (

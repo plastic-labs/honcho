@@ -1,5 +1,5 @@
 from logging import getLogger
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +12,7 @@ from src.utils.shared_models import ObservationDict
 logger = getLogger(__name__)
 
 # The collection name for documents that make up a peer's global representation
-GLOBAL_REPRESENTATION_COLLECTION_NAME = "global_representation"
+GLOBAL_REPRESENTATION_COLLECTION_NAME: Final[str] = "global_representation"
 
 # The key for the working representation in the session peer's internal_metadata
 WORKING_REPRESENTATION_METADATA_KEY = "working_representation"
