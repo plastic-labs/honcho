@@ -17,6 +17,26 @@ class ExplicitObservation(Observation):
     def __str__(self) -> str:
         return f"[{self.created_at}] {self.content}"
 
+    def __hash__(self) -> int:
+        """
+        Make ExplicitObservation hashable for use in sets.
+        """
+        return hash((self.content, self.created_at, self.message_id, self.session_name))
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for ExplicitObservation objects.
+        Two observations are equal if all their fields match.
+        """
+        if not isinstance(other, ExplicitObservation):
+            return False
+        return (
+            self.content == other.content
+            and self.created_at == other.created_at
+            and self.message_id == other.message_id
+            and self.session_name == other.session_name
+        )
+
 
 class DeductiveObservation(Observation):
     """Deductive observation with multiple premises and one conclusion."""
@@ -33,6 +53,28 @@ class DeductiveObservation(Observation):
             for premise in self.premises
         )
         return f"[{self.created_at}] {self.conclusion}\n{premises_text}"
+
+    def __hash__(self) -> int:
+        """
+        Make DeductiveObservation hashable for use in sets.
+        """
+        return hash(
+            (self.conclusion, self.created_at, self.message_id, self.session_name)
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Define equality for DeductiveObservation objects.
+        Two observations are equal if all their fields match.
+        """
+        if not isinstance(other, DeductiveObservation):
+            return False
+        return (
+            self.conclusion == other.conclusion
+            and self.created_at == other.created_at
+            and self.message_id == other.message_id
+            and self.session_name == other.session_name
+        )
 
 
 class Representation(BaseModel):
