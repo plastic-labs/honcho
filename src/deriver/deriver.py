@@ -22,7 +22,6 @@ from src.utils.logging import (
 )
 from src.utils.representation import (
     DeductiveObservation,
-    ExplicitObservation,
     Representation,
 )
 from src.utils.shared_models import PeerCardQuery
@@ -73,7 +72,10 @@ async def critical_analysis_call(
 async def peer_card_call(
     old_peer_card: list[str] | None,
     new_observations: Representation,
-):
+) -> PeerCardQuery:
+    """
+    Generate peer card prompt, call LLM with response model.
+    """
     prompt = peer_card_prompt(
         old_peer_card=old_peer_card,
         new_observations=str(new_observations),
