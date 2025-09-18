@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from src.config import settings
+from src.utils.formatting import parse_datetime_iso, utc_now_iso
 
 
 class Observation(BaseModel):
@@ -149,6 +150,41 @@ class Representation(BaseModel):
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
             parts.append(f"{i}. {observation}")
+            if observation.premises:
+                parts.append(
+                    "    - " + "\n    - ".join([str(p) for p in observation.premises])
+                )
+        parts.append("")
+
+        return "\n".join(parts)
+
+    def str_no_timestamps(self) -> str:
+        """
+        Format representation into a clean, readable string for LLM prompts... but without timestamps.
+
+        Returns:
+            Formatted string with clear sections and bullet points including temporal metadata
+            Example:
+            EXPLICIT:
+            1. The user has a dog named Rover
+            2. The user's dog is 5 years old
+            3. The user is 25 years old
+            DEDUCTIVE:
+            1. Rover is 5 years old
+                - The user has a dog named Rover
+                - The user's dog is 5 years old
+
+        """
+        parts: list[str] = []
+
+        parts.append("EXPLICIT:\n")
+        for i, observation in enumerate(self.explicit, 1):
+            parts.append(f"{i}. {observation.content}")
+        parts.append("")
+
+        parts.append("DEDUCTIVE:\n")
+        for i, observation in enumerate(self.deductive, 1):
+            parts.append(f"{i}. {observation.conclusion}")
         parts.append("")
 
         return "\n".join(parts)
@@ -213,20 +249,23 @@ class PromptRepresentation(BaseModel):
         return Representation(
             explicit=[
                 ExplicitObservation(
-                    content=e, created_at=datetime.now(), message_id="", session_name=""
+                    content=e,
+                    created_at=parse_datetime_iso(utc_now_iso()),
+                    message_id="",
+                    session_name="",
                 )
                 for e in self.explicit
             ],
             deductive=[
                 DeductiveObservation(
-                    created_at=datetime.now(),
+                    created_at=parse_datetime_iso(utc_now_iso()),
                     message_id="",
                     session_name="",
                     conclusion=d.conclusion,
                     premises=[
                         ExplicitObservation(
                             content=p,
-                            created_at=datetime.now(),
+                            created_at=parse_datetime_iso(utc_now_iso()),
                             message_id="",
                             session_name="",
                         )

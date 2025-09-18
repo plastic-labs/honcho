@@ -75,7 +75,7 @@ async def peer_card_call(
     """
     prompt = peer_card_prompt(
         old_peer_card=old_peer_card,
-        new_observations=str(new_observations),
+        new_observations=new_observations.str_no_timestamps(),
     )
 
     response = await honcho_llm_call(
@@ -179,10 +179,6 @@ async def process_representation_task(
             conversation_context=formatted_history,
         )
 
-    old_observations_count = len(working_representation.explicit) + len(
-        working_representation.deductive
-    )
-
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
         f"deriver_representation_{payload.message_id}_{payload.target_name}",
@@ -201,7 +197,7 @@ async def process_representation_task(
         logger.info("Using peer card: %s", speaker_peer_card)
 
     # Run single-pass reasoning
-    final_observations: Representation = await reasoner.reason(
+    final_observations, new_observations_count = await reasoner.reason(
         working_representation,
         formatted_history,
         speaker_peer_card,
@@ -237,7 +233,7 @@ async def process_representation_task(
     accumulate_metric(
         f"deriver_representation_{payload.message_id}_{payload.target_name}",
         "new_observation_count",
-        total_observations - old_observations_count,
+        new_observations_count,
         "",
     )
 
@@ -268,10 +264,13 @@ class CertaintyReasoner:
         working_representation: Representation,
         history: str,
         speaker_peer_card: list[str] | None,
-    ) -> Representation:
+    ) -> tuple[Representation, int]:
         """
         Single-pass reasoning function that critically analyzes and derives insights.
-        Performs one analysis pass and returns the final observations.
+        Performs one analysis pass and returns the final observations and count of new observations.
+
+        Returns:
+            tuple[Representation, int]: Final observations and count of new observations added
         """
         analysis_start = time.perf_counter()
 
@@ -351,6 +350,11 @@ class CertaintyReasoner:
             "ms",
         )
 
+        # Store the count of new observations for metrics
+        new_observations_count = len(new_observations.explicit) + len(
+            new_observations.deductive
+        )
+
         update_peer_card_start = time.perf_counter()
         if not new_observations.is_empty():
             await self._update_peer_card(speaker_peer_card, new_observations)
@@ -364,7 +368,7 @@ class CertaintyReasoner:
             "ms",
         )
 
-        return reasoning_response
+        return reasoning_response, new_observations_count
 
     @conditional_observe
     @sentry_sdk.trace

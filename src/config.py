@@ -210,7 +210,7 @@ class DeriverSettings(HonchoSettings):
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
         int, Field(default=100, gt=0, le=500)
-    ] = 100
+    ] = 50
 
 
 class DialecticSettings(HonchoSettings):

@@ -35,6 +35,9 @@ def format_datetime_utc(dt: datetime) -> str:
     if dt.tzinfo != timezone.utc:
         dt = dt.astimezone(timezone.utc)
 
+    # Remove subsecond precision
+    dt = dt.replace(microsecond=0)
+
     # Format and replace +00:00 with Z
     return dt.isoformat().replace("+00:00", "Z")
 
@@ -42,13 +45,14 @@ def format_datetime_utc(dt: datetime) -> str:
 def utc_now_iso() -> str:
     """
     Get current UTC time as ISO 8601 string with Z suffix.
+    Removes subsecond precision.
 
     Returns:
         Current UTC time in ISO 8601 format with Z suffix
 
     Example:
         >>> utc_now_iso()
-        '2023-01-01T12:34:56.789123Z'
+        '2023-01-01T12:34:56Z'
     """
     return format_datetime_utc(datetime.now(timezone.utc))
 

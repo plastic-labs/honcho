@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import json
 import logging
 
@@ -8,6 +7,7 @@ from langfuse import get_client
 from src.config import settings
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
+from src.utils.formatting import parse_datetime_iso, utc_now_iso
 from src.utils.logging import conditional_observe
 from src.utils.representation import StoredRepresentation
 from src.utils.shared_models import SemanticQueries
@@ -78,7 +78,7 @@ async def get_observations(
 
         representation = StoredRepresentation(
             **sub_representations.pop().model_dump(),
-            created_at=datetime.datetime.now(),
+            created_at=parse_datetime_iso(utc_now_iso()),
             message_id=str(1),
         )
 
