@@ -12,7 +12,6 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src import exceptions
 from src.config import settings
 from src.models import QueueItem
 
@@ -253,13 +252,6 @@ class QueueManager:
                         logger.debug(
                             f"Successfully processed queue item for task type {message.task_type} with id {message.id}"
                         )
-                    except exceptions.LLMError as e:
-                        logger.error(
-                            f"LLM returned bad JSON for message {message}, re-queueing",
-                        )
-                        if settings.SENTRY.ENABLED:
-                            sentry_sdk.capture_exception(e)
-                        continue
                     except Exception as e:
                         logger.error(
                             f"Error processing queue item for task type {message.task_type} with id {message.id}: {str(e)}",

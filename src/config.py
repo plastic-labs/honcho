@@ -272,6 +272,7 @@ class AppSettings(HonchoSettings):
         100_000
     )
 
+    MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
     EMBED_MESSAGES: bool = True
     MAX_EMBEDDING_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_EMBEDDING_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = (

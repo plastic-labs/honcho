@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from src.config import settings
+
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
 
@@ -114,7 +116,7 @@ class MessageBase(BaseModel):
 
 
 class MessageCreate(MessageBase):
-    content: Annotated[str, Field(min_length=0, max_length=50000)]
+    content: Annotated[str, Field(min_length=0, max_length=settings.MAX_MESSAGE_SIZE)]
     peer_name: str = Field(alias="peer_id")
     metadata: dict[str, Any] | None = None
     created_at: datetime.datetime | None = None
