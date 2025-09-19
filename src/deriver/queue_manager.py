@@ -15,7 +15,7 @@ from sqlalchemy.sql import func
 from src.config import settings
 from src.models import QueueItem
 
-from .. import exceptions, models
+from .. import models
 from ..dependencies import tracked_db
 from .consumer import process_items
 
@@ -278,13 +278,6 @@ class QueueManager:
                     try:
                         raw_payloads = [msg.payload for msg in messages_to_process]
                         await process_items(task_type, raw_payloads)
-                    except exceptions.LLMError as e:
-                        logger.error(
-                            f"LLM returned bad JSON for messages in work unit {work_unit_key}, re-queueing",
-                        )
-                        if settings.SENTRY.ENABLED:
-                            sentry_sdk.capture_exception(e)
-                        continue  # Don't mark as processed, allow re-queue
                     except Exception as e:
                         logger.error(
                             f"Error processing tasks for work unit {work_unit_key}: {e}",

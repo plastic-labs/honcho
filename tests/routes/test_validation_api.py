@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
 
+from src.config import settings
 from src.models import Peer, Workspace
 
 
@@ -73,14 +74,21 @@ def test_message_validations_api(
         f"/v2/workspaces/{test_workspace.name}/sessions/{session_id}/messages",
         json={
             "messages": [
-                {"content": "a" * 50001, "peer_id": test_peer.name, "metadata": {}}
+                {
+                    "content": "a" * (settings.MAX_MESSAGE_SIZE + 1),
+                    "peer_id": test_peer.name,
+                    "metadata": {},
+                }
             ]
         },
     )
     assert response.status_code == 422
     error = response.json()["detail"][0]
     assert "content" in str(error["loc"])
-    assert error["msg"] == "String should have at most 50000 characters"
+    assert (
+        error["msg"]
+        == f"String should have at most {settings.MAX_MESSAGE_SIZE} characters"
+    )
     assert error["type"] == "string_too_long"
 
 
