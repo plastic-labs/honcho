@@ -239,6 +239,39 @@ async def get_working_representation(
 
 
 @router.post(
+    "/{peer_id}/peer-cards",
+    response_model=schemas.PeerCardResponse,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def get_peer_card(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the observer peer"),
+    options: schemas.PeerCardGet = Body(
+        ..., description="Options for getting the peer card"
+    ),
+    db: AsyncSession = db,
+):
+    """Get a peer card for a specific peer relationship.
+
+    Returns the peer card that the observer peer has for the target peer.
+    If no target is specified, returns the observer's own peer card.
+    """
+    # If no target specified, get the observer's own card
+    target_peer = options.target if options.target is not None else peer_id
+
+    try:
+        peer_card = await crud.get_peer_card(db, workspace_id, target_peer, peer_id)
+        return schemas.PeerCardResponse(peer_card=peer_card)
+    except Exception as e:
+        logger.warning(
+            f"Failed to get peer card for observer {peer_id}, target {target_peer}: {str(e)}"
+        )
+        raise ResourceNotFoundException("Peer card not found") from e
+
+
+@router.post(
     "/{peer_id}/search",
     response_model=list[schemas.Message],
     dependencies=[
