@@ -175,6 +175,7 @@ async def chat(
             session_name=options.session_id,
             query=options.query,
             stream=options.stream,
+            system_prompt=options.system_prompt,
         )
         return schemas.DialecticResponse(content=str(response))
 
@@ -187,6 +188,7 @@ async def chat(
                 session_name=options.session_id,
                 query=options.query,
                 stream=options.stream,
+                system_prompt=options.system_prompt,
             )
             if isinstance(stream, Stream):
                 async for chunk, _ in stream:
