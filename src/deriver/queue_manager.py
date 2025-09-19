@@ -12,12 +12,11 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from src import models
 from src.config import settings
+from src.dependencies import tracked_db
+from src.deriver.consumer import process_items
 from src.models import QueueItem
-
-from .. import models
-from ..dependencies import tracked_db
-from .consumer import process_items
 
 logger = getLogger(__name__)
 
@@ -258,6 +257,7 @@ class QueueManager:
 
                         for msg in candidate_messages:
                             msg_tokens = msg.token_count or 0
+                            # Always process at least one message, even if over limit
                             if (
                                 not messages_to_process
                                 or token_count + msg_tokens <= max_tokens

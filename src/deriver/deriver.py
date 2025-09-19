@@ -112,7 +112,7 @@ async def process_representation_tasks_batch(
     if not payloads:
         return
 
-    payloads.sort(key=lambda x: x.created_at)
+    payloads.sort(key=lambda x: x.message_id)
 
     latest_payload = payloads[-1]
     earliest_payload = payloads[0]
@@ -212,12 +212,10 @@ async def process_representation_tasks_batch(
         )
     else:
         # No existing working representation, use global search
-        # For the first turn of a batch, we need some query text to get relevant observations.
-        # We'll use the content of the first message in the batch.
         query_text = [payload.content for payload in payloads]
         query_text = "\n".join(
             query_text
-        )  # we probably want to think about how to handle this better
+        )  # TODO: consider a smarter strategy than concatenation
         working_representation = await embedding_store.get_relevant_observations(
             query=query_text,
             conversation_context=formatted_history,
@@ -286,7 +284,7 @@ async def process_representation_tasks_batch(
         f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
         "final_observation_count",
         total_observations,
-        "",
+        "count",
     )
     log_performance_metrics(
         f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}"

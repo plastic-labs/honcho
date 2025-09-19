@@ -464,3 +464,31 @@ class TestQueueProcessing:
         assert len(processed_batches) == 2
         assert all(batch["task_type"] == "summary" for batch in processed_batches)
         assert all(batch["payload_count"] == 1 for batch in processed_batches)
+
+        # Verify the corresponding DB records are marked as processed
+        from sqlalchemy import select
+
+        # Query for the summary queue items that were processed
+        processed_items = (
+            (
+                await db_session.execute(
+                    select(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(models.QueueItem.task_type == "summary")
+                    .order_by(models.QueueItem.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        # Assert we found both summary items
+        assert len(processed_items) == 2
+
+        # Assert both items are marked as processed
+        assert all(item.processed is True for item in processed_items)
+
+        # Optionally verify the items have the expected token counts from the messages
+        expected_token_counts = [500, 600]  # From the test messages
+        actual_token_counts = [item.token_count for item in processed_items]
+        assert sorted(actual_token_counts) == sorted(expected_token_counts)
