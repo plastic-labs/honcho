@@ -20,7 +20,7 @@ async def test_generic_honcho_llm_call_mock():
         message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
         working_representation="test working representation",
         history="test history",
-        new_turn="test new turn",
+        new_turns=["test new turn"],
     )
 
     # Verify that we get a mock result, not an actual LLM call

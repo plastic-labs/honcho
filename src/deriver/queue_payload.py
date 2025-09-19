@@ -23,6 +23,12 @@ class RepresentationPayload(BasePayload):
     created_at: datetime
 
 
+class RepresentationPayloads(BasePayload):
+    """Payload for a batch of representation tasks."""
+
+    payloads: list[RepresentationPayload]
+
+
 class SummaryPayload(BasePayload):
     """Payload for summary tasks."""
 
