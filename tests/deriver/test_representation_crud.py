@@ -94,21 +94,21 @@ def _make_representation(*, session_name: str) -> Representation:
     e1 = ExplicitObservation(
         content="likes pizza",
         created_at=now - datetime.timedelta(seconds=5),
-        message_id="m1",
+        message_id=1,
         session_name=session_name,
     )
     e2 = ExplicitObservation(
         content="runs daily",
         created_at=now - datetime.timedelta(seconds=4),
-        message_id="m2",
+        message_id=2,
         session_name=session_name,
     )
     d1 = DeductiveObservation(
         created_at=now - datetime.timedelta(seconds=3),
-        message_id="m3",
+        message_id=3,
         session_name=session_name,
         conclusion="is healthy",
-        premises=[e2],
+        premises=[e2.content],
     )
     return Representation(explicit=[e1, e2], deductive=[d1])
 
@@ -210,13 +210,13 @@ def test_representation_is_empty_and_diff():
     exp_shared_1 = ExplicitObservation(
         content="A",
         created_at=shared_time,
-        message_id="m",
+        message_id=1,
         session_name="s",
     )
     exp_shared_2 = ExplicitObservation(
         content="B",
         created_at=shared_time,
-        message_id="m",
+        message_id=1,
         session_name="s",
     )
     rep1 = Representation(explicit=[exp_shared_1], deductive=[])
@@ -225,7 +225,7 @@ def test_representation_is_empty_and_diff():
             ExplicitObservation(
                 content="A",
                 created_at=shared_time,
-                message_id="m",
+                message_id=1,
                 session_name="s",
             ),
             exp_shared_2,
@@ -246,15 +246,15 @@ def test_representation_formatting_methods():
     e = ExplicitObservation(
         content="has a dog",
         created_at=now,
-        message_id="m",
+        message_id=1,
         session_name="s",
     )
     d = DeductiveObservation(
         created_at=now,
-        message_id="m",
+        message_id=1,
         session_name="s",
         conclusion="owns a pet",
-        premises=[e],
+        premises=[e.content],
     )
     rep = Representation(explicit=[e], deductive=[d])
 
@@ -275,11 +275,11 @@ def test_prompt_representation_conversion():
         explicit=["A"],
         deductive=[PromptDeductiveObservation(conclusion="C", premises=["P1"])],
     )
-    rep = pr.to_representation()
+    rep = pr.to_representation(message_id=1, session_name="s")
     assert isinstance(rep, Representation)
     assert [e.content for e in rep.explicit] == ["A"]
     assert rep.deductive[0].conclusion == "C"
-    assert [p.content for p in rep.deductive[0].premises] == ["P1"]
+    assert rep.deductive[0].premises == ["P1"]
 
 
 def test_stored_representation_add_and_trim():
@@ -299,7 +299,7 @@ def test_stored_representation_add_and_trim():
             ExplicitObservation(
                 content=f"E{i}",
                 created_at=now + datetime.timedelta(seconds=i),
-                message_id=f"me{i}",
+                message_id=i,
                 session_name="s",
             )
         )
@@ -310,31 +310,10 @@ def test_stored_representation_add_and_trim():
         sr.add_single_observation(
             DeductiveObservation(
                 created_at=now + datetime.timedelta(seconds=10 + i),
-                message_id=f"md{i}",
+                message_id=i,
                 session_name="s",
                 conclusion=f"D{i}",
                 premises=[],
             )
         )
     assert [d.conclusion for d in sr.deductive] == ["D1", "D2"]
-
-
-def test_observation_strs():
-    """ExplicitObservation and DeductiveObservation string formatting include timestamps and content."""
-    when = datetime.datetime(2025, 1, 1, tzinfo=datetime.timezone.utc)
-    e = ExplicitObservation(
-        content="alpha",
-        created_at=when,
-        message_id="m",
-        session_name="s",
-    )
-    d = DeductiveObservation(
-        created_at=when,
-        message_id="m",
-        session_name="s",
-        conclusion="beta",
-        premises=[e],
-    )
-    assert str(e).startswith("[2025-01-01") and "alpha" in str(e)
-    s = str(d)
-    assert "beta" in s and "- [2025-01-01" in s

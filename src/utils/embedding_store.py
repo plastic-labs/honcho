@@ -12,7 +12,7 @@ from src import crud, models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
-from src.utils.formatting import format_datetime_utc, parse_datetime_iso
+from src.utils.formatting import format_datetime_utc
 from src.utils.logging import conditional_observe
 from src.utils.representation import (
     DeductiveObservation,
@@ -91,10 +91,7 @@ class EmbeddingStore:
                 if isinstance(obs, DeductiveObservation):
                     obs_level = "deductive"
                     obs_content = obs.conclusion
-                    # Serialize ExplicitObservation objects in premises to avoid JSON serialization errors
-                    metadata["premises"] = [
-                        premise.model_dump(mode="json") for premise in obs.premises
-                    ]
+                    metadata["premises"] = obs.premises
                 else:
                     obs_level = "explicit"
                     obs_content = obs.content
@@ -164,7 +161,7 @@ class EmbeddingStore:
                 explicit=[
                     ExplicitObservation(
                         created_at=doc.created_at,
-                        message_id=str(doc.internal_metadata["message_id"]),
+                        message_id=doc.internal_metadata["message_id"],
                         session_name=doc.internal_metadata["session_name"],
                         content=doc.content,
                     )
@@ -173,17 +170,9 @@ class EmbeddingStore:
                 deductive=[
                     DeductiveObservation(
                         created_at=doc.created_at,
-                        message_id=str(doc.internal_metadata["message_id"]),
+                        message_id=doc.internal_metadata["message_id"],
                         session_name=doc.internal_metadata["session_name"],
-                        premises=[
-                            ExplicitObservation(
-                                created_at=parse_datetime_iso(premise["created_at"]),
-                                message_id=str(premise["message_id"]),
-                                session_name=premise["session_name"],
-                                content=premise["content"],
-                            )
-                            for premise in doc.internal_metadata["premises"]
-                        ],
+                        premises=doc.internal_metadata["premises"],
                         conclusion=doc.content,
                     )
                     for doc in deductive_documents

@@ -8,8 +8,8 @@ from src.utils.formatting import parse_datetime_iso, utc_now_iso
 
 class Observation(BaseModel):
     created_at: datetime
-    message_id: str
-    session_name: str
+    message_id: int | None
+    session_name: str | None
 
 
 class ExplicitObservation(Observation):
@@ -42,17 +42,14 @@ class ExplicitObservation(Observation):
 class DeductiveObservation(Observation):
     """Deductive observation with multiple premises and one conclusion."""
 
-    premises: list[ExplicitObservation] = Field(
+    premises: list[str] = Field(
         description="Supporting premises or evidence for this conclusion",
         default_factory=list,
     )
     conclusion: str = Field(description="The deductive conclusion")
 
     def __str__(self) -> str:
-        premises_text = "\n".join(
-            f"    - [{premise.created_at}] {premise.content}"
-            for premise in self.premises
-        )
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
         return f"[{self.created_at}] {self.conclusion}\n{premises_text}"
 
     def __hash__(self) -> int:
@@ -135,8 +132,8 @@ class Representation(BaseModel):
             3. [2025-01-01 12:05:00] The user is 25 years old
             DEDUCTIVE:
             1. [2025-01-01 12:01:00] Rover is 5 years old
-                - [2025-01-01 12:00:00] The user has a dog named Rover
-                - [2025-01-01 12:01:00] The user's dog is 5 years old
+                - The user has a dog named Rover
+                - The user's dog is 5 years old
 
         """
 
@@ -150,10 +147,6 @@ class Representation(BaseModel):
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
             parts.append(f"{i}. {observation}")
-            if observation.premises:
-                parts.append(
-                    "    - " + "\n    - ".join([str(p) for p in observation.premises])
-                )
         parts.append("")
 
         return "\n".join(parts)
@@ -184,7 +177,7 @@ class Representation(BaseModel):
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation.conclusion}")
+            parts.append(f"{i}. {observation}")
         parts.append("")
 
         return "\n".join(parts)
@@ -209,7 +202,7 @@ class Representation(BaseModel):
         parts.append("## Deductive Observations\n")
         for i, obs in enumerate(self.deductive, 1):
             parts.append(f"{i}. **Conclusion**: {obs.conclusion}")
-            if hasattr(obs, "premises") and obs.premises:
+            if obs.premises:
                 parts.append("   **Premises**:")
                 for premise in obs.premises:
                     parts.append(f"   - {premise}")
@@ -242,7 +235,7 @@ class PromptRepresentation(BaseModel):
         default_factory=list,
     )
 
-    def to_representation(self) -> Representation:
+    def to_representation(self, message_id: int, session_name: str) -> Representation:
         """
         Convert a PromptRepresentation object to a Representation object.
         """
@@ -251,26 +244,18 @@ class PromptRepresentation(BaseModel):
                 ExplicitObservation(
                     content=e,
                     created_at=parse_datetime_iso(utc_now_iso()),
-                    message_id="",
-                    session_name="",
+                    message_id=message_id,
+                    session_name=session_name,
                 )
                 for e in self.explicit
             ],
             deductive=[
                 DeductiveObservation(
                     created_at=parse_datetime_iso(utc_now_iso()),
-                    message_id="",
-                    session_name="",
+                    message_id=message_id,
+                    session_name=session_name,
                     conclusion=d.conclusion,
-                    premises=[
-                        ExplicitObservation(
-                            content=p,
-                            created_at=parse_datetime_iso(utc_now_iso()),
-                            message_id="",
-                            session_name="",
-                        )
-                        for p in d.premises
-                    ],
+                    premises=d.premises,
                 )
                 for d in self.deductive
             ],

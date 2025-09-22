@@ -39,7 +39,7 @@ async def critical_analysis_call(
     working_representation: str | None,
     history: str,
     new_turn: str,
-) -> Representation:
+) -> PromptRepresentation:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
         peer_card=peer_card,
@@ -63,7 +63,7 @@ async def critical_analysis_call(
         retry_attempts=3,
     )
 
-    return response.content.to_representation()
+    return response.content
 
 
 async def peer_card_call(
@@ -314,6 +314,10 @@ class CertaintyReasoner:
                 history=history,
                 new_turn=formatted_new_turn,
             ) from e
+
+        reasoning_response = reasoning_response.to_representation(
+            self.ctx.message_id, self.ctx.session_name
+        )
 
         if settings.LANGFUSE_PUBLIC_KEY:
             lf.update_current_generation(
