@@ -6,6 +6,7 @@ Create Date: 2025-08-27 10:49:26.591473
 
 """
 
+import json
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -38,39 +39,67 @@ def upgrade() -> None:
 
     while True:
         # Fetch a batch of items that need backfilling using raw SQL
-        items_result = bind.execute(
-            sa.text(
-                f"""
-                SELECT id, payload FROM {schema_name}.queue
-                WHERE processed = false
-                  AND token_count = 0
-                  AND task_type IN ('representation', 'summary')
-                ORDER BY id
-                LIMIT :batch_size
-                """
-            ),
-            {"batch_size": BATCH_SIZE},
+        items_stmt = sa.text(
+            f"""
+            SELECT id, payload FROM {schema_name}.queue
+            WHERE processed = false
+              AND token_count = 0
+              AND task_type IN ('representation', 'summary')
+            ORDER BY id
+            LIMIT :batch_size
+            """
+        ).columns(id=sa.Integer, payload=sa.JSON)
+
+        items_to_backfill = (
+            bind.execute(
+                items_stmt,
+                {"batch_size": BATCH_SIZE},
+            )
+            .mappings()
+            .all()
         )
-        items_to_backfill = items_result.fetchall()
 
         if not items_to_backfill:
             break  # No more items to process
 
         # Assuming message_id is always present due to application-level validation
+        def _extract_message_id(payload: object) -> int | None:
+            if isinstance(payload, dict):
+                return payload.get("message_id")  # type: ignore[return-value]
+            if payload is None:
+                return None
+            try:
+                parsed = json.loads(payload)
+            except (TypeError, json.JSONDecodeError):
+                return None
+            if isinstance(parsed, dict):
+                return parsed.get("message_id")  # type: ignore[return-value]
+            return None
+
         message_id_map = {
-            item.id: item.payload["message_id"] for item in items_to_backfill
+            row["id"]: _extract_message_id(row["payload"]) for row in items_to_backfill
+        }
+        # Drop rows where message_id couldn't be extracted
+        message_id_map = {
+            queue_id: message_id
+            for queue_id, message_id in message_id_map.items()
+            if message_id is not None
         }
 
         # Get token counts for the message IDs
-        token_counts_result = bind.execute(
-            sa.text(
-                f"""
-                SELECT id, token_count FROM {schema_name}.messages
-                WHERE id = ANY(:ids)
-                """
-            ),
-            {"ids": list(message_id_map.values())},
+        token_ids = list(message_id_map.values())
+        if not token_ids:
+            continue
+
+        placeholders = ", ".join(f":id_{idx}" for idx in range(len(token_ids)))
+        token_counts_stmt = sa.text(
+            f"""
+            SELECT id, token_count FROM {schema_name}.messages
+            WHERE id IN ({placeholders})
+            """
         )
+        bind_params = {f"id_{idx}": token_id for idx, token_id in enumerate(token_ids)}
+        token_counts_result = bind.execute(token_counts_stmt, bind_params)
         token_map = {msg_id: count for msg_id, count in token_counts_result.fetchall()}
 
         # Prepare parameters for the bulk update, skipping any queue items whose
@@ -82,24 +111,16 @@ def upgrade() -> None:
         ]
 
         if update_params:
-            queue_ids = [p[0] for p in update_params]
-            token_counts = [p[1] for p in update_params]
+            update_stmt = sa.text(
+                f"UPDATE {schema_name}.queue SET token_count = :token_count WHERE id = :queue_id"
+            )
 
-            # Perform a single bulk update using the UNNEST pattern
             bind.execute(
-                sa.text(
-                    f"""
-                    UPDATE {schema_name}.queue q
-                    SET token_count = v.token_count
-                    FROM (
-                        SELECT
-                            UNNEST(:queue_ids) AS queue_id,
-                            UNNEST(:token_counts) AS token_count
-                    ) AS v
-                    WHERE q.id = v.queue_id
-                    """
-                ),
-                {"queue_ids": queue_ids, "token_counts": token_counts},
+                update_stmt,
+                [
+                    {"queue_id": queue_id, "token_count": token_count}
+                    for queue_id, token_count in update_params
+                ],
             )
 
         # If we fetched fewer items than the batch size, we are on the last batch
