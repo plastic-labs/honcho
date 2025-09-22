@@ -31,20 +31,20 @@ def upgrade() -> None:
         schema=schema,
     )
 
-    # ### Data Migration: Backfill token_count using raw SQL ###
     bind = op.get_bind()
-    schema_name = settings.DB.SCHEMA
 
     BATCH_SIZE = 500  # Process 500 items at a time
+    last_seen_id: int = 0
 
     while True:
-        # Fetch a batch of items that need backfilling using raw SQL
         items_stmt = sa.text(
             f"""
-            SELECT id, payload FROM {schema_name}.queue
+            SELECT id, payload FROM {schema}.queue
             WHERE processed = false
               AND token_count = 0
               AND task_type IN ('representation', 'summary')
+              AND (payload->>'message_id') IS NOT NULL
+              AND id > :after_id
             ORDER BY id
             LIMIT :batch_size
             """
@@ -53,7 +53,7 @@ def upgrade() -> None:
         items_to_backfill = (
             bind.execute(
                 items_stmt,
-                {"batch_size": BATCH_SIZE},
+                {"batch_size": BATCH_SIZE, "after_id": last_seen_id},
             )
             .mappings()
             .all()
@@ -61,19 +61,19 @@ def upgrade() -> None:
 
         if not items_to_backfill:
             break  # No more items to process
+        last_seen_id = items_to_backfill[-1]["id"]
 
-        # Assuming message_id is always present due to application-level validation
         def _extract_message_id(payload: object) -> int | None:
             if isinstance(payload, dict):
-                return payload.get("message_id")  # type: ignore[return-value]
+                return payload.get("message_id")  # pyright: ignore
             if payload is None:
                 return None
             try:
-                parsed = json.loads(payload)
+                parsed = json.loads(str(payload))
             except (TypeError, json.JSONDecodeError):
                 return None
             if isinstance(parsed, dict):
-                return parsed.get("message_id")  # type: ignore[return-value]
+                return parsed.get("message_id")  # pyright: ignore
             return None
 
         message_id_map = {
@@ -94,7 +94,7 @@ def upgrade() -> None:
         placeholders = ", ".join(f":id_{idx}" for idx in range(len(token_ids)))
         token_counts_stmt = sa.text(
             f"""
-            SELECT id, token_count FROM {schema_name}.messages
+            SELECT id, token_count FROM {schema}.messages
             WHERE id IN ({placeholders})
             """
         )
@@ -112,7 +112,7 @@ def upgrade() -> None:
 
         if update_params:
             update_stmt = sa.text(
-                f"UPDATE {schema_name}.queue SET token_count = :token_count WHERE id = :queue_id"
+                f"UPDATE {schema}.queue SET token_count = :token_count WHERE id = :queue_id"
             )
 
             bind.execute(
@@ -129,6 +129,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    inspector = sa.inspect(op.get_context().connection)
+    inspector = sa.inspect(op.get_bind())
     if column_exists("queue", "token_count", inspector):
         op.drop_column("queue", "token_count", schema=schema)
