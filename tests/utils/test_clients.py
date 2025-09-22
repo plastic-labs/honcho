@@ -32,9 +32,6 @@ from src.utils.clients import (
     handle_streaming_response,
     honcho_llm_call,
     honcho_llm_call_inner,
-    retry,
-    stop_after_attempt,
-    wait_exponential,
     with_langfuse,
 )
 
@@ -90,124 +87,6 @@ class TestLLMCallResponse:
         chunk = HonchoLLMCallStreamChunk(content="test")
         assert isinstance(chunk.finish_reasons, list)
         assert chunk.finish_reasons == []
-
-
-class TestRetryMechanisms:
-    """Tests for retry logic and backoff strategies"""
-
-    def test_stop_after_attempt(self):
-        """Test stop_after_attempt predicate"""
-        stop_func = stop_after_attempt(3)
-
-        # Should retry on attempts 1 and 2
-        assert stop_func(1) is True
-        assert stop_func(2) is True
-        # Should not retry on attempt 3 and beyond
-        assert stop_func(3) is False
-        assert stop_func(4) is False
-
-    def test_wait_exponential_basic(self):
-        """Test basic exponential backoff"""
-        wait_func = wait_exponential(multiplier=1.0)
-
-        # Should return 1 * 2^(attempt-1)
-        assert wait_func(1) == 1.0  # 1 * 2^0 = 1
-        assert wait_func(2) == 2.0  # 1 * 2^1 = 2
-        assert wait_func(3) == 4.0  # 1 * 2^2 = 4
-
-    def test_wait_exponential_with_bounds(self):
-        """Test exponential backoff with min/max bounds"""
-        wait_func = wait_exponential(multiplier=1.0, min=1.5, max=3.0)
-
-        # Should be clamped to min=1.5 for attempt 1
-        assert wait_func(1) == 1.5  # max(1.0, 1.5) = 1.5
-        # Should be normal for attempt 2
-        assert wait_func(2) == 2.0
-        # Should be clamped to max=3.0 for attempt 3
-        assert wait_func(3) == 3.0  # min(4.0, 3.0) = 3.0
-
-    def test_wait_exponential_multiplier(self):
-        """Test exponential backoff with different multiplier"""
-        wait_func = wait_exponential(multiplier=2.0)
-
-        assert wait_func(1) == 2.0  # 2 * 2^0 = 2
-        assert wait_func(2) == 4.0  # 2 * 2^1 = 4
-        assert wait_func(3) == 8.0  # 2 * 2^2 = 8
-
-    @pytest.mark.asyncio
-    async def test_retry_decorator_success(self):
-        """Test retry decorator with successful function"""
-        call_count = 0
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=0.1, max=0.1),  # Fast for testing
-        )
-        async def test_func():
-            nonlocal call_count
-            call_count += 1
-            return "success"
-
-        result = await test_func()
-        assert result == "success"
-        assert call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_retry_decorator_eventual_success(self):
-        """Test retry decorator with eventual success"""
-        call_count = 0
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=0.01, max=0.01),  # Fast for testing
-        )
-        async def test_func():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 2:
-                raise Exception("Temporary failure")
-            return "success"
-
-        result = await test_func()
-        assert result == "success"
-        assert call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_retry_decorator_max_attempts_exceeded(self):
-        """Test retry decorator when max attempts are exceeded"""
-        call_count = 0
-
-        @retry(
-            stop=stop_after_attempt(2),
-            wait=wait_exponential(multiplier=0.01, max=0.01),  # Fast for testing
-        )
-        async def test_func():
-            nonlocal call_count
-            call_count += 1
-            raise Exception("Persistent failure")
-
-        with pytest.raises(Exception, match="Persistent failure"):
-            await test_func()
-        assert call_count == 2
-
-    def test_retry_decorator_sync_function(self):
-        """Test retry decorator with synchronous function"""
-        call_count = 0
-
-        @retry(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=0.001, max=0.001),  # Fast for testing
-        )
-        def test_func():
-            nonlocal call_count
-            call_count += 1
-            if call_count < 2:
-                raise Exception("Temporary failure")
-            return "success"
-
-        result = test_func()
-        assert result == "success"
-        assert call_count == 2
 
 
 class TestLangfuseIntegration:
@@ -1087,10 +966,7 @@ class TestMainLLMCallFunction:
         mock_response.stop_reason = "stop"
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        with (
-            patch.dict(CLIENTS, {"anthropic": mock_client}),
-            patch("src.utils.clients.retry") as mock_retry,
-        ):
+        with patch.dict(CLIENTS, {"anthropic": mock_client}):
             response = await honcho_llm_call(
                 provider="anthropic",
                 model="claude-3-sonnet",
@@ -1099,36 +975,11 @@ class TestMainLLMCallFunction:
                 enable_retry=False,
             )
 
-            # Retry decorator should not have been applied
-            mock_retry.assert_not_called()
             assert response.content == "No retry response"
 
 
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions"""
-
-    def test_wait_exponential_zero_multiplier(self):
-        """Test exponential backoff with zero multiplier"""
-        wait_func = wait_exponential(multiplier=0.0)
-        assert wait_func(1) == 0.0
-        assert wait_func(2) == 0.0
-        assert wait_func(5) == 0.0
-
-    def test_wait_exponential_very_large_attempt(self):
-        """Test exponential backoff with very large attempt number"""
-        wait_func = wait_exponential(multiplier=1.0, max=100.0)
-        # Should be clamped to max
-        assert wait_func(20) == 100.0  # 2^19 would be huge but clamped to 100
-
-    def test_stop_after_attempt_edge_cases(self):
-        """Test stop predicate edge cases"""
-        # Zero attempts should never retry
-        stop_func = stop_after_attempt(0)
-        assert stop_func(1) is False
-
-        # One attempt should never retry (first call fails, no retry)
-        stop_func = stop_after_attempt(1)
-        assert stop_func(1) is False
 
     def test_stream_chunk_with_no_finish_reasons(self):
         """Test stream chunk creation without finish reasons"""
