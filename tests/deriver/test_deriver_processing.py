@@ -134,6 +134,24 @@ class TestDeriverProcessing:
             ),
         )
 
+        # Avoid DB access for collection and peer card
+        monkeypatch.setattr(
+            "src.deriver.deriver.crud.get_or_create_collection",
+            AsyncMock(return_value=type("Collection", (), {"name": "dummy"})()),
+        )
+        monkeypatch.setattr(
+            "src.deriver.deriver.crud.get_peer_card",
+            AsyncMock(return_value=[]),
+        )
+        # Short-circuit tracked_db context manager
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _no_db(_label: str):
+            yield object()
+
+        monkeypatch.setattr("src.deriver.deriver.tracked_db", _no_db)
+
         # Avoid executing the full reasoning pipeline; we only care about cutoff behavior.
         monkeypatch.setattr(
             "src.deriver.deriver.CertaintyReasoner.reason",
