@@ -1,12 +1,7 @@
 import logging
 from collections.abc import AsyncGenerator
 
-from fastapi import (
-    APIRouter,
-    Body,
-    Depends,
-    Path,
-)
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
@@ -238,7 +233,7 @@ async def get_working_representation(
         raise ResourceNotFoundException("Peer or session not found") from e
 
 
-@router.post(
+@router.get(
     "/{peer_id}/peer-cards",
     response_model=schemas.PeerCardResponse,
     dependencies=[
@@ -248,8 +243,9 @@ async def get_working_representation(
 async def get_peer_card(
     workspace_id: str = Path(..., description="ID of the workspace"),
     peer_id: str = Path(..., description="ID of the observer peer"),
-    options: schemas.PeerCardGet = Body(
-        ..., description="Options for getting the peer card"
+    target: str | None = Query(
+        None,
+        description="The peer whose card to retrieve. If not provided, returns the observer's own card",
     ),
     db: AsyncSession = db,
 ):
@@ -259,7 +255,7 @@ async def get_peer_card(
     If no target is specified, returns the observer's own peer card.
     """
     # If no target specified, get the observer's own card
-    target_peer = options.target if options.target is not None else peer_id
+    target_peer = target if target is not None else peer_id
 
     peer_card = await crud.get_peer_card(db, workspace_id, target_peer, peer_id)
     return schemas.PeerCardResponse(peer_card=peer_card)
