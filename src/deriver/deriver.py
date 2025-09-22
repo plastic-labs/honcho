@@ -256,7 +256,6 @@ async def process_representation_tasks_batch(
         working_representation,
         formatted_history,
         speaker_peer_card,
-        payloads,
     )
 
     logger.debug("REASONING COMPLETION: Unified reasoning completed across all levels.")
