@@ -15,6 +15,7 @@ from src.exceptions import (
 )
 from src.security import JWTParams, require_auth
 from src.utils import summarizer
+from src.utils.embedding_store import EmbeddingStore
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -373,9 +374,13 @@ async def get_session_context(
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
-        description=f"Number of tokens to use for the context. Includes summary if set to true. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
+        description=f"Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
     *,
+    last_message: str | None = Query(
+        None,
+        description="The most recent message, used to fetch semantically relevant observations",
+    ),
     include_summary: bool = Query(
         default=True,
         description="Whether or not to include a summary *if* one is available for the session",
@@ -399,20 +404,12 @@ async def get_session_context(
     """
     token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
 
-    if peer_target and not peer_perspective:
-        # Get Honcho-level representation and card for peer_target
-        observer_name = peer_target
-        observed_name = peer_target
-    elif peer_target and peer_perspective:
-        # Get representation and card for peer_target from the perspective of peer_perspective
-        observer_name = peer_perspective
-        observed_name = peer_target
-    elif not peer_target and peer_perspective:
-        # Error: peer_target must be provided if peer_perspective is provided
+    if peer_perspective and not peer_target:
         raise ValidationException(
             "peer_target must be provided if peer_perspective is provided"
         )
-    else:
+
+    if not peer_target:
         # No representation or card needed
         summary_obj, messages = await summarizer.get_session_context(
             db,
@@ -427,12 +424,31 @@ async def get_session_context(
             summary=summary_obj,
         )
 
+    observer_name = peer_perspective or peer_target
+    observed_name = peer_target
+
     representation = await crud.get_working_representation(
         db,
         workspace_name=workspace_id,
         observer_name=observer_name,
         observed_name=observed_name,
     )
+
+    # get semantically relevant documents and merge them into the working representation
+    if last_message:
+        semantically_relevant_representation = await EmbeddingStore(
+            workspace_name=workspace_id,
+            peer_name=observer_name,
+            collection_name=crud.construct_collection_name(
+                observer=observer_name, observed=observed_name
+            ),
+        ).get_relevant_observations(
+            query=last_message,
+        )
+        if representation:
+            representation.merge_representation(semantically_relevant_representation)
+        else:
+            representation = semantically_relevant_representation
     card = await crud.get_peer_card(
         db,
         workspace_name=workspace_id,
@@ -441,11 +457,19 @@ async def get_session_context(
     )
 
     # adjust token limit downward to account for approximate token count of representation and card
-    tokenizer = tiktoken.get_encoding("cl100k_base")
-    if representation:
-        token_limit -= len(tokenizer.encode(str(representation)))
-    if card:
-        token_limit -= len(tokenizer.encode("\n".join(card)))
+    # TODO determine if this impacts performance too much
+    try:
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        if representation:
+            token_limit -= len(tokenizer.encode(str(representation)))
+        if card:
+            token_limit -= len(tokenizer.encode("\n".join(card)))
+    except Exception:
+        # Fallback to rough character-based estimation
+        if representation:
+            token_limit -= len(str(representation)) // 4
+        if card:
+            token_limit -= len("\n".join(card)) // 4
 
     summary_obj, messages = await summarizer.get_session_context(
         db,
