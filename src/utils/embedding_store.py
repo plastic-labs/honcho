@@ -14,11 +14,7 @@ from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.utils.formatting import format_datetime_utc
 from src.utils.logging import conditional_observe
-from src.utils.representation import (
-    DeductiveObservation,
-    ExplicitObservation,
-    Representation,
-)
+from src.utils.representation import DeductiveObservation, Representation
 
 logger = logging.getLogger(__name__)
 
@@ -149,35 +145,7 @@ class EmbeddingStore:
 
             # convert documents to representation
             # use level to filter documents
-            explicit_documents = [
-                doc for doc in documents if doc.internal_metadata["level"] == "explicit"
-            ]
-            deductive_documents = [
-                doc
-                for doc in documents
-                if doc.internal_metadata["level"] == "deductive"
-            ]
-            return Representation(
-                explicit=[
-                    ExplicitObservation(
-                        created_at=doc.created_at,
-                        message_id=doc.internal_metadata["message_id"],
-                        session_name=doc.internal_metadata["session_name"],
-                        content=doc.content,
-                    )
-                    for doc in explicit_documents
-                ],
-                deductive=[
-                    DeductiveObservation(
-                        created_at=doc.created_at,
-                        message_id=doc.internal_metadata["message_id"],
-                        session_name=doc.internal_metadata["session_name"],
-                        premises=doc.internal_metadata["premises"],
-                        conclusion=doc.content,
-                    )
-                    for doc in deductive_documents
-                ],
-            )
+            return crud.representation_from_documents(documents)
 
     def _build_filter_conditions(
         self,

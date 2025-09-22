@@ -207,28 +207,22 @@ async def chat(
     start_time = asyncio.get_event_loop().time()
 
     # 1. Working representation (short-term) -----------------------------------
-    # Only useful for session-scoped queries, not global queries
-    if session_name:
-        working_rep_start_time = asyncio.get_event_loop().time()
-        async with tracked_db("chat.get_working_representation") as db:
-            # If no target specified, get global representation (peer observing themselves)
-            target_peer = target_name if target_name is not None else peer_name
-            working_representation = await crud.get_working_representation(
-                db, workspace_name, peer_name, target_peer
-            )
-        working_rep_duration = asyncio.get_event_loop().time() - working_rep_start_time
-        accumulate_metric(
-            f"dialectic_chat_{dialectic_chat_uuid}",
-            "retrieve_working_rep",
-            working_rep_duration,
-            "s",
+    working_rep_start_time = asyncio.get_event_loop().time()
+    async with tracked_db("chat.get_working_representation") as db:
+        # If no target specified, get global representation (peer observing themselves)
+        target_peer = target_name if target_name is not None else peer_name
+        working_representation = await crud.get_working_representation(
+            db, workspace_name, peer_name, target_peer
         )
-        logger.info("Retrieved working representation:\n%s\n", working_representation)
-        context_window_size -= len(tokenizer.encode(str(working_representation)))
-    else:
-        # For global queries, working representation isn't useful - use historical context instead
-        working_representation = None
-        logger.info("Query is not session-scoped, skipping working representation")
+    working_rep_duration = asyncio.get_event_loop().time() - working_rep_start_time
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "retrieve_working_rep",
+        working_rep_duration,
+        "s",
+    )
+    logger.info("Retrieved working representation:\n%s\n", working_representation)
+    context_window_size -= len(tokenizer.encode(str(working_representation)))
 
     # 2. Additional context (long-term semantic search) ------------------------
     # If the query is not targeted, get global_representation facts from other sessions

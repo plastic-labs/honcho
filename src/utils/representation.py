@@ -15,7 +15,7 @@ class ExplicitObservation(Observation):
     content: str = Field(description="The explicit observation")
 
     def __str__(self) -> str:
-        return f"[{self.created_at}] {self.content}"
+        return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
 
     def __hash__(self) -> int:
         """
@@ -140,6 +140,7 @@ class Representation(BaseModel):
     def __str__(self) -> str:
         """
         Format representation into a clean, readable string for LLM prompts.
+        NOTE: we always strip subsecond precision from the timestamps.
 
         Returns:
             Formatted string with clear sections and bullet points including temporal metadata
@@ -203,6 +204,7 @@ class Representation(BaseModel):
     def format_as_markdown(self) -> str:
         """
         Format a Representation object as markdown.
+        NOTE: we always strip subsecond precision from the timestamps.
 
         Returns:
             Formatted markdown string
