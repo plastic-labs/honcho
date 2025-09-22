@@ -1,7 +1,3 @@
-import asyncio
-import builtins as _builtins
-import inspect
-import time
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
 from typing import Any, Generic, Literal, TypeVar, cast, overload
@@ -17,6 +13,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel, Field
 from sentry_sdk.ai.monitoring import ai_track
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import settings
 from src.utils.types import SupportedProviders
@@ -643,109 +640,6 @@ async def handle_streaming_response(
                         is_done=True,
                         finish_reasons=[chunk.choices[0].finish_reason],
                     )
-
-
-def retry(
-    stop: Callable[[int], bool],
-    wait: Callable[[int], float],
-) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """
-    Decorator that retries a function up to a maximum number of attempts.
-
-    Args:
-        stop: A function that returns True if the function should be retried.
-        wait: A function that returns the wait time in seconds.
-
-    Returns:
-        A decorator that returns a function that retries the input function.
-    """
-
-    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-        if inspect.iscoroutinefunction(func):
-
-            @wraps(func)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                attempt_number = 1
-                while True:
-                    try:
-                        return await func(*args, **kwargs)
-                    except Exception:
-                        if not stop(attempt_number):
-                            raise
-                        delay_seconds = max(0.0, float(wait(attempt_number)))
-                        if delay_seconds:
-                            await asyncio.sleep(delay_seconds)
-                        attempt_number += 1
-
-            return async_wrapper
-        else:
-
-            @wraps(func)
-            def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-                attempt_number = 1
-                while True:
-                    try:
-                        return func(*args, **kwargs)
-                    except Exception:
-                        if not stop(attempt_number):
-                            raise
-                        delay_seconds = max(0.0, float(wait(attempt_number)))
-                        if delay_seconds:
-                            time.sleep(delay_seconds)
-                        attempt_number += 1
-
-            return sync_wrapper
-
-    return decorator
-
-
-def stop_after_attempt(max_attempts: int) -> Callable[[int], bool]:
-    """Create a stop predicate that allows retries up to a maximum number of attempts.
-
-    The predicate receives the 1-based attempt number that just failed and returns
-    True if another retry should be performed, otherwise False.
-
-    Args:
-        max_attempts: Maximum number of attempts to perform, including the first call.
-
-    Returns:
-        A callable that decides whether to continue retrying based on attempt count.
-    """
-
-    def _should_retry(attempt_number: int) -> bool:
-        return attempt_number < max_attempts
-
-    return _should_retry
-
-
-def wait_exponential(
-    *, multiplier: float = 1.0, min: float | None = None, max: float | None = None
-) -> Callable[[int], float]:
-    """Create an exponential backoff wait strategy.
-
-    Computes wait time as multiplier * 2^(attempt-1), clamped to [min, max] if provided.
-
-    Args:
-        multiplier: Base multiplier applied to the exponential growth.
-        min: Optional minimum wait bound in seconds.
-        max: Optional maximum wait bound in seconds.
-
-    Returns:
-        A callable that maps 1-based attempt number to a wait duration in seconds.
-    """
-
-    clamped_min = float(min) if min is not None else None
-    clamped_max = float(max) if max is not None else None
-
-    def _wait_time(attempt_number: int) -> float:
-        base = float(multiplier) * (2.0 ** _builtins.max(0, attempt_number - 1))
-        if clamped_min is not None:
-            base = _builtins.max(clamped_min, base)
-        if clamped_max is not None:
-            base = _builtins.min(clamped_max, base)
-        return float(base)
-
-    return _wait_time
 
 
 def with_langfuse(func: Callable[..., Any]) -> Callable[..., Any]:
