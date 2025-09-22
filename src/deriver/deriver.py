@@ -127,15 +127,13 @@ async def process_representation_tasks_batch(
 
     # Use get_session_context_formatted with configurable token limit
     async with tracked_db("deriver.get_session_context") as db:
-        formatted_history = (
-            await summarizer.get_session_context_formatted(  # NEED TO FIX?
-                db,
-                latest_payload.workspace_name,
-                latest_payload.session_name,
-                token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-                cutoff=latest_payload.message_id,
-                include_summary=True,
-            )
+        formatted_history = await summarizer.get_session_context_formatted(
+            db,
+            latest_payload.workspace_name,
+            latest_payload.session_name,
+            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
+            cutoff=earliest_payload.message_id,
+            include_summary=True,
         )
 
     # instantiate embedding store from collection
