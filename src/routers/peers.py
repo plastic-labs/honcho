@@ -255,20 +255,14 @@ async def get_peer_card(
 ):
     """Get a peer card for a specific peer relationship.
 
-    Returns the peer card that the observer peer has for the target peer.
+    Returns the peer card that the observer peer has for the target peer if it exists.
     If no target is specified, returns the observer's own peer card.
     """
     # If no target specified, get the observer's own card
     target_peer = options.target if options.target is not None else peer_id
 
-    try:
-        peer_card = await crud.get_peer_card(db, workspace_id, target_peer, peer_id)
-        return schemas.PeerCardResponse(peer_card=peer_card)
-    except Exception as e:
-        logger.warning(
-            f"Failed to get peer card for observer {peer_id}, target {target_peer}: {str(e)}"
-        )
-        raise ResourceNotFoundException("Peer card not found") from e
+    peer_card = await crud.get_peer_card(db, workspace_id, target_peer, peer_id)
+    return schemas.PeerCardResponse(peer_card=peer_card)
 
 
 @router.post(
