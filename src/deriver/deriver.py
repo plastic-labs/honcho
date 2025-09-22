@@ -153,14 +153,8 @@ async def process_representation_task(
 
     # Check for existing working representation first, fall back to global search
     async with tracked_db("deriver.get_working_representation_data") as db:
-        working_representation: (
-            Representation | None
-        ) = await crud.get_working_representation(
-            db,
-            payload.workspace_name,
-            payload.target_name,
-            payload.sender_name,
-            payload.session_name,
+        working_representation = await crud.get_working_representation(
+            db, payload.workspace_name, payload.target_name, payload.sender_name
         )
 
     # Time context preparation
@@ -205,10 +199,6 @@ async def process_representation_task(
 
     # Display final observations in a beautiful tree
     log_representation(final_observations)
-
-    # Always save working representation to peer for dialectic access
-    async with tracked_db("deriver.save_working_representation") as db:
-        await crud.set_working_representation(db, final_observations, payload)
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000

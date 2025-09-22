@@ -227,7 +227,7 @@ async def get_working_representation(
         target_peer = options.target if options.target is not None else peer_id
 
         representation = await crud.get_working_representation(
-            db, workspace_id, peer_id, target_peer, options.session_id
+            db, workspace_id, peer_id, target_peer
         )
         return {"representation": representation}
     except ValueError as e:

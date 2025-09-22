@@ -7,9 +7,7 @@ from langfuse import get_client
 from src.config import settings
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
-from src.utils.formatting import parse_datetime_iso, utc_now_iso
 from src.utils.logging import conditional_observe
-from src.utils.representation import StoredRepresentation
 from src.utils.shared_models import SemanticQueries
 
 from .prompts import query_generation_prompt
@@ -76,13 +74,8 @@ async def get_observations(
         ]
         sub_representations = await asyncio.gather(*tasks)
 
-        representation = StoredRepresentation(
-            **sub_representations.pop().model_dump(),
-            created_at=parse_datetime_iso(utc_now_iso()),
-            message_id=str(1),
-        )
-
         # merge all sub_representations into one
+        representation = sub_representations.pop()
         for sub_rep in sub_representations:
             representation.merge_representation(sub_rep)
 

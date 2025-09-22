@@ -22,7 +22,6 @@ from .representation import (
     get_peer_card,
     get_working_representation,
     set_peer_card,
-    set_working_representation,
 )
 from .session import (
     clone_session,
@@ -74,7 +73,6 @@ __all__ = [
     "get_peer_card",
     "get_working_representation",
     "set_peer_card",
-    "set_working_representation",
     # Session
     "get_sessions",
     "get_or_create_session",

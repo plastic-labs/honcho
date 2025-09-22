@@ -2,7 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from src.config import settings
 from src.utils.formatting import parse_datetime_iso, utc_now_iso
 
 
@@ -118,6 +117,25 @@ class Representation(BaseModel):
         diff.explicit = [o for o in other.explicit if o not in self.explicit]
         diff.deductive = [o for o in other.deductive if o not in self.deductive]
         return diff
+
+    def merge_representation(
+        self, other: "Representation", max_observations: int | None = None
+    ):
+        """
+        Merge another representation object into this one.
+        This will automatically deduplicate explicit and deductive observations.
+        This *preserves order* of observations so that they retain FIFO order.
+        """
+        # removing duplicates by going list->set->list
+        self.explicit = list(set(self.explicit + other.explicit))
+        self.deductive = list(set(self.deductive + other.deductive))
+        # sort by created_at
+        self.explicit.sort(key=lambda x: x.created_at)
+        self.deductive.sort(key=lambda x: x.created_at)
+
+        if max_observations:
+            self.explicit = self.explicit[-max_observations:]
+            self.deductive = self.deductive[-max_observations:]
 
     def __str__(self) -> str:
         """
@@ -260,49 +278,3 @@ class PromptRepresentation(BaseModel):
                 for d in self.deductive
             ],
         )
-
-
-class StoredRepresentation(Representation):
-    """
-    A representation that is stored in the database with its creation timestamp and the ID of the message that triggered its creation.
-    """
-
-    created_at: datetime
-    message_id: str
-    max_observations: int | None = Field(
-        description="The maximum number of observations to store. If None, there is no limit. This limit is applied individually to each level of reasoning.",
-        default=settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
-    )
-
-    def add_single_observation(
-        self, observation: ExplicitObservation | DeductiveObservation
-    ) -> None:
-        if isinstance(observation, ExplicitObservation):
-            self.explicit.append(observation)
-            if self.max_observations:
-                self.explicit: list[ExplicitObservation] = self.explicit[
-                    -self.max_observations :
-                ]
-        else:
-            self.deductive.append(observation)
-            if self.max_observations:
-                self.deductive: list[DeductiveObservation] = self.deductive[
-                    -self.max_observations :
-                ]
-
-    def merge_representation(self, other: "Representation"):
-        """
-        Merge another representation object into this one.
-        This will automatically deduplicate explicit and deductive observations.
-        This *preserves order* of observations so that they retain FIFO order.
-        """
-        # removing duplicates by going list->set->list
-        self.explicit = list(set(self.explicit + other.explicit))
-        self.deductive = list(set(self.deductive + other.deductive))
-        # sort by created_at
-        self.explicit.sort(key=lambda x: x.created_at)
-        self.deductive.sort(key=lambda x: x.created_at)
-
-        if self.max_observations:
-            self.explicit = self.explicit[-self.max_observations :]
-            self.deductive = self.deductive[-self.max_observations :]

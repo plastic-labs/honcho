@@ -214,7 +214,7 @@ async def chat(
             # If no target specified, get global representation (peer observing themselves)
             target_peer = target_name if target_name is not None else peer_name
             working_representation = await crud.get_working_representation(
-                db, workspace_name, peer_name, target_peer, session_name
+                db, workspace_name, peer_name, target_peer
             )
         working_rep_duration = asyncio.get_event_loop().time() - working_rep_start_time
         accumulate_metric(
