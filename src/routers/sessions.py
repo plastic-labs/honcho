@@ -1,5 +1,6 @@
 import logging
 
+import tiktoken
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -380,6 +381,14 @@ async def get_session_context(
         description="Whether or not to include a summary *if* one is available for the session",
         alias="summary",
     ),
+    peer_target: str | None = Query(
+        None,
+        description="The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.",
+    ),
+    peer_perspective: str | None = Query(
+        None,
+        description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+    ),
     db: AsyncSession = db,
 ):
     """
@@ -390,7 +399,54 @@ async def get_session_context(
     """
     token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
 
-    # Use the shared get_session_context function from summarizer
+    if peer_target and not peer_perspective:
+        # Get Honcho-level representation and card for peer_target
+        observer_name = peer_target
+        observed_name = peer_target
+    elif peer_target and peer_perspective:
+        # Get representation and card for peer_target from the perspective of peer_perspective
+        observer_name = peer_perspective
+        observed_name = peer_target
+    elif not peer_target and peer_perspective:
+        # Error: peer_target must be provided if peer_perspective is provided
+        raise ValidationException(
+            "peer_target must be provided if peer_perspective is provided"
+        )
+    else:
+        # No representation or card needed
+        summary_obj, messages = await summarizer.get_session_context(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
+            token_limit=token_limit,
+            include_summary=include_summary,
+        )
+        return schemas.SessionContext(
+            name=session_id,
+            messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
+            summary=summary_obj,
+        )
+
+    representation = await crud.get_working_representation(
+        db,
+        workspace_name=workspace_id,
+        observer_name=observer_name,
+        observed_name=observed_name,
+    )
+    card = await crud.get_peer_card(
+        db,
+        workspace_name=workspace_id,
+        observed_name=observed_name,
+        observer_name=observer_name,
+    )
+
+    # adjust token limit downward to account for approximate token count of representation and card
+    tokenizer = tiktoken.get_encoding("cl100k_base")
+    if representation:
+        token_limit -= len(tokenizer.encode(str(representation)))
+    if card:
+        token_limit -= len(tokenizer.encode("\n".join(card)))
+
     summary_obj, messages = await summarizer.get_session_context(
         db,
         workspace_name=workspace_id,
@@ -403,6 +459,8 @@ async def get_session_context(
         name=session_id,
         messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
         summary=summary_obj,
+        peer_representation=representation,
+        peer_card=card,
     )
 
 

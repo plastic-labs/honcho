@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from src.config import settings
+from src.utils.representation import Representation
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -243,6 +244,14 @@ class SessionContext(SessionBase):
     messages: list[Message]
     summary: Summary | None = Field(
         default=None, description="The summary if available"
+    )
+    peer_representation: Representation | None = Field(
+        default=None,
+        description="The peer representation, if context is requested from a specific perspective",
+    )
+    peer_card: list[str] | None = Field(
+        default=None,
+        description="The peer card, if context is requested from a specific perspective",
     )
 
     model_config = ConfigDict(  # pyright: ignore
