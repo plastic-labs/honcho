@@ -292,7 +292,13 @@ async def honcho_llm_call_inner(
     if stream:
         # Return async generator for streaming responses
         return handle_streaming_response(
-            client, params, json_mode, thinking_budget_tokens, response_model
+            client,
+            params,
+            json_mode,
+            thinking_budget_tokens,
+            response_model,
+            reasoning_effort,
+            verbosity,
         )
 
     # Remove stream parameter for non-streaming calls as some providers don't accept it
@@ -577,7 +583,7 @@ async def handle_streaming_response(
             prompt_text = params["messages"][0]["content"] if params["messages"] else ""
 
             if response_model is not None:
-                response_stream = client.models.generate_content_stream(
+                response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
                     config={
@@ -586,7 +592,7 @@ async def handle_streaming_response(
                     },
                 )
             else:
-                response_stream = client.models.generate_content_stream(
+                response_stream = await client.aio.models.generate_content_stream(
                     model=params["model"],
                     contents=prompt_text,
                     config={
@@ -595,7 +601,7 @@ async def handle_streaming_response(
                 )
 
             final_chunk = None
-            for chunk in response_stream:
+            async for chunk in response_stream:
                 if chunk.text:
                     yield HonchoLLMCallStreamChunk(content=chunk.text)
                 final_chunk = chunk
