@@ -1,7 +1,9 @@
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Peer, Workspace
 
@@ -305,7 +307,15 @@ def test_get_sessions_for_peer_with_empty_filter(
     assert isinstance(data["items"], list)
 
 
-def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
+@patch("src.routers.peers.tracked_db")
+def test_chat(
+    mock_tracked_db: AsyncMock,
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+):
+    mock_tracked_db.return_value.__aenter__.return_value = db_session
+
     test_workspace, test_peer = sample_data
     target_peer = str(generate_nanoid())
 
@@ -323,12 +333,17 @@ def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert "content" in data
 
 
+@patch("src.routers.peers.tracked_db")
 def test_chat_with_optional_params(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    mock_tracked_db: AsyncMock,
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
 ):
     """Test chat endpoint with optional parameters"""
-    test_workspace, test_peer = sample_data
+    mock_tracked_db.return_value.__aenter__.return_value = db_session
 
+    test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
     # Create a session first
