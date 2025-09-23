@@ -641,7 +641,17 @@ class TestGoogleClient:
             Mock(text="", candidates=[Mock(finish_reason=mock_finish_reason)]),
         ]
 
-        mock_client.models.generate_content_stream.return_value = iter(mock_chunks)
+        # Create async iterator for the chunks
+        async def async_chunk_iterator():
+            for chunk in mock_chunks:
+                yield chunk
+
+        # Mock the aio.models.generate_content_stream method to return an awaitable async iterator
+        mock_aio = Mock()
+        mock_aio.models.generate_content_stream = AsyncMock(
+            return_value=async_chunk_iterator()
+        )
+        mock_client.aio = mock_aio
 
         with patch.dict(CLIENTS, {"google": mock_client}):
             chunks: list[HonchoLLMCallStreamChunk] = []
