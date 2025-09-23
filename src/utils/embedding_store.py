@@ -59,74 +59,72 @@ class EmbeddingStore:
             fallback_level: Reasoning level for the observations if not provided
             similarity_threshold: Threshold for considering observations similar
         """
-        async with tracked_db("ed_embedding_store.save_unified_observations") as db:
-            # Extract conclusions for deduplication and embedding
-            conclusions: list[str] = [obs.conclusion for obs in observations]
+        # Extract conclusions for deduplication and embedding
+        conclusions: list[str] = [obs.conclusion for obs in observations]
 
-            # Remove duplicates before saving
-            unique_conclusions: list[str] = await self.remove_duplicates(
-                conclusions, similarity_threshold=similarity_threshold
+        # Remove duplicates before saving
+        unique_conclusions: list[str] = await self.remove_duplicates(
+            conclusions, similarity_threshold=similarity_threshold
+        )
+        if settings.LANGFUSE_PUBLIC_KEY:
+            langfuse_context.update_current_observation(
+                input={"observations": [obs.model_dump() for obs in observations]},
+                output={"unique_conclusions": unique_conclusions},
             )
-            if settings.LANGFUSE_PUBLIC_KEY:
-                langfuse_context.update_current_observation(
-                    input={"observations": [obs.model_dump() for obs in observations]},
-                    output={"unique_conclusions": unique_conclusions},
+
+        if not unique_conclusions:
+            logger.debug("No unique observations to save after deduplication")
+            return
+
+        # Create mapping from conclusion back to original observation
+        conclusion_to_observation: dict[str, UnifiedObservation] = {
+            obs.conclusion: obs for obs in observations
+        }
+
+        # Filter unified observations to only unique ones
+        unique_observations: list[UnifiedObservation] = [
+            conclusion_to_observation[conclusion] for conclusion in unique_conclusions
+        ]
+
+        # Batch embed all unique conclusions (not premises)
+        embeddings: list[list[float]] = []
+        batch_size: int = 2048  # OpenAI batch limit
+
+        for i in range(0, len(unique_conclusions), batch_size):
+            batch = unique_conclusions[i : i + batch_size]
+            response: CreateEmbeddingResponse = (
+                await embedding_client.client.embeddings.create(
+                    input=batch, model="text-embedding-3-small"
                 )
+            )
+            embeddings.extend([data.embedding for data in response.data])
 
-            if not unique_conclusions:
-                logger.debug("No unique observations to save after deduplication")
-                return
+        # Batch create document objects
+        document_objects: list[models.Document] = []
+        for obs, embedding in zip(unique_observations, embeddings, strict=True):
+            # Use the observation's own level or fall back to parameter level
+            obs_level = obs.level or fallback_level
 
-            # Create mapping from conclusion back to original observation
-            conclusion_to_observation: dict[str, UnifiedObservation] = {
-                obs.conclusion: obs for obs in observations
+            # Build metadata including premises
+            metadata: dict[str, Any] = {
+                "level": obs_level,
+                "message_id": message_id,
+                "session_name": session_name,
+                "premises": obs.premises,  # Store premises in metadata
+                "created_at": format_datetime_utc(message_created_at),
             }
 
-            # Filter unified observations to only unique ones
-            unique_observations: list[UnifiedObservation] = [
-                conclusion_to_observation[conclusion]
-                for conclusion in unique_conclusions
-            ]
-
-            # Batch embed all unique conclusions (not premises)
-            embeddings: list[list[float]] = []
-            batch_size: int = 2048  # OpenAI batch limit
-
-            for i in range(0, len(unique_conclusions), batch_size):
-                batch = unique_conclusions[i : i + batch_size]
-                response: CreateEmbeddingResponse = (
-                    await embedding_client.client.embeddings.create(
-                        input=batch, model="text-embedding-3-small"
-                    )
-                )
-                embeddings.extend([data.embedding for data in response.data])
-
-            # Batch create document objects
-            document_objects: list[models.Document] = []
-            for obs, embedding in zip(unique_observations, embeddings, strict=True):
-                # Use the observation's own level or fall back to parameter level
-                obs_level = obs.level or fallback_level
-
-                # Build metadata including premises
-                metadata: dict[str, Any] = {
-                    "level": obs_level,
-                    "message_id": message_id,
-                    "session_name": session_name,
-                    "premises": obs.premises,  # Store premises in metadata
-                    "created_at": format_datetime_utc(message_created_at),
-                }
-
-                doc = models.Document(
-                    workspace_name=self.workspace_name,
-                    peer_name=self.peer_name,
-                    collection_name=self.collection_name,
-                    content=obs.conclusion,  # Store only conclusion as content
-                    internal_metadata=metadata,
-                    embedding=embedding,  # Embedding generated from conclusion only
-                    created_at=message_created_at,
-                )
-                document_objects.append(doc)
-
+            doc = models.Document(
+                workspace_name=self.workspace_name,
+                peer_name=self.peer_name,
+                collection_name=self.collection_name,
+                content=obs.conclusion,  # Store only conclusion as content
+                internal_metadata=metadata,
+                embedding=embedding,  # Embedding generated from conclusion only
+                created_at=message_created_at,
+            )
+            document_objects.append(doc)
+        async with tracked_db("ed_embedding_store.save_unified_observations") as db:
             # Batch insert all documents
             db.add_all(document_objects)
             await db.commit()
