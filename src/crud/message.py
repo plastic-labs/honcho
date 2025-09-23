@@ -94,7 +94,6 @@ async def create_messages(
         message_objects.append(message_obj)
 
     db.add_all(message_objects)
-    await db.flush()
 
     if settings.EMBED_MESSAGES:
         encoded_message_lookup = {
@@ -130,6 +129,9 @@ async def create_messages(
             db.add_all(embedding_objects)
 
     await db.commit()
+
+    for message_obj in message_objects:
+        await db.refresh(message_obj)
 
     return message_objects
 
