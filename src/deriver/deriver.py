@@ -109,7 +109,7 @@ async def process_representation_tasks_batch(
     """
     Process a batch of representation tasks by extracting insights and updating working representations.
     """
-    if not payloads:
+    if not payloads or len(payloads) == 0:
         return
 
     payloads.sort(key=lambda x: x.message_id)

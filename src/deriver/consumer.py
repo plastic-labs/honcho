@@ -33,7 +33,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
     task type to Pydantic model. After validation, routes the request to
     the correct processor without repeating type checks elsewhere.
     """
-    if not queue_payloads:
+    if not queue_payloads or not queue_payloads[0]:
         logger.debug("process_items received no payloads for task type %s", task_type)
         return
 
