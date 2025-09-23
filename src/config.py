@@ -55,6 +55,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
+        "DREAM": "dream",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -258,6 +259,20 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
+class DreamSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
+    IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=10, gt=0, le=1440)] = 1
+    MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 24
+    ENABLED_TYPES: list[str] = ["deduplicate"]
+
+    # LLM settings for dream processing
+    PROVIDER: SupportedProviders = "openai"
+    MODEL: str = "gpt-4o-mini-2024-07-18"
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -290,6 +305,7 @@ class AppSettings(HonchoSettings):
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
+    DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

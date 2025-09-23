@@ -9,11 +9,13 @@ from rich.console import Console
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver import deriver
+from src.deriver.dreamer import process_dream
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
 from src.webhooks import webhook_delivery
 
 from .queue_payload import (
+    DreamPayload,
     RepresentationPayload,
     SummaryPayload,
     WebhookPayload,
@@ -79,6 +81,15 @@ async def process_item(task_type: str, payload: dict[str, Any]) -> None:
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
         await deriver.process_representation_task(validated)
+    elif task_type == "dream":
+        try:
+            validated = DreamPayload(**payload)
+        except ValidationError as e:
+            logger.error(
+                "Invalid dream payload received: %s. Payload: %s", str(e), payload
+            )
+            raise ValueError(f"Invalid payload structure: {str(e)}") from e
+        await process_dream(validated)
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 

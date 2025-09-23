@@ -17,7 +17,7 @@ def get_work_unit_key(task_type: str, payload: dict[str, Any]) -> str:
     if not workspace_name:
         raise ValueError("workspace_name is required to generate a work_unit_key")
 
-    if task_type in ["representation", "summary"]:
+    if task_type in ["representation", "summary", "dream"]:
         sender_name = payload.get("sender_name", "None")
         target_name = payload.get("target_name", "None")
         session_name = payload.get("session_name", "None")
@@ -38,7 +38,7 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     parts = work_unit_key.split(":")
     task_type = parts[0]
 
-    if task_type in ["representation", "summary"]:
+    if task_type in ["representation", "summary", "dream"]:
         if len(parts) != 5:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
