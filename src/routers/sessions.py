@@ -15,7 +15,6 @@ from src.exceptions import (
 )
 from src.security import JWTParams, require_auth
 from src.utils import summarizer
-from src.utils.embedding_store import EmbeddingStore
 from src.utils.search import search
 
 logger = logging.getLogger(__name__)
@@ -432,23 +431,10 @@ async def get_session_context(
         workspace_name=workspace_id,
         observer_name=observer_name,
         observed_name=observed_name,
+        include_semantic_query=last_message,
+        include_most_derived=True,
     )
 
-    # get semantically relevant documents and merge them into the working representation
-    if last_message:
-        semantically_relevant_representation = await EmbeddingStore(
-            workspace_name=workspace_id,
-            peer_name=observer_name,
-            collection_name=crud.construct_collection_name(
-                observer=observer_name, observed=observed_name
-            ),
-        ).get_relevant_observations(
-            query=last_message,
-        )
-        if representation:
-            representation.merge_representation(semantically_relevant_representation)
-        else:
-            representation = semantically_relevant_representation
     card = await crud.get_peer_card(
         db,
         workspace_name=workspace_id,

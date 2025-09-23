@@ -1,7 +1,7 @@
 # pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
 import ipaddress
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 import tiktoken
@@ -277,14 +277,29 @@ class DocumentBase(BaseModel):
     pass
 
 
+class DocumentMetadata(BaseModel):
+    times_derived: int | None = Field(
+        default=None,
+        ge=1,
+        description="The number of times that a semantic duplicate document to this one has been derived",
+    )
+    message_id: int = Field()
+    message_created_at: str = Field(
+        description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
+    )
+    session_name: str = Field()
+    level: Literal["explicit", "deductive"] = Field(
+        description="The level of the document (explicit or deductive)"
+    )
+    premises: list[str] | None = Field(
+        default=None,
+        description="The premises of the deduction -- only applicable for deductive observations",
+    )
+
+
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
-    metadata: dict[str, Any] = {}
-
-
-class DocumentUpdate(DocumentBase):
-    content: Annotated[str, Field(min_length=1, max_length=100000)]
-    metadata: dict[str, Any] | None = None
+    metadata: DocumentMetadata = Field()
 
 
 class MessageSearchOptions(BaseModel):

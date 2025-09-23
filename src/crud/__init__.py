@@ -1,6 +1,10 @@
 from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
-from .document import create_document, get_duplicate_documents, query_documents
+from .document import (
+    create_document,
+    get_duplicate_documents,
+    query_documents,
+)
 from .message import (
     create_messages,
     get_message,

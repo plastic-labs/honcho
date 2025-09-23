@@ -5,10 +5,9 @@ import logging
 from typing import Any
 
 from langfuse import get_client
-from openai.types import CreateEmbeddingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
@@ -38,7 +37,7 @@ class EmbeddingStore:
         message_id: int,
         session_name: str,
         message_created_at: datetime.datetime,
-    ) -> None:
+    ) -> int:
         """
         Save Representation objects to the collection as a set of documents.
 
@@ -47,68 +46,60 @@ class EmbeddingStore:
             message_id: Message ID to link with observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
+
+        Returns:
+            The number of *new documents saved*
         """
+
+        new_documents = 0
+
+        if not representation.deductive and not representation.explicit:
+            logger.debug("No observations to save")
+            return new_documents
+
+        all_observations = representation.deductive + representation.explicit
+
+        # Batch embed all observations
+        observation_texts = [
+            obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
+            for obs in all_observations
+        ]
+        embeddings = await embedding_client.simple_batch_embed(observation_texts)
+
+        # Batch create document objects
         async with tracked_db("ed_embedding_store.save_representation") as db:
-            if not representation.deductive and not representation.explicit:
-                logger.debug("No observations to save")
-                return
-
-            all_observations = representation.deductive + representation.explicit
-
-            # Batch embed all observations
-            embeddings: list[list[float]] = []
-            batch_size: int = 2048  # OpenAI batch limit
-
-            for i in range(0, len(all_observations), batch_size):
-                batch = all_observations[i : i + batch_size]
-                response: CreateEmbeddingResponse = (
-                    await embedding_client.client.embeddings.create(
-                        input=[
-                            obs.conclusion
-                            if isinstance(obs, DeductiveObservation)
-                            else obs.content
-                            for obs in batch
-                        ],
-                        model="text-embedding-3-small",
-                    )
-                )
-                embeddings.extend([data.embedding for data in response.data])
-
-            # Batch create document objects
-            document_objects: list[models.Document] = []
             for obs, embedding in zip(all_observations, embeddings, strict=True):
-                metadata: dict[str, Any] = {
-                    "message_id": str(message_id),
-                    "session_name": session_name,
-                    "created_at": format_datetime_utc(message_created_at),
-                }
-
                 # NOTE: will add additional levels of reasoning in the future
                 if isinstance(obs, DeductiveObservation):
                     obs_level = "deductive"
                     obs_content = obs.conclusion
-                    metadata["premises"] = obs.premises
+                    obs_premises = obs.premises
                 else:
                     obs_level = "explicit"
                     obs_content = obs.content
+                    obs_premises = None
 
-                metadata["level"] = obs_level
+                metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
+                    message_id=message_id,
+                    session_name=session_name,
+                    level=obs_level,
+                    premises=obs_premises,
+                    message_created_at=format_datetime_utc(message_created_at),
+                )
 
-                doc = models.Document(
+                _honcho_document, is_duplicate = await crud.create_document(
+                    db,
+                    schemas.DocumentCreate(content=obs_content, metadata=metadata),
                     workspace_name=self.workspace_name,
                     peer_name=self.peer_name,
                     collection_name=self.collection_name,
-                    content=obs_content,
-                    internal_metadata=metadata,
                     embedding=embedding,
-                    created_at=message_created_at,
+                    duplicate_threshold=0.95,
                 )
-                document_objects.append(doc)
+                if not is_duplicate:
+                    new_documents += 1
 
-            # Batch insert all documents
-            db.add_all(document_objects)
-            await db.commit()
-            logger.debug("Batch created %s unified observations", len(document_objects))
+        return new_documents
 
     async def get_relevant_observations(
         self,

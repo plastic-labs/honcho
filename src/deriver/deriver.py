@@ -151,34 +151,24 @@ async def process_representation_task(
     # Create reasoner instance
     reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payload)
 
+    # Time context preparation
+    context_prep_start = time.perf_counter()
+
     # Check for existing working representation first, fall back to global search
     async with tracked_db("deriver.get_working_representation_data") as db:
         working_representation = await crud.get_working_representation(
-            db, payload.workspace_name, payload.target_name, payload.sender_name
+            db,
+            payload.workspace_name,
+            payload.target_name,
+            payload.sender_name,
+            include_semantic_query=payload.content,
+            include_most_derived=False,
         )
 
-    # Time context preparation
-    context_prep_start = time.perf_counter()
-    if working_representation:
-        logger.info(
-            "Using existing working representation with %s explicit, %s deductive observations",
-            len(working_representation.explicit),
-            len(working_representation.deductive),
-        )
-    else:
-        # No existing working representation, use global search
-        logger.info("No working representation found, using global semantic search")
-        working_representation = await embedding_store.get_relevant_observations(
-            query=payload.content,
-            conversation_context=formatted_history,
-        )
-
-    context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
-    accumulate_metric(
-        f"deriver_representation_{payload.message_id}_{payload.target_name}",
-        "context_preparation",
-        context_prep_duration,
-        "ms",
+    logger.info(
+        "Using working representation with %s explicit, %s deductive observations",
+        len(working_representation.explicit),
+        len(working_representation.deductive),
     )
 
     async with tracked_db("deriver.get_peer_card") as db:
@@ -190,8 +180,17 @@ async def process_representation_task(
     else:
         logger.info("Using peer card: %s", speaker_peer_card)
 
+    # got working representation and peer card, log timing
+    context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
+    accumulate_metric(
+        f"deriver_representation_{payload.message_id}_{payload.target_name}",
+        "context_preparation",
+        context_prep_duration,
+        "ms",
+    )
+
     # Run single-pass reasoning
-    final_observations, new_observations_count = await reasoner.reason(
+    final_observations = await reasoner.reason(
         working_representation,
         formatted_history,
         speaker_peer_card,
@@ -215,15 +214,8 @@ async def process_representation_task(
 
     accumulate_metric(
         f"deriver_representation_{payload.message_id}_{payload.target_name}",
-        "final_observation_count",
+        "observation_count",
         total_observations,
-        "",
-    )
-
-    accumulate_metric(
-        f"deriver_representation_{payload.message_id}_{payload.target_name}",
-        "new_observation_count",
-        new_observations_count,
         "",
     )
 
@@ -254,13 +246,13 @@ class CertaintyReasoner:
         working_representation: Representation,
         history: str,
         speaker_peer_card: list[str] | None,
-    ) -> tuple[Representation, int]:
+    ) -> Representation:
         """
         Single-pass reasoning function that critically analyzes and derives insights.
-        Performs one analysis pass and returns the final observations and count of new observations.
+        Performs one analysis pass and returns the final observations.
 
         Returns:
-            tuple[Representation, int]: Final observations and count of new observations added
+            Representation: Final observations
         """
         analysis_start = time.perf_counter()
 
@@ -328,12 +320,14 @@ class CertaintyReasoner:
             reasoning_response
         )
         if not new_observations.is_empty():
-            await self.embedding_store.save_representation(
+            new_observations_saved = await self.embedding_store.save_representation(
                 new_observations,
                 self.ctx.message_id,
                 self.ctx.session_name,
                 self.ctx.created_at,
             )
+        else:
+            new_observations_saved = 0
         save_observations_duration = (
             time.perf_counter() - save_observations_start
         ) * 1000
@@ -344,9 +338,11 @@ class CertaintyReasoner:
             "ms",
         )
 
-        # Store the count of new observations for metrics
-        new_observations_count = len(new_observations.explicit) + len(
-            new_observations.deductive
+        accumulate_metric(
+            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
+            "new_observation_count",
+            new_observations_saved,
+            "",
         )
 
         update_peer_card_start = time.perf_counter()
@@ -362,7 +358,7 @@ class CertaintyReasoner:
             "ms",
         )
 
-        return reasoning_response, new_observations_count
+        return reasoning_response
 
     @conditional_observe
     @sentry_sdk.trace

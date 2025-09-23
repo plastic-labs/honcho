@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import exceptions, models, schemas
 from src.config import settings
 from src.crud.peer import get_peer
+from src.utils.embedding_store import EmbeddingStore
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -111,9 +112,12 @@ async def get_working_representation(
     workspace_name: str,
     observer_name: str,
     observed_name: str,
-) -> Representation | None:
+    session_name: str | None = None,
+    include_semantic_query: str | None = None,
+    include_most_derived: bool = False,
+) -> Representation:
     """
-    Get raw working representation data from internal_metadata.
+    Get raw working representation data from the relevant document collection.
     """
     # Determine metadata key based on observer/observed relationship
     if observer_name == observed_name:
@@ -123,24 +127,88 @@ async def get_working_representation(
             observer=observer_name, observed=observed_name
         )
 
+    max_observations = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS
+
+    if include_semantic_query and include_most_derived:
+        # three-way blend of semantically relevant, most rederived, and most recent observations
+        semantic_observations = max_observations // 3
+        top_observations = max_observations - semantic_observations
+        max_observations -= top_observations + semantic_observations
+    elif include_semantic_query:
+        # two-way blend of semantically relevant and most recent observations
+        semantic_observations = max_observations // 2
+        top_observations = 0
+        max_observations -= semantic_observations
+    elif include_most_derived:
+        # two-way blend of most rederived and most recent observations
+        top_observations = max_observations // 2
+        semantic_observations = 0
+        max_observations -= top_observations
+    else:
+        # only most recent observations
+        semantic_observations = 0
+        top_observations = 0
+
+    if include_semantic_query:
+        semantically_relevant_representation = await EmbeddingStore(
+            workspace_name=workspace_name,
+            peer_name=observer_name,
+            collection_name=construct_collection_name(
+                observer=observer_name, observed=observed_name
+            ),
+        ).get_relevant_observations(
+            query=include_semantic_query,
+            top_k=semantic_observations,
+        )
+        representation = semantically_relevant_representation
+    else:
+        representation = Representation()
+
+    if include_most_derived:
+        stmt = (
+            select(models.Document)
+            .where(
+                models.Document.workspace_name == workspace_name,
+                models.Document.collection_name == collection_name,
+            )
+            .order_by(models.Document.internal_metadata["times_derived"].desc())
+            .limit(top_observations)
+        )
+
+        result = await db.execute(stmt)
+        documents = result.scalars().all()
+
+        representation.merge_representation(representation_from_documents(documents))
+
     stmt = (
         select(models.Document)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.collection_name == collection_name,
+            *(
+                [
+                    models.Document.internal_metadata["session_name"].astext
+                    == session_name
+                ]
+                if session_name is not None
+                else []
+            ),
         )
         .order_by(models.Document.created_at.desc())
-        .limit(settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS)
+        .limit(max_observations)
     )
 
     result = await db.execute(stmt)
     documents = result.scalars().all()
 
     if not documents:
-        logger.warning(f"No peer {observer_name} observations found")
-        return None
+        logger.warning(
+            f"No observations for {observed_name} (observer: {observer_name}) found. Normal if brand-new peer."
+        )
 
-    return representation_from_documents(documents)
+    representation.merge_representation(representation_from_documents(documents))
+
+    return representation
 
 
 def representation_from_documents(
@@ -151,22 +219,22 @@ def representation_from_documents(
             ExplicitObservation(
                 created_at=doc.created_at,
                 content=doc.content,
-                message_id=doc.internal_metadata["message_id"],
-                session_name=doc.internal_metadata["session_name"],
+                message_id=doc.internal_metadata.get("message_id"),
+                session_name=doc.internal_metadata.get("session_name"),
             )
             for doc in documents
-            if doc.internal_metadata["level"] == "explicit"
+            if doc.internal_metadata.get("level") == "explicit"
         ],
         deductive=[
             DeductiveObservation(
                 created_at=doc.created_at,
                 conclusion=doc.content,
-                message_id=doc.internal_metadata["message_id"],
-                session_name=doc.internal_metadata["session_name"],
-                premises=doc.internal_metadata["premises"],
+                message_id=doc.internal_metadata.get("message_id"),
+                session_name=doc.internal_metadata.get("session_name"),
+                premises=doc.internal_metadata.get("premises", []),
             )
             for doc in documents
-            if doc.internal_metadata["level"] == "deductive"
+            if doc.internal_metadata.get("level") == "deductive"
         ],
     )
 
