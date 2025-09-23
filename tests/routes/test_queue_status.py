@@ -157,7 +157,7 @@ class TestDeriverStatusEndpoint:
             queue_item = models.QueueItem(
                 session_id=session.id,
                 task_type="representation",
-                work_unit_key=get_work_unit_key("representation", payload),
+                work_unit_key=get_work_unit_key(payload),
                 payload=payload,
                 processed=False,
             )
@@ -231,7 +231,7 @@ class TestDeriverStatusEndpoint:
                 queue_item = models.QueueItem(
                     session_id=session.id,
                     task_type="representation",
-                    work_unit_key=get_work_unit_key("representation", payload),
+                    work_unit_key=get_work_unit_key(payload),
                     payload=payload,
                     processed=False,
                 )
@@ -292,7 +292,7 @@ class TestDeriverStatusEndpoint:
         queue_item = models.QueueItem(
             session_id=session.id,
             task_type="representation",
-            work_unit_key=get_work_unit_key("representation", payload),
+            work_unit_key=get_work_unit_key(payload),
             payload=payload,
             processed=False,
         )

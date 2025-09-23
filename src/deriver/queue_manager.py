@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src.config import settings
-from src.deriver.utils import get_work_unit_key, parse_work_unit_key
+from src.deriver.utils import ParsedWorkUnit, get_work_unit_key, parse_work_unit_key
 from src.models import QueueItem
 
 from .. import models
@@ -64,8 +64,9 @@ class DreamScheduler:
         try:
             await asyncio.sleep(delay_minutes * 60)
 
-            if await self._should_execute_dreams(work_unit_key):
-                await self._execute_dreams(work_unit_key)
+            parsed_key = parse_work_unit_key(work_unit_key)
+            if await self._should_execute_dreams(parsed_key):
+                await self._execute_dreams(parsed_key)
                 logger.info(f"Executed dreams for {work_unit_key}")
         except asyncio.CancelledError:
             logger.info(f"Dream task cancelled for {work_unit_key}")
@@ -74,46 +75,43 @@ class DreamScheduler:
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
 
-    async def _should_execute_dreams(self, work_unit_key: str) -> bool:
+    async def _should_execute_dreams(self, work_unit_key: ParsedWorkUnit) -> bool:
         async with tracked_db("dream_idle_check") as db:
-            query = (
-                select(func.count(models.QueueItem.id))
-                .where(models.QueueItem.work_unit_key == work_unit_key)
-                .where(~models.QueueItem.processed)
-            )
+            query = select(models.ActiveQueueSession)
             result = await db.execute(query)
-            unprocessed_count = result.scalar() or 0
-            await db.commit()
+            active_sessions = result.scalars().all()
 
-            # If there are unprocessed messages, user became active again
-            if unprocessed_count > 0:
-                return False
+            # look at work unit key of all active sessions -- if any match our workspace/sender/target, return False
+            for active_session in active_sessions:
+                parsed_key = parse_work_unit_key(active_session.work_unit_key)
+                if (
+                    parsed_key["workspace_name"] == work_unit_key["workspace_name"]
+                    and parsed_key["sender_name"] == work_unit_key["sender_name"]
+                    and parsed_key["target_name"] == work_unit_key["target_name"]
+                ):
+                    return False
 
         # TODO: Add additional logic to determine if dreams are actually needed!!
         # such as number of documents added etc
         return True
 
-    async def _execute_dreams(self, work_unit_key: str) -> None:
-        parsed_key = parse_work_unit_key(work_unit_key)
-
+    async def _execute_dreams(self, work_unit_key: ParsedWorkUnit) -> None:
         # Create dream payload using configured settings
         dream_payload = create_dream_payload(
-            workspace_name=parsed_key["workspace_name"],
-            session_name=parsed_key["session_name"] or "",
-            sender_name=parsed_key["sender_name"] or "",
-            target_name=parsed_key["target_name"] or "",
+            workspace_name=work_unit_key["workspace_name"],
+            sender_name=work_unit_key["sender_name"] or "",
+            target_name=work_unit_key["target_name"] or "",
             dream_type="consolidate",
         )
 
         async with tracked_db("dream_enqueue") as db:
             dream_record = {
                 "work_unit_key": get_work_unit_key(
-                    "dream",
                     {
-                        "workspace_name": parsed_key["workspace_name"],
-                        "session_name": parsed_key["session_name"],
-                        "sender_name": parsed_key["sender_name"],
-                        "target_name": parsed_key["target_name"],
+                        "task_type": "dream",
+                        "workspace_name": work_unit_key["workspace_name"],
+                        "sender_name": work_unit_key["sender_name"],
+                        "target_name": work_unit_key["target_name"],
                     },
                 ),
                 "payload": dream_payload,
@@ -356,7 +354,7 @@ class QueueManager:
     async def process_work_unit(self, work_unit_key: str):
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
-        parsed_key = parse_work_unit_key(work_unit_key)
+        work_unit = parse_work_unit_key(work_unit_key)
         async with (
             self.semaphore
         ):  # Hold the semaphore for the entire work unit duration
@@ -415,7 +413,7 @@ class QueueManager:
                 )
 
                 # Schedule dream if we processed messages and might benefit from dreaming
-                if message_count > 0 and parsed_key["task_type"] == "representation":
+                if message_count > 0 and work_unit["task_type"] == "representation":
                     self.dream_scheduler.schedule_dream(work_unit_key)
 
             finally:
@@ -431,17 +429,17 @@ class QueueManager:
                             publish_webhook_event,
                         )
 
-                        if parsed_key["task_type"] in ["representation", "summary"]:
+                        if work_unit["task_type"] in ["representation", "summary"]:
                             logger.info(
                                 f"Publishing queue.empty event for {work_unit_key}"
                             )
                             await publish_webhook_event(
                                 QueueEmptyEvent(
-                                    workspace_id=parsed_key["workspace_name"],
-                                    queue_type=parsed_key["task_type"],
-                                    session_id=parsed_key["session_name"],
-                                    sender_name=parsed_key["sender_name"],
-                                    observer_name=parsed_key["target_name"],
+                                    workspace_id=work_unit["workspace_name"],
+                                    queue_type=work_unit["task_type"],
+                                    session_id=work_unit["session_name"],
+                                    sender_name=work_unit["sender_name"],
+                                    observer_name=work_unit["target_name"],
                                 )
                             )
                         else:

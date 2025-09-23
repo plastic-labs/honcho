@@ -4,7 +4,6 @@ import datetime
 import logging
 from typing import Any
 
-from langfuse import get_client
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
@@ -12,12 +11,13 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
 from src.utils.formatting import format_datetime_utc
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import conditional_observe
 from src.utils.representation import DeductiveObservation, Representation
 
 logger = logging.getLogger(__name__)
 
-lf = get_client()
+lf = get_langfuse_client()
 
 
 class EmbeddingStore:

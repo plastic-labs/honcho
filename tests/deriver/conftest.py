@@ -162,7 +162,7 @@ async def add_queue_items(
         for payload in payloads:
             # Generate work_unit_key from the payload
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(task_type, payload)
+            work_unit_key = get_work_unit_key(payload)
 
             queue_item = models.QueueItem(
                 session_id=session_id,

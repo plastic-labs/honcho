@@ -2,7 +2,6 @@ import logging
 from typing import Any
 
 import sentry_sdk
-from langfuse import get_client
 from pydantic import ValidationError
 from rich.console import Console
 
@@ -11,6 +10,7 @@ from src.dependencies import tracked_db
 from src.deriver import deriver
 from src.deriver.dreamer import process_dream
 from src.utils import summarizer
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import log_performance_metrics
 from src.webhooks import webhook_delivery
 
@@ -26,7 +26,7 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=True)
 
-lf = get_client()
+lf = get_langfuse_client()
 
 
 async def process_item(task_type: str, payload: dict[str, Any]) -> None:

@@ -13,7 +13,6 @@ from collections.abc import AsyncIterator
 
 import tiktoken
 from dotenv import load_dotenv
-from langfuse import get_client
 
 from src import crud
 from src.config import settings
@@ -22,6 +21,7 @@ from src.dependencies import tracked_db
 from src.utils import summarizer
 from src.utils.clients import HonchoLLMCallStreamChunk, honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
     accumulate_metric,
     log_performance_metrics,
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Create langfuse client
-lf = get_client()
+lf = get_langfuse_client()
 
 
 async def dialectic_call(

@@ -60,7 +60,10 @@ async def publish_webhook_event(event: WebhookEvent) -> None:
         async with tracked_db("publish_webhook_event") as db:
             queue_item = QueueItem(
                 work_unit_key=get_work_unit_key(
-                    "webhook", {"workspace_name": event.workspace_id}
+                    {
+                        "task_type": "webhook",
+                        "workspace_name": event.workspace_id,
+                    }
                 ),
                 payload=payload,
                 session_id=None,

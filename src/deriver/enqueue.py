@@ -32,7 +32,7 @@ def get_dream_scheduler():
     return _dream_scheduler
 
 
-def _get_affected_work_unit_keys(message: dict[str, Any]) -> list[str]:
+def _get_affected_dreams(message: dict[str, Any]) -> list[str]:
     """
     Get all work unit keys that might be affected by this message.
 
@@ -43,16 +43,23 @@ def _get_affected_work_unit_keys(message: dict[str, Any]) -> list[str]:
         List of work unit keys that should have their dreams cancelled
     """
     workspace_name = message.get("workspace_name")
-    session_name = message.get("session_name")
     sender_name = message.get("sender_name")
     target_name = message.get("target_name")
 
-    if not all([workspace_name, session_name, sender_name]):
-        return []
+    if not workspace_name:
+        raise ValidationException("Workspace name is required")
 
     work_unit_keys: list[str] = []
 
-    global_key = f"dream:{workspace_name}:{session_name}:{sender_name}:{target_name}"
+    global_key = get_work_unit_key(
+        {
+            "task_type": "dream",
+            "workspace_name": workspace_name,
+            "session_name": None,
+            "sender_name": sender_name,
+            "target_name": target_name,
+        }
+    )
     work_unit_keys.append(global_key)
 
     # TODO: We could also cancel dreams for peer representation work units
@@ -76,7 +83,7 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
         cancelled_dreams: set[str] = set()
         for message in payload:
             # Generate work unit keys that might be affected by this message
-            work_unit_keys: list[str] = _get_affected_work_unit_keys(message)
+            work_unit_keys: list[str] = _get_affected_dreams(message)
             for work_unit_key in work_unit_keys:
                 if dream_scheduler.cancel_dream(work_unit_key):
                     cancelled_dreams.add(work_unit_key)
@@ -221,9 +228,7 @@ def create_representation_record(
         task_type="representation",
     )
     return {
-        "work_unit_key": get_work_unit_key(
-            task_type="representation", payload=processed_payload
-        ),
+        "work_unit_key": get_work_unit_key(processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "representation",
@@ -253,9 +258,7 @@ def create_summary_record(
         message_seq_in_session=message_seq_in_session,
     )
     return {
-        "work_unit_key": get_work_unit_key(
-            task_type="summary", payload=processed_payload
-        ),
+        "work_unit_key": get_work_unit_key(processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "summary",

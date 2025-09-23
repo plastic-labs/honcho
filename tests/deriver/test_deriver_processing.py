@@ -43,7 +43,7 @@ class TestDeriverProcessing:
         }
 
         # Generate work unit key for representation
-        work_unit_key = get_work_unit_key("representation", representation_payload)
+        work_unit_key = get_work_unit_key(representation_payload)
         expected_key = (
             f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
         )
@@ -57,7 +57,7 @@ class TestDeriverProcessing:
         }
 
         # Generate work unit key for summary
-        summary_work_unit_key = get_work_unit_key("summary", summary_payload)
+        summary_work_unit_key = get_work_unit_key(summary_payload)
         expected_summary_key = f"summary:workspace1:{session.name}:None:None"
         assert summary_work_unit_key == expected_summary_key
 
