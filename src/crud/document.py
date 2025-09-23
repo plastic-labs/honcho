@@ -105,7 +105,12 @@ async def create_document(
         ValidationException: If the document data is invalid
     """
     if embedding is None:
-        embedding = await embedding_client.embed(document.content)
+        try:
+            embedding = await embedding_client.embed(document.content)
+        except ValueError as e:
+            raise ValidationException(
+                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+            ) from e
 
     if duplicate_threshold is not None:
         distance = 1 - duplicate_threshold
@@ -181,8 +186,12 @@ async def get_duplicate_documents(
         List of documents that are similar to the provided content
     """
     # Get embedding for the content
-    # Using ModelClient for embeddings
-    embedding = await embedding_client.embed(content)
+    try:
+        embedding = await embedding_client.embed(content)
+    except ValueError as e:
+        raise ValidationException(
+            f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+        ) from e
 
     # Find documents with similar embeddings
     stmt = (
