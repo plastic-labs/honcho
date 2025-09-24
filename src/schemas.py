@@ -104,6 +104,12 @@ class PeerRepresentationGet(BaseModel):
     )
 
 
+class PeerCardResponse(BaseModel):
+    peer_card: list[str] | None = Field(
+        None, description="The peer card content, or None if not found"
+    )
+
+
 class PeerConfig(BaseModel):
     observe_me: bool = Field(
         default=True,
