@@ -3,9 +3,9 @@
   "theme": "mint",
   "name": "Honcho",
   "colors": {
-    "primary": "#FF5A7E",
-    "light": "#FF5A7E",
-    "dark": "#FF5A7E"
+    "primary": "#86BCF2",
+    "dark": "#151E27",
+    "light": "#B5D9FD"
   },
   "favicon": "/favicon.svg",
   "contextual": {
@@ -363,5 +363,7 @@
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
     }
+  },
+  "custom": {
   }
 }
