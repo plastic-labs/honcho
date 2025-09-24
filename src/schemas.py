@@ -1,4 +1,3 @@
-# pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
 import ipaddress
 from typing import Annotated, Any, Literal, Self
