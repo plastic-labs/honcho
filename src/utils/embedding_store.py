@@ -4,7 +4,7 @@ import datetime
 import logging
 from typing import Any, Literal, overload
 
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 from openai.types import CreateEmbeddingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,8 @@ from src.utils.shared_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+lf = get_client()
 
 
 class EmbeddingStore:
@@ -68,7 +70,7 @@ class EmbeddingStore:
                 conclusions, similarity_threshold=similarity_threshold
             )
             if settings.LANGFUSE_PUBLIC_KEY:
-                langfuse_context.update_current_observation(
+                lf.update_current_generation(
                     input={"observations": [obs.model_dump() for obs in observations]},
                     output={"unique_conclusions": unique_conclusions},
                 )
