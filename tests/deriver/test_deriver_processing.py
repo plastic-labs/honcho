@@ -1,10 +1,15 @@
 import signal
 from collections.abc import Callable, Generator
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
 from src import models
+from src.deriver.deriver import process_representation_tasks_batch
+from src.deriver.queue_payload import RepresentationPayload
+from src.utils.shared_models import ReasoningResponseWithThinking
 
 
 @pytest.mark.asyncio
@@ -98,3 +103,92 @@ class TestDeriverProcessing:
 
         # Verify the methods were called
         assert mock_embedding_store.save_unified_observations.called  # type: ignore[attr-defined]
+
+    async def test_representation_batch_uses_earliest_cutoff(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Ensure batching history cutoff uses the earliest payload in the batch."""
+        captured_cutoffs: list[int] = []
+
+        async def fake_get_session_context_formatted(*_args: Any, **kwargs: Any) -> str:
+            captured_cutoffs.append(kwargs["cutoff"])
+            return "formatted-history"
+
+        # Mock only the function we need to inspect for the test assertion
+        monkeypatch.setattr(
+            "src.deriver.deriver.summarizer.get_session_context_formatted",
+            fake_get_session_context_formatted,
+        )
+
+        # Provide a stub working representation so embedding lookups are skipped.
+        monkeypatch.setattr(
+            "src.deriver.deriver.crud.get_working_representation_data",
+            AsyncMock(
+                return_value={
+                    "final_observations": {
+                        "explicit": ["existing"],
+                        "deductive": [],
+                    }
+                }
+            ),
+        )
+
+        # Avoid DB access for collection and peer card
+        monkeypatch.setattr(
+            "src.deriver.deriver.crud.get_or_create_collection",
+            AsyncMock(return_value=type("Collection", (), {"name": "dummy"})()),
+        )
+        monkeypatch.setattr(
+            "src.deriver.deriver.crud.get_peer_card",
+            AsyncMock(return_value=[]),
+        )
+        # Short-circuit tracked_db context manager
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def _no_db(_label: str):
+            yield object()
+
+        monkeypatch.setattr("src.deriver.deriver.tracked_db", _no_db)
+
+        # Avoid executing the full reasoning pipeline; we only care about cutoff behavior.
+        monkeypatch.setattr(
+            "src.deriver.deriver.CertaintyReasoner.reason",
+            AsyncMock(
+                return_value=ReasoningResponseWithThinking(
+                    thinking=None, explicit=[], deductive=[]
+                )
+            ),
+        )
+
+        # Skip persisting results back to the database.
+        monkeypatch.setattr(
+            "src.deriver.deriver.save_working_representation_to_peer",
+            AsyncMock(),
+        )
+
+        # Create test payloads with different message IDs (earlier message has lower ID)
+        now = datetime.now(timezone.utc)
+        payloads: list[RepresentationPayload] = []
+        for i in range(8):
+            message_id = 100 + i  # 100, 101, 102, ..., 107
+            payloads.append(
+                RepresentationPayload(
+                    workspace_name="test_workspace",
+                    session_name="test_session",
+                    message_id=message_id,
+                    content=f"message {message_id}",
+                    sender_name="alice",
+                    target_name="alice",
+                    created_at=now
+                    - timedelta(
+                        minutes=7 - i
+                    ),  # Earlier messages have earlier timestamps
+                )
+            )
+
+        await process_representation_tasks_batch(payloads)
+
+        # Verify that the earliest message ID was used as the cutoff
+        assert captured_cutoffs == [payloads[0].message_id]

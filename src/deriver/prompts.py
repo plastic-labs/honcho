@@ -15,7 +15,7 @@ def critical_analysis_prompt(
     message_created_at: datetime.datetime,
     working_representation: str | None,
     history: str,
-    new_turn: str,
+    new_turns: list[str],
 ) -> str:
     """
     Generate the critical analysis prompt for the deriver.
@@ -26,7 +26,7 @@ def critical_analysis_prompt(
         message_created_at (datetime.datetime): Timestamp of the message.
         working_representation (str | None): Current user understanding context.
         history (str): Recent conversation history.
-        new_turn (str): New conversation turn to analyze.
+        new_turns (list[str]): New conversation turns to analyze.
 
     Returns:
         Formatted prompt string for critical analysis
@@ -54,6 +54,8 @@ The current user understanding:
         if working_representation is not None
         else ""
     )
+
+    new_turns_section = "\n".join(new_turns)
 
     return c(
         f"""
@@ -91,10 +93,10 @@ Recent conversation history for context:
 {history}
 </history>
 
-New conversation turn to analyze:
-<new_turn>
-{new_turn}
-</new_turn>
+New conversation turns to analyze:
+<new_turns>
+{new_turns_section}
+</new_turns>
 """
     )
 
