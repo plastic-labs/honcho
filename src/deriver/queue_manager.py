@@ -16,6 +16,7 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import process_items
+from src.deriver.utils import parse_work_unit_key
 from src.models import QueueItem
 
 logger = getLogger(__name__)
@@ -234,8 +235,6 @@ class QueueManager:
         async with self.semaphore:
             message_count = 0
             try:
-                from src.deriver.utils import parse_work_unit_key
-
                 parsed_key = parse_work_unit_key(work_unit_key)
                 task_type = parsed_key["task_type"]
 
@@ -281,7 +280,6 @@ class QueueManager:
                 if removed and message_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        from src.deriver.utils import parse_work_unit_key
                         from src.webhooks.events import (
                             QueueEmptyEvent,
                             publish_webhook_event,
