@@ -1,9 +1,6 @@
 from inspect import cleandoc as c
 
-from mirascope import prompt_template
 
-
-@prompt_template()
 def dialectic_prompt(
     query: str,
     working_representation: str | None,
@@ -86,7 +83,6 @@ Provide a natural language response that:
     )
 
 
-@prompt_template()
 def query_generation_prompt(query: str, target_peer_name: str) -> str:
     """
     Generate the prompt for semantic query expansion.
@@ -101,7 +97,7 @@ def query_generation_prompt(query: str, target_peer_name: str) -> str:
     """
     return c(
         f"""
-        You are a query expansion agent helping AI applications understand their users. The user's name is {target_peer_name}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
+You are a query expansion agent helping AI applications understand their users. The user's name is {target_peer_name}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
 
 ## QUERY EXPANSION STRATEGY FOR SEMANTIC SIMILARITY
 

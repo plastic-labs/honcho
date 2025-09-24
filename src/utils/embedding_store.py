@@ -4,7 +4,7 @@ import datetime
 import logging
 from typing import Any, Literal, overload
 
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 from openai.types import CreateEmbeddingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,8 @@ from src.utils.shared_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+lf = get_client()
 
 
 class EmbeddingStore:
