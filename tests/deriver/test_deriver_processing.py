@@ -8,7 +8,7 @@ import pytest
 
 from src import models
 from src.deriver.deriver import process_representation_tasks_batch
-from src.deriver.queue_payload import RepresentationPayload
+from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import Representation
 
 

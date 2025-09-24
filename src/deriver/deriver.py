@@ -20,11 +20,11 @@ from src.utils.logging import (
     log_performance_metrics,
     log_representation,
 )
+from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.shared_models import PeerCardQuery
 
 from .prompts import critical_analysis_prompt, peer_card_prompt
-from .queue_payload import RepresentationPayload
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True

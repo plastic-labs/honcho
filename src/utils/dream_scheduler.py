@@ -1,7 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 from logging import getLogger
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any
 
 import sentry_sdk
 from sqlalchemy import insert, select, update
@@ -10,10 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
+from src.utils.queue_payload import create_dream_payload
 from src.utils.work_unit import get_work_unit_key, parse_work_unit_key
-
-if TYPE_CHECKING:
-    from src.deriver.queue_payload import DreamPayload
 
 logger = getLogger(__name__)
 
@@ -68,7 +66,9 @@ class DreamScheduler:
     def schedule_dream(
         self,
         work_unit_key: str,
-        collection: models.Collection,
+        workspace_name: str,
+        peer_name: str,
+        collection_name: str,
         document_count: int,
         delay_minutes: int,
     ) -> None:
@@ -81,7 +81,12 @@ class DreamScheduler:
 
         task = asyncio.create_task(
             self._delayed_dream(
-                work_unit_key, collection, document_count, delay_minutes
+                work_unit_key,
+                workspace_name,
+                peer_name,
+                collection_name,
+                document_count,
+                delay_minutes,
             )
         )
         self.pending_dreams[work_unit_key] = task
@@ -101,7 +106,9 @@ class DreamScheduler:
     async def _delayed_dream(
         self,
         work_unit_key: str,
-        collection: models.Collection,
+        workspace_name: str,
+        peer_name: str,
+        collection_name: str,
         document_count: int,
         delay_minutes: int,
     ) -> None:
@@ -109,8 +116,16 @@ class DreamScheduler:
             await asyncio.sleep(delay_minutes * 60)
 
             # Check if collection is still inactive before executing dream
-            if await self._should_execute_dream(collection):
-                await self._execute_dream(work_unit_key, collection, document_count)
+            if await self._should_execute_dream(
+                workspace_name, peer_name, collection_name
+            ):
+                await self._execute_dream(
+                    work_unit_key,
+                    workspace_name,
+                    peer_name,
+                    collection_name,
+                    document_count,
+                )
                 logger.info(f"Executed dream for {work_unit_key}")
             else:
                 logger.info(
@@ -124,7 +139,9 @@ class DreamScheduler:
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_exception(e)
 
-    async def _should_execute_dream(self, collection: models.Collection) -> bool:
+    async def _should_execute_dream(
+        self, workspace_name: str, peer_name: str, collection_name: str
+    ) -> bool:
         """Check if the collection is inactive and should be dreamed upon."""
         async with tracked_db("dream_activity_check") as db:
             # Check for active queue sessions related to this collection
@@ -136,26 +153,31 @@ class DreamScheduler:
             for active_session in active_sessions:
                 parsed_key = parse_work_unit_key(active_session.work_unit_key)
                 if (
-                    parsed_key["workspace_name"] == collection.workspace_name
-                    and parsed_key["sender_name"] == collection.peer_name
+                    parsed_key["workspace_name"] == workspace_name
+                    and parsed_key["sender_name"] == peer_name
                     and parsed_key["target_name"]
-                    == collection.peer_name  # Global representation tasks
+                    == peer_name  # Global representation tasks
                 ):
                     logger.debug(
-                        f"Collection {collection.name} is active, skipping dream"
+                        f"Collection {collection_name} is active, skipping dream"
                     )
                     return False
 
         return True
 
     async def _execute_dream(
-        self, work_unit_key: str, collection: models.Collection, document_count: int
+        self,
+        work_unit_key: str,
+        workspace_name: str,
+        peer_name: str,
+        collection_name: str,
+        document_count: int,
     ) -> None:
         """Execute the dream by enqueueing it and updating collection metadata."""
         dream_payload = create_dream_payload(
-            workspace_name=collection.workspace_name,
-            sender_name=collection.peer_name,
-            target_name=collection.name,
+            workspace_name=workspace_name,
+            sender_name=peer_name,
+            target_name=collection_name,
             dream_type="consolidate",
         )
 
@@ -173,9 +195,9 @@ class DreamScheduler:
             stmt = (
                 update(models.Collection)
                 .where(
-                    models.Collection.workspace_name == collection.workspace_name,
-                    models.Collection.peer_name == collection.peer_name,
-                    models.Collection.name == collection.name,
+                    models.Collection.workspace_name == workspace_name,
+                    models.Collection.peer_name == peer_name,
+                    models.Collection.name == collection_name,
                 )
                 .values(
                     internal_metadata=models.Collection.internal_metadata.op("||")(
@@ -192,7 +214,7 @@ class DreamScheduler:
             await db.commit()
 
         logger.info(
-            f"Enqueued dream task for {collection.workspace_name}/{collection.peer_name}/{collection.name}"
+            f"Enqueued dream task for {workspace_name}/{peer_name}/{collection_name}"
         )
 
     async def shutdown(self) -> None:
@@ -203,20 +225,6 @@ class DreamScheduler:
                 task.cancel()
             await asyncio.gather(*self.pending_dreams.values(), return_exceptions=True)
             self.pending_dreams.clear()
-
-
-def create_dream_payload(
-    workspace_name: str,
-    sender_name: str,
-    target_name: str,
-    dream_type: Literal["consolidate"] = "consolidate",
-) -> dict[str, Any]:
-    return DreamPayload(
-        workspace_name=workspace_name,
-        sender_name=sender_name,
-        target_name=target_name,
-        dream_type=dream_type,
-    ).model_dump(mode="json")
 
 
 async def check_and_schedule_dream(
@@ -299,7 +307,9 @@ async def check_and_schedule_dream(
 
             dream_scheduler.schedule_dream(
                 collection_work_unit_key,
-                collection,
+                collection.workspace_name,
+                collection.peer_name,
+                collection.name,
                 current_document_count,
                 settings.DREAM.IDLE_TIMEOUT_MINUTES,
             )

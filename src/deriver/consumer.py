@@ -12,15 +12,14 @@ from src.deriver.dreamer import process_dream
 from src.utils import summarizer
 from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import log_performance_metrics
-from src.webhooks import webhook_delivery
-
-from .queue_payload import (
+from src.utils.queue_payload import (
     DreamPayload,
     RepresentationPayload,
     RepresentationPayloads,
     SummaryPayload,
     WebhookPayload,
 )
+from src.webhooks import webhook_delivery
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True

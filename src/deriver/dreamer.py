@@ -3,8 +3,7 @@ import logging
 import sentry_sdk
 
 from src.config import settings
-
-from .queue_payload import DreamPayload
+from src.utils.queue_payload import DreamPayload
 
 logger = logging.getLogger(__name__)
 

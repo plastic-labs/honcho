@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.deriver.queue_payload import create_payload
+from src.utils.queue_payload import create_payload
 from src.utils.work_unit import get_work_unit_key
 
 
