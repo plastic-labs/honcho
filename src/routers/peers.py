@@ -234,7 +234,7 @@ async def get_working_representation(
 
 
 @router.get(
-    "/{peer_id}/peer-cards",
+    "/{peer_id}/card",
     response_model=schemas.PeerCardResponse,
     dependencies=[
         Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))

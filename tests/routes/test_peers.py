@@ -573,7 +573,7 @@ def test_get_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
 
     # Test getting observer's own card (should return null initially)
     response = client.get(
-        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/peer-cards"
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card"
     )
     assert response.status_code == 200
     data = response.json()
@@ -581,7 +581,7 @@ def test_get_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
 
     # Test getting card for target peer (should return null initially)
     response = client.get(
-        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/peer-cards",
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
         params={"target": target_peer_name},
     )
     assert response.status_code == 200
@@ -629,7 +629,7 @@ async def test_get_peer_card_with_data(
 
     # Test getting observer's own card
     response = client.get(
-        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/peer-cards"
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card"
     )
     assert response.status_code == 200
     data = response.json()
@@ -637,7 +637,7 @@ async def test_get_peer_card_with_data(
 
     # Test getting card for target peer
     response = client.get(
-        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/peer-cards",
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
         params={"target": target_peer_name},
     )
     assert response.status_code == 200
