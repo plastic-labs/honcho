@@ -8,7 +8,8 @@ from logging import getLogger
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import Integer, delete, select, update
+from sqlalchemy import BigInteger, delete, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -167,8 +168,6 @@ class QueueManager:
     async def claim_work_units(
         self, db: AsyncSession, work_unit_keys: Sequence[str]
     ) -> list[str]:
-        from sqlalchemy.dialects.postgresql import insert
-
         values = [{"work_unit_key": key} for key in work_unit_keys]
 
         stmt = (
@@ -354,7 +353,8 @@ class QueueManager:
                         models.QueueItem.__table__.join(
                             models.Message.__table__,
                             func.cast(
-                                models.QueueItem.payload["message_id"].astext, Integer
+                                models.QueueItem.payload["message_id"].astext,
+                                BigInteger,
                             )
                             == models.Message.id,
                         )
