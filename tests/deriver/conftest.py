@@ -289,7 +289,7 @@ def mock_embedding_store(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyrig
     from src.utils.embedding_store import EmbeddingStore
 
     mock_store = AsyncMock(spec=EmbeddingStore)
-    mock_store.save_representation = AsyncMock()
+    mock_store.save_representation.return_value = None
     mock_store.get_relevant_observations = AsyncMock(return_value=MagicMock())
 
     return mock_store

@@ -22,7 +22,7 @@ import os
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -145,9 +145,10 @@ def build_peer_card_caller(
 
     async def call(
         old_peer_card: list[str] | None, new_observations: Representation
-    ) -> Any:
+    ) -> PeerCardQuery:
         prompt = peer_card_prompt(
-            old_peer_card=old_peer_card, new_observations=str(new_observations)
+            old_peer_card=old_peer_card,
+            new_observations=new_observations.str_no_timestamps(),
         )
 
         response = await honcho_llm_call(
@@ -330,7 +331,7 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
                     explicit=[
                         ExplicitObservation(
                             content=o,
-                            created_at=datetime.now(),
+                            created_at=datetime.now(timezone.utc),
                             message_id=None,
                             session_name=None,
                         )
