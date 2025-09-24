@@ -14,7 +14,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
@@ -159,12 +159,14 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
-    db: AsyncSession = db,
 ):
     # Get or create the peer to ensure it exists
-    await crud.get_or_create_peers(
-        db, workspace_name=workspace_id, peers=[schemas.PeerCreate(name=peer_id)]
-    )
+    async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
+        await crud.get_or_create_peers(
+            peer_db,
+            workspace_name=workspace_id,
+            peers=[schemas.PeerCreate(name=peer_id)],
+        )
 
     if not options.stream:
         response = await dialectic_chat(

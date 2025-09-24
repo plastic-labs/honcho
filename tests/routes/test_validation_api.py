@@ -1,5 +1,8 @@
+from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.models import Peer, Workspace
@@ -140,9 +143,15 @@ def test_session_validations_api(
     assert data["configuration"] == {"test_flag": "test_value"}
 
 
+@patch("src.routers.peers.tracked_db")
 def test_agent_query_validations_api(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    mock_tracked_db: AsyncMock,
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
 ):
+    mock_tracked_db.return_value.__aenter__.return_value = db_session
+
     test_workspace, test_peer = sample_data
     # Create a session first since agent query are session-based
     session_id = str(generate_nanoid())
