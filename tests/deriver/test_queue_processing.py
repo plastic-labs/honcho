@@ -118,22 +118,34 @@ class TestQueueProcessing:
         session, peers = sample_session_with_peers
         peer = peers[0]
 
-        payloads: list[Any] = []
-        for i in range(3):
-            payloads.append(
-                create_queue_payload(  # type: ignore[reportUnknownArgumentType]
-                    message=models.Message(
-                        id=i,
-                        session_name=session.name,
-                        workspace_name=session.workspace_name,
-                        peer_name=peer.name,
-                        content="hello",
-                    ),  # include id for payload builder
-                    task_type="representation",
-                    sender_name=peer.name,
-                    target_name=peer.name,
-                )
+        # Create and save messages to the database first
+        messages: list[models.Message] = []
+        for _ in range(3):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content="hello",
+                token_count=10,
             )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Refresh to get the actual IDs
+        for message in messages:
+            await db_session.refresh(message)
+
+        payloads: list[Any] = []
+        for message in messages:
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=message,
+                task_type="representation",
+                sender_name=peer.name,
+                target_name=peer.name,
+            )
+            payloads.append(payload)
 
         items = await add_queue_items(payloads, session.id)
         # Determine ascending order by DB id
@@ -151,14 +163,20 @@ class TestQueueProcessing:
         first, second = ordered[0], ordered[1]
 
         qm = QueueManager()
-        batch = await qm.get_message_batch(first.work_unit_key, limit=1)
+        batch = await qm.get_message_batch(
+            first.work_unit_key,
+            task_type="representation",
+        )
         nxt = batch[0] if batch else None
         assert nxt is not None and nxt.id == first.id
 
         # Mark first processed, next should be the second
         first.processed = True
         await db_session.commit()
-        batch2 = await qm.get_message_batch(first.work_unit_key, limit=1)
+        batch2 = await qm.get_message_batch(
+            first.work_unit_key,
+            task_type="representation",
+        )
         nxt2 = batch2[0] if batch2 else None
         assert nxt2 is not None and nxt2.id == second.id
 
@@ -253,17 +271,26 @@ class TestQueueProcessing:
 
         # Create messages with token counts that exceed batch limit
         limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-        messages = [
-            models.Message(
-                id=i,
+        token_counts = [limit // 2, limit // 2, limit // 2]
+
+        # Create and save messages to the database first
+        messages: list[models.Message] = []
+        for i, token_count in enumerate(token_counts):
+            message = models.Message(
                 session_name=session.name,
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
             )
-            for i, token_count in enumerate([limit // 2, limit // 2, limit // 2])
-        ]
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Refresh to get the actual IDs
+        for message in messages:
+            await db_session.refresh(message)
 
         # Create queue items with token counts
         payloads = [
@@ -280,7 +307,7 @@ class TestQueueProcessing:
         from src.deriver.utils import get_work_unit_key
 
         queue_items: list[models.QueueItem] = []
-        for payload, message in zip(payloads, messages, strict=False):
+        for payload in payloads:
             task_type = payload.get("task_type", "unknown")
             work_unit_key = get_work_unit_key(task_type, payload)
 
@@ -290,7 +317,6 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
-                token_count=message.token_count,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -326,68 +352,6 @@ class TestQueueProcessing:
         assert all(b["task_type"] == "representation" for b in processed_batches)
 
     @pytest.mark.asyncio
-    async def test_hard_batch_size_limit(
-        self,
-        db_session: AsyncSession,
-        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
-        create_queue_payload: Callable[..., Any],
-    ) -> None:
-        """Test that get_message_batch respects the hard limit of 10 messages"""
-        session, peers = sample_session_with_peers
-        peer = peers[0]
-
-        # Create 15 messages to test batch size limit
-        messages = [
-            models.Message(
-                id=i,
-                session_name=session.name,
-                workspace_name=session.workspace_name,
-                peer_name=peer.name,
-                content=f"Test message {i}",
-                token_count=5,  # Small tokens to avoid token-based batching
-            )
-            for i in range(15)
-        ]
-
-        payloads = [
-            create_queue_payload(msg, "representation", peer.name, peer.name)
-            for msg in messages
-        ]
-
-        # Create queue items
-        from src.deriver.utils import get_work_unit_key
-
-        queue_items: list[models.QueueItem] = []
-        for payload, message in zip(payloads, messages, strict=False):
-            task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(task_type, payload)
-
-            queue_item = models.QueueItem(
-                session_id=session.id,
-                task_type=task_type,
-                work_unit_key=work_unit_key,
-                payload=payload,
-                processed=False,
-                token_count=message.token_count,
-            )
-            db_session.add(queue_item)
-            queue_items.append(queue_item)
-
-        await db_session.commit()
-
-        # Test batch size limit
-        qm = QueueManager()
-        batch = await qm.get_message_batch(queue_items[0].work_unit_key, limit=10)
-        assert len(batch) == 10  # Should respect hard limit
-
-        # Mark the first batch as processed
-        await qm.mark_messages_as_processed(batch, queue_items[0].work_unit_key)
-
-        # Get the next batch - should return remaining 5 items
-        next_batch = await qm.get_message_batch(queue_items[0].work_unit_key, limit=10)
-        assert len(next_batch) == 5  # Should return remaining items
-
-    @pytest.mark.asyncio
     async def test_single_message_processing(
         self,
         db_session: AsyncSession,
@@ -401,6 +365,7 @@ class TestQueueProcessing:
         peer = peers[0]
 
         # Create two summary messages
+        token_counts = [500, 600]
         messages = [
             models.Message(
                 id=999,
@@ -408,7 +373,6 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="First summary message",
-                token_count=500,
             ),
             models.Message(
                 id=1000,
@@ -416,7 +380,6 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="Second summary message",
-                token_count=600,
             ),
         ]
 
@@ -426,6 +389,7 @@ class TestQueueProcessing:
             payload = create_queue_payload(
                 message, "summary", message_seq_in_session=i + 1
             )
+            payload["token_count"] = token_counts[i]
             from src.deriver.utils import get_work_unit_key
 
             work_unit_key = get_work_unit_key("summary", payload)
@@ -436,7 +400,6 @@ class TestQueueProcessing:
                 work_unit_key=work_unit_key,
                 payload=payload,
                 processed=False,
-                token_count=message.token_count,
             )
             db_session.add(queue_item)
             queue_items.append(queue_item)
@@ -490,5 +453,207 @@ class TestQueueProcessing:
 
         # Optionally verify the items have the expected token counts from the messages
         expected_token_counts = [500, 600]  # From the test messages
-        actual_token_counts = [item.token_count for item in processed_items]
+        actual_token_counts = [
+            item.payload.get("token_count") or 0 for item in processed_items
+        ]
         assert sorted(actual_token_counts) == sorted(expected_token_counts)
+
+    @pytest.mark.asyncio
+    async def test_first_message_exceeds_token_limit_still_included(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that if the first message exceeds BATCH_MAX_TOKENS, it's still included alone"""
+        from unittest.mock import patch
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        # Create messages where first message exceeds the batch limit
+        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        token_counts = [limit + 1000, 100, 200]  # First message way over limit
+
+        # Create and save messages to the database first
+        messages: list[models.Message] = []
+        for i, token_count in enumerate(token_counts):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Test message {i}",
+                token_count=token_count,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Refresh to get the actual IDs
+        for message in messages:
+            await db_session.refresh(message)
+
+        # Create queue items
+        payloads = [
+            create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=msg,
+                task_type="representation",
+                sender_name=peer.name,
+                target_name=peer.name,
+            )
+            for msg in messages
+        ]
+
+        # Add items to queue
+        from src.deriver.utils import get_work_unit_key
+
+        queue_items: list[models.QueueItem] = []
+        for payload in payloads:
+            task_type = payload.get("task_type", "unknown")
+            work_unit_key = get_work_unit_key(task_type, payload)
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type=task_type,
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+            )
+            db_session.add(queue_item)
+            queue_items.append(queue_item)
+
+        await db_session.commit()
+        for item in queue_items:
+            await db_session.refresh(item)
+
+        # Mock process_items to capture batches
+        processed_batches: list[dict[str, Any]] = []
+
+        async def mock_process_items(
+            task_type: str, queue_payloads: list[dict[str, Any]]
+        ) -> None:
+            processed_batches.append(
+                {
+                    "task_type": task_type,
+                    "payload_count": len(queue_payloads),
+                }
+            )
+
+        # Process work unit and verify batching
+        qm = QueueManager()
+        with patch(
+            "src.deriver.queue_manager.process_items", side_effect=mock_process_items
+        ):
+            await qm.process_work_unit(queue_items[0].work_unit_key)
+
+        # Should create 2 batches: first large message alone, then second and third together
+        assert len(processed_batches) == 2
+        assert (
+            processed_batches[0]["payload_count"] == 1
+        )  # First message (over limit) alone
+        assert processed_batches[1]["payload_count"] == 2  # Second and third messages
+        assert all(b["task_type"] == "representation" for b in processed_batches)
+
+    @pytest.mark.asyncio
+    async def test_message_exactly_at_token_limit(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test boundary condition when cumulative sum exactly equals limit"""
+        from unittest.mock import patch
+
+        session, peers = sample_session_with_peers
+        peer = peers[0]
+
+        # Create messages that test the exact boundary
+        limit = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        token_counts = [
+            limit // 2,
+            limit // 2,
+            1,
+        ]  # First two exactly at limit, third exceeds
+
+        # Create and save messages to the database first
+        messages: list[models.Message] = []
+        for i, token_count in enumerate(token_counts):
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Test message {i}",
+                token_count=token_count,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+
+        # Refresh to get the actual IDs
+        for message in messages:
+            await db_session.refresh(message)
+
+        # Create queue items
+        payloads = [
+            create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=msg,
+                task_type="representation",
+                sender_name=peer.name,
+                target_name=peer.name,
+            )
+            for msg in messages
+        ]
+
+        # Add items to queue
+        from src.deriver.utils import get_work_unit_key
+
+        queue_items: list[models.QueueItem] = []
+        for payload in payloads:
+            task_type = payload.get("task_type", "unknown")
+            work_unit_key = get_work_unit_key(task_type, payload)
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type=task_type,
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+            )
+            db_session.add(queue_item)
+            queue_items.append(queue_item)
+
+        await db_session.commit()
+        for item in queue_items:
+            await db_session.refresh(item)
+
+        # Mock process_items to capture batches
+        processed_batches: list[dict[str, Any]] = []
+
+        async def mock_process_items(
+            task_type: str, queue_payloads: list[dict[str, Any]]
+        ) -> None:
+            processed_batches.append(
+                {
+                    "task_type": task_type,
+                    "payload_count": len(queue_payloads),
+                }
+            )
+
+        # Process work unit and verify batching
+        qm = QueueManager()
+        with patch(
+            "src.deriver.queue_manager.process_items", side_effect=mock_process_items
+        ):
+            await qm.process_work_unit(queue_items[0].work_unit_key)
+
+        # Should create 2 batches: first two messages together (exactly at limit), third alone
+        assert len(processed_batches) == 2
+        assert (
+            processed_batches[0]["payload_count"] == 2
+        )  # First two messages (exactly at limit)
+        assert (
+            processed_batches[1]["payload_count"] == 1
+        )  # Third message (exceeds limit)
+        assert all(b["task_type"] == "representation" for b in processed_batches)

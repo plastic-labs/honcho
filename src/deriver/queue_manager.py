@@ -8,7 +8,7 @@ from logging import getLogger
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import delete, select, update
+from sqlalchemy import Integer, delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
@@ -234,50 +234,24 @@ class QueueManager:
         async with self.semaphore:
             message_count = 0
             try:
+                from src.deriver.utils import parse_work_unit_key
+
+                parsed_key = parse_work_unit_key(work_unit_key)
+                task_type = parsed_key["task_type"]
+
                 while not self.shutdown_event.is_set():
-                    candidate_messages = await self.get_message_batch(
+                    messages_to_process: list[QueueItem] = await self.get_message_batch(
                         work_unit_key,
-                        limit=10,  # hard limit of 10 messages per batch
+                        task_type,
                     )
-                    if not candidate_messages:
-                        logger.debug(f"No more messages for work unit {work_unit_key}")
-                        break
-
-                    next_message = candidate_messages[0]
-                    task_type = next_message.task_type
-
-                    messages_to_process: list[QueueItem] = []
-
-                    if task_type != "representation":
-                        messages_to_process.append(next_message)
-                    else:
-                        # It's a representation task, build a batch
-                        token_count = 0
-                        max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-
-                        for msg in candidate_messages:
-                            msg_tokens = msg.token_count or 0
-                            # Always process at least one message, even if over limit
-                            if (
-                                not messages_to_process
-                                or token_count + msg_tokens <= max_tokens
-                            ):
-                                messages_to_process.append(msg)
-                                token_count += msg_tokens
-                            else:
-                                break
-
                     if not messages_to_process:
-                        logger.warning(
-                            "No messages to process, breaking loop for work unit %s to prevent infinite loop.",
-                            work_unit_key,
-                        )
+                        logger.debug(f"No more messages for work unit {work_unit_key}")
                         break
 
                     # Process the batch/single item
                     try:
-                        raw_payloads = [msg.payload for msg in messages_to_process]
-                        await process_items(task_type, raw_payloads)
+                        payloads = [msg.payload for msg in messages_to_process]
+                        await process_items(task_type, payloads)
                     except Exception as e:
                         logger.error(
                             f"Error processing tasks for work unit {work_unit_key}: {e}",
@@ -286,7 +260,6 @@ class QueueManager:
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
 
-                    # Mark messages as processed (only for non-LLM errors)
                     await self.mark_messages_as_processed(
                         messages_to_process, work_unit_key
                     )
@@ -343,19 +316,79 @@ class QueueManager:
 
     @sentry_sdk.trace
     async def get_message_batch(
-        self, work_unit_key: str, limit: int
+        self, work_unit_key: str, task_type: str
     ) -> list[QueueItem]:
-        """Get a batch of unprocessed messages for a specific work unit ordered by id."""
+        """
+        Get a batch of unprocessed messages for a specific work unit ordered by id.
+        For representation tasks, this will be a batch of messages up to REPRESENTATION_BATCH_MAX_TOKENS.
+        For other tasks, it will be a single message.
+        """
         async with tracked_db("get_message_batch") as db:
-            query = (
-                select(models.QueueItem)
-                .where(models.QueueItem.work_unit_key == work_unit_key)
-                .where(~models.QueueItem.processed)
-                .order_by(models.QueueItem.id)
-                .limit(limit)
-            )
-            result = await db.execute(query)
-            messages = result.scalars().all()
+            if task_type != "representation":
+                # For non-representation tasks, just get the next single message.
+                query = (
+                    select(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .order_by(models.QueueItem.id)
+                    .limit(1)
+                )
+                result = await db.execute(query)
+                messages = result.scalars().all()
+            else:
+                # For representation tasks, get a batch based on token count.
+                # Always get at least the first message, then include additional messages
+                # as long as cumulative token count stays within limit.
+                # Join with messages table to get the actual token_count
+
+                # Create CTE with row numbers and cumulative token counts
+                cte = (
+                    select(
+                        models.QueueItem.id,
+                        func.row_number()
+                        .over(order_by=models.QueueItem.id)
+                        .label("row_num"),
+                        func.sum(models.Message.token_count)
+                        .over(order_by=models.QueueItem.id)
+                        .label("cumulative_token_count"),
+                    )
+                    .select_from(
+                        models.QueueItem.__table__.join(
+                            models.Message.__table__,
+                            func.cast(
+                                models.QueueItem.payload["message_id"].astext, Integer
+                            )
+                            == models.Message.id,
+                        )
+                    )
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .order_by(models.QueueItem.id)
+                    .cte()
+                )
+
+                # Select messages where either:
+                # 1. It's the first message (row_num = 1), OR
+                # 2. The cumulative token count is within the limit
+                query = (
+                    select(models.QueueItem)
+                    .where(
+                        models.QueueItem.id.in_(
+                            select(cte.c.id).where(
+                                (cte.c.row_num == 1)
+                                | (
+                                    cte.c.cumulative_token_count
+                                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                                )
+                            )
+                        )
+                    )
+                    .order_by(models.QueueItem.id)
+                )
+
+                result = await db.execute(query)
+                messages = result.scalars().all()
+
             # Important: commit to avoid tracked_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
             await db.commit()

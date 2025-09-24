@@ -165,7 +165,6 @@ def create_representation_record(
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "representation",
-        "token_count": message.get("token_count"),
     }
 
 
@@ -198,7 +197,6 @@ def create_summary_record(
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "summary",
-        "token_count": message.get("token_count"),
     }
 
 
