@@ -3,9 +3,9 @@
   "theme": "mint",
   "name": "Honcho",
   "colors": {
-    "primary": "#FF5A7E",
-    "light": "#FF5A7E",
-    "dark": "#FF5A7E"
+    "primary": "#86BCF2",
+    "dark": "#151E27",
+    "light": "#B5D9FD"
   },
   "favicon": "/favicon.svg",
   "contextual": {
@@ -68,7 +68,8 @@
                   "v2/guides/search",
                   "v2/guides/working-rep",
                   "v2/guides/streaming-response",
-                  "v2/guides/using-filters"
+                  "v2/guides/using-filters",
+                  "v2/guides/file-uploads"
                 ]
               }
             ]
