@@ -263,9 +263,9 @@ class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
-    IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=10, gt=0, le=1440)] = 1
+    DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 1
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 24
-    ENABLED_TYPES: list[str] = ["deduplicate"]
+    ENABLED_TYPES: list[str] = ["consolidate"]
 
     # LLM settings for dream processing
     PROVIDER: SupportedProviders = "openai"

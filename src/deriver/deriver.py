@@ -131,21 +131,11 @@ async def process_representation_task(
         else GLOBAL_REPRESENTATION_COLLECTION_NAME
     )
 
-    # get_or_create_collection already handles IntegrityError with rollback and a retry
-    async with tracked_db("deriver.get_or_create_collection") as db:
-        collection = await crud.get_or_create_collection(
-            db,
-            payload.workspace_name,
-            collection_name,
-            payload.sender_name,
-        )
-        collection_name_loaded = collection.name
-
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
         workspace_name=payload.workspace_name,
         peer_name=payload.sender_name,
-        collection_name=collection_name_loaded,
+        collection_name=collection_name,
     )
 
     # Create reasoner instance
@@ -176,7 +166,9 @@ async def process_representation_task(
             db, payload.workspace_name, payload.sender_name, payload.target_name
         )
     if speaker_peer_card is None:
-        logger.warning("No peer card found for %s", payload.sender_name)
+        logger.warning(
+            "No peer card found for %s. Normal if brand-new peer.", payload.sender_name
+        )
     else:
         logger.info("Using peer card: %s", speaker_peer_card)
 
@@ -373,6 +365,7 @@ class CertaintyReasoner:
         """
         try:
             response = await peer_card_call(old_peer_card, new_observations)
+            logger.info("Jettisoned notes from peer card: %s", response.notes)
             new_peer_card = response.card
             if not new_peer_card:
                 logger.info("No changes to peer card")
@@ -381,7 +374,7 @@ class CertaintyReasoner:
             new_peer_card = [
                 observation
                 for observation in new_peer_card
-                if not observation.lower().startswith("notes")
+                if not observation.lower().startswith(("note", "notes"))
             ]
             logger.info("New peer card: %s", new_peer_card)
             async with tracked_db("deriver.update_peer_card") as db:

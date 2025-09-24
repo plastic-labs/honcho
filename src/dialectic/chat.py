@@ -26,6 +26,7 @@ from src.utils.logging import (
     accumulate_metric,
     log_performance_metrics,
 )
+from src.utils.representation import Representation
 
 from .prompts import dialectic_prompt
 from .utils import get_observations
@@ -42,9 +43,8 @@ lf = get_langfuse_client()
 
 async def dialectic_call(
     query: str,
-    working_representation: str | None,
+    working_representation: str,
     recent_conversation_history: str | None,
-    additional_context: str | None,
     peer_name: str,
     peer_card: list[str] | None,
     target_name: str | None = None,
@@ -55,9 +55,12 @@ async def dialectic_call(
 
     Args:
         query: The user query
-        working_representation: Current session conclusions
-        additional_context: Historical context from semantic search
+        working_representation: Current session conclusions AND historical conclusions from the user's global representation
+        recent_conversation_history: Recent conversation history
         peer_name: Name of the user/peer
+        peer_card: Known biographical information about the user
+        target_name: Name of the user/peer being queried about
+        target_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Model response
@@ -67,7 +70,6 @@ async def dialectic_call(
         query,
         working_representation,
         recent_conversation_history,
-        additional_context,
         peer_name,
         peer_card,
         target_name,
@@ -96,9 +98,8 @@ async def dialectic_call(
 
 async def dialectic_stream(
     query: str,
-    working_representation: str | None,
+    working_representation: str,
     recent_conversation_history: str | None,
-    additional_context: str | None,
     peer_name: str,
     peer_card: list[str] | None,
     target_name: str | None = None,
@@ -109,9 +110,12 @@ async def dialectic_stream(
 
     Args:
         query: The user query
-        working_representation: Current session conclusions
-        additional_context: Historical context from semantic search
+        working_representation: Current session conclusions AND historical conclusions from the user's global representation
+        recent_conversation_history: Recent conversation history
         peer_name: Name of the user/peer
+        peer_card: Known biographical information about the user
+        target_name: Name of the user/peer being queried about
+        target_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Streaming model response
@@ -121,7 +125,6 @@ async def dialectic_stream(
         query,
         working_representation,
         recent_conversation_history,
-        additional_context,
         peer_name,
         peer_card,
         target_name,
@@ -211,7 +214,7 @@ async def chat(
     async with tracked_db("chat.get_working_representation") as db:
         # If no target specified, get global representation (peer observing themselves)
         target_peer = target_name if target_name is not None else peer_name
-        working_representation = await crud.get_working_representation(
+        working_representation: Representation = await crud.get_working_representation(
             db,
             workspace_name,
             peer_name,
@@ -227,8 +230,11 @@ async def chat(
         working_rep_duration,
         "s",
     )
-    logger.info("Retrieved working representation:\n%s\n", working_representation)
-    context_window_size -= len(tokenizer.encode(str(working_representation)))
+    logger.info(
+        "Retrieved working representation with %s explicit, %s deductive observations",
+        len(working_representation.explicit),
+        len(working_representation.deductive),
+    )
 
     # 2. Additional context (long-term semantic search) ------------------------
     # If the query is not targeted, get global_representation facts from other sessions
@@ -241,7 +247,7 @@ async def chat(
         if not target_name
         else crud.construct_collection_name(observer=peer_name, observed=target_name),
     )
-    additional_context: str = await get_observations(
+    additional_context: Representation = await get_observations(
         query,
         target_name if target_name else peer_name,
         embedding_store,
@@ -256,8 +262,21 @@ async def chat(
         "s",
     )
 
-    logger.info("Retrieved additional context:\n%s", additional_context)
-    context_window_size -= len(tokenizer.encode(additional_context))
+    logger.info(
+        "Retrieved additional context with %s explicit, %s deductive observations",
+        len(additional_context.explicit),
+        len(additional_context.deductive),
+    )
+
+    working_representation.merge_representation(additional_context)
+    unified_working_representation = str(working_representation)
+
+    context_window_size -= len(tokenizer.encode(unified_working_representation))
+
+    logger.info(
+        "Constructed unified working representation:\n%s\n",
+        unified_working_representation,
+    )
 
     # 3. Recent conversation history --------------------------------------------
     # If query is session-scoped, get recent conversation history from that session
@@ -306,9 +325,8 @@ async def chat(
     if stream:
         return await dialectic_stream(
             query,
-            str(working_representation) if working_representation else None,
+            unified_working_representation,
             recent_conversation_history,
-            additional_context,
             peer_name,
             peer_card,
             target_name,
@@ -317,9 +335,8 @@ async def chat(
 
     response = await dialectic_call(
         query,
-        str(working_representation) if working_representation else None,
+        unified_working_representation,
         recent_conversation_history,
-        additional_context,
         peer_name,
         peer_card,
         target_name,

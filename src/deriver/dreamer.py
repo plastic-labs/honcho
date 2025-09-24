@@ -45,6 +45,12 @@ async def process_dream(
 async def _process_consolidate_dream(payload: DreamPayload) -> None:
     """
     Process a consolidation dream task.
+
+    Consolidation means taking all the documents in a collection and merging
+    similar observations into a single, best-quality observation document.
+
+    TODO: need to determine a way to do this on a subset of documents since
+    collections will grow very large.
     """
     logger.info(f"STUB: Consolidating documents for {payload.target_name}")
 

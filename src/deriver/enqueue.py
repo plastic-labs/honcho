@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,63 +10,10 @@ from src.dependencies import tracked_db
 from src.exceptions import ValidationException
 from src.models import QueueItem
 
-if TYPE_CHECKING:
-    from .queue_manager import DreamScheduler
 from .queue_payload import create_payload
 from .utils import get_work_unit_key
 
 logger = logging.getLogger(__name__)
-
-# Global reference to dream scheduler (set by QueueManager)
-_dream_scheduler = None
-
-
-def set_dream_scheduler(dream_scheduler: "DreamScheduler") -> None:
-    """Set the global dream scheduler reference."""
-    global _dream_scheduler
-    _dream_scheduler = dream_scheduler
-
-
-def get_dream_scheduler():
-    """Get the global dream scheduler reference."""
-    return _dream_scheduler
-
-
-def _get_affected_dreams(message: dict[str, Any]) -> list[str]:
-    """
-    Get all work unit keys that might be affected by this message.
-
-    Args:
-        message: The message payload
-
-    Returns:
-        List of work unit keys that should have their dreams cancelled
-    """
-    workspace_name = message.get("workspace_name")
-    sender_name = message.get("sender_name")
-    target_name = message.get("target_name")
-
-    if not workspace_name:
-        raise ValidationException("Workspace name is required")
-
-    work_unit_keys: list[str] = []
-
-    global_key = get_work_unit_key(
-        {
-            "task_type": "dream",
-            "workspace_name": workspace_name,
-            "session_name": None,
-            "sender_name": sender_name,
-            "target_name": target_name,
-        }
-    )
-    work_unit_keys.append(global_key)
-
-    # TODO: We could also cancel dreams for peer representation work units
-    # but that would require knowing which peers are active in the session
-    # For now, just cancel the sender's global representation dreams
-
-    return work_unit_keys
 
 
 async def enqueue(payload: list[dict[str, Any]]) -> None:
@@ -76,22 +23,6 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
     Args:
         payload: List of message payload dictionaries
     """
-
-    # Cancel any pending dreams for affected work units since user is active again
-    dream_scheduler = get_dream_scheduler()
-    if dream_scheduler and payload:
-        cancelled_dreams: set[str] = set()
-        for message in payload:
-            # Generate work unit keys that might be affected by this message
-            work_unit_keys: list[str] = _get_affected_dreams(message)
-            for work_unit_key in work_unit_keys:
-                if dream_scheduler.cancel_dream(work_unit_key):
-                    cancelled_dreams.add(work_unit_key)
-
-        if cancelled_dreams:
-            logger.info(
-                f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
-            )
 
     async with tracked_db("message_enqueue") as db_session:
         try:
