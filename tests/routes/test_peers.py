@@ -1,8 +1,12 @@
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from nanoid import generate as generate_nanoid
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import crud
 from src.models import Peer, Workspace
 
 
@@ -305,7 +309,15 @@ def test_get_sessions_for_peer_with_empty_filter(
     assert isinstance(data["items"], list)
 
 
-def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
+@patch("src.routers.peers.tracked_db")
+def test_chat(
+    mock_tracked_db: AsyncMock,
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
+):
+    mock_tracked_db.return_value.__aenter__.return_value = db_session
+
     test_workspace, test_peer = sample_data
     target_peer = str(generate_nanoid())
 
@@ -323,12 +335,17 @@ def test_chat(client: TestClient, sample_data: tuple[Workspace, Peer]):
     assert "content" in data
 
 
+@patch("src.routers.peers.tracked_db")
 def test_chat_with_optional_params(
-    client: TestClient, sample_data: tuple[Workspace, Peer]
+    mock_tracked_db: AsyncMock,
+    client: TestClient,
+    sample_data: tuple[Workspace, Peer],
+    db_session: AsyncSession,
 ):
     """Test chat endpoint with optional parameters"""
-    test_workspace, test_peer = sample_data
+    mock_tracked_db.return_value.__aenter__.return_value = db_session
 
+    test_workspace, test_peer = sample_data
     session_id = str(generate_nanoid())
 
     # Create a session first
@@ -554,3 +571,89 @@ def test_update_peer_all_fields(
     data = response.json()
     assert data["metadata"] == metadata
     assert data["configuration"] == configuration
+
+
+def test_get_peer_card(client: TestClient, sample_data: tuple[Workspace, Peer]):
+    """Test the peer cards endpoint"""
+    test_workspace, observer_peer = sample_data
+
+    # Create a second peer (the target/observed peer)
+    target_peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+    assert response.status_code == 200
+
+    # Test getting observer's own card (should return null initially)
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["peer_card"] is None
+
+    # Test getting card for target peer (should return null initially)
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
+        params={"target": target_peer_name},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["peer_card"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_peer_card_with_data(
+    client: TestClient,
+    db_session: AsyncSession,
+    sample_data: tuple[Workspace, Peer],
+):
+    """Test the peer cards endpoint with actual peer card data"""
+    test_workspace, observer_peer = sample_data
+
+    # Create a second peer (the target/observed peer)
+    target_peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{test_workspace.name}/peers",
+        json={"name": target_peer_name},
+    )
+    assert response.status_code == 200
+
+    # Set up peer cards using the database directly
+    # Set a self-card for the observer peer
+    self_card_content = ["I am a helpful AI assistant", "I enjoy learning about users"]
+    await crud.set_peer_card(
+        db_session,
+        test_workspace.name,
+        observer_peer.name,
+        observer_peer.name,
+        self_card_content,
+    )
+
+    # Set a card for the observer describing the target peer
+    target_card_content = ["This peer seems friendly", "They ask good questions"]
+    await crud.set_peer_card(
+        db_session,
+        test_workspace.name,
+        target_peer_name,
+        observer_peer.name,
+        target_card_content,
+    )
+
+    # Test getting observer's own card
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card"
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["peer_card"] == self_card_content
+
+    # Test getting card for target peer
+    response = client.get(
+        f"/v2/workspaces/{test_workspace.name}/peers/{observer_peer.name}/card",
+        params={"target": target_peer_name},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["peer_card"] == target_card_content
