@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 
 from fastapi import (
     APIRouter,
@@ -11,11 +11,10 @@ from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
-from mirascope.llm import Stream
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
@@ -160,12 +159,14 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
-    db: AsyncSession = db,
 ):
     # Get or create the peer to ensure it exists
-    await crud.get_or_create_peers(
-        db, workspace_name=workspace_id, peers=[schemas.PeerCreate(name=peer_id)]
-    )
+    async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
+        await crud.get_or_create_peers(
+            peer_db,
+            workspace_name=workspace_id,
+            peers=[schemas.PeerCreate(name=peer_id)],
+        )
 
     if not options.stream:
         response = await dialectic_chat(
@@ -188,8 +189,8 @@ async def chat(
                 query=options.query,
                 stream=options.stream,
             )
-            if isinstance(stream, Stream):
-                async for chunk, _ in stream:
+            if isinstance(stream, AsyncIterator):
+                async for chunk in stream:
                     yield chunk.content
             else:
                 raise HTTPException(status_code=500, detail="Invalid stream type")

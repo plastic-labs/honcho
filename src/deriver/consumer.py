@@ -2,7 +2,7 @@ import logging
 from typing import Any
 
 import sentry_sdk
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 from pydantic import ValidationError
 from rich.console import Console
 
@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=True)
+
+lf = get_client()
 
 
 async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) -> None:
@@ -58,7 +60,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
 
     elif task_type == "summary":
         if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_trace(  # type: ignore
+            lf.update_current_trace(  # type: ignore
                 metadata={
                     "critical_analysis_model": settings.DERIVER.MODEL,
                 }
@@ -76,7 +78,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
 
     elif task_type == "representation":
         if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_trace(
+            lf.update_current_trace(
                 metadata={
                     "critical_analysis_model": settings.DERIVER.MODEL,
                 }

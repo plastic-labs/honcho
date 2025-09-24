@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 import sentry_sdk
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 
 from src import crud, exceptions
 from src.config import settings
@@ -48,20 +48,9 @@ from .queue_payload import (
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
+lf = get_client()
 
-@honcho_llm_call(
-    provider=settings.DERIVER.PROVIDER,
-    model=settings.DERIVER.MODEL,
-    track_name="Critical Analysis Call",
-    response_model=ReasoningResponse,
-    json_mode=True,
-    max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS,
-    thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
-    if settings.DERIVER.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-)
+
 async def critical_analysis_call(
     peer_id: str,
     peer_card: list[str] | None,
@@ -69,8 +58,8 @@ async def critical_analysis_call(
     working_representation: str | None,
     history: str,
     new_turns: list[str],
-):
-    return critical_analysis_prompt(
+) -> ReasoningResponse:
+    prompt = critical_analysis_prompt(
         peer_id=peer_id,
         peer_card=peer_card,
         message_created_at=message_created_at,
@@ -79,27 +68,50 @@ async def critical_analysis_call(
         new_turns=new_turns,
     )
 
+    response = await honcho_llm_call(
+        provider=settings.DERIVER.PROVIDER,
+        model=settings.DERIVER.MODEL,
+        prompt=prompt,
+        max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+        or settings.LLM.DEFAULT_MAX_TOKENS,
+        track_name="Critical Analysis Call",
+        response_model=ReasoningResponse,
+        json_mode=True,
+        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+        enable_retry=True,
+        retry_attempts=3,
+    )
 
-@honcho_llm_call(
-    provider=settings.DERIVER.PEER_CARD_PROVIDER,
-    model=settings.DERIVER.PEER_CARD_MODEL,
-    track_name="Peer Card Call",
-    response_model=PeerCardQuery,
-    json_mode=True,
-    max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
-    or settings.LLM.DEFAULT_MAX_TOKENS,
-    reasoning_effort="minimal",
-    enable_retry=True,
-    retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
-)
+    return response.content
+
+
 async def peer_card_call(
     old_peer_card: list[str] | None,
     new_observations: list[str],
-):
-    return peer_card_prompt(
+) -> PeerCardQuery:
+    """
+    Generate peer card prompt, call LLM with response model.
+    """
+    prompt = peer_card_prompt(
         old_peer_card=old_peer_card,
         new_observations=new_observations,
     )
+
+    response = await honcho_llm_call(
+        provider=settings.DERIVER.PEER_CARD_PROVIDER,
+        model=settings.DERIVER.PEER_CARD_MODEL,
+        prompt=prompt,
+        max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
+        or settings.LLM.DEFAULT_MAX_TOKENS,
+        track_name="Peer Card Call",
+        response_model=PeerCardQuery,
+        json_mode=True,
+        reasoning_effort="minimal",
+        enable_retry=True,
+        retry_attempts=3,
+    )
+
+    return response.content
 
 
 @sentry_sdk.trace
@@ -288,7 +300,7 @@ async def process_representation_tasks_batch(
     )
 
     if settings.LANGFUSE_PUBLIC_KEY:
-        langfuse_context.update_current_trace(
+        lf.update_current_trace(
             output=format_reasoning_response_as_markdown(final_observations)
         )
 
@@ -327,7 +339,7 @@ class CertaintyReasoner:
         latest_payload = self.ctx[-1]
 
         if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_observation(
+            lf.update_current_generation(
                 input=format_reasoning_inputs_as_markdown(
                     working_representation,
                     history,
@@ -417,7 +429,7 @@ class CertaintyReasoner:
         )
 
         if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_observation(
+            lf.update_current_generation(
                 output=format_reasoning_response_as_markdown(response),
             )
 
