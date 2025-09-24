@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 lf = get_client()
 
+# Fetch extra documents to ensure we have enough after filtering
+FILTER_OVERSAMPLING_FACTOR = 3
+
 
 class EmbeddingStore:
     """Embedding store specialized for observation-based reasoning with structured metadata."""
@@ -209,7 +212,7 @@ class EmbeddingStore:
             collection_name=self.collection_name,
             query=self._build_truncated_query(query, conversation_context),
             max_distance=max_distance,
-            top_k=count * 3,
+            top_k=count * FILTER_OVERSAMPLING_FACTOR,
             filters=self._build_filter_conditions(level),
         )
 

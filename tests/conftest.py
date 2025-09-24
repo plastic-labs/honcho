@@ -338,17 +338,16 @@ def mock_llm_call_functions():
         mock_long_summary.return_value = "Test long summary content"
 
         # Mock critical_analysis_call to return a proper object with _response attribute
-        mock_critical_analysis_result = MagicMock(
-            PromptRepresentation(
-                explicit=["Test explicit observation"],
-                deductive=[
-                    PromptDeductiveObservation(
-                        conclusion="Test deductive conclusion",
-                        premises=["Test premise 1", "Test premise 2"],
-                    )
-                ],
-            )
+        _rep = PromptRepresentation(
+            explicit=["Test explicit observation"],
+            deductive=[
+                PromptDeductiveObservation(
+                    conclusion="Test deductive conclusion",
+                    premises=["Test premise 1", "Test premise 2"],
+                )
+            ],
         )
+        mock_critical_analysis_result = MagicMock(wraps=_rep)
         # Add the _response attribute that contains thinking (used in the actual code)
         mock_response = MagicMock()
         mock_response.thinking = "Test thinking content"
@@ -402,17 +401,16 @@ def mock_honcho_llm_call():
         elif response_model:
             # For structured responses, create appropriate mock objects
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
-                mock_response = MagicMock(
-                    PromptRepresentation(
-                        explicit=["Test explicit observation"],
-                        deductive=[
-                            PromptDeductiveObservation(
-                                conclusion="Test deductive conclusion",
-                                premises=["Test premise 1", "Test premise 2"],
-                            )
-                        ],
-                    )
+                _rep = PromptRepresentation(
+                    explicit=["Test explicit observation"],
+                    deductive=[
+                        PromptDeductiveObservation(
+                            conclusion="Test deductive conclusion",
+                            premises=["Test premise 1", "Test premise 2"],
+                        ),
+                    ],
                 )
+                mock_response = MagicMock(wraps=_rep)
                 # Add the _response attribute that contains thinking (used in the actual code)
                 mock_response._response = MagicMock()
                 mock_response._response.thinking = "Test thinking content"

@@ -15,8 +15,14 @@ class PeerCardQuery(BaseModel):
     The notes field is just a place for stupid models to dump useless info.
     """
 
-    card: list[str] | None
-    notes: str | None
+    card: list[str] | None = Field(
+        default=None,
+        description="Generated peer card as list of strings. None if no new useful biographical observations.",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Optional additional notes from the model; may include non-actionable info.",
+    )
 
 
 class SemanticQueries(BaseModel):

@@ -49,7 +49,7 @@ class DeductiveObservation(Observation):
 
     def __str__(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
-        return f"[{self.created_at}] {self.conclusion}\n{premises_text}"
+        return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
 
     def __hash__(self) -> int:
         """
@@ -125,6 +125,9 @@ class Representation(BaseModel):
         Merge another representation object into this one.
         This will automatically deduplicate explicit and deductive observations.
         This *preserves order* of observations so that they retain FIFO order.
+
+        NOTE: observations with the *same* timestamp will not have order preserved.
+        That's fine though, because they are from the same timestamp...
         """
         # removing duplicates by going list->set->list
         self.explicit = list(set(self.explicit + other.explicit))
@@ -258,12 +261,16 @@ class PromptRepresentation(BaseModel):
     def to_representation(self, message_id: int, session_name: str) -> Representation:
         """
         Convert a PromptRepresentation object to a Representation object.
+
+        NOTE: all observations produced by this method will have the same timestamp, so
+        only use it on the output of a single inference call.
         """
+        created_at = parse_datetime_iso(utc_now_iso())
         return Representation(
             explicit=[
                 ExplicitObservation(
                     content=e,
-                    created_at=parse_datetime_iso(utc_now_iso()),
+                    created_at=created_at,
                     message_id=message_id,
                     session_name=session_name,
                 )
@@ -271,7 +278,7 @@ class PromptRepresentation(BaseModel):
             ],
             deductive=[
                 DeductiveObservation(
-                    created_at=parse_datetime_iso(utc_now_iso()),
+                    created_at=created_at,
                     message_id=message_id,
                     session_name=session_name,
                     conclusion=d.conclusion,

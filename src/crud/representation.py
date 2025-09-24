@@ -20,12 +20,6 @@ logger = getLogger(__name__)
 # The collection name for documents that make up a peer's global representation
 GLOBAL_REPRESENTATION_COLLECTION_NAME: Final[str] = "global_representation"
 
-# The key for the working representation in the session peer's internal_metadata
-WORKING_REPRESENTATION_METADATA_KEY = "working_representation"
-
-# Old working representation key--remove in 2.3.0?
-WORKING_REPRESENTATION_LEGACY_METADATA_KEY = "global_representation"
-
 
 async def get_peer_card(
     db: AsyncSession,
@@ -120,12 +114,9 @@ async def get_working_representation(
     Get raw working representation data from the relevant document collection.
     """
     # Determine metadata key based on observer/observed relationship
-    if observer_name == observed_name:
-        collection_name = WORKING_REPRESENTATION_METADATA_KEY
-    else:
-        collection_name = construct_collection_name(
-            observer=observer_name, observed=observed_name
-        )
+    collection_name = construct_collection_name(
+        observer=observer_name, observed=observed_name
+    )
 
     max_observations = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS
 
@@ -153,9 +144,7 @@ async def get_working_representation(
         semantically_relevant_representation = await EmbeddingStore(
             workspace_name=workspace_name,
             peer_name=observer_name,
-            collection_name=construct_collection_name(
-                observer=observer_name, observed=observed_name
-            ),
+            collection_name=collection_name,
         ).get_relevant_observations(
             query=include_semantic_query,
             top_k=semantic_observations,
@@ -240,6 +229,8 @@ def representation_from_documents(
 
 
 def construct_collection_name(*, observer: str, observed: str) -> str:
+    if observer == observed:
+        return GLOBAL_REPRESENTATION_COLLECTION_NAME
     return f"{observer}_{observed}"
 
 

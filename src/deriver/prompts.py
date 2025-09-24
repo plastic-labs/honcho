@@ -150,6 +150,7 @@ Example 2:
 {old_peer_card_section}
 
 New observations:
+
 {new_observations}
 
 If there's no new key info, set "card" to null (or omit it) to signal no update. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
