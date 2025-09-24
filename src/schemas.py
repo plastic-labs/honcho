@@ -1,4 +1,3 @@
-# pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
 import ipaddress
 from typing import Annotated, Any, Literal, Self
@@ -102,6 +101,12 @@ class PeerRepresentationGet(BaseModel):
     target: str | None = Field(
         None,
         description="Optional peer ID to get the representation for, from the perspective of this peer",
+    )
+
+
+class PeerCardResponse(BaseModel):
+    peer_card: list[str] | None = Field(
+        None, description="The peer card content, or None if not found"
     )
 
 

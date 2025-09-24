@@ -213,6 +213,22 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=50, gt=0, le=500)
     ] = 50
 
+    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+        int,
+        Field(
+            default=4096,
+            ge=1,
+        ),
+    ] = 4096
+
+    @model_validator(mode="after")
+    def validate_batch_tokens_vs_context_limit(self):
+        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.CONTEXT_TOKEN_LIMIT:
+            raise ValueError(
+                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed CONTEXT_TOKEN_LIMIT ({self.CONTEXT_TOKEN_LIMIT})"
+            )
+        return self
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore

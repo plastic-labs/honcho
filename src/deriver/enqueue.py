@@ -118,7 +118,6 @@ async def handle_session(
                 message_seq_map=message_seq_map,
             )
         )
-
     return queue_records
 
 

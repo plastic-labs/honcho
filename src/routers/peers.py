@@ -1,12 +1,7 @@
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 
-from fastapi import (
-    APIRouter,
-    Body,
-    Depends,
-    Path,
-)
+from fastapi import APIRouter, Body, Depends, Path, Query
 from fastapi.exceptions import HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi_pagination import Page
@@ -14,7 +9,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, schemas
-from src.dependencies import db
+from src.dependencies import db, tracked_db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
 from src.security import JWTParams, require_auth
@@ -159,12 +154,14 @@ async def chat(
     options: schemas.DialecticOptions = Body(
         ..., description="Dialectic Endpoint Parameters"
     ),
-    db: AsyncSession = db,
 ):
     # Get or create the peer to ensure it exists
-    await crud.get_or_create_peers(
-        db, workspace_name=workspace_id, peers=[schemas.PeerCreate(name=peer_id)]
-    )
+    async with tracked_db("peers.chat.get_or_create_peer") as peer_db:
+        await crud.get_or_create_peers(
+            peer_db,
+            workspace_name=workspace_id,
+            peers=[schemas.PeerCreate(name=peer_id)],
+        )
 
     if not options.stream:
         response = await dialectic_chat(
@@ -235,6 +232,34 @@ async def get_working_representation(
             f"Failed to get working representation for peer {peer_id}: {str(e)}"
         )
         raise ResourceNotFoundException("Peer or session not found") from e
+
+
+@router.get(
+    "/{peer_id}/card",
+    response_model=schemas.PeerCardResponse,
+    dependencies=[
+        Depends(require_auth(workspace_name="workspace_id", peer_name="peer_id"))
+    ],
+)
+async def get_peer_card(
+    workspace_id: str = Path(..., description="ID of the workspace"),
+    peer_id: str = Path(..., description="ID of the observer peer"),
+    target: str | None = Query(
+        None,
+        description="The peer whose card to retrieve. If not provided, returns the observer's own card",
+    ),
+    db: AsyncSession = db,
+):
+    """Get a peer card for a specific peer relationship.
+
+    Returns the peer card that the observer peer has for the target peer if it exists.
+    If no target is specified, returns the observer's own peer card.
+    """
+    # If no target specified, get the observer's own card
+    target_peer = target if target is not None else peer_id
+
+    peer_card = await crud.get_peer_card(db, workspace_id, target_peer, peer_id)
+    return schemas.PeerCardResponse(peer_card=peer_card)
 
 
 @router.post(

@@ -8,18 +8,18 @@ from logging import getLogger
 import sentry_sdk
 from dotenv import load_dotenv
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import delete, select, update
+from sqlalchemy import BigInteger, delete, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from src import models
 from src.config import settings
+from src.dependencies import tracked_db
+from src.deriver.consumer import process_items
 from src.models import QueueItem
 from src.utils.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.utils.work_unit import parse_work_unit_key
-
-from .. import models
-from ..dependencies import tracked_db
-from .consumer import process_item
 
 logger = getLogger(__name__)
 
@@ -177,8 +177,6 @@ class QueueManager:
     async def claim_work_units(
         self, db: AsyncSession, work_unit_keys: Sequence[str]
     ) -> list[str]:
-        from sqlalchemy.dialects.postgresql import insert
-
         values = [{"work_unit_key": key} for key in work_unit_keys]
 
         stmt = (
@@ -243,62 +241,45 @@ class QueueManager:
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
         work_unit = parse_work_unit_key(work_unit_key)
-        async with (
-            self.semaphore
-        ):  # Hold the semaphore for the entire work unit duration
+        async with self.semaphore:
             message_count = 0
             try:
+                parsed_key = parse_work_unit_key(work_unit_key)
+                task_type = parsed_key["task_type"]
+
                 while not self.shutdown_event.is_set():
-                    message = await self.get_next_message(work_unit_key)
-                    if not message:
+                    messages_to_process: list[QueueItem] = await self.get_message_batch(
+                        work_unit_key,
+                        task_type,
+                    )
+                    if not messages_to_process:
                         logger.debug(f"No more messages for work unit {work_unit_key}")
                         break
 
-                    message_count += 1
+                    # Process the batch/single item
                     try:
-                        logger.info(
-                            f"Processing item for task type {message.task_type} with id {message.id} from work unit {work_unit_key}"
-                        )
-                        await process_item(message.task_type, message.payload)
-                        logger.debug(
-                            f"Successfully processed queue item for task type {message.task_type} with id {message.id}"
-                        )
+                        payloads = [msg.payload for msg in messages_to_process]
+                        await process_items(task_type, payloads)
                     except Exception as e:
                         logger.error(
-                            f"Error processing queue item for task type {message.task_type} with id {message.id}: {str(e)}",
+                            f"Error processing tasks for work unit {work_unit_key}: {e}",
                             exc_info=True,
                         )
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
 
-                    # Prevent malformed messages from stalling queue indefinitely
-                    async with tracked_db("process_message") as db:
-                        await db.execute(
-                            update(models.QueueItem)
-                            .where(models.QueueItem.id == message.id)
-                            .values(processed=True)
-                        )
+                    await self.mark_messages_as_processed(
+                        messages_to_process, work_unit_key
+                    )
+                    message_count += len(messages_to_process)
 
-                        await db.execute(
-                            update(models.ActiveQueueSession)
-                            .where(
-                                models.ActiveQueueSession.work_unit_key == work_unit_key
-                            )
-                            .values(last_updated=func.now())
-                        )
-
-                        await db.commit()
-
+                    # Check for shutdown after processing each batch
                     if self.shutdown_event.is_set():
                         logger.debug(
                             "Shutdown requested, stopping processing for work unit %s",
                             work_unit_key,
                         )
                         break
-
-                logger.debug(
-                    f"Completed processing work unit {work_unit_key}, processed {message_count} messages"
-                )
 
             finally:
                 # Remove work unit from active_queue_sessions when done
@@ -340,22 +321,104 @@ class QueueManager:
                 self.untrack_work_unit(work_unit_key)
 
     @sentry_sdk.trace
-    async def get_next_message(self, work_unit_key: str) -> QueueItem | None:
-        """Get the next unprocessed message for a specific work unit."""
-        async with tracked_db("get_next_message") as db:
-            query = (
-                select(models.QueueItem)
-                .where(models.QueueItem.work_unit_key == work_unit_key)
-                .where(~models.QueueItem.processed)
-                .order_by(models.QueueItem.id)
-                .limit(1)
-            )
-            result = await db.execute(query)
-            message = result.scalar_one_or_none()
+    async def get_message_batch(
+        self, work_unit_key: str, task_type: str
+    ) -> list[QueueItem]:
+        """
+        Get a batch of unprocessed messages for a specific work unit ordered by id.
+        For representation tasks, this will be a batch of messages up to REPRESENTATION_BATCH_MAX_TOKENS.
+        For other tasks, it will be a single message.
+        """
+        async with tracked_db("get_message_batch") as db:
+            if task_type != "representation":
+                # For non-representation tasks, just get the next single message.
+                query = (
+                    select(models.QueueItem)
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .order_by(models.QueueItem.id)
+                    .limit(1)
+                )
+                result = await db.execute(query)
+                messages = result.scalars().all()
+            else:
+                # For representation tasks, get a batch based on token count.
+                # Always get at least the first message, then include additional messages
+                # as long as cumulative token count stays within limit.
+                # Join with messages table to get the actual token_count
+
+                # Create CTE with row numbers and cumulative token counts
+                cte = (
+                    select(
+                        models.QueueItem.id,
+                        func.row_number()
+                        .over(order_by=models.QueueItem.id)
+                        .label("row_num"),
+                        func.sum(models.Message.token_count)
+                        .over(order_by=models.QueueItem.id)
+                        .label("cumulative_token_count"),
+                    )
+                    .select_from(
+                        models.QueueItem.__table__.join(
+                            models.Message.__table__,
+                            func.cast(
+                                models.QueueItem.payload["message_id"].astext,
+                                BigInteger,
+                            )
+                            == models.Message.id,
+                        )
+                    )
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(~models.QueueItem.processed)
+                    .order_by(models.QueueItem.id)
+                    .cte()
+                )
+
+                # Select messages where either:
+                # 1. It's the first message (row_num = 1), OR
+                # 2. The cumulative token count is within the limit
+                query = (
+                    select(models.QueueItem)
+                    .where(
+                        models.QueueItem.id.in_(
+                            select(cte.c.id).where(
+                                (cte.c.row_num == 1)
+                                | (
+                                    cte.c.cumulative_token_count
+                                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                                )
+                            )
+                        )
+                    )
+                    .order_by(models.QueueItem.id)
+                )
+
+                result = await db.execute(query)
+                messages = result.scalars().all()
+
             # Important: commit to avoid tracked_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
             await db.commit()
-            return message
+            return list(messages)
+
+    async def mark_messages_as_processed(
+        self, messages: list[QueueItem], work_unit_key: str
+    ):
+        if not messages:
+            return
+        async with tracked_db("process_message_batch") as db:
+            message_ids = [msg.id for msg in messages]
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id.in_(message_ids))
+                .values(processed=True)
+            )
+            await db.execute(
+                update(models.ActiveQueueSession)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                .values(last_updated=func.now())
+            )
+            await db.commit()
 
     async def _cleanup_work_unit(self, work_unit_key: str) -> bool:
         async with tracked_db("cleanup_work_unit") as db:
