@@ -69,7 +69,7 @@ class EmbeddingStore:
             conclusions, similarity_threshold=similarity_threshold
         )
         if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_observation(
+            lf.update_current_trace(
                 input={"observations": [obs.model_dump() for obs in observations]},
                 output={"unique_conclusions": unique_conclusions},
             )
