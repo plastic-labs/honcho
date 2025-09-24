@@ -8,7 +8,7 @@ from rich.console import Console
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
-from src.deriver.dreamer import process_dream
+from src.dreamer.dreamer import process_dream
 from src.utils import summarizer
 from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import log_performance_metrics

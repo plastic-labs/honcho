@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
+from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
-from src.utils.dream_scheduler import check_and_schedule_dream
 from src.utils.formatting import format_datetime_utc
 from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import conditional_observe

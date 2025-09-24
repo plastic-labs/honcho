@@ -54,7 +54,7 @@ class DreamPayload(BasePayload):
     task_type: Literal["dream"] = "dream"
     workspace_name: str
     sender_name: str
-    target_name: str
+    collection_name: str
     dream_type: Literal["consolidate"] = "consolidate"
 
 
@@ -71,13 +71,13 @@ def create_webhook_payload(
 def create_dream_payload(
     workspace_name: str,
     sender_name: str,
-    target_name: str,
+    collection_name: str,
     dream_type: Literal["consolidate"] = "consolidate",
 ) -> dict[str, Any]:
     return DreamPayload(
         workspace_name=workspace_name,
         sender_name=sender_name,
-        target_name=target_name,
+        collection_name=collection_name,
         dream_type=dream_type,
     ).model_dump(mode="json")
 

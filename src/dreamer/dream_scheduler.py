@@ -92,8 +92,6 @@ class DreamScheduler:
         self.pending_dreams[work_unit_key] = task
         task.add_done_callback(lambda t: self.pending_dreams.pop(work_unit_key, None))
 
-        logger.info(f"Scheduled dream for {work_unit_key} in {delay_minutes} minutes")
-
     def cancel_dream(self, work_unit_key: str) -> bool:
         """Cancel a pending dream. Returns True if a dream was cancelled."""
         if work_unit_key in self.pending_dreams:
@@ -177,7 +175,7 @@ class DreamScheduler:
         dream_payload = create_dream_payload(
             workspace_name=workspace_name,
             sender_name=peer_name,
-            target_name=collection_name,
+            collection_name=collection_name,
             dream_type="consolidate",
         )
 
@@ -314,7 +312,7 @@ async def check_and_schedule_dream(
                 settings.DREAM.IDLE_TIMEOUT_MINUTES,
             )
             logger.info(
-                f"Scheduled timer-based dream for {collection.workspace_name}/{collection.peer_name}/{collection.name} "
+                f"Scheduled dream for {collection.workspace_name}/{collection.peer_name}/{collection.name} "
                 + f"(threshold reached: {documents_since_last_dream}/{settings.DREAM.DOCUMENT_THRESHOLD} documents)"
             )
             return True

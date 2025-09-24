@@ -17,8 +17,8 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import process_items
+from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.models import QueueItem
-from src.utils.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.utils.work_unit import parse_work_unit_key
 
 logger = getLogger(__name__)

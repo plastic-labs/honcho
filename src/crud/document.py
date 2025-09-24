@@ -15,6 +15,23 @@ from src.utils.filter import apply_filter
 logger = getLogger(__name__)
 
 
+async def get_all_documents(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
+) -> Sequence[models.Document]:
+    """Get all documents in a collection."""
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.peer_name == peer_name)
+        .where(models.Document.collection_name == collection_name)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 async def query_documents(
     db: AsyncSession,
     workspace_name: str,
