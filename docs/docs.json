@@ -68,7 +68,8 @@
                   "v2/guides/search",
                   "v2/guides/working-rep",
                   "v2/guides/streaming-response",
-                  "v2/guides/using-filters"
+                  "v2/guides/using-filters",
+                  "v2/guides/file-uploads"
                 ]
               }
             ]
@@ -363,7 +364,5 @@
     "posthog": {
       "apiKey": "phc_1yrzzcgywqXGcerkkI4g7C0YfyPMcAKNOOvGcjTCiUk"
     }
-  },
-  "custom": {
   }
 }
