@@ -8,7 +8,7 @@ import pytest
 
 from src import models
 from src.deriver.deriver import process_representation_tasks_batch
-from src.deriver.queue_payload import RepresentationPayload
+from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import Representation
 
 
@@ -33,7 +33,7 @@ class TestDeriverProcessing:
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ):
         """Test that work unit keys are generated correctly"""
-        from src.deriver.utils import get_work_unit_key
+        from src.utils.work_unit import get_work_unit_key
 
         session, peers = sample_session_with_peers
         peer1, peer2, _ = peers
@@ -48,7 +48,7 @@ class TestDeriverProcessing:
         }
 
         # Generate work unit key for representation
-        work_unit_key = get_work_unit_key("representation", representation_payload)
+        work_unit_key = get_work_unit_key(representation_payload)
         expected_key = (
             f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
         )
@@ -62,7 +62,7 @@ class TestDeriverProcessing:
         }
 
         # Generate work unit key for summary
-        summary_work_unit_key = get_work_unit_key("summary", summary_payload)
+        summary_work_unit_key = get_work_unit_key(summary_payload)
         expected_summary_key = f"summary:workspace1:{session.name}:None:None"
         assert summary_work_unit_key == expected_summary_key
 

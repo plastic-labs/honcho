@@ -2,12 +2,12 @@ import asyncio
 import json
 import logging
 
-from langfuse import get_client
-
 from src.config import settings
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import conditional_observe
+from src.utils.representation import Representation
 from src.utils.shared_models import SemanticQueries
 
 from .prompts import query_generation_prompt
@@ -15,7 +15,7 @@ from .prompts import query_generation_prompt
 # Configure logging
 logger = logging.getLogger(__name__)
 
-lf = get_client()
+lf = get_langfuse_client()
 
 
 @conditional_observe
@@ -23,7 +23,7 @@ async def get_observations(
     query: str,
     target_peer_name: str,
     embedding_store: EmbeddingStore,
-) -> str:
+) -> Representation:
     """
     Generate queries based on the dialectic query and retrieve relevant observations.
 
@@ -36,7 +36,7 @@ async def get_observations(
         include_premises: Whether to include premises from document metadata
 
     Returns:
-        String containing additional relevant observations from semantic search
+        Representation containing additional relevant observations from semantic search
     """
     logger.info("Starting observation retrieval for query: %s", query)
 
@@ -86,7 +86,7 @@ async def get_observations(
             max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
         )
 
-    return str(representation)
+    return representation
 
 
 async def generate_semantic_queries(

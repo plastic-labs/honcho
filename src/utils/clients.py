@@ -8,7 +8,6 @@ from anthropic.types.message import Message as AnthropicMessage
 from google import genai
 from google.genai.types import GenerateContentResponse
 from groq import AsyncGroq
-from langfuse import get_client
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from pydantic import BaseModel, Field
@@ -16,12 +15,13 @@ from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import settings
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.types import SupportedProviders
 
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
 
-lf = get_client()
+lf = get_langfuse_client()
 
 CLIENTS: dict[
     SupportedProviders,

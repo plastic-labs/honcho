@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.deriver.queue_manager import QueueManager
+from src.utils.work_unit import get_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -303,13 +304,10 @@ class TestQueueProcessing:
             for msg in messages
         ]
 
-        # Add items with token counts
-        from src.deriver.utils import get_work_unit_key
-
         queue_items: list[models.QueueItem] = []
         for payload in payloads:
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(task_type, payload)
+            work_unit_key = get_work_unit_key(payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -390,9 +388,8 @@ class TestQueueProcessing:
                 message, "summary", message_seq_in_session=i + 1
             )
             payload["token_count"] = token_counts[i]
-            from src.deriver.utils import get_work_unit_key
 
-            work_unit_key = get_work_unit_key("summary", payload)
+            work_unit_key = get_work_unit_key(payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -505,13 +502,10 @@ class TestQueueProcessing:
             for msg in messages
         ]
 
-        # Add items to queue
-        from src.deriver.utils import get_work_unit_key
-
         queue_items: list[models.QueueItem] = []
         for payload in payloads:
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(task_type, payload)
+            work_unit_key = get_work_unit_key(payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,
@@ -606,13 +600,10 @@ class TestQueueProcessing:
             for msg in messages
         ]
 
-        # Add items to queue
-        from src.deriver.utils import get_work_unit_key
-
         queue_items: list[models.QueueItem] = []
         for payload in payloads:
             task_type = payload.get("task_type", "unknown")
-            work_unit_key = get_work_unit_key(task_type, payload)
+            work_unit_key = get_work_unit_key(payload)
 
             queue_item = models.QueueItem(
                 session_id=session.id,

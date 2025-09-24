@@ -359,7 +359,7 @@ class Document(Base):
     )
 
 
-TaskType = Literal["webhook", "summary", "representation"]
+TaskType = Literal["webhook", "summary", "representation", "dream"]
 
 
 @final

@@ -3,9 +3,8 @@ from inspect import cleandoc as c
 
 def dialectic_prompt(
     query: str,
-    working_representation: str | None,
+    working_representation: str,
     recent_conversation_history: str | None,
-    additional_context: str | None,
     peer_name: str,
     peer_card: list[str] | None,
     target_name: str | None = None,
@@ -16,9 +15,12 @@ def dialectic_prompt(
 
     Args:
         query: The specific question or request from the application about the user
-        working_representation: Current session conclusions from recent conversation analysis
-        additional_context: Historical conclusions from the user's global representation
+        working_representation: Conclusions from recent conversation analysis AND historical conclusions from the user's global representation
+        recent_conversation_history: Recent conversation history
         peer_name: Name of the user/peer being queried about
+        peer_card: Known biographical information about the user
+        target_name: Name of the user/peer being queried about
+        target_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Formatted prompt string for the dialectic model
@@ -79,7 +81,7 @@ Provide a natural language response that:
 
 <query>{query}</query>
 <working_representation>{working_representation}</working_representation>
-{f"<global_context>{additional_context}</global_context>" if additional_context else ""}"""
+"""
     )
 
 

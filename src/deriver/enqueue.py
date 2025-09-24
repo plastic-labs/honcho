@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, schemas
 from src.config import settings
 from src.dependencies import tracked_db
-from src.deriver.utils import get_work_unit_key
+from src.dreamer.dream_scheduler import get_affected_dream_keys, get_dream_scheduler
 from src.exceptions import ValidationException
 from src.models import QueueItem
-
-from .queue_payload import create_payload
+from src.utils.queue_payload import create_payload
+from src.utils.work_unit import get_work_unit_key
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,22 @@ async def enqueue(payload: list[dict[str, Any]]) -> None:
         payload: List of message payload dictionaries
     """
 
-    # Use the get_db dependency to ensure proper transaction handling
+    # Cancel any pending dreams for affected collections since user is active again
+    dream_scheduler = get_dream_scheduler()
+    if dream_scheduler and payload:
+        cancelled_dreams: set[str] = set()
+        for message in payload:
+            # Generate work unit keys for dreams that might be affected by this message
+            dream_keys: list[str] = get_affected_dream_keys(message)
+            for dream_key in dream_keys:
+                if dream_scheduler.cancel_dream(dream_key):
+                    cancelled_dreams.add(dream_key)
+
+        if cancelled_dreams:
+            logger.info(
+                f"Cancelled {len(cancelled_dreams)} pending dreams due to new activity"
+            )
+
     async with tracked_db("message_enqueue") as db_session:
         try:
             # Determine if batch or single processing
@@ -159,9 +174,7 @@ def create_representation_record(
         task_type="representation",
     )
     return {
-        "work_unit_key": get_work_unit_key(
-            task_type="representation", payload=processed_payload
-        ),
+        "work_unit_key": get_work_unit_key(processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "representation",
@@ -191,9 +204,7 @@ def create_summary_record(
         message_seq_in_session=message_seq_in_session,
     )
     return {
-        "work_unit_key": get_work_unit_key(
-            task_type="summary", payload=processed_payload
-        ),
+        "work_unit_key": get_work_unit_key(processed_payload),
         "payload": processed_payload,
         "session_id": session_id,
         "task_type": "summary",

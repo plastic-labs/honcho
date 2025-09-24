@@ -2,30 +2,31 @@ import logging
 from typing import Any
 
 import sentry_sdk
-from langfuse import get_client
 from pydantic import ValidationError
 from rich.console import Console
 
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
+from src.dreamer.dreamer import process_dream
 from src.utils import summarizer
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import log_performance_metrics
-from src.webhooks import webhook_delivery
-
-from .queue_payload import (
+from src.utils.queue_payload import (
+    DreamPayload,
     RepresentationPayload,
     RepresentationPayloads,
     SummaryPayload,
     WebhookPayload,
 )
+from src.webhooks import webhook_delivery
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=True)
 
-lf = get_client()
+lf = get_langfuse_client()
 
 
 async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) -> None:
@@ -46,6 +47,15 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
     )
 
     if task_type == "webhook":
+        if len(queue_payloads) > 1:
+            logger.error(
+                "Received multiple webhook payloads for task type %s. Only the first one will be processed.",
+                task_type,
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_message(
+                    "Received multiple webhook payloads for task type %s. Only the first one will be processed.",
+                )
         try:
             validated = WebhookPayload(**queue_payloads[0])
         except ValidationError as e:
@@ -59,6 +69,15 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
         logger.debug("Finished processing webhook %s", validated.event_type)
 
     elif task_type == "summary":
+        if len(queue_payloads) > 1:
+            logger.error(
+                "Received multiple summary payloads for task type %s. Only the first one will be processed.",
+                task_type,
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_message(
+                    "Received multiple summary payloads for task type %s. Only the first one will be processed.",
+                )
         if settings.LANGFUSE_PUBLIC_KEY:
             lf.update_current_trace(  # type: ignore
                 metadata={
@@ -96,8 +115,28 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
                 queue_payloads,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-
         await process_representation_tasks_batch(validated_payloads.payloads)
+
+    elif task_type == "dream":
+        if len(queue_payloads) > 1:
+            logger.error(
+                "Received multiple dream payloads for task type %s. Only the first one will be processed.",
+                task_type,
+            )
+            if settings.SENTRY.ENABLED:
+                sentry_sdk.capture_message(
+                    "Received multiple dream payloads for task type %s. Only the first one will be processed.",
+                )
+        try:
+            validated = DreamPayload(**queue_payloads[0])
+        except ValidationError as e:
+            logger.error(
+                "Invalid dream payload received: %s. Payload: %s",
+                str(e),
+                queue_payloads[0],
+            )
+            raise ValueError(f"Invalid payload structure: {str(e)}") from e
+        await process_dream(validated)
 
     else:
         raise ValueError(f"Invalid task type: {task_type}")

@@ -2,7 +2,7 @@ from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
 from .document import (
     create_document,
-    get_duplicate_documents,
+    get_all_documents,
     query_documents,
 )
 from .message import (
@@ -56,9 +56,9 @@ __all__ = [
     # Deriver
     "get_deriver_status",
     # Document
-    "query_documents",
     "create_document",
-    "get_duplicate_documents",
+    "get_all_documents",
+    "query_documents",
     # Message
     "create_messages",
     "get_messages",
