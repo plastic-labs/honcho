@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.deriver.queue_payload import create_payload
-from src.deriver.utils import get_work_unit_key
+from src.utils.work_unit import get_work_unit_key
 
 
 @pytest.fixture

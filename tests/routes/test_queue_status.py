@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.deriver.utils import get_work_unit_key
+from src.utils.work_unit import get_work_unit_key
 
 
 @pytest.mark.asyncio

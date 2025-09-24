@@ -13,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src.config import settings
-from src.deriver.utils import parse_work_unit_key
 from src.models import QueueItem
+from src.utils.dream_scheduler import DreamScheduler, set_dream_scheduler
+from src.utils.work_unit import parse_work_unit_key
 
 from .. import models
 from ..dependencies import tracked_db
@@ -35,6 +36,9 @@ class QueueManager:
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
+
+        # Initialize dream scheduler
+        self.dream_scheduler: DreamScheduler = DreamScheduler()
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
@@ -65,6 +69,8 @@ class QueueManager:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
+        set_dream_scheduler(self.dream_scheduler)
+
         # Set up signal handlers
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)
@@ -85,6 +91,9 @@ class QueueManager:
         """Handle graceful shutdown"""
         logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
+
+        # Cancel all pending dreams
+        await self.dream_scheduler.shutdown()
 
         if self.active_tasks:
             logger.info(

@@ -264,6 +264,7 @@ class DreamSettings(HonchoSettings):
 
     ENABLED: bool = True
     DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 1
+    IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 1
     MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 24
     ENABLED_TYPES: list[str] = ["consolidate"]
 

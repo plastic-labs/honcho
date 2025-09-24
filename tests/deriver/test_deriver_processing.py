@@ -28,7 +28,7 @@ class TestDeriverProcessing:
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
     ):
         """Test that work unit keys are generated correctly"""
-        from src.deriver.utils import get_work_unit_key
+        from src.utils.work_unit import get_work_unit_key
 
         session, peers = sample_session_with_peers
         peer1, peer2, _ = peers

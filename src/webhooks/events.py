@@ -6,8 +6,8 @@ from pydantic import BaseModel
 
 from src.dependencies import tracked_db
 from src.deriver.queue_payload import create_webhook_payload
-from src.deriver.utils import get_work_unit_key
 from src.models import QueueItem
+from src.utils.work_unit import get_work_unit_key
 
 logger = logging.getLogger(__name__)
 

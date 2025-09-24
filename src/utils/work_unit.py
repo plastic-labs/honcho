@@ -1,7 +1,11 @@
+"""Work unit utility functions for generating and parsing work unit keys."""
+
 from typing_extensions import Any, TypedDict
 
 
 class ParsedWorkUnit(TypedDict):
+    """Parsed work unit components."""
+
     task_type: str
     workspace_name: str
     session_name: str | None
@@ -12,6 +16,15 @@ class ParsedWorkUnit(TypedDict):
 def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
     """
     Generate a work unit key for a given task type, workspace name, and event type.
+
+    Args:
+        payload: Dictionary containing work unit information
+
+    Returns:
+        Formatted work unit key string
+
+    Raises:
+        ValueError: If required fields are missing or task type is invalid
     """
     workspace_name = payload.get("workspace_name")
     task_type = payload.get("task_type")
@@ -39,6 +52,15 @@ def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
 def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
     """
     Parse a work unit key to extract its components.
+
+    Args:
+        work_unit_key: The work unit key string to parse
+
+    Returns:
+        ParsedWorkUnit dictionary with extracted components
+
+    Raises:
+        ValueError: If the work unit key format is invalid
     """
     parts = work_unit_key.split(":")
     task_type = parts[0]
