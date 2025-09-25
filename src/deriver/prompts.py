@@ -6,7 +6,10 @@ and reasoning tasks.
 """
 
 import datetime
+import logging
 from inspect import cleandoc as c
+
+from src.deriver.utils import estimate_tokens
 
 
 def critical_analysis_prompt(
@@ -157,3 +160,36 @@ New observations:
 If there's no new key info, set "card" to null (or omit it) to signal no update. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
     """  # nosec B608 <-- this is a really dumb false positive
     )
+
+
+# Cache for base prompt tokens - only changes on redeploys
+_base_prompt_tokens_cache: int | None = None
+
+
+def estimate_base_prompt_tokens(logger: logging.Logger) -> int:
+    """Estimate base prompt tokens by calling critical_analysis_prompt with empty values.
+
+    This value is cached since it only changes on redeploys when the prompt template changes.
+    """
+    global _base_prompt_tokens_cache
+
+    if _base_prompt_tokens_cache is not None:
+        return _base_prompt_tokens_cache
+
+    try:
+        base_prompt = critical_analysis_prompt(
+            peer_id="",
+            peer_card=None,
+            message_created_at=datetime.datetime.now(datetime.timezone.utc),
+            working_representation=None,
+            history="",
+            new_turns=[],
+        )
+        _base_prompt_tokens_cache = estimate_tokens(base_prompt)
+        logger.debug("Cached base prompt tokens: %d", _base_prompt_tokens_cache)
+        return _base_prompt_tokens_cache
+    except Exception as e:
+        logger.warning("Failed to estimate base prompt tokens: %s", e)
+        # Return a conservative estimate if estimation fails
+        _base_prompt_tokens_cache = 500
+        return _base_prompt_tokens_cache

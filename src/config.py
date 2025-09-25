@@ -220,6 +220,8 @@ class DeriverSettings(HonchoSettings):
         ),
     ] = 4096
 
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
         if self.REPRESENTATION_BATCH_MAX_TOKENS > self.CONTEXT_TOKEN_LIMIT:
