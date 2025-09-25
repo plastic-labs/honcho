@@ -101,7 +101,7 @@ class TestQueueProcessing:
         assert len(claimed) > 0
         key = list(claimed.keys())[0]
 
-        # Trying to claim the same key again via the API should return empty list
+        # Trying to claim the same key again via the API should return empty dict
         claimed_again = await queue_manager.claim_work_units(db_session, [key])
         assert claimed_again == {}
 

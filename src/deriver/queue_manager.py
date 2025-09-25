@@ -4,12 +4,13 @@ from asyncio import Task
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
+from typing import NamedTuple
 
 import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import BigInteger, delete, select, update
+from sqlalchemy import BigInteger, delete, exists, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -26,13 +27,18 @@ logger = getLogger(__name__)
 load_dotenv(override=True)
 
 
+class WorkerOwnership(NamedTuple):
+    """Represents the instance of a work unit that a worker is processing."""
+
+    work_unit_key: str
+    aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
+
+
 class QueueManager:
     def __init__(self):
         self.shutdown_event: asyncio.Event = asyncio.Event()
         self.active_tasks: set[asyncio.Task[None]] = set()
-        self.worker_ownership: dict[
-            str, tuple[str, str]
-        ] = {}  # {worker_id: (work_unit_key, aqs_id)}
+        self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
         # Initialize from settings
@@ -60,7 +66,7 @@ class QueueManager:
         self, worker_id: str, work_unit_key: str, aqs_id: str
     ) -> None:
         """Track a work unit owned by a specific worker"""
-        self.worker_ownership[worker_id] = (work_unit_key, aqs_id)
+        self.worker_ownership[worker_id] = WorkerOwnership(work_unit_key, aqs_id)
         logger.debug(
             f"Worker {worker_id} now owns work unit {work_unit_key} (AQS ID: {aqs_id})"
         )
@@ -69,8 +75,8 @@ class QueueManager:
         """Remove a work unit from worker tracking"""
         if worker_id in self.worker_ownership:
             # Verify this worker actually owns the expected work unit
-            stored_work_unit, _ = self.worker_ownership[worker_id]
-            if stored_work_unit == work_unit_key:
+            ownership = self.worker_ownership[worker_id]
+            if ownership.work_unit_key == work_unit_key:
                 del self.worker_ownership[worker_id]
         logger.debug(f"Worker {worker_id} no longer owns work unit {work_unit_key}")
 
@@ -94,20 +100,20 @@ class QueueManager:
         if worker_id not in self.worker_ownership:
             return False
 
-        stored_work_unit, expected_aqs_id = self.worker_ownership[worker_id]
-        if stored_work_unit != work_unit_key:
+        ownership = self.worker_ownership[worker_id]
+        if ownership.work_unit_key != work_unit_key:
             return False
 
-        # Verify against database
         async with tracked_db("verify_worker_ownership") as db:
             result = await db.execute(
-                select(models.ActiveQueueSession.id)
-                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
-                .where(models.ActiveQueueSession.id == expected_aqs_id)
+                select(
+                    exists().where(
+                        (models.ActiveQueueSession.work_unit_key == work_unit_key)
+                        & (models.ActiveQueueSession.id == ownership.aqs_id)
+                    )
+                )
             )
-            aqs_id = result.scalar_one_or_none()
-
-            return aqs_id is not None
+            return bool(result.scalar())
 
     async def initialize(self) -> None:
         """Setup signal handlers, initialize client, and start the main polling loop"""
@@ -149,12 +155,13 @@ class QueueManager:
                 # Use the tracked_db dependency for transaction safety
                 async with tracked_db("queue_cleanup") as db:
                     # Collect all AQS IDs from all workers
-                    for work_unit_key, aqs_id in self.worker_ownership.values():
+                    for ownership in self.worker_ownership.values():
                         await db.execute(
                             delete(models.ActiveQueueSession)
-                            .where(models.ActiveQueueSession.id == aqs_id)
+                            .where(models.ActiveQueueSession.id == ownership.aqs_id)
                             .where(
-                                models.ActiveQueueSession.work_unit_key == work_unit_key
+                                models.ActiveQueueSession.work_unit_key
+                                == ownership.work_unit_key
                             )
                         )
                     await db.commit()
@@ -163,6 +170,8 @@ class QueueManager:
                 logger.error(f"Error during cleanup: {str(e)}")
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
+            finally:
+                self.worker_ownership.clear()
 
     ##########################
     # Polling and Scheduling #
@@ -206,6 +215,8 @@ class QueueManager:
             "get_available_work_units"
         ) as db:  # Get number of available workers
             limit: int = max(0, self.workers - self.get_total_owned_work_units())
+            if limit == 0:
+                return {}
 
             query = (
                 select(models.QueueItem.work_unit_key)
@@ -364,12 +375,14 @@ class QueueManager:
             finally:
                 # Remove work unit from active_queue_sessions when done
                 if worker_id in self.worker_ownership:
-                    stored_work_unit, aqs_id = self.worker_ownership[worker_id]
-                    if stored_work_unit == work_unit_key:
+                    ownership = self.worker_ownership[worker_id]
+                    if ownership.work_unit_key == work_unit_key:
                         logger.debug(
-                            f"Worker {worker_id} removing work unit {work_unit_key} from active sessions (AQS ID: {aqs_id})"
+                            f"Worker {worker_id} removing work unit {work_unit_key} from active sessions (AQS ID: {ownership.aqs_id})"
                         )
-                        removed = await self._cleanup_work_unit(work_unit_key, aqs_id)
+                        removed = await self._cleanup_work_unit(
+                            work_unit_key, ownership.aqs_id
+                        )
                     else:
                         removed = False
                     # Clean up worker tracking
@@ -415,8 +428,8 @@ class QueueManager:
 
                 # Ensure worker tracking is cleaned up even if we didn't do DB cleanup
                 if worker_id in self.worker_ownership:
-                    stored_work_unit, _ = self.worker_ownership[worker_id]
-                    if stored_work_unit == work_unit_key:
+                    ownership = self.worker_ownership[worker_id]
+                    if ownership.work_unit_key == work_unit_key:
                         self.untrack_worker_work_unit(worker_id, work_unit_key)
 
     @sentry_sdk.trace
