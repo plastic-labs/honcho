@@ -16,11 +16,9 @@ from dotenv import load_dotenv
 
 from src import crud
 from src.config import settings
-from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
 from src.utils import summarizer
 from src.utils.clients import HonchoLLMCallStreamChunk, honcho_llm_call
-from src.utils.embedding_store import EmbeddingStore
 from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
     accumulate_metric,
@@ -29,7 +27,6 @@ from src.utils.logging import (
 from src.utils.representation import Representation
 
 from .prompts import dialectic_prompt
-from .utils import get_observations
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -220,7 +217,9 @@ async def chat(
             peer_name,
             target_peer,
             session_name,
-            # NOTE: do not include semantic query, because we do a semantic search in addutional_context
+            include_semantic_query=query,
+            semantic_search_top_k=settings.DIALECTIC.SEMANTIC_SEARCH_TOP_K,
+            semantic_search_max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
             include_most_derived=True,
         )
     working_rep_duration = asyncio.get_event_loop().time() - working_rep_start_time
@@ -236,49 +235,16 @@ async def chat(
         len(working_representation.deductive),
     )
 
-    # 2. Additional context (long-term semantic search) ------------------------
-    # If the query is not targeted, get global_representation facts from other sessions
-    # If the query is targeted, get facts from other sessions for our target
-    additional_context_start_time = asyncio.get_event_loop().time()
-    embedding_store = EmbeddingStore(
-        workspace_name=workspace_name,
-        peer_name=target_name if target_name else peer_name,
-        collection_name=GLOBAL_REPRESENTATION_COLLECTION_NAME
-        if not target_name
-        else crud.construct_collection_name(observer=peer_name, observed=target_name),
-    )
-    additional_context: Representation = await get_observations(
-        query,
-        target_name if target_name else peer_name,
-        embedding_store,
-    )
-    additional_context_duration = (
-        asyncio.get_event_loop().time() - additional_context_start_time
-    )
-    accumulate_metric(
-        f"dialectic_chat_{dialectic_chat_uuid}",
-        "retrieve_additional_context",
-        additional_context_duration,
-        "s",
-    )
+    working_representation_str = str(working_representation)
+
+    context_window_size -= len(tokenizer.encode(working_representation_str))
 
     logger.info(
-        "Retrieved additional context with %s explicit, %s deductive observations",
-        len(additional_context.explicit),
-        len(additional_context.deductive),
+        "Constructed working representation:\n%s\n",
+        working_representation_str,
     )
 
-    working_representation.merge_representation(additional_context)
-    unified_working_representation = str(working_representation)
-
-    context_window_size -= len(tokenizer.encode(unified_working_representation))
-
-    logger.info(
-        "Constructed unified working representation:\n%s\n",
-        unified_working_representation,
-    )
-
-    # 3. Recent conversation history --------------------------------------------
+    # 2. Recent conversation history --------------------------------------------
     # If query is session-scoped, get recent conversation history from that session
     if session_name:
         async with tracked_db("chat.get_session_context") as db:
@@ -305,7 +271,7 @@ async def chat(
         "tokens",
     )
 
-    # 4. Peer card(s) ----------------------------------------------------------
+    # 3. Peer card(s) ----------------------------------------------------------
     async with tracked_db("chat.get_peer_card") as db:
         peer_card = await crud.get_peer_card(db, workspace_name, peer_name, peer_name)
         if target_name:
@@ -320,12 +286,12 @@ async def chat(
     else:
         logger.info("Retrieved peer card:\n%s", peer_card)
 
-    # 5. Dialectic call --------------------------------------------------------
+    # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = asyncio.get_event_loop().time()
     if stream:
         return await dialectic_stream(
             query,
-            unified_working_representation,
+            working_representation_str,
             recent_conversation_history,
             peer_name,
             peer_card,
@@ -335,7 +301,7 @@ async def chat(
 
     response = await dialectic_call(
         query,
-        unified_working_representation,
+        working_representation_str,
         recent_conversation_history,
         peer_name,
         peer_card,

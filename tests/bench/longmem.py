@@ -52,6 +52,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -119,7 +120,9 @@ class LongMemEvalRunner:
         """
         self.honcho_url: str = honcho_url
         self.anthropic_api_key: str | None = anthropic_api_key
-        self.timeout_seconds: int | None = timeout_seconds
+        self.timeout_seconds: int = (
+            timeout_seconds if timeout_seconds is not None else 10000
+        )
 
         # Configure logging
         logging.basicConfig(
@@ -162,6 +165,34 @@ class LongMemEvalRunner:
                 seconds_rounded = 0
             return f"{minutes}m{seconds_rounded:02d}s"
         return f"{total_seconds:.2f}s"
+
+    def _parse_date(self, date_str: str) -> datetime:
+        """Parse longmemeval date format to datetime.
+
+        Args:
+            date_str: Date string in format "YYYY/MM/DD (Day) HH:MM"
+
+        Returns:
+            Parsed datetime object
+
+        Raises:
+            ValueError: If date format is invalid
+        """
+        try:
+            # Extract the date and time parts, ignoring the day name in parentheses
+            # Format: "2023/05/20 (Sat) 02:21"
+            parts = date_str.split(") ")
+            if len(parts) != 2:
+                raise ValueError(f"Invalid date format: {date_str}")
+
+            date_part = parts[0].split(" (")[0]  # "2023/05/20"
+            time_part = parts[1]  # "02:21"
+
+            # Combine and parse
+            datetime_str = f"{date_part} {time_part}"
+            return datetime.strptime(datetime_str, "%Y/%m/%d %H:%M")
+        except (ValueError, IndexError) as e:
+            raise ValueError(f"Failed to parse date '{date_str}': {e}") from e
 
     def load_test_file(self, test_file: Path) -> list[dict[str, Any]]:
         """
@@ -208,9 +239,7 @@ class LongMemEvalRunner:
         try:
             await honcho_client.poll_deriver_status(
                 session_id=session_id,
-                timeout=float(self.timeout_seconds)
-                if self.timeout_seconds
-                else 10000.0,
+                timeout=float(self.timeout_seconds),
             )
             return True
         except Exception as e:
@@ -349,15 +378,34 @@ Evaluate whether the actual response correctly answers the question based on the
             haystack_sessions = question_data.get("haystack_sessions", [])
             haystack_session_ids = question_data.get("haystack_session_ids", [])
 
-            message_count = 0
-
-            for i, session_messages in enumerate(haystack_sessions):
-                session_id = (
-                    haystack_session_ids[i]
-                    if i < len(haystack_session_ids)
-                    else f"session_{i}"
+            # Validate alignment of dates, session IDs, and sessions
+            if len(haystack_dates) != len(haystack_sessions):
+                raise ValueError(
+                    f"Misaligned data: {len(haystack_dates)} dates but {len(haystack_sessions)} sessions"
+                )
+            if len(haystack_session_ids) != len(haystack_sessions):
+                raise ValueError(
+                    f"Misaligned data: {len(haystack_session_ids)} session IDs but {len(haystack_sessions)} sessions"
                 )
 
+            # Parse all dates upfront to catch parsing errors early
+            parsed_dates: list[datetime] = []
+            for date_str in haystack_dates:
+                try:
+                    parsed_dates.append(self._parse_date(date_str))
+                except ValueError as e:
+                    raise ValueError(f"Error parsing date '{date_str}': {e}") from e
+
+            haystack_total_messages = sum(len(session) for session in haystack_sessions)
+
+            print(
+                f"[{workspace_id}] processing {len(haystack_sessions)} sessions with {haystack_total_messages} total messages"
+            )
+
+            # Zip together dates, session IDs, and session content
+            for session_date, session_id, session_messages in zip(
+                parsed_dates, haystack_session_ids, haystack_sessions, strict=True
+            ):
                 session = await honcho_client.session(id=session_id)
 
                 await session.add_peers(
@@ -377,12 +425,16 @@ Evaluate whether the actual response correctly answers the question based on the
                 for msg in session_messages:
                     role = msg["role"]
                     content = msg["content"]
-                    message_count += 1
 
+                    # Use the session date as the timestamp for all messages in this session
                     if role == "user":
-                        honcho_messages.append(user_peer.message(content))
+                        honcho_messages.append(
+                            user_peer.message(content, created_at=session_date)
+                        )
                     elif role == "assistant":
-                        honcho_messages.append(assistant_peer.message(content))
+                        honcho_messages.append(
+                            assistant_peer.message(content, created_at=session_date)
+                        )
 
                 if honcho_messages:
                     await session.add_messages(honcho_messages)
@@ -392,7 +444,7 @@ Evaluate whether the actual response correctly answers the question based on the
                 )
 
             print(
-                f"[{workspace_id}] Fired all ({message_count} messages). Waiting for deriver queue to be empty... will time out in {self.timeout_seconds} seconds"
+                f"[{workspace_id}] fired all messages.\nwaiting for deriver queue to be empty... will time out in {self.timeout_seconds} seconds"
             )
             await asyncio.sleep(
                 1
@@ -498,7 +550,6 @@ Evaluate whether the actual response correctly answers the question based on the
         # Print detailed per-question outputs in order after completion
         for result in results:
             print(f"\n{'=' * 60}")
-            print(f"Executing question {result['question_id']}")
             print("\n".join(result.get("output_lines", [])))
             print(f"{'=' * 60}\n")
 

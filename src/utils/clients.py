@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
 from typing import Any, Generic, Literal, TypeVar, cast, overload
@@ -371,6 +372,12 @@ async def honcho_llm_call_inner(
                 usage = response.usage
                 finish_reason = response.choices[0].finish_reason
 
+                # Validate that parsed content matches the response model
+                if not isinstance(parsed_content, response_model):
+                    raise ValueError(
+                        f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                    )
+
                 return HonchoLLMCallResponse(
                     content=parsed_content,
                     output_tokens=usage.completion_tokens if usage else 0,
@@ -446,6 +453,12 @@ async def honcho_llm_call_inner(
                     else "stop"
                 )
 
+                # Validate that parsed content matches the response model
+                if not isinstance(gemini_response.parsed, response_model):
+                    raise ValueError(
+                        f"Parsed content does not match the response model: {gemini_response.parsed} != {response_model}"
+                    )
+
                 return HonchoLLMCallResponse(
                     content=gemini_response.parsed,
                     output_tokens=token_count,
@@ -464,6 +477,7 @@ async def honcho_llm_call_inner(
             elif json_mode:
                 groq_params["response_format"] = {"type": "json_object"}
 
+            # TODO: figure out why groq returns unknown type and fix it
             response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                 **groq_params
             )
@@ -474,11 +488,27 @@ async def honcho_llm_call_inner(
             usage = response.usage  # pyright: ignore
             finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
-            return HonchoLLMCallResponse(
-                content=response.choices[0].message.content,  # pyright: ignore
-                output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                finish_reasons=[finish_reason] if finish_reason else [],
-            )
+            # Handle response model parsing for Groq
+            if response_model:
+                try:
+                    json_content = json.loads(response.choices[0].message.content)  # pyright: ignore
+                    parsed_content = response_model.model_validate(json_content)
+
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                    )
+                except (json.JSONDecodeError, ValueError) as e:
+                    raise ValueError(
+                        f"Failed to parse Groq response as {response_model}: {e}. Raw content: {response.choices[0].message.content}"  # pyright: ignore
+                    ) from e
+            else:
+                return HonchoLLMCallResponse(
+                    content=response.choices[0].message.content,  # pyright: ignore
+                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    finish_reasons=[finish_reason] if finish_reason else [],
+                )
 
 
 async def handle_streaming_response(
