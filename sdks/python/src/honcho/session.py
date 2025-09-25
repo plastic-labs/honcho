@@ -360,6 +360,17 @@ class Session(BaseModel):
             or {}
         )
 
+    def delete(self) -> None:
+        """
+        Delete this session
+
+        Makes an API call to mark this session as inactive.
+        """
+        self._client.workspaces.sessions.delete(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+        )
+
     @validate_call
     def set_metadata(
         self,

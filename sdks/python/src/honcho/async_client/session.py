@@ -362,6 +362,17 @@ class AsyncSession(BaseModel):
         )
         return AsyncPage(messages_page)
 
+    async def delete(self) -> None:
+        """
+        Delete this session.
+
+        Makes an async API call to delete this session.
+        """
+        await self._client.workspaces.sessions.delete(
+            session_id=self.workspace_id,
+            workspace_id=self.id,
+        )
+
     async def get_metadata(self) -> dict[str, object]:
         """
         Get metadata for this session.

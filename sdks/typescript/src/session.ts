@@ -428,6 +428,15 @@ export class Session {
   }
 
   /**
+   * Delete this session.
+   *
+   * Makes an API call to mark this session as inactive.
+   */
+  async delete(): Promise<void> {
+    await this._client.workspaces.sessions.delete(this.workspaceId, this.id)
+  }
+
+  /**
    * Get optimized context for this session within a token limit.
    *
    * Makes an API call to retrieve a curated list of messages that provides
