@@ -2,11 +2,12 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.config import settings
-from src.deriver.queue_manager import QueueManager
+from src.deriver.queue_manager import QueueManager, WorkerOwnership
 
 
 @pytest.mark.asyncio
@@ -163,9 +164,22 @@ class TestQueueProcessing:
         first, second = ordered[0], ordered[1]
 
         qm = QueueManager()
+
+        # Manually create an ActiveQueueSession for the test
+        from nanoid import generate as generate_nanoid
+
+        aqs = models.ActiveQueueSession(
+            id=generate_nanoid(),
+            work_unit_key=first.work_unit_key,
+        )
+        db_session.add(aqs)
+        await db_session.commit()
+        await db_session.refresh(aqs)
+
         batch = await qm.get_message_batch(
-            first.work_unit_key,
             task_type="representation",
+            work_unit_key=first.work_unit_key,
+            aqs_id=aqs.id,
         )
         nxt = batch[0] if batch else None
         assert nxt is not None and nxt.id == first.id
@@ -174,8 +188,9 @@ class TestQueueProcessing:
         first.processed = True
         await db_session.commit()
         batch2 = await qm.get_message_batch(
-            first.work_unit_key,
             task_type="representation",
+            work_unit_key=first.work_unit_key,
+            aqs_id=aqs.id,
         )
         nxt2 = batch2[0] if batch2 else None
         assert nxt2 is not None and nxt2.id == second.id
@@ -341,17 +356,21 @@ class TestQueueProcessing:
 
         # Process work unit and verify batching
         qm = QueueManager()
-        with (
-            patch(
-                "src.deriver.queue_manager.process_items",
-                side_effect=mock_process_items,
-            ),
-            patch(
-                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
-                return_value=True,
-            ),
+        work_unit_key = queue_items[0].work_unit_key
+        worker_id = "test_worker"
+
+        # Manually claim and assign ownership
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed_units[work_unit_key]
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=aqs_id
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_items",
+            side_effect=mock_process_items,
         ):
-            await qm.process_work_unit(queue_items[0].work_unit_key, "test_worker")
+            await qm.process_work_unit(work_unit_key, worker_id)
 
         # Should create 2 batches due to token limits
         assert len(processed_batches) == 2
@@ -424,27 +443,29 @@ class TestQueueProcessing:
                 {"task_type": task_type, "payload_count": len(queue_payloads)}
             )
 
+        from src.deriver.queue_manager import WorkerOwnership
+
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
-        with (
-            patch(
-                "src.deriver.queue_manager.process_items",
-                side_effect=mock_process_items,
-            ),
-            patch(
-                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
-                return_value=True,
-            ),
+        worker_id = "test_worker"
+
+        # Manually claim and assign ownership
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed_units[work_unit_key]
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=aqs_id
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_items",
+            side_effect=mock_process_items,
         ):
-            await qm.process_work_unit(work_unit_key, "test_worker")
+            await qm.process_work_unit(work_unit_key, worker_id)
 
         # Verify both messages were processed in separate batches
         assert len(processed_batches) == 2
         assert all(batch["task_type"] == "summary" for batch in processed_batches)
         assert all(batch["payload_count"] == 1 for batch in processed_batches)
-
-        # Verify the corresponding DB records are marked as processed
-        from sqlalchemy import select
 
         # Query for the summary queue items that were processed
         processed_items = (
@@ -556,18 +577,24 @@ class TestQueueProcessing:
             )
 
         # Process work unit and verify batching
+        from src.deriver.queue_manager import WorkerOwnership
+
         qm = QueueManager()
-        with (
-            patch(
-                "src.deriver.queue_manager.process_items",
-                side_effect=mock_process_items,
-            ),
-            patch(
-                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
-                return_value=True,
-            ),
+        work_unit_key = queue_items[0].work_unit_key
+        worker_id = "test_worker"
+
+        # Manually claim and assign ownership
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed_units[work_unit_key]
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=aqs_id
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_items",
+            side_effect=mock_process_items,
         ):
-            await qm.process_work_unit(queue_items[0].work_unit_key, "test_worker")
+            await qm.process_work_unit(work_unit_key, worker_id)
 
         # Should create 2 batches: first large message alone, then second and third together
         assert len(processed_batches) == 2
@@ -664,18 +691,24 @@ class TestQueueProcessing:
             )
 
         # Process work unit and verify batching
+        from src.deriver.queue_manager import WorkerOwnership
+
         qm = QueueManager()
-        with (
-            patch(
-                "src.deriver.queue_manager.process_items",
-                side_effect=mock_process_items,
-            ),
-            patch(
-                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
-                return_value=True,
-            ),
+        work_unit_key = queue_items[0].work_unit_key
+        worker_id = "test_worker"
+
+        # Manually claim and assign ownership
+        claimed_units = await qm.claim_work_units(db_session, [work_unit_key])
+        aqs_id = claimed_units[work_unit_key]
+        qm.worker_ownership[worker_id] = WorkerOwnership(
+            work_unit_key=work_unit_key, aqs_id=aqs_id
+        )
+
+        with patch(
+            "src.deriver.queue_manager.process_items",
+            side_effect=mock_process_items,
         ):
-            await qm.process_work_unit(queue_items[0].work_unit_key, "test_worker")
+            await qm.process_work_unit(work_unit_key, worker_id)
 
         # Should create 2 batches: first two messages together (exactly at limit), third alone
         assert len(processed_batches) == 2
