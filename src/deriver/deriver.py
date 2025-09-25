@@ -152,7 +152,7 @@ async def process_representation_tasks_batch(
     if speaker_peer_card is None:
         logger.warning("No peer card found for %s", latest_payload.sender_name)
     else:
-        logger.info("Using peer card: %s", speaker_peer_card)
+        logger.debug("Using peer card for %s", latest_payload.sender_name)
 
     # Get working representation data early for token estimation
     async with tracked_db("deriver.get_working_representation_data") as db:
