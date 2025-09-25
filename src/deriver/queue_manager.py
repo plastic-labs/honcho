@@ -7,6 +7,7 @@ from logging import getLogger
 
 import sentry_sdk
 from dotenv import load_dotenv
+from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
 from sqlalchemy import BigInteger, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -29,7 +30,9 @@ class QueueManager:
     def __init__(self):
         self.shutdown_event: asyncio.Event = asyncio.Event()
         self.active_tasks: set[asyncio.Task[None]] = set()
-        self.owned_work_units: set[str] = set()
+        self.worker_ownership: dict[
+            str, tuple[str, str]
+        ] = {}  # {worker_id: (work_unit_key, aqs_id)}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
         # Initialize from settings
@@ -53,13 +56,58 @@ class QueueManager:
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
 
-    def track_work_unit(self, work_unit_key: str) -> None:
-        """Track a new work unit owned by this process"""
-        self.owned_work_units.add(work_unit_key)
+    def track_worker_work_unit(
+        self, worker_id: str, work_unit_key: str, aqs_id: str
+    ) -> None:
+        """Track a work unit owned by a specific worker"""
+        self.worker_ownership[worker_id] = (work_unit_key, aqs_id)
+        logger.debug(
+            f"Worker {worker_id} now owns work unit {work_unit_key} (AQS ID: {aqs_id})"
+        )
 
-    def untrack_work_unit(self, work_unit_key: str) -> None:
-        """Remove a work unit from tracking"""
-        self.owned_work_units.discard(work_unit_key)
+    def untrack_worker_work_unit(self, worker_id: str, work_unit_key: str) -> None:
+        """Remove a work unit from worker tracking"""
+        if worker_id in self.worker_ownership:
+            # Verify this worker actually owns the expected work unit
+            stored_work_unit, _ = self.worker_ownership[worker_id]
+            if stored_work_unit == work_unit_key:
+                del self.worker_ownership[worker_id]
+        logger.debug(f"Worker {worker_id} no longer owns work unit {work_unit_key}")
+
+    def create_worker_id(self) -> str:
+        """Generate a unique worker ID for this processing task"""
+        return generate_nanoid()
+
+    def get_total_owned_work_units(self) -> int:
+        """Get the total number of work units owned by all workers"""
+        return len(self.worker_ownership)
+
+    async def verify_worker_ownership(self, worker_id: str, work_unit_key: str) -> bool:
+        """
+        Verify that a specific worker still owns the work unit.
+        We check:
+        1) If the worker is tracking any work units
+        2) If the worker is tracking the correct work unit
+        3) If the worker's ActiveQueueSession ID is still valid
+        """
+
+        if worker_id not in self.worker_ownership:
+            return False
+
+        stored_work_unit, expected_aqs_id = self.worker_ownership[worker_id]
+        if stored_work_unit != work_unit_key:
+            return False
+
+        # Verify against database
+        async with tracked_db("verify_worker_ownership") as db:
+            result = await db.execute(
+                select(models.ActiveQueueSession.id)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                .where(models.ActiveQueueSession.id == expected_aqs_id)
+            )
+            aqs_id = result.scalar_one_or_none()
+
+            return aqs_id is not None
 
     async def initialize(self) -> None:
         """Setup signal handlers, initialize client, and start the main polling loop"""
@@ -94,14 +142,18 @@ class QueueManager:
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
-        if self.owned_work_units:
-            logger.info(f"Cleaning up {len(self.owned_work_units)} owned work units...")
+        total_work_units = self.get_total_owned_work_units()
+        if total_work_units > 0:
+            logger.debug(f"Cleaning up {total_work_units} owned work units...")
             try:
                 # Use the tracked_db dependency for transaction safety
                 async with tracked_db("queue_cleanup") as db:
-                    for work_unit_key in self.owned_work_units:
+                    # Collect all AQS IDs from all workers
+                    for work_unit_key, aqs_id in self.worker_ownership.values():
                         await db.execute(
-                            delete(models.ActiveQueueSession).where(
+                            delete(models.ActiveQueueSession)
+                            .where(models.ActiveQueueSession.id == aqs_id)
+                            .where(
                                 models.ActiveQueueSession.work_unit_key == work_unit_key
                             )
                         )
@@ -145,17 +197,15 @@ class QueueManager:
                 )
             await db.commit()
 
-    async def get_and_claim_work_units(self) -> Sequence[str]:
+    async def get_and_claim_work_units(self) -> dict[str, str]:
         """
         Get available work units that aren't being processed.
-        Returns a list of work unit keys.
+        Returns a dict mapping work_unit_key to aqs_id.
         """
-        claimed_units: list[str] = []
-
         async with tracked_db(
             "get_available_work_units"
         ) as db:  # Get number of available workers
-            limit: int = max(0, self.workers - len(self.owned_work_units))
+            limit: int = max(0, self.workers - self.get_total_owned_work_units())
 
             query = (
                 select(models.QueueItem.work_unit_key)
@@ -175,32 +225,36 @@ class QueueManager:
             available_units = result.scalars().all()
             if not available_units:
                 await db.commit()
-                return []
+                return {}
 
-            claimed_units = await self.claim_work_units(db, available_units)
+            claimed_mapping = await self.claim_work_units(db, available_units)
             await db.commit()
 
-            for work_unit in claimed_units:
-                self.track_work_unit(work_unit)
-
-            return claimed_units
+            return claimed_mapping
 
     async def claim_work_units(
         self, db: AsyncSession, work_unit_keys: Sequence[str]
-    ) -> list[str]:
+    ) -> dict[str, str]:
+        """
+        Claim work units and return a mapping of work_unit_key to aqs_id.
+        Returns only the work units that were successfully claimed.
+        """
         values = [{"work_unit_key": key} for key in work_unit_keys]
 
         stmt = (
             insert(models.ActiveQueueSession)
             .values(values)
             .on_conflict_do_nothing()
-            .returning(models.ActiveQueueSession.work_unit_key)
+            .returning(
+                models.ActiveQueueSession.work_unit_key, models.ActiveQueueSession.id
+            )
         )
 
         result = await db.execute(stmt)
-        claimed_units = result.scalars().all()
-        logger.debug(f"Claimed {len(claimed_units)} work units")
-        return list(claimed_units)
+        claimed_rows = result.all()
+        claimed_mapping = {row[0]: row[1] for row in claimed_rows}
+        logger.debug(f"Claimed {len(claimed_mapping)} work units")
+        return claimed_mapping
 
     async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
@@ -221,13 +275,19 @@ class QueueManager:
 
                 try:
                     await self.cleanup_stale_work_units()
-                    new_work_units = await self.get_and_claim_work_units()
-                    if new_work_units:
-                        for work_unit in new_work_units:
+                    claimed_work_units = await self.get_and_claim_work_units()
+                    if claimed_work_units:
+                        for work_unit_key, aqs_id in claimed_work_units.items():
                             # Create a new task for processing this work unit
                             if not self.shutdown_event.is_set():
+                                # Track worker ownership
+                                worker_id = self.create_worker_id()
+                                self.track_worker_work_unit(
+                                    worker_id, work_unit_key, aqs_id
+                                )
+
                                 task: Task[None] = asyncio.create_task(
-                                    self.process_work_unit(work_unit)
+                                    self.process_work_unit(work_unit_key, worker_id)
                                 )
                                 self.add_task(task)
                     else:
@@ -249,9 +309,11 @@ class QueueManager:
     ######################
 
     @sentry_sdk.trace
-    async def process_work_unit(self, work_unit_key: str):
+    async def process_work_unit(self, work_unit_key: str, worker_id: str):
         """Process all messages for a specific work unit by routing to the correct handler."""
-        logger.debug(f"Starting to process work unit {work_unit_key}")
+        logger.debug(
+            f"Worker {worker_id} starting to process work unit {work_unit_key}"
+        )
         async with self.semaphore:
             message_count = 0
             try:
@@ -259,6 +321,13 @@ class QueueManager:
                 task_type = parsed_key["task_type"]
 
                 while not self.shutdown_event.is_set():
+                    # Check if this worker still owns this work unit before processing
+                    if not await self.verify_worker_ownership(worker_id, work_unit_key):
+                        logger.warning(
+                            f"Worker {worker_id} lost ownership of work unit {work_unit_key}, stopping processing {work_unit_key}"
+                        )
+                        break
+
                     messages_to_process: list[QueueItem] = await self.get_message_batch(
                         work_unit_key,
                         task_type,
@@ -294,8 +363,22 @@ class QueueManager:
 
             finally:
                 # Remove work unit from active_queue_sessions when done
-                logger.debug(f"Removing work unit {work_unit_key} from active sessions")
-                removed = await self._cleanup_work_unit(work_unit_key)
+                if worker_id in self.worker_ownership:
+                    stored_work_unit, aqs_id = self.worker_ownership[worker_id]
+                    if stored_work_unit == work_unit_key:
+                        logger.debug(
+                            f"Worker {worker_id} removing work unit {work_unit_key} from active sessions (AQS ID: {aqs_id})"
+                        )
+                        removed = await self._cleanup_work_unit(work_unit_key, aqs_id)
+                    else:
+                        removed = False
+                    # Clean up worker tracking
+                    self.untrack_worker_work_unit(worker_id, work_unit_key)
+                else:
+                    logger.debug(
+                        f"Work unit {work_unit_key} already cleaned up by another worker, worker {worker_id} skipping cleanup"
+                    )
+                    removed = False
 
                 if removed and message_count > 0:
                     # Only publish webhook if we actually removed an active session
@@ -307,7 +390,7 @@ class QueueManager:
 
                         parsed_key = parse_work_unit_key(work_unit_key)
                         if parsed_key["task_type"] in ["representation", "summary"]:
-                            logger.info(
+                            logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key}"
                             )
                             await publish_webhook_event(
@@ -330,7 +413,11 @@ class QueueManager:
                         f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
                     )
 
-                self.untrack_work_unit(work_unit_key)
+                # Ensure worker tracking is cleaned up even if we didn't do DB cleanup
+                if worker_id in self.worker_ownership:
+                    stored_work_unit, _ = self.worker_ownership[worker_id]
+                    if stored_work_unit == work_unit_key:
+                        self.untrack_worker_work_unit(worker_id, work_unit_key)
 
     @sentry_sdk.trace
     async def get_message_batch(
@@ -432,12 +519,15 @@ class QueueManager:
             )
             await db.commit()
 
-    async def _cleanup_work_unit(self, work_unit_key: str) -> bool:
+    async def _cleanup_work_unit(self, work_unit_key: str, aqs_id: str) -> bool:
+        """
+        Clean up a specific work unit session by both work_unit_key and AQS ID.
+        """
         async with tracked_db("cleanup_work_unit") as db:
             result = await db.execute(
-                delete(models.ActiveQueueSession).where(
-                    models.ActiveQueueSession.work_unit_key == work_unit_key
-                )
+                delete(models.ActiveQueueSession)
+                .where(models.ActiveQueueSession.id == aqs_id)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
             )
             await db.commit()
             return result.rowcount > 0

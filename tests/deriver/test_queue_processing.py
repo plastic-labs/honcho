@@ -60,7 +60,7 @@ class TestQueueProcessing:
         # The API already claimed returned units; verify it's tracked and not returned again
         from sqlalchemy import select
 
-        work_unit = work_units[0]
+        work_unit = list(work_units.keys())[0]
         tracked = (
             await db_session.execute(
                 select(models.ActiveQueueSession).where(
@@ -99,11 +99,11 @@ class TestQueueProcessing:
         queue_manager = QueueManager()
         claimed = await queue_manager.get_and_claim_work_units()
         assert len(claimed) > 0
-        key = claimed[0]
+        key = list(claimed.keys())[0]
 
         # Trying to claim the same key again via the API should return empty list
         claimed_again = await queue_manager.claim_work_units(db_session, [key])
-        assert claimed_again == []
+        assert claimed_again == {}
 
     @pytest.mark.asyncio
     async def test_get_next_message_orders_and_filters_simple(
@@ -191,9 +191,10 @@ class TestQueueProcessing:
         qm = QueueManager()
         claimed = await qm.get_and_claim_work_units()
         assert len(claimed) > 0
-        key = claimed[0]
+        key = list(claimed.keys())[0]
+        aqs_id = claimed[key]
 
-        removed = await qm._cleanup_work_unit(key)  # pyright: ignore[reportPrivateUsage]
+        removed = await qm._cleanup_work_unit(key, aqs_id)  # pyright: ignore[reportPrivateUsage]
         assert removed is True
 
         remaining = (
@@ -225,7 +226,7 @@ class TestQueueProcessing:
         work_units = await queue_manager.get_and_claim_work_units()
 
         # This test ensures the cleanup logic doesn't break, though we don't have stale entries yet
-        assert isinstance(work_units, list)
+        assert isinstance(work_units, dict)
 
     async def test_work_unit_key_format(
         self, sample_session_with_peers: tuple[models.Session, list[models.Peer]]
@@ -340,10 +341,17 @@ class TestQueueProcessing:
 
         # Process work unit and verify batching
         qm = QueueManager()
-        with patch(
-            "src.deriver.queue_manager.process_items", side_effect=mock_process_items
+        with (
+            patch(
+                "src.deriver.queue_manager.process_items",
+                side_effect=mock_process_items,
+            ),
+            patch(
+                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
+                return_value=True,
+            ),
         ):
-            await qm.process_work_unit(queue_items[0].work_unit_key)
+            await qm.process_work_unit(queue_items[0].work_unit_key, "test_worker")
 
         # Should create 2 batches due to token limits
         assert len(processed_batches) == 2
@@ -418,10 +426,17 @@ class TestQueueProcessing:
 
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
-        with patch(
-            "src.deriver.queue_manager.process_items", side_effect=mock_process_items
+        with (
+            patch(
+                "src.deriver.queue_manager.process_items",
+                side_effect=mock_process_items,
+            ),
+            patch(
+                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
+                return_value=True,
+            ),
         ):
-            await qm.process_work_unit(work_unit_key)
+            await qm.process_work_unit(work_unit_key, "test_worker")
 
         # Verify both messages were processed in separate batches
         assert len(processed_batches) == 2
@@ -542,10 +557,17 @@ class TestQueueProcessing:
 
         # Process work unit and verify batching
         qm = QueueManager()
-        with patch(
-            "src.deriver.queue_manager.process_items", side_effect=mock_process_items
+        with (
+            patch(
+                "src.deriver.queue_manager.process_items",
+                side_effect=mock_process_items,
+            ),
+            patch(
+                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
+                return_value=True,
+            ),
         ):
-            await qm.process_work_unit(queue_items[0].work_unit_key)
+            await qm.process_work_unit(queue_items[0].work_unit_key, "test_worker")
 
         # Should create 2 batches: first large message alone, then second and third together
         assert len(processed_batches) == 2
@@ -643,10 +665,17 @@ class TestQueueProcessing:
 
         # Process work unit and verify batching
         qm = QueueManager()
-        with patch(
-            "src.deriver.queue_manager.process_items", side_effect=mock_process_items
+        with (
+            patch(
+                "src.deriver.queue_manager.process_items",
+                side_effect=mock_process_items,
+            ),
+            patch(
+                "src.deriver.queue_manager.QueueManager.verify_worker_ownership",
+                return_value=True,
+            ),
         ):
-            await qm.process_work_unit(queue_items[0].work_unit_key)
+            await qm.process_work_unit(queue_items[0].work_unit_key, "test_worker")
 
         # Should create 2 batches: first two messages together (exactly at limit), third alone
         assert len(processed_batches) == 2
