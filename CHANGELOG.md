@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.3.2] - 2025-09-25
+
+### Added
+
+- Get peer cards endpoint (`GET /v2/peers/{peer_id}/peer-card`) for retrieving targeted peer context information
+
+### Changed
+
+- Replaced Mirascope dependency with small client implementation for better control
+- Optimized deriver performance by using joins on messages table instead of storing token count in queue payload
+- Database scope optimization for various operations
+- Batch representation task processing for ~10x speed improvement in practice
+
+### Fixed
+
+- Separated clean and claim work units in queue manager to prevent race conditions
+- Skip locked ActiveQueueSession rows on delete operations
+- Langfuse SDK integration updates for compatibility
+- Added configurable maximum message size to prevent token overflow in deriver
+- Various minor bugfixes
+
 ## [2.3.0] — 2025-08-14
 
 ### Added
