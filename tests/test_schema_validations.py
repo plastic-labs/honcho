@@ -3,6 +3,7 @@ from pydantic import ValidationError
 
 from src.schemas import (
     DocumentCreate,
+    DocumentMetadata,
     MessageCreate,
     PeerCreate,
     SessionCreate,
@@ -92,18 +93,46 @@ class TestMessageValidations:
 
 class TestDocumentValidations:
     def test_valid_document_create(self):
-        doc = DocumentCreate(content="test content", metadata={})
+        metadata = DocumentMetadata(
+            message_id=1,
+            session_name="test",
+            level="explicit",
+            premises=[],
+            message_created_at="2021-01-01T00:00:00Z",
+        )
+        doc = DocumentCreate(
+            content="test content",
+            metadata=metadata,
+        )
         assert doc.content == "test content"
-        assert doc.metadata == {}
+        assert doc.metadata == metadata
 
     def test_document_content_too_short(self):
         with pytest.raises(ValidationError) as exc_info:
-            DocumentCreate(content="", metadata={})
+            DocumentCreate(
+                content="",
+                metadata=DocumentMetadata(
+                    message_id=1,
+                    session_name="test",
+                    level="explicit",
+                    premises=[],
+                    message_created_at="2021-01-01T00:00:00Z",
+                ),
+            )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_short"
 
     def test_document_content_too_long(self):
         with pytest.raises(ValidationError) as exc_info:
-            DocumentCreate(content="a" * 100001, metadata={})
+            DocumentCreate(
+                content="a" * 100001,
+                metadata=DocumentMetadata(
+                    message_id=1,
+                    session_name="test",
+                    level="explicit",
+                    premises=[],
+                    message_created_at="2021-01-01T00:00:00Z",
+                ),
+            )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"

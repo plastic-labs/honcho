@@ -9,7 +9,7 @@ import pytest
 from src import models
 from src.deriver.deriver import process_representation_tasks_batch
 from src.deriver.queue_payload import RepresentationPayload
-from src.utils.shared_models import ReasoningResponseWithThinking
+from src.utils.representation import Representation
 
 
 @pytest.mark.asyncio
@@ -98,11 +98,11 @@ class TestDeriverProcessing:
         assert mock_embedding_store is not None
 
         # Verify we can call the mocked methods
-        await mock_embedding_store.save_unified_observations([])
+        await mock_embedding_store.save_representation([])
         mock_embedding_store.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
-        assert mock_embedding_store.save_unified_observations.called  # type: ignore[attr-defined]
+        assert mock_embedding_store.save_representation.called  # type: ignore[attr-defined]
 
     async def test_representation_batch_uses_earliest_cutoff(
         self,
@@ -123,24 +123,22 @@ class TestDeriverProcessing:
 
         # Provide a stub working representation so embedding lookups are skipped.
         monkeypatch.setattr(
-            "src.deriver.deriver.crud.get_working_representation_data",
+            "src.crud.get_working_representation",
             AsyncMock(
-                return_value={
-                    "final_observations": {
-                        "explicit": ["existing"],
-                        "deductive": [],
-                    }
-                }
+                return_value=Representation(
+                    explicit=[],
+                    deductive=[],
+                )
             ),
         )
 
         # Avoid DB access for collection and peer card
         monkeypatch.setattr(
-            "src.deriver.deriver.crud.get_or_create_collection",
+            "src.crud.get_or_create_collection",
             AsyncMock(return_value=type("Collection", (), {"name": "dummy"})()),
         )
         monkeypatch.setattr(
-            "src.deriver.deriver.crud.get_peer_card",
+            "src.crud.get_peer_card",
             AsyncMock(return_value=[]),
         )
         # Short-circuit tracked_db context manager
@@ -155,17 +153,7 @@ class TestDeriverProcessing:
         # Avoid executing the full reasoning pipeline; we only care about cutoff behavior.
         monkeypatch.setattr(
             "src.deriver.deriver.CertaintyReasoner.reason",
-            AsyncMock(
-                return_value=ReasoningResponseWithThinking(
-                    thinking=None, explicit=[], deductive=[]
-                )
-            ),
-        )
-
-        # Skip persisting results back to the database.
-        monkeypatch.setattr(
-            "src.deriver.deriver.save_working_representation_to_peer",
-            AsyncMock(),
+            AsyncMock(return_value=Representation(explicit=[], deductive=[])),
         )
 
         # Create test payloads with different message IDs (earlier message has lower ID)

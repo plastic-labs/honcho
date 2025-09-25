@@ -190,7 +190,7 @@ class DeriverSettings(HonchoSettings):
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
@@ -209,8 +209,8 @@ class DeriverSettings(HonchoSettings):
     # Maximum number of observations to store in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
-        int, Field(default=100, gt=0, le=500)
-    ] = 100
+        int, Field(default=50, gt=0, le=500)
+    ] = 50
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,

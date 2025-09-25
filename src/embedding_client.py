@@ -49,6 +49,40 @@ class EmbeddingClient:
         )
         return response.data[0].embedding
 
+    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Simple batch embedding for a list of text strings.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            List of embedding vectors corresponding to input texts
+
+        Raises:
+            ValueError: If any text exceeds token limits
+        """
+        embeddings: list[list[float]] = []
+        batch_size = 2048  # OpenAI batch limit
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            try:
+                response = await self.client.embeddings.create(
+                    input=batch,
+                    model="text-embedding-3-small",
+                )
+                embeddings.extend([data.embedding for data in response.data])
+            except Exception as e:
+                # Check if it's a token limit error and re-raise as ValueError for consistency
+                if "token" in str(e).lower():
+                    raise ValueError(
+                        f"Text content exceeds maximum token limit of {self.max_embedding_tokens}."
+                    ) from e
+                raise
+
+        return embeddings
+
     async def batch_embed(
         self, id_resource_dict: dict[str, tuple[str, list[int]]]
     ) -> dict[str, list[list[float]]]:
