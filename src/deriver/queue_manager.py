@@ -211,13 +211,12 @@ class QueueManager:
         Get available work units that aren't being processed.
         Returns a dict mapping work_unit_key to aqs_id.
         """
+        limit: int = max(0, self.workers - self.get_total_owned_work_units())
+        if limit == 0:
+            return {}
         async with tracked_db(
             "get_available_work_units"
         ) as db:  # Get number of available workers
-            limit: int = max(0, self.workers - self.get_total_owned_work_units())
-            if limit == 0:
-                return {}
-
             query = (
                 select(models.QueueItem.work_unit_key)
                 .outerjoin(
