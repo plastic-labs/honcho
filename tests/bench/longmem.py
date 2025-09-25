@@ -39,6 +39,7 @@ Optional arguments:
 --anthropic-api-key: Anthropic API key for response judging (can be set in .env as LLM_ANTHROPIC_API_KEY or provided as an argument)
 --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes)
 --honcho-url: URL of the running Honcho instance (default: http://localhost:8000)
+--batch-size: Number of questions to run concurrently in each batch (default: 10)
 ```
 
 ## Other notes
@@ -557,13 +558,14 @@ Evaluate whether the actual response correctly answers the question based on the
         return results
 
     async def run_all_questions(
-        self, test_file: Path
+        self, test_file: Path, batch_size: int = 10
     ) -> tuple[list[TestResult], float]:
         """
         Run all questions in a longmemeval test file.
 
         Args:
             test_file: Path to the longmemeval JSON file
+            batch_size: Number of questions to run concurrently in each batch
 
         Returns:
             Tuple of (list of test results, total duration)
@@ -574,20 +576,38 @@ Evaluate whether the actual response correctly answers the question based on the
         )
 
         overall_start = time.time()
-        # Run all questions concurrently
-        results: list[TestResult] = await asyncio.gather(
-            *[self.execute_question(q) for q in questions]
-        )
+
+        # Process questions in batches
+        all_results: list[TestResult] = []
+
+        for i in range(0, len(questions), batch_size):
+            batch = questions[i : i + batch_size]
+            batch_num = (i // batch_size) + 1
+            total_batches = (len(questions) + batch_size - 1) // batch_size
+
+            print(f"\n{'=' * 60}")
+            print(
+                f"Processing batch {batch_num}/{total_batches} ({len(batch)} questions)"
+            )
+            print(f"{'=' * 60}")
+
+            # Run questions in current batch concurrently
+            batch_results: list[TestResult] = await asyncio.gather(
+                *[self.execute_question(q) for q in batch]
+            )
+
+            # Print detailed per-question outputs for this batch
+            for result in batch_results:
+                print(f"\n{'=' * 60}")
+                print("\n".join(result.get("output_lines", [])))
+                print(f"{'=' * 60}\n")
+
+            all_results.extend(batch_results)
+
         overall_end = time.time()
         overall_duration = overall_end - overall_start
 
-        # Print detailed per-question outputs in order after completion
-        for result in results:
-            print(f"\n{'=' * 60}")
-            print("\n".join(result.get("output_lines", [])))
-            print(f"{'=' * 60}\n")
-
-        return results, overall_duration
+        return all_results, overall_duration
 
     def print_summary(
         self, results: list[TestResult], total_elapsed_seconds: float | None = None
@@ -678,11 +698,22 @@ Examples:
         help="Timeout for deriver queue to empty in seconds (default: 10 minutes)",
     )
 
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=10,
+        help="Number of questions to run concurrently in each batch (default: 10)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
     if not args.test_file.exists():
         print(f"Error: Test file {args.test_file} does not exist")
+        return 1
+
+    if args.batch_size <= 0:
+        print(f"Error: Batch size must be positive, got {args.batch_size}")
         return 1
 
     # Create test runner
@@ -694,7 +725,9 @@ Examples:
 
     try:
         # Run all questions
-        results, total_elapsed = await runner.run_all_questions(args.test_file)
+        results, total_elapsed = await runner.run_all_questions(
+            args.test_file, args.batch_size
+        )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
 
         # Return exit code based on results

@@ -57,7 +57,6 @@ SELECTED_PROVIDERS = [
     ("Dialectic", settings.DIALECTIC.PROVIDER),
     ("Summary", settings.SUMMARY.PROVIDER),
     ("Deriver", settings.DERIVER.PROVIDER),
-    ("Query Generation Provider", settings.DIALECTIC.QUERY_GENERATION_PROVIDER),
 ]
 
 for provider_name, provider_value in SELECTED_PROVIDERS:
