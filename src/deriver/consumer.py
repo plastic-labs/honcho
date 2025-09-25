@@ -1,7 +1,6 @@
 import logging
 from typing import Any
 
-import sentry_sdk
 from langfuse import get_client
 from pydantic import ValidationError
 from rich.console import Console
@@ -11,6 +10,7 @@ from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
+from src.utils.tracing import with_sentry_transaction
 from src.webhooks import webhook_delivery
 
 from .queue_payload import (
@@ -103,7 +103,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
         raise ValueError(f"Invalid task type: {task_type}")
 
 
-@sentry_sdk.trace
+@with_sentry_transaction("process_webhook", op="deriver")
 async def process_webhook(
     payload: WebhookPayload,
 ) -> None:
@@ -111,7 +111,7 @@ async def process_webhook(
         await webhook_delivery.deliver_webhook(db, payload)
 
 
-@sentry_sdk.trace
+@with_sentry_transaction("process_summary", op="deriver")
 async def process_summary_task(
     payload: SummaryPayload,
 ) -> None:

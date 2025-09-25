@@ -39,6 +39,7 @@ from src.utils.shared_models import (
     ReasoningResponseWithThinking,
     UnifiedObservation,
 )
+from src.utils.tracing import with_sentry_transaction
 
 from .prompts import critical_analysis_prompt, peer_card_prompt
 from .queue_payload import (
@@ -114,7 +115,7 @@ async def peer_card_call(
     return response.content
 
 
-@sentry_sdk.trace
+@with_sentry_transaction("process_representation_tasks_batch", op="deriver")
 async def process_representation_tasks_batch(
     payloads: list[RepresentationPayload],
 ) -> None:
