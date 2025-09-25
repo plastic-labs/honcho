@@ -402,24 +402,52 @@ Evaluate whether the actual response correctly answers the question based on the
                 f"[{workspace_id}] processing {len(haystack_sessions)} sessions with {haystack_total_messages} total messages"
             )
 
+            # Determine which peer should be observed based on question type
+            is_assistant_type = question_type == "single-session-assistant"
+
             # Zip together dates, session IDs, and session content
             for session_date, session_id, session_messages in zip(
                 parsed_dates, haystack_session_ids, haystack_sessions, strict=True
             ):
                 session = await honcho_client.session(id=session_id)
 
-                await session.add_peers(
-                    [
-                        (
-                            user_peer,
-                            SessionPeerConfig(observe_me=True, observe_others=False),
-                        ),
-                        (
-                            assistant_peer,
-                            SessionPeerConfig(observe_me=False, observe_others=False),
-                        ),
-                    ]
-                )
+                # Configure peer observation based on question type
+                if is_assistant_type:
+                    # For assistant questions, observe the assistant peer
+                    await session.add_peers(
+                        [
+                            (
+                                user_peer,
+                                SessionPeerConfig(
+                                    observe_me=False, observe_others=False
+                                ),
+                            ),
+                            (
+                                assistant_peer,
+                                SessionPeerConfig(
+                                    observe_me=True, observe_others=False
+                                ),
+                            ),
+                        ]
+                    )
+                else:
+                    # For user questions, observe the user peer (default behavior)
+                    await session.add_peers(
+                        [
+                            (
+                                user_peer,
+                                SessionPeerConfig(
+                                    observe_me=True, observe_others=False
+                                ),
+                            ),
+                            (
+                                assistant_peer,
+                                SessionPeerConfig(
+                                    observe_me=False, observe_others=False
+                                ),
+                            ),
+                        ]
+                    )
 
                 honcho_messages: list[MessageCreateParam] = []
                 for msg in session_messages:
@@ -460,8 +488,14 @@ Evaluate whether the actual response correctly answers the question based on the
             output_lines.append(f"\nAsking question: {question}")
 
             try:
-                # Use the user peer to ask the question
-                actual_response = await user_peer.chat(question)
+                # Use the appropriate peer based on question type
+                if is_assistant_type:
+                    # For assistant questions, use the assistant peer
+                    actual_response = await assistant_peer.chat(question)
+                else:
+                    # For user questions, use the user peer (default behavior)
+                    actual_response = await user_peer.chat(question)
+
                 actual_response = actual_response if actual_response is not None else ""
 
                 # Judge the response

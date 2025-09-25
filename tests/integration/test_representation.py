@@ -700,8 +700,10 @@ class TestPromptRepresentationConversion:
             ],
         )
 
+        timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+
         representation = prompt_rep.to_representation(
-            message_id=123, session_name="test_session"
+            message_id=123, session_name="test_session", timestamp=timestamp
         )
 
         assert len(representation.explicit) == 2
@@ -712,6 +714,7 @@ class TestPromptRepresentationConversion:
         assert representation.explicit[0].message_id == 123
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
+        assert representation.explicit[0].created_at == timestamp
 
         # Check deductive observation
         deductive_obs = representation.deductive[0]
@@ -722,12 +725,15 @@ class TestPromptRepresentationConversion:
         assert deductive_obs.premises == ["User likes coffee", "User works remotely"]
         assert deductive_obs.message_id == 123
         assert deductive_obs.session_name == "test_session"
+        assert deductive_obs.created_at == timestamp
 
     async def test_empty_prompt_representation_conversion(self):
         """Test converting empty PromptRepresentation"""
         empty_prompt_rep = PromptRepresentation()
         representation = empty_prompt_rep.to_representation(
-            message_id=1, session_name="test"
+            message_id=1,
+            session_name="test",
+            timestamp=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
 
         assert representation.is_empty()

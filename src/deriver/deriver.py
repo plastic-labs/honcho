@@ -315,7 +315,9 @@ class CertaintyReasoner:
             ) from e
 
         reasoning_response = reasoning_response.to_representation(
-            latest_payload.message_id, latest_payload.session_name
+            latest_payload.message_id,
+            latest_payload.session_name,
+            latest_payload.created_at,
         )
 
         if settings.LANGFUSE_PUBLIC_KEY:

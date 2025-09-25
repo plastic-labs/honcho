@@ -2,8 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from src.utils.formatting import parse_datetime_iso, utc_now_iso
-
 
 class Observation(BaseModel):
     created_at: datetime
@@ -50,6 +48,10 @@ class DeductiveObservation(Observation):
     def __str__(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
         return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
+
+    def str_no_timestamps(self) -> str:
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"{self.conclusion}\n{premises_text}"
 
     def __hash__(self) -> int:
         """
@@ -199,7 +201,7 @@ class Representation(BaseModel):
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation}")
+            parts.append(f"{i}. {observation.str_no_timestamps()}")
         parts.append("")
 
         return "\n".join(parts)
@@ -258,19 +260,20 @@ class PromptRepresentation(BaseModel):
         default_factory=list,
     )
 
-    def to_representation(self, message_id: int, session_name: str) -> Representation:
+    def to_representation(
+        self, message_id: int, session_name: str, timestamp: datetime
+    ) -> Representation:
         """
         Convert a PromptRepresentation object to a Representation object.
 
         NOTE: all observations produced by this method will have the same timestamp, so
         only use it on the output of a single inference call.
         """
-        created_at = parse_datetime_iso(utc_now_iso())
         return Representation(
             explicit=[
                 ExplicitObservation(
                     content=e,
-                    created_at=created_at,
+                    created_at=timestamp,
                     message_id=message_id,
                     session_name=session_name,
                 )
@@ -278,7 +281,7 @@ class PromptRepresentation(BaseModel):
             ],
             deductive=[
                 DeductiveObservation(
-                    created_at=created_at,
+                    created_at=timestamp,
                     message_id=message_id,
                     session_name=session_name,
                     conclusion=d.conclusion,
