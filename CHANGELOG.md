@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Added configurable maximum message size to prevent token overflow in deriver
 - Various minor bugfixes
 
+## [2.3.1] - 2025-09-18
+
+### Fixed
+
+- Added max message count to deriver in order to not overflow token limits
+
 ## [2.3.0] — 2025-08-14
 
 ### Added
