@@ -6,7 +6,7 @@ and reasoning tasks.
 """
 
 import datetime
-import logging
+from functools import cache
 from inspect import cleandoc as c
 
 from src.deriver.utils import estimate_tokens
@@ -162,19 +162,12 @@ If there's no new key info, set "card" to null (or omit it) to signal no update.
     )
 
 
-# Cache for base prompt tokens - only changes on redeploys
-_base_prompt_tokens_cache: int | None = None
-
-
-def estimate_base_prompt_tokens(logger: logging.Logger) -> int:
+@cache
+def estimate_base_prompt_tokens() -> int:
     """Estimate base prompt tokens by calling critical_analysis_prompt with empty values.
 
     This value is cached since it only changes on redeploys when the prompt template changes.
     """
-    global _base_prompt_tokens_cache
-
-    if _base_prompt_tokens_cache is not None:
-        return _base_prompt_tokens_cache
 
     try:
         base_prompt = critical_analysis_prompt(
@@ -185,11 +178,7 @@ def estimate_base_prompt_tokens(logger: logging.Logger) -> int:
             history="",
             new_turns=[],
         )
-        _base_prompt_tokens_cache = estimate_tokens(base_prompt)
-        logger.debug("Cached base prompt tokens: %d", _base_prompt_tokens_cache)
-        return _base_prompt_tokens_cache
-    except Exception as e:
-        logger.warning("Failed to estimate base prompt tokens: %s", e)
+        return estimate_tokens(base_prompt)
+    except Exception:
         # Return a conservative estimate if estimation fails
-        _base_prompt_tokens_cache = 500
-        return _base_prompt_tokens_cache
+        return 500

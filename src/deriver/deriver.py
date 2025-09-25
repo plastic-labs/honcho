@@ -169,7 +169,7 @@ async def process_representation_tasks_batch(
     # Estimate tokens for deriver input
     peer_card_tokens = estimate_tokens(speaker_peer_card)
     working_rep_tokens = _estimate_working_representation_tokens(working_rep_data)
-    base_prompt_tokens = estimate_base_prompt_tokens(logger)
+    base_prompt_tokens = estimate_base_prompt_tokens()
 
     # Estimate tokens for new conversation turns
     new_turns = [
