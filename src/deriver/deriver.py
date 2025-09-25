@@ -189,7 +189,7 @@ async def process_representation_tasks_batch(
         settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
     )
 
-    logger.info(
+    logger.debug(
         "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
         + "New turns: %d, Total estimated: %d, Available for context: %d",
         peer_card_tokens,

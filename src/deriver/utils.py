@@ -76,4 +76,7 @@ def estimate_tokens(text: str | list[str] | None) -> int:
         return 0
     if isinstance(text, list):
         text = "\n".join(text)
-    return len(tokenizer.encode(text))
+    try:
+        return len(tokenizer.encode(text))
+    except Exception:
+        return len(text) // 4
