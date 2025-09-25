@@ -116,6 +116,35 @@ class QueueManager:
     # Polling and Scheduling #
     ##########################
 
+    async def cleanup_stale_work_units(self) -> None:
+        """Clean up stale work units"""
+        async with tracked_db("cleanup_stale_work_units") as db:
+            cutoff = datetime.now(timezone.utc) - timedelta(
+                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
+            )
+
+            stale_ids = (
+                (
+                    await db.execute(
+                        select(models.ActiveQueueSession.id)
+                        .where(models.ActiveQueueSession.last_updated < cutoff)
+                        .order_by(models.ActiveQueueSession.last_updated)
+                        .with_for_update(skip_locked=True)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+
+            # Delete only the records we successfully got locks for
+            if stale_ids:
+                await db.execute(
+                    delete(models.ActiveQueueSession).where(
+                        models.ActiveQueueSession.id.in_(stale_ids)
+                    )
+                )
+            await db.commit()
+
     async def get_and_claim_work_units(self) -> Sequence[str]:
         """
         Get available work units that aren't being processed.
@@ -123,18 +152,9 @@ class QueueManager:
         """
         claimed_units: list[str] = []
 
-        async with tracked_db("get_available_work_units") as db:
-            # Clean up stale work units
-            five_minutes_ago = datetime.now(timezone.utc) - timedelta(
-                minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
-            )
-            await db.execute(
-                delete(models.ActiveQueueSession).where(
-                    models.ActiveQueueSession.last_updated < five_minutes_ago
-                )
-            )
-
-            # Get number of available workers
+        async with tracked_db(
+            "get_available_work_units"
+        ) as db:  # Get number of available workers
             limit: int = max(0, self.workers - len(self.owned_work_units))
 
             query = (
@@ -200,6 +220,7 @@ class QueueManager:
                     continue
 
                 try:
+                    await self.cleanup_stale_work_units()
                     new_work_units = await self.get_and_claim_work_units()
                     if new_work_units:
                         for work_unit in new_work_units:
