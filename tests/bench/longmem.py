@@ -17,7 +17,7 @@ This script:
 uv sync
 source .venv/bin/activate
 ```
-NOTE: you may create a .env file in this directory to customize honcho config
+NOTE: you may create a .env file in this directory to customize honcho config. The harness will print the config it is using.
 
 1. Run the test harness:
 ```
@@ -323,7 +323,7 @@ Evaluate whether the actual response correctly answers the question based on the
         output_lines.append(f"Expected: {expected_answer}")
 
         # Create workspace for this question
-        workspace_id = f"{question_id}_{question_type}_{int(time.time())}"
+        workspace_id = f"{question_id}_{question_type}"
         honcho_client = await self.create_honcho_client(workspace_id)
 
         results: TestResult = {
@@ -345,8 +345,11 @@ Evaluate whether the actual response correctly answers the question based on the
             assistant_peer = await honcho_client.peer(id="assistant")
 
             # Process haystack sessions
+            haystack_dates = question_data.get("haystack_dates", [])
             haystack_sessions = question_data.get("haystack_sessions", [])
             haystack_session_ids = question_data.get("haystack_session_ids", [])
+
+            message_count = 0
 
             for i, session_messages in enumerate(haystack_sessions):
                 session_id = (
@@ -374,6 +377,7 @@ Evaluate whether the actual response correctly answers the question based on the
                 for msg in session_messages:
                     role = msg["role"]
                     content = msg["content"]
+                    message_count += 1
 
                     if role == "user":
                         honcho_messages.append(user_peer.message(content))
@@ -387,10 +391,12 @@ Evaluate whether the actual response correctly answers the question based on the
                     SessionResult(name=session_id, message_count=len(honcho_messages))
                 )
 
-            output_lines.append(
-                "\nFired all messages. Waiting for deriver queue to be empty..."
+            print(
+                f"[{workspace_id}] Fired all ({message_count} messages). Waiting for deriver queue to be empty... will time out in {self.timeout_seconds} seconds"
             )
-            await asyncio.sleep(1)  # Give time for messages to be queued
+            await asyncio.sleep(
+                1
+            )  # Give time for at least some tasks to be queued, so deriver queue size check doesn't immediately return 0
 
             queue_empty = await self.wait_for_deriver_queue_empty(honcho_client)
             if not queue_empty:
@@ -477,7 +483,9 @@ Evaluate whether the actual response correctly answers the question based on the
             Tuple of (list of test results, total duration)
         """
         questions = self.load_test_file(test_file)
-        print(f"found {len(questions)} questions in {test_file}")
+        print(
+            f"found {len(questions)} {'question' if len(questions) == 1 else 'questions'} in {test_file}"
+        )
 
         overall_start = time.time()
         # Run all questions concurrently
@@ -581,8 +589,8 @@ Examples:
     parser.add_argument(
         "--timeout",
         type=int,
-        default=60,
-        help="Timeout for deriver queue to empty in seconds (default: 60)",
+        default=None,
+        help="Timeout for deriver queue to empty in seconds (default: 10 minutes)",
     )
 
     args = parser.parse_args()

@@ -195,6 +195,7 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
+    USE_PEER_CARD: bool = True
     PEER_CARD_PROVIDER: SupportedProviders = "openai"
     PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
     # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...

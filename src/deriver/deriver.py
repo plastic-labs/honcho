@@ -171,20 +171,23 @@ async def process_representation_tasks_batch(
         len(working_representation.deductive),
     )
 
-    async with tracked_db("deriver.get_peer_card") as db:
-        speaker_peer_card: list[str] | None = await crud.get_peer_card(
-            db,
-            latest_payload.workspace_name,
-            latest_payload.sender_name,
-            latest_payload.target_name,
-        )
-    if speaker_peer_card is None:
-        logger.warning(
-            "No peer card found for %s. Normal if brand-new peer.",
-            latest_payload.sender_name,
-        )
+    if settings.DERIVER.USE_PEER_CARD:
+        async with tracked_db("deriver.get_peer_card") as db:
+            speaker_peer_card: list[str] | None = await crud.get_peer_card(
+                db,
+                latest_payload.workspace_name,
+                latest_payload.sender_name,
+                latest_payload.target_name,
+            )
+        if speaker_peer_card is None:
+            logger.warning(
+                "No peer card found for %s. Normal if brand-new peer.",
+                latest_payload.sender_name,
+            )
+        else:
+            logger.info("Using peer card: %s", speaker_peer_card)
     else:
-        logger.info("Using peer card: %s", speaker_peer_card)
+        speaker_peer_card = None
 
     # got working representation and peer card, log timing
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
@@ -359,18 +362,19 @@ class CertaintyReasoner:
             "",
         )
 
-        update_peer_card_start = time.perf_counter()
-        if not new_observations.is_empty():
-            await self._update_peer_card(speaker_peer_card, new_observations)
-        update_peer_card_duration = (
-            time.perf_counter() - update_peer_card_start
-        ) * 1000
-        accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
-            "update_peer_card",
-            update_peer_card_duration,
-            "ms",
-        )
+        if settings.DERIVER.USE_PEER_CARD:
+            update_peer_card_start = time.perf_counter()
+            if not new_observations.is_empty():
+                await self._update_peer_card(speaker_peer_card, new_observations)
+            update_peer_card_duration = (
+                time.perf_counter() - update_peer_card_start
+            ) * 1000
+            accumulate_metric(
+                f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+                "update_peer_card",
+                update_peer_card_duration,
+                "ms",
+            )
 
         return reasoning_response
 
