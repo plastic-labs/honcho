@@ -287,6 +287,48 @@ async def process_representation_tasks_batch(
             working_representation
         )
         logger.info("No working representation found, using global semantic search")
+
+        # Recalculate tokens now that we have a new working representation
+        new_working_rep_tokens = _estimate_working_representation_tokens(
+            {
+                "final_observations": {
+                    "thinking": working_representation.thinking,
+                    "explicit": working_representation.explicit,
+                    "deductive": [
+                        {
+                            "conclusion": obs.conclusion,
+                            "premises": obs.premises,
+                        }
+                        for obs in working_representation.deductive
+                    ],
+                }
+            }
+        )
+
+        # Update estimated input tokens with the new working representation
+        estimated_input_tokens = (
+            peer_card_tokens
+            + new_working_rep_tokens
+            + base_prompt_tokens
+            + new_turns_tokens
+        )
+
+        # Recalculate available tokens for context
+        available_context_tokens = max(
+            0,
+            settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+        )
+
+        # Recalculate formatted_history with updated token limit
+        async with tracked_db("deriver.recalc_session_context") as db:
+            formatted_history = await summarizer.get_session_context_formatted(
+                db,
+                latest_payload.workspace_name,
+                latest_payload.session_name,
+                token_limit=available_context_tokens,
+                cutoff=earliest_payload.message_id,
+                include_summary=True,
+            )
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
         f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
