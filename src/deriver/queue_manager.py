@@ -70,11 +70,9 @@ class QueueManager:
 
     def untrack_worker_work_unit(self, worker_id: str, work_unit_key: str) -> None:
         """Remove a work unit from worker tracking"""
-        if worker_id in self.worker_ownership:
-            # Verify this worker actually owns the expected work unit
-            ownership = self.worker_ownership[worker_id]
-            if ownership.work_unit_key == work_unit_key:
-                del self.worker_ownership[worker_id]
+        ownership = self.worker_ownership.get(worker_id)
+        if ownership and ownership.work_unit_key == work_unit_key:
+            del self.worker_ownership[worker_id]
 
     def create_worker_id(self) -> str:
         """Generate a unique worker ID for this processing task"""
@@ -123,14 +121,13 @@ class QueueManager:
             try:
                 # Use the tracked_db dependency for transaction safety
                 async with tracked_db("queue_cleanup") as db:
-                    # Collect all AQS IDs from all workers
-                    for ownership in self.worker_ownership.values():
+                    aqs_ids = [
+                        ownership.aqs_id for ownership in self.worker_ownership.values()
+                    ]
+                    if aqs_ids:
                         await db.execute(
-                            delete(models.ActiveQueueSession)
-                            .where(models.ActiveQueueSession.id == ownership.aqs_id)
-                            .where(
-                                models.ActiveQueueSession.work_unit_key
-                                == ownership.work_unit_key
+                            delete(models.ActiveQueueSession).where(
+                                models.ActiveQueueSession.id.in_(aqs_ids)
                             )
                         )
                     await db.commit()
@@ -290,7 +287,7 @@ class QueueManager:
     ######################
 
     @sentry_sdk.trace
-    async def process_work_unit(self, work_unit_key: str, worker_id: str):
+    async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(
             f"Worker {worker_id} starting to process work unit {work_unit_key}"
@@ -347,22 +344,15 @@ class QueueManager:
 
             finally:
                 # Remove work unit from active_queue_sessions when done
-                if worker_id in self.worker_ownership:
-                    ownership = self.worker_ownership[worker_id]
-                    if ownership.work_unit_key == work_unit_key:
-                        removed = await self._cleanup_work_unit(
-                            work_unit_key, ownership.aqs_id
-                        )
-                    else:
-                        removed = False
-                    # Clean up worker tracking
-                    self.untrack_worker_work_unit(worker_id, work_unit_key)
-                else:
-                    logger.debug(
-                        f"Work unit {work_unit_key} already cleaned up by another worker, worker {worker_id} skipping cleanup"
+                ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
+                if ownership and ownership.work_unit_key == work_unit_key:
+                    removed = await self._cleanup_work_unit(
+                        ownership.aqs_id, work_unit_key
                     )
+                else:
                     removed = False
 
+                self.untrack_worker_work_unit(worker_id, work_unit_key)
                 if removed and message_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
@@ -395,12 +385,6 @@ class QueueManager:
                     logger.debug(
                         f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
                     )
-
-                # Ensure worker tracking is cleaned up even if we didn't do DB cleanup
-                if worker_id in self.worker_ownership:
-                    ownership = self.worker_ownership[worker_id]
-                    if ownership.work_unit_key == work_unit_key:
-                        self.untrack_worker_work_unit(worker_id, work_unit_key)
 
     @sentry_sdk.trace
     async def get_message_batch(
@@ -512,7 +496,7 @@ class QueueManager:
 
     async def mark_messages_as_processed(
         self, messages: list[QueueItem], work_unit_key: str
-    ):
+    ) -> None:
         if not messages:
             return
         async with tracked_db("process_message_batch") as db:
@@ -529,7 +513,11 @@ class QueueManager:
             )
             await db.commit()
 
-    async def _cleanup_work_unit(self, work_unit_key: str, aqs_id: str) -> bool:
+    async def _cleanup_work_unit(
+        self,
+        aqs_id: str,
+        work_unit_key: str,
+    ) -> bool:
         """
         Clean up a specific work unit session by both work_unit_key and AQS ID.
         """

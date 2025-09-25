@@ -59,9 +59,8 @@ class TestQueueProcessing:
         assert len(work_units) > 0
 
         # The API already claimed returned units; verify it's tracked and not returned again
-        from sqlalchemy import select
 
-        work_unit = list(work_units.keys())[0]
+        work_unit = next(iter(work_units.keys()))
         tracked = (
             await db_session.execute(
                 select(models.ActiveQueueSession).where(
@@ -114,8 +113,6 @@ class TestQueueProcessing:
         create_queue_payload: Callable[..., Any],
         add_queue_items: Callable[..., Any],
     ) -> None:
-        from sqlalchemy import select
-
         session, peers = sample_session_with_peers
         peer = peers[0]
 
@@ -165,11 +162,7 @@ class TestQueueProcessing:
 
         qm = QueueManager()
 
-        # Manually create an ActiveQueueSession for the test
-        from nanoid import generate as generate_nanoid
-
         aqs = models.ActiveQueueSession(
-            id=generate_nanoid(),
             work_unit_key=first.work_unit_key,
         )
         db_session.add(aqs)
@@ -201,15 +194,13 @@ class TestQueueProcessing:
         sample_queue_items: list[models.QueueItem],  # noqa: ARG001  # pyright: ignore[reportUnusedParameter]
         db_session: AsyncSession,
     ) -> None:
-        from sqlalchemy import select
-
         qm = QueueManager()
         claimed = await qm.get_and_claim_work_units()
         assert len(claimed) > 0
         key = list(claimed.keys())[0]
         aqs_id = claimed[key]
 
-        removed = await qm._cleanup_work_unit(key, aqs_id)  # pyright: ignore[reportPrivateUsage]
+        removed = await qm._cleanup_work_unit(aqs_id, key)  # pyright: ignore[reportPrivateUsage]
         assert removed is True
 
         remaining = (
@@ -443,8 +434,6 @@ class TestQueueProcessing:
                 {"task_type": task_type, "payload_count": len(queue_payloads)}
             )
 
-        from src.deriver.queue_manager import WorkerOwnership
-
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
         worker_id = "test_worker"
@@ -576,9 +565,6 @@ class TestQueueProcessing:
                 }
             )
 
-        # Process work unit and verify batching
-        from src.deriver.queue_manager import WorkerOwnership
-
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
         worker_id = "test_worker"
@@ -689,9 +675,6 @@ class TestQueueProcessing:
                     "payload_count": len(queue_payloads),
                 }
             )
-
-        # Process work unit and verify batching
-        from src.deriver.queue_manager import WorkerOwnership
 
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
