@@ -40,6 +40,7 @@ Optional arguments:
 --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes)
 --honcho-url: URL of the running Honcho instance (default: http://localhost:8000)
 --batch-size: Number of questions to run concurrently in each batch (default: 10)
+--json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file)
 ```
 
 ## Other notes
@@ -65,6 +66,8 @@ from honcho_core.types.workspaces.sessions.message_create_param import (
     MessageCreateParam,
 )
 from typing_extensions import TypedDict
+
+from src.config import settings
 
 load_dotenv()
 
@@ -227,25 +230,24 @@ class LongMemEvalRunner:
     async def wait_for_deriver_queue_empty(
         self, honcho_client: AsyncHoncho, session_id: str | None = None
     ) -> bool:
-        """
-        Wait for the deriver queue to be empty.
+        start_time = time.time()
+        while True:
+            try:
+                status = await honcho_client.get_deriver_status(session_id)
+            except Exception as _e:
+                await asyncio.sleep(1)
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= self.timeout_seconds:
+                    return False
+                continue
 
-        Args:
-            honcho_client: Honcho client instance
-            session_id: Optional session ID to wait for specific session
+            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
+                return True
 
-        Returns:
-            True if queue is empty, False if timeout exceeded
-        """
-        try:
-            await honcho_client.poll_deriver_status(
-                session_id=session_id,
-                timeout=float(self.timeout_seconds),
-            )
-            return True
-        except Exception as e:
-            self.logger.warning(f"Error polling deriver status: {e}")
-            return False
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= self.timeout_seconds:
+                return False
+            await asyncio.sleep(1)
 
     async def judge_response(
         self, question: str, expected_answer: str, actual_response: str
@@ -657,6 +659,103 @@ Evaluate whether the actual response correctly answers the question based on the
 
         print(f"{'=' * 80}")
 
+    def generate_json_summary(
+        self,
+        results: list[TestResult],
+        test_file: Path,
+        total_elapsed_seconds: float,
+        output_file: Path | None = None,
+    ) -> None:
+        """
+        Generate a comprehensive JSON summary of test results for analytics.
+
+        Args:
+            results: List of test results
+            test_file: Path to the test file that was executed
+            total_elapsed_seconds: Total elapsed time for all tests
+            output_file: Optional path to write JSON output to
+        """
+        total_questions = len(results)
+        passed_questions = sum(1 for r in results if r.get("passed", False))
+        failed_questions = total_questions - passed_questions
+
+        # Calculate statistics by question type
+        type_stats: dict[str, dict[str, int | float]] = {}
+        for result in results:
+            q_type = result["question_type"]
+            if q_type not in type_stats:
+                type_stats[q_type] = {"total": 0, "passed": 0, "failed": 0}
+            type_stats[q_type]["total"] += 1
+            if result.get("passed", False):
+                type_stats[q_type]["passed"] += 1
+            else:
+                type_stats[q_type]["failed"] += 1
+
+        # Add success rates to type stats
+        for q_type in type_stats:
+            stats = type_stats[q_type]
+            stats["success_rate"] = (
+                (stats["passed"] / stats["total"]) * 100 if stats["total"] > 0 else 0
+            )
+
+        # Calculate timing statistics
+        durations = [r["duration_seconds"] for r in results]
+        timing_stats = {
+            "total_duration_seconds": total_elapsed_seconds,
+            "individual_test_durations": {
+                "min_seconds": min(durations) if durations else 0,
+                "max_seconds": max(durations) if durations else 0,
+                "mean_seconds": sum(durations) / len(durations) if durations else 0,
+                "median_seconds": sorted(durations)[len(durations) // 2]
+                if durations
+                else 0,
+            },
+        }
+
+        # Create the full summary
+        summary = {
+            "metadata": {
+                "test_file": str(test_file),
+                "execution_timestamp": datetime.now().isoformat(),
+                "runner_version": "1.0.0",
+                "honcho_url": self.honcho_url,
+                "timeout_seconds": self.timeout_seconds,
+                "deriver_settings": settings.DERIVER.model_dump(),
+                "dialectic_settings": settings.DIALECTIC.model_dump(),
+                "dream_settings": settings.DREAM.model_dump(),
+                "summary_settings": settings.SUMMARY.model_dump(),
+            },
+            "summary_statistics": {
+                "total_questions": total_questions,
+                "passed": passed_questions,
+                "failed": failed_questions,
+                "success_rate_percent": (passed_questions / total_questions) * 100
+                if total_questions > 0
+                else 0,
+                "statistics_by_type": type_stats,
+            },
+            "timing": timing_stats,
+            "detailed_results": [
+                {
+                    "question_id": result["question_id"],
+                    "question_type": result["question_type"],
+                    "workspace_id": result["workspace_id"],
+                    "passed": result.get("passed", False),
+                    "duration_seconds": result["duration_seconds"],
+                    "start_time": result["start_time"],
+                    "end_time": result["end_time"],
+                    "error": result.get("error"),
+                    "query_executed": result.get("query_executed"),
+                }
+                for result in results
+            ],
+        }
+
+        if output_file:
+            with open(output_file, "w") as f:
+                json.dump(summary, f, indent=2, default=str)
+            print(f"\nJSON summary written to: {output_file}")
+
 
 async def main() -> int:
     """
@@ -705,6 +804,12 @@ Examples:
         help="Number of questions to run concurrently in each batch (default: 10)",
     )
 
+    parser.add_argument(
+        "--json-output",
+        type=Path,
+        help="Path to write JSON summary results for analytics (optional)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -729,6 +834,20 @@ Examples:
             args.test_file, args.batch_size
         )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
+
+        # Generate JSON output if requested
+        if args.json_output:
+            runner.generate_json_summary(
+                results, args.test_file, total_elapsed, args.json_output
+            )
+        else:
+            # Always generate a default JSON output file with timestamp
+            default_output = Path(
+                f"longmemeval_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            )
+            runner.generate_json_summary(
+                results, args.test_file, total_elapsed, default_output
+            )
 
         # Return exit code based on results
         all_passed = all(r.get("passed", False) for r in results)

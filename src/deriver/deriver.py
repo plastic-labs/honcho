@@ -333,7 +333,6 @@ class CertaintyReasoner:
             "ms",
         )
 
-        save_observations_start = time.perf_counter()
         # Save only the new observations that weren't in the original context
         new_observations = working_representation.diff_representation(
             reasoning_response
@@ -347,15 +346,6 @@ class CertaintyReasoner:
             )
         else:
             new_observations_saved = 0
-        save_observations_duration = (
-            time.perf_counter() - save_observations_start
-        ) * 1000
-        accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
-            "save_new_observations",
-            save_observations_duration,
-            "ms",
-        )
 
         accumulate_metric(
             f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
