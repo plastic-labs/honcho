@@ -35,16 +35,21 @@ class AsyncPage(AsyncPageCore[U]):
             transform_func: Optional function to transform objects from type T to type U.
                             If None, objects are passed through unchanged.
         """
-        super().__init__(items=original_page.items)  # pyright: ignore
+        # Initialize with transformed items if transform_func is provided
+        if transform_func is not None:
+            transformed_items = [transform_func(item) for item in original_page.items]
+            super().__init__(items=transformed_items)
+        else:
+            super().__init__(items=original_page.items)  # pyright: ignore
+
         self._original_page = original_page  # pyright: ignore
         self._transform_func = transform_func  # pyright: ignore
 
     @property
     def items(self) -> list[U]:  # pyright: ignore
         """Get all optionally transformed items as a list."""
-        if self._transform_func is not None:
-            return [self._transform_func(item) for item in self._original_page.items]
-        return self._original_page.items  # pyright: ignore
+        # Since we initialize with transformed items, just return the base class items
+        return super().items
 
     async def __aiter__(self) -> AsyncIterator[U]:
         """Async iterate over optionally transformed objects."""

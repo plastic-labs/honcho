@@ -1,10 +1,10 @@
 import HonchoCore from '@honcho-ai/core'
 import type { DefaultQuery } from '@honcho-ai/core/src/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
 import type {
   DeriverStatus,
   WorkspaceDeriverStatusParams,
 } from '@honcho-ai/core/src/resources/workspaces/workspaces'
+import { Message } from './message'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
@@ -339,11 +339,12 @@ export class Honcho {
     const validatedLimit = options?.limit
       ? LimitSchema.parse(options.limit)
       : undefined
-    return await this._client.workspaces.search(this.workspaceId, {
+    const response = await this._client.workspaces.search(this.workspaceId, {
       query: validatedQuery,
       filters: validatedFilters,
       limit: validatedLimit,
     })
+    return response.map((msg) => Message.fromCore(msg, this._client))
   }
 
   /**

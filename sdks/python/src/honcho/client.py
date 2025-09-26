@@ -7,9 +7,9 @@ from typing import Any, Literal
 import httpx
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types import DeriverStatus
-from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .message import Message
 from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
@@ -337,9 +337,10 @@ class Honcho(BaseModel):
             A list of Message objects representing the search results.
             Returns an empty list if no messages are found.
         """
-        return self._client.workspaces.search(
+        response = self._client.workspaces.search(
             self.workspace_id, query=query, filters=filters, limit=limit
         )
+        return [Message.from_core(msg, self._client) for msg in response]
 
     @validate_call
     def get_deriver_status(

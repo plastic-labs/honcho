@@ -13,7 +13,7 @@ class Summary(BaseModel):
     """Represents a summary of a session's conversation."""
 
     content: str = Field(..., description="The summary text")
-    message_id: int = Field(
+    message_id: str = Field(
         ..., description="The ID of the message that this summary covers up to"
     )
     summary_type: str = Field(..., description="The type of summary (short or long)")

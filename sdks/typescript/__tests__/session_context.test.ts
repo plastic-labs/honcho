@@ -1,5 +1,5 @@
-import { SessionContext, Summary } from '../src/session_context';
 import { Peer } from '../src/peer';
+import { SessionContext, Summary } from '../src/session_context';
 
 /**
  * Helper function to create a proper Message object for testing
@@ -23,7 +23,7 @@ function createTestMessage(id: string, content: string, peer_id: string, additio
 function createTestSummary(content: string): Summary {
   return new Summary({
     content,
-    message_id: 1,
+    message_id: '1',
     summary_type: 'short',
     created_at: new Date().toISOString(),
     token_count: content.length
