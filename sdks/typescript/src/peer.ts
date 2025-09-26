@@ -1,5 +1,5 @@
 import type HonchoCore from '@honcho-ai/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
 import { Session } from './session'
 import {

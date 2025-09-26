@@ -1,10 +1,10 @@
 import HonchoCore from '@honcho-ai/core'
-import type { DefaultQuery } from '@honcho-ai/core/src/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type { DefaultQuery } from '@honcho-ai/core/core'
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type {
   DeriverStatus,
   WorkspaceDeriverStatusParams,
-} from '@honcho-ai/core/src/resources/workspaces/workspaces'
+} from '@honcho-ai/core/resources/workspaces/workspaces'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
