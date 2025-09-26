@@ -322,16 +322,12 @@ def mock_llm_call_functions():
         patch(
             "src.dialectic.chat.dialectic_stream", new_callable=AsyncMock
         ) as mock_dialectic_stream,
-        patch(
-            "src.dialectic.utils.generate_semantic_queries", new_callable=AsyncMock
-        ) as mock_semantic_queries,
     ):
         # Import the required models for proper mocking
         from src.utils.representation import (
             PromptDeductiveObservation,
             PromptRepresentation,
         )
-        from src.utils.shared_models import SemanticQueries
 
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
@@ -361,18 +357,12 @@ def mock_llm_call_functions():
 
         mock_dialectic_stream.return_value = AsyncMock()
 
-        # Mock semantic query generation
-        mock_semantic_queries.return_value = SemanticQueries(
-            queries=["test query 1", "test query 2"]
-        )
-
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "critical_analysis": mock_critical_analysis,
             "dialectic_call": mock_dialectic_call,
             "dialectic_stream": mock_dialectic_stream,
-            "semantic_queries": mock_semantic_queries,
         }
 
 
@@ -385,7 +375,6 @@ def mock_honcho_llm_call():
         PromptDeductiveObservation,
         PromptRepresentation,
     )
-    from src.utils.shared_models import SemanticQueries
 
     def create_mock_response(
         response_model: Any = None,
@@ -415,8 +404,6 @@ def mock_honcho_llm_call():
                 mock_response._response = MagicMock()
                 mock_response._response.thinking = "Test thinking content"
                 return mock_response
-            elif getattr(response_model, "__name__", "") == "SemanticQueries":
-                return SemanticQueries(queries=["test query 1", "test query 2"])
             else:
                 # Generic response model mock
                 mock_response = MagicMock(spec=response_model)

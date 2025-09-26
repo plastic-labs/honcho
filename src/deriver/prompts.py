@@ -8,12 +8,14 @@ and reasoning tasks.
 import datetime
 from inspect import cleandoc as c
 
+from src.utils.representation import Representation
+
 
 def critical_analysis_prompt(
     peer_id: str,
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
-    working_representation: str | None,
+    working_representation: Representation,
     history: str,
     new_turns: list[str],
 ) -> str:
@@ -24,7 +26,7 @@ def critical_analysis_prompt(
         peer_id (str): The ID of the user being analyzed.
         peer_card (list[str] | None): The bio card of the user being analyzed.
         message_created_at (datetime.datetime): Timestamp of the message.
-        working_representation (str | None): Current user understanding context.
+        working_representation (Representation): Current user understanding context.
         history (str): Recent conversation history.
         new_turns (list[str]): New conversation turns to analyze.
 
@@ -34,7 +36,7 @@ def critical_analysis_prompt(
     # Format the peer card as a string with newlines
     peer_card_section = (
         f"""
-The user's known biographical information:
+{peer_id}'s known biographical information:
 <peer_card>
 Peer ID: {peer_id}
 {chr(10).join(peer_card)}
@@ -48,10 +50,10 @@ Peer ID: {peer_id}
         f"""
 The current user understanding:
 <current_context>
-{working_representation}
+{str(working_representation)}
 </current_context>
 """
-        if working_representation is not None
+        if not working_representation.is_empty()
         else ""
     )
 
@@ -59,30 +61,30 @@ The current user understanding:
 
     return c(
         f"""
-You are an agent who critically analyzes user messages through rigorous logical reasoning to produce only conclusions about the user that are CERTAIN.
+You are an agent who critically analyzes messages from {peer_id} through rigorous logical reasoning to produce only conclusions about them that are CERTAIN.
 
 IMPORTANT NAMING RULES
-• When you write a conclusion about the current user, always start the sentence with the user's name (e.g. "Anthony is 25 years old").
-• NEVER start a conclusion with generic phrases like "The user …" unless the user name is not known.
+• When you write a conclusion about {peer_id}, always start the sentence with {peer_id}'s name (e.g. "Anthony is 25 years old").
+• NEVER start a conclusion with generic phrases like "{peer_id} is…" unless {peer_id}'s name is not known.
 • If you must reference a third person, use their explicit name, and add clarifiers such as "(third-party)" when confusion is possible.
 
-Your goal is to IMPROVE understanding of the user through careful analysis. Your task is to arrive at truthful, factual conclusions via explicit and deductive reasoning.
+Your goal is to IMPROVE understanding of {peer_id} through careful analysis. Your task is to arrive at truthful, factual conclusions via explicit and deductive reasoning.
 
 Here are strict definitions for the reasoning modes you are to employ:
 
 1. **EXPLICIT REASONING**:
-    - Conclusions about the user that MUST be true given premises ONLY of the following types:
-        - Most recent user message
+    - Conclusions about {peer_id} that MUST be true given premises ONLY of the following types:
+        - Recent messages
         - Knowledge about the conversation history
         - Current date and time (which is: {message_created_at})
         - Timestamps from conversation history
 2. **DEDUCTIVE REASONING**:
-    - Conclusions about the user that MUST be true given premises ONLY of the following types:
+    - Conclusions about {peer_id} that MUST be true given premises ONLY of the following types:
         - Explicit conclusions
         - Previous deductive conclusions
         - General, open domain knowledge known to be true
         - Current date and time (which is: {message_created_at})
-        - Timestamps for user messages, and previous premises and conclusions
+        - Timestamps for {peer_id}'s messages, and previous premises and conclusions
 
 {peer_card_section}
 

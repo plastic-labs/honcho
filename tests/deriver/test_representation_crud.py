@@ -136,8 +136,15 @@ def test_prompt_representation_conversion():
         explicit=["A"],
         deductive=[PromptDeductiveObservation(conclusion="C", premises=["P1"])],
     )
-    rep = pr.to_representation(message_id=1, session_name="s")
+    timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    rep = pr.to_representation(
+        message_id=1,
+        session_name="s",
+        timestamp=timestamp,
+    )
     assert isinstance(rep, Representation)
     assert [e.content for e in rep.explicit] == ["A"]
     assert rep.deductive[0].conclusion == "C"
     assert rep.deductive[0].premises == ["P1"]
+    assert rep.explicit[0].created_at == timestamp
+    assert rep.deductive[0].created_at == timestamp

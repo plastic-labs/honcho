@@ -780,6 +780,8 @@ class TestGroqClient:
         from groq import AsyncGroq
 
         mock_client = AsyncMock(spec=AsyncGroq)
+        # Mock JSON response that matches SampleTestModel structure
+        json_content = '{"name": "Bob", "age": 30, "active": true}'
         mock_response = ChatCompletion(
             id="test-id",
             object="chat.completion",
@@ -788,7 +790,9 @@ class TestGroqClient:
             choices=[
                 Choice(
                     index=0,
-                    message=ChatCompletionMessage(role="assistant", content="Bob"),
+                    message=ChatCompletionMessage(
+                        role="assistant", content=json_content
+                    ),
                     finish_reason="stop",
                 )
             ],
@@ -799,7 +803,7 @@ class TestGroqClient:
         mock_client.chat.completions.create = AsyncMock(return_value=mock_response)
 
         with patch.dict(CLIENTS, {"groq": mock_client}):
-            _response = await honcho_llm_call_inner(
+            response = await honcho_llm_call_inner(
                 provider="groq",
                 model="llama-3.1-70b",
                 prompt="Generate a person",
@@ -807,7 +811,15 @@ class TestGroqClient:
                 response_model=SampleTestModel,
             )
 
-            # Verify response_format was set to the model
+            # Verify the response contains the parsed model
+            assert isinstance(response.content, SampleTestModel)
+            assert response.content.name == "Bob"
+            assert response.content.age == 30
+            assert response.content.active is True
+            assert response.output_tokens == 12
+            assert response.finish_reasons == ["stop"]
+
+            # Verify the response format was set to the model
             mock_client.chat.completions.create.assert_called_once()
             call_args = mock_client.chat.completions.create.call_args
             assert call_args.kwargs["response_format"] == SampleTestModel

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import time
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +14,7 @@ from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.utils.formatting import format_datetime_utc
 from src.utils.langfuse_client import get_langfuse_client
-from src.utils.logging import conditional_observe
+from src.utils.logging import accumulate_metric, conditional_observe
 from src.utils.representation import DeductiveObservation, Representation
 
 logger = logging.getLogger(__name__)
@@ -64,13 +65,22 @@ class EmbeddingStore:
         all_observations = representation.deductive + representation.explicit
 
         # Batch embed all observations
+        batch_embed_start = time.perf_counter()
         observation_texts = [
             obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
             for obs in all_observations
         ]
         embeddings = await embedding_client.simple_batch_embed(observation_texts)
+        batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
+        accumulate_metric(
+            f"deriver_representation_{message_id}_{self.peer_name}",
+            "embed_new_observations",
+            batch_embed_duration,
+            "ms",
+        )
 
         # Batch create document objects
+        create_document_start = time.perf_counter()
         async with tracked_db("embedding_store.save_representation") as db:
             # get_or_create_collection already handles IntegrityError with rollback and a retry
             collection = await crud.get_or_create_collection(
@@ -80,7 +90,9 @@ class EmbeddingStore:
                 self.peer_name,
             )
 
-            for obs, embedding in zip(all_observations, embeddings, strict=True):
+            # Prepare all documents for bulk creation
+            documents_to_create: list[schemas.DocumentCreate] = []
+            for obs in all_observations:
                 # NOTE: will add additional levels of reasoning in the future
                 if isinstance(obs, DeductiveObservation):
                     obs_level = "deductive"
@@ -99,20 +111,29 @@ class EmbeddingStore:
                     message_created_at=format_datetime_utc(message_created_at),
                 )
 
-                _honcho_document, is_duplicate = await crud.create_document(
-                    db,
-                    schemas.DocumentCreate(content=obs_content, metadata=metadata),
-                    collection=collection,
-                    embedding=embedding,
-                    duplicate_threshold=0.95,
+                documents_to_create.append(
+                    schemas.DocumentCreate(content=obs_content, metadata=metadata)
                 )
-                if not is_duplicate:
-                    new_documents += 1
+
+            # Use bulk creation with NO duplicate detection
+            _created_documents, new_documents = await crud.create_documents_bulk(
+                db,
+                documents_to_create,
+                collection,
+                embeddings,
+            )
 
             try:
                 await check_and_schedule_dream(db, collection)
             except Exception as e:
                 logger.warning(f"Failed to check dream scheduling: {e}")
+        create_document_duration = (time.perf_counter() - create_document_start) * 1000
+        accumulate_metric(
+            f"deriver_representation_{message_id}_{self.peer_name}",
+            "save_new_observations",
+            create_document_duration,
+            "ms",
+        )
 
         return new_documents
 

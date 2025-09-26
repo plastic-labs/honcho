@@ -5,6 +5,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.models import Message
+from src.utils.representation import (
+    DeductiveObservation,
+    ExplicitObservation,
+    Representation,
+)
 
 
 @pytest.mark.asyncio
@@ -18,7 +23,25 @@ async def test_generic_honcho_llm_call_mock():
         peer_id="test_peer_id",
         peer_card=["test_peer_card"],
         message_created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
-        working_representation="test working representation",
+        working_representation=Representation(
+            explicit=[
+                ExplicitObservation(
+                    content="test explicit observation",
+                    created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                    message_id=1,
+                    session_name="test_session",
+                )
+            ],
+            deductive=[
+                DeductiveObservation(
+                    conclusion="test deductive conclusion",
+                    premises=["test premise 1", "test premise 2"],
+                    created_at=datetime(2023, 1, 1, 0, 0, 0, tzinfo=timezone.utc),
+                    message_id=1,
+                    session_name="test_session",
+                )
+            ],
+        ),
         history="test history",
         new_turns=["test new turn"],
     )

@@ -167,3 +167,44 @@ async def create_document(
     await db.commit()
     await db.refresh(honcho_document)
     return honcho_document, False
+
+
+async def create_documents_bulk(
+    db: AsyncSession,
+    documents: list[schemas.DocumentCreate],
+    collection: models.Collection,
+    embeddings: list[list[float]],
+) -> tuple[list[models.Document], int]:
+    """
+    Create multiple documents with NO duplicate detection.
+
+    Args:
+        db: Database session
+        documents: List of document creation schemas
+        collection: Collection to save documents to
+        embeddings: Pre-computed embeddings for each document
+
+    Returns:
+        Tuple of (created/updated documents, count of new documents)
+    """
+    if len(documents) != len(embeddings):
+        raise ValidationException("Number of documents must match number of embeddings")
+
+    honcho_documents = [
+        models.Document(
+            workspace_name=collection.workspace_name,
+            peer_name=collection.peer_name,
+            collection_name=collection.name,
+            content=doc.content,
+            internal_metadata=doc.metadata.model_dump(exclude_none=True),
+            embedding=embedding,
+        )
+        for doc, embedding in zip(documents, embeddings, strict=True)
+    ]
+    db.add_all(honcho_documents)
+    await db.commit()
+
+    for doc in honcho_documents:
+        await db.refresh(doc)
+
+    return honcho_documents, len(honcho_documents)
