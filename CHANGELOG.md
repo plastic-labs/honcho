@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ### Added
 
-- Get peer cards endpoint (`GET /v2/peers/{peer_id}/peer-card`) for retrieving targeted peer context information
+- Get peer cards endpoint (`GET /v2/peers/{peer_id}/card`) for retrieving targeted peer context information
 
 ### Changed
 
