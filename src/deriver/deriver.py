@@ -11,6 +11,7 @@ from src import crud, exceptions
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
+from src.deriver.utils import estimate_tokens
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
@@ -41,7 +42,11 @@ from src.utils.shared_models import (
 )
 from src.utils.tracing import with_sentry_transaction
 
-from .prompts import critical_analysis_prompt, peer_card_prompt
+from .prompts import (
+    critical_analysis_prompt,
+    estimate_base_prompt_tokens,
+    peer_card_prompt,
+)
 from .queue_payload import (
     RepresentationPayload,
 )
@@ -138,13 +143,71 @@ async def process_representation_tasks_batch(
         earliest_payload.message_id,
     )
 
-    # Use get_session_context_formatted with configurable token limit
+    async with tracked_db("deriver.get_peer_card") as db:
+        speaker_peer_card: list[str] | None = await crud.get_peer_card(
+            db,
+            latest_payload.workspace_name,
+            latest_payload.sender_name,
+            latest_payload.target_name,
+        )
+    if speaker_peer_card is None:
+        logger.warning("No peer card found for %s", latest_payload.sender_name)
+    else:
+        logger.debug("Using peer card for %s", latest_payload.sender_name)
+
+    # Get working representation data early for token estimation
+    async with tracked_db("deriver.get_working_representation_data") as db:
+        working_rep_data: (
+            dict[str, Any] | str | None
+        ) = await crud.get_working_representation_data(
+            db,
+            latest_payload.workspace_name,
+            latest_payload.target_name,
+            latest_payload.sender_name,
+            latest_payload.session_name,
+        )
+
+    # Estimate tokens for deriver input
+    peer_card_tokens = estimate_tokens(speaker_peer_card)
+    working_rep_tokens = _estimate_working_representation_tokens(working_rep_data)
+    base_prompt_tokens = estimate_base_prompt_tokens()
+
+    # Estimate tokens for new conversation turns
+    new_turns = [
+        format_new_turn_with_timestamp(p.content, p.created_at, p.sender_name)
+        for p in payloads
+    ]
+    new_turns_tokens = estimate_tokens(new_turns)
+
+    estimated_input_tokens = (
+        peer_card_tokens + working_rep_tokens + base_prompt_tokens + new_turns_tokens
+    )
+
+    # Calculate available tokens for context
+    safety_buffer = 500
+    available_context_tokens = max(
+        0,
+        settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+    )
+
+    logger.debug(
+        "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
+        + "New turns: %d, Total estimated: %d, Available for context: %d",
+        peer_card_tokens,
+        working_rep_tokens,
+        base_prompt_tokens,
+        new_turns_tokens,
+        estimated_input_tokens,
+        available_context_tokens,
+    )
+
+    # Use get_session_context_formatted with dynamic token limit
     async with tracked_db("deriver.get_session_context") as db:
         formatted_history = await summarizer.get_session_context_formatted(
             db,
             latest_payload.workspace_name,
             latest_payload.session_name,
-            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
+            token_limit=available_context_tokens,
             cutoff=earliest_payload.message_id,
             include_summary=True,
         )
@@ -180,18 +243,6 @@ async def process_representation_tasks_batch(
 
     # Create reasoner instance
     reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payloads)
-
-    # Check for existing working representation first, fall back to global search
-    async with tracked_db("deriver.get_working_representation_data") as db:
-        working_rep_data: (
-            dict[str, Any] | str | None
-        ) = await crud.get_working_representation_data(
-            db,
-            latest_payload.workspace_name,
-            latest_payload.target_name,
-            latest_payload.sender_name,
-            latest_payload.session_name,
-        )
 
     # Time context preparation
     context_prep_start = time.perf_counter()
@@ -237,6 +288,48 @@ async def process_representation_tasks_batch(
             working_representation
         )
         logger.info("No working representation found, using global semantic search")
+
+        # Recalculate tokens now that we have a new working representation
+        new_working_rep_tokens = _estimate_working_representation_tokens(
+            {
+                "final_observations": {
+                    "thinking": working_representation.thinking,
+                    "explicit": working_representation.explicit,
+                    "deductive": [
+                        {
+                            "conclusion": obs.conclusion,
+                            "premises": obs.premises,
+                        }
+                        for obs in working_representation.deductive
+                    ],
+                }
+            }
+        )
+
+        # Update estimated input tokens with the new working representation
+        estimated_input_tokens = (
+            peer_card_tokens
+            + new_working_rep_tokens
+            + base_prompt_tokens
+            + new_turns_tokens
+        )
+
+        # Recalculate available tokens for context
+        available_context_tokens = max(
+            0,
+            settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+        )
+
+        # Recalculate formatted_history with updated token limit
+        async with tracked_db("deriver.recalc_session_context") as db:
+            formatted_history = await summarizer.get_session_context_formatted(
+                db,
+                latest_payload.workspace_name,
+                latest_payload.session_name,
+                token_limit=available_context_tokens,
+                cutoff=earliest_payload.message_id,
+                include_summary=True,
+            )
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
         f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
@@ -249,18 +342,6 @@ async def process_representation_tasks_batch(
     logger.debug(
         "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
     )
-
-    async with tracked_db("deriver.get_peer_card") as db:
-        speaker_peer_card: list[str] | None = await crud.get_peer_card(
-            db,
-            latest_payload.workspace_name,
-            latest_payload.sender_name,
-            latest_payload.target_name,
-        )
-    if speaker_peer_card is None:
-        logger.warning("No peer card found for %s", latest_payload.sender_name)
-    else:
-        logger.info("Using peer card: %s", speaker_peer_card)
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
@@ -671,3 +752,28 @@ async def save_working_representation_to_peer(
             payload.sender_name,
             payload.session_name,
         )
+
+
+def _estimate_working_representation_tokens(
+    working_rep_data: dict[str, Any] | str | None,
+) -> int:
+    """Estimate tokens for working representation data."""
+    if isinstance(working_rep_data, str):
+        return estimate_tokens(working_rep_data)
+
+    if (
+        not isinstance(working_rep_data, dict)
+        or "final_observations" not in working_rep_data
+    ):
+        return 0
+
+    final_obs = working_rep_data["final_observations"]
+
+    explicit_tokens = estimate_tokens(final_obs.get("explicit"))
+    thinking_tokens = estimate_tokens(final_obs.get("thinking"))
+    deductive_tokens = sum(
+        estimate_tokens(d.get("conclusion")) + estimate_tokens(d.get("premises"))
+        for d in final_obs.get("deductive", [])
+    )
+
+    return explicit_tokens + thinking_tokens + deductive_tokens
