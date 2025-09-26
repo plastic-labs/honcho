@@ -6,7 +6,10 @@ and reasoning tasks.
 """
 
 import datetime
+from functools import cache
 from inspect import cleandoc as c
+
+from src.deriver.utils import estimate_tokens
 
 
 def critical_analysis_prompt(
@@ -157,3 +160,25 @@ New observations:
 If there's no new key info, set "card" to null (or omit it) to signal no update. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
     """  # nosec B608 <-- this is a really dumb false positive
     )
+
+
+@cache
+def estimate_base_prompt_tokens() -> int:
+    """Estimate base prompt tokens by calling critical_analysis_prompt with empty values.
+
+    This value is cached since it only changes on redeploys when the prompt template changes.
+    """
+
+    try:
+        base_prompt = critical_analysis_prompt(
+            peer_id="",
+            peer_card=None,
+            message_created_at=datetime.datetime.now(datetime.timezone.utc),
+            working_representation=None,
+            history="",
+            new_turns=[],
+        )
+        return estimate_tokens(base_prompt)
+    except Exception:
+        # Return a conservative estimate if estimation fails
+        return 500
