@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING
+from collections.abc import AsyncGenerator
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import NOT_GIVEN
@@ -107,7 +108,7 @@ class AsyncPeer(BaseModel):
         stream: bool = False,
         target: str | AsyncPeer | None = None,
         session_id: str | None = None,
-    ) -> str | None:
+    ) -> str | AsyncGenerator[str, None] | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -128,6 +129,21 @@ class AsyncPeer(BaseModel):
             Response string containing the answer to the query, or None if no
             relevant information is available
         """
+        if stream:
+
+            async def stream_response() -> AsyncGenerator[str, None]:
+                async with self._client.workspaces.peers.with_streaming_response.chat(
+                    peer_id=self.id,
+                    workspace_id=self.workspace_id,
+                    query=query,
+                    target=str(target.id) if isinstance(target, AsyncPeer) else target,
+                    session_id=session_id,
+                ) as response:
+                    async for text in response.iter_text():
+                        yield text
+
+            return stream_response()
+
         response = await self._client.workspaces.peers.chat(
             peer_id=self.id,
             workspace_id=self.workspace_id,

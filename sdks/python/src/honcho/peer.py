@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING
+from collections.abc import Generator
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
@@ -91,7 +92,7 @@ class Peer(BaseModel):
         stream: bool = False,
         target: str | Peer | None = None,
         session_id: str | None = None,
-    ) -> str | None:
+    ) -> str | Generator[str, None, None] | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -112,6 +113,20 @@ class Peer(BaseModel):
             Response string containing the answer to the query, or None if no
             relevant information is available
         """
+        if stream:
+
+            def stream_response() -> Generator[str, None, None]:
+                with self._client.workspaces.peers.with_streaming_response.chat(
+                    peer_id=self.id,
+                    workspace_id=self.workspace_id,
+                    query=query,
+                    target=str(target.id) if isinstance(target, Peer) else target,
+                    session_id=session_id,
+                ) as response:
+                    yield from response.iter_text()
+
+            return stream_response()
+
         response = self._client.workspaces.peers.chat(
             peer_id=self.id,
             workspace_id=self.workspace_id,
