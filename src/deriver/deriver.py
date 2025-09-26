@@ -36,7 +36,7 @@ async def critical_analysis_call(
     peer_id: str,
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
-    working_representation: str | None,
+    working_representation: Representation,
     history: str,
     new_turns: list[str],
 ) -> PromptRepresentation:
@@ -125,7 +125,7 @@ async def process_representation_tasks_batch(
             latest_payload.workspace_name,
             latest_payload.session_name,
             token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-            cutoff=earliest_payload.message_id,
+            cutoff=latest_payload.message_id,
             include_summary=True,
         )
 
@@ -236,12 +236,6 @@ async def process_representation_tasks_batch(
         lf.update_current_trace(output=final_observations.format_as_markdown())
 
 
-async def process_representation_task(
-    payload: RepresentationPayload,
-) -> None:
-    await process_representation_tasks_batch([payload])
-
-
 class CertaintyReasoner:
     """Certainty reasoner for analyzing and deriving insights."""
 
@@ -289,8 +283,6 @@ class CertaintyReasoner:
             for p in self.ctx
         ]
 
-        formatted_working_representation = str(working_representation)
-
         logger.debug(
             "CRITICAL ANALYSIS: message_created_at='%s', new_turns_count=%s",
             latest_payload.created_at,
@@ -302,14 +294,14 @@ class CertaintyReasoner:
                 peer_id=latest_payload.sender_name,
                 peer_card=speaker_peer_card,
                 message_created_at=latest_payload.created_at,
-                working_representation=formatted_working_representation,
+                working_representation=working_representation,
                 history=history,
                 new_turns=new_turns,
             )
         except Exception as e:
             raise exceptions.LLMError(
                 speaker_peer_card=speaker_peer_card,
-                working_representation=formatted_working_representation,
+                working_representation=working_representation,
                 history=history,
                 new_turns=new_turns,
             ) from e

@@ -314,7 +314,7 @@ class AppSettings(HonchoSettings):
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
-    COLLECT_METRICS_LOCAL: bool = True
+    COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
 
     # Nested settings models

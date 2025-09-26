@@ -353,12 +353,17 @@ Evaluate whether the actual response correctly answers the question based on the
         question_type = question_data["question_type"]
         question = question_data["question"]
         expected_answer = question_data["answer"]
+        question_date = question_data.get("question_date", "")
+
+        question_with_date = (
+            f"[{question_date}] {question}" if question_date else question
+        )
 
         output_lines: list[str] = []
         output_lines.append(
             f"\033[1mExecuting question {question_id} ({question_type})\033[0m"
         )
-        output_lines.append(f"Question: {question}")
+        output_lines.append(f"Question: {question_with_date}")
         output_lines.append(f"Expected: {expected_answer}")
 
         # Create workspace for this question
@@ -495,26 +500,26 @@ Evaluate whether the actual response correctly answers the question based on the
                 return results
 
             # Execute the question
-            output_lines.append(f"\nAsking question: {question}")
+            output_lines.append(f"\nAsking question: {question_with_date}")
 
             try:
                 # Use the appropriate peer based on question type
                 if is_assistant_type:
                     # For assistant questions, use the assistant peer
-                    actual_response = await assistant_peer.chat(question)
+                    actual_response = await assistant_peer.chat(question_with_date)
                 else:
                     # For user questions, use the user peer (default behavior)
-                    actual_response = await user_peer.chat(question)
+                    actual_response = await user_peer.chat(question_with_date)
 
                 actual_response = actual_response if actual_response is not None else ""
 
                 # Judge the response
                 judgment = await self.judge_response(
-                    question, expected_answer, actual_response
+                    question_with_date, expected_answer, actual_response
                 )
 
                 query_result: QueryResult = {
-                    "question": question,
+                    "question": question_with_date,
                     "expected_answer": expected_answer,
                     "actual_response": actual_response,
                     "judgment": judgment,
@@ -538,7 +543,7 @@ Evaluate whether the actual response correctly answers the question based on the
             except Exception as e:
                 self.logger.error(f"Error executing question: {e}")
                 query_result = QueryResult(
-                    question=question,
+                    question=question_with_date,
                     expected_answer=expected_answer,
                     actual_response=f"ERROR: {e}",
                     judgment={
