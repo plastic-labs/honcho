@@ -222,12 +222,14 @@ async def chat(
             semantic_search_max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
             include_most_derived=True,
         )
-    working_rep_duration = asyncio.get_event_loop().time() - working_rep_start_time
+    working_rep_duration = (
+        asyncio.get_event_loop().time() - working_rep_start_time
+    ) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
         "retrieve_working_rep",
         working_rep_duration,
-        "s",
+        "ms",
     )
     logger.info(
         "Retrieved working representation with %s explicit, %s deductive observations",
@@ -310,18 +312,18 @@ async def chat(
     )
     dialectic_call_duration = (
         asyncio.get_event_loop().time() - dialectic_call_start_time
-    )
+    ) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
         "dialectic_call",
         dialectic_call_duration,
-        "s",
+        "ms",
     )
 
-    elapsed = asyncio.get_event_loop().time() - start_time
+    elapsed = (asyncio.get_event_loop().time() - start_time) * 1000
 
     accumulate_metric(
-        f"dialectic_chat_{dialectic_chat_uuid}", "total_duration", elapsed, "s"
+        f"dialectic_chat_{dialectic_chat_uuid}", "total_duration", elapsed, "ms"
     )
 
     log_performance_metrics(f"dialectic_chat_{dialectic_chat_uuid}")

@@ -14,12 +14,15 @@ from rich.table import Table
 from rich.tree import Tree
 
 from src.config import settings
+from src.utils.metrics_collector import append_metrics_to_file
 from src.utils.representation import (
     Representation,
 )
 
 # Global console instance for consistent formatting
 console = Console(markup=True)
+
+COLLECT_METRICS_LOCAL = settings.COLLECT_METRICS_LOCAL
 
 
 def conditional_observe(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -133,7 +136,7 @@ def log_performance_metrics(
     title: str = "⚡ PERFORMANCE",
 ) -> None:
     """
-    Log performance metrics in a clean table.
+    Log performance metrics in a clean table and optionally send to global collector.
     Args:
         metrics: Dictionary of metric names and (value, unit) tuples
         title: Table title
@@ -144,6 +147,9 @@ def log_performance_metrics(
         metrics = []
     metrics = accumulated_metrics.get(task_name, []) + metrics
     accumulated_metrics[task_name].clear()
+
+    if COLLECT_METRICS_LOCAL:
+        append_metrics_to_file(task_name, metrics)
 
     table = Table(
         title=f"{title} - {task_name}",

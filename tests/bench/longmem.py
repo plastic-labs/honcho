@@ -31,7 +31,7 @@ python -m tests.bench.harness
 
 3. Run this file with a selected test file:
 ```
-python -m tests.bench.longmem --test-file longmemeval_data/longmemeval_s.json
+python -m tests.bench.longmem --test-file tests/bench/longmemeval_data/longmemeval_oracle.json
 ```
 
 Optional arguments:
@@ -40,7 +40,7 @@ Optional arguments:
 --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes)
 --honcho-url: URL of the running Honcho instance (default: http://localhost:8000)
 --batch-size: Number of questions to run concurrently in each batch (default: 10)
---json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file)
+--json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file in tests/bench/eval_results)
 ```
 
 ## Other notes
@@ -68,6 +68,7 @@ from honcho_core.types.workspaces.sessions.message_create_param import (
 from typing_extensions import TypedDict
 
 from src.config import settings
+from src.utils.metrics_collector import MetricsCollector
 
 load_dotenv()
 
@@ -126,6 +127,12 @@ class LongMemEvalRunner:
         self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 10000
+        )
+
+        # Initialize metrics collector
+        self.metrics_collector: MetricsCollector = MetricsCollector()
+        self.metrics_collector.start_collection(
+            f"longmem_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         )
 
         # Configure logging
@@ -609,6 +616,9 @@ Evaluate whether the actual response correctly answers the question based on the
         overall_end = time.time()
         overall_duration = overall_end - overall_start
 
+        # Finalize metrics collection
+        self.metrics_collector.finalize_collection()
+
         return all_results, overall_duration
 
     def print_summary(
@@ -766,8 +776,8 @@ async def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s --test-file longmemeval_data/longmemeval_s.json    # Run longmemeval tests
-  %(prog)s --honcho-url http://localhost:8000                 # Custom Honcho URL
+  %(prog)s --test-file tests/bench/longmemeval_data/longmemeval_s.json    # Run longmemeval tests
+  %(prog)s --honcho-url http://localhost:8000                             # Custom Honcho URL
         """,
     )
 
@@ -835,6 +845,11 @@ Examples:
         )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
 
+        runner.metrics_collector.load_from_file(Path(settings.LOCAL_METRICS_FILE))
+
+        # Print metrics summary
+        runner.metrics_collector.print_summary()
+
         # Generate JSON output if requested
         if args.json_output:
             runner.generate_json_summary(
@@ -843,11 +858,18 @@ Examples:
         else:
             # Always generate a default JSON output file with timestamp
             default_output = Path(
-                f"longmemeval_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                f"tests/bench/eval_results/longmemeval_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             )
             runner.generate_json_summary(
                 results, args.test_file, total_elapsed, default_output
             )
+
+        # Export metrics to JSON file
+        metrics_output = Path(
+            f"tests/bench/perf_metrics/{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        )
+        runner.metrics_collector.export_to_json(metrics_output)
+        runner.metrics_collector.cleanup_collection()
 
         # Return exit code based on results
         all_passed = all(r.get("passed", False) for r in results)

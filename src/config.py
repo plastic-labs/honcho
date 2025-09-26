@@ -314,6 +314,9 @@ class AppSettings(HonchoSettings):
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
+    COLLECT_METRICS_LOCAL: bool = True
+    LOCAL_METRICS_FILE: str = "metrics.jsonl"
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
