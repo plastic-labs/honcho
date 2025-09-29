@@ -192,7 +192,7 @@ async def process_representation_tasks_batch(
     # got working representation and peer card, log timing
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
         "context_preparation",
         context_prep_duration,
         "ms",
@@ -211,7 +211,7 @@ async def process_representation_tasks_batch(
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
         "total_processing_time",
         overall_duration,
         "ms",
@@ -222,7 +222,7 @@ async def process_representation_tasks_batch(
     )
 
     accumulate_metric(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
         "observation_count",
         total_observations,
         "count",
@@ -319,7 +319,7 @@ class CertaintyReasoner:
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
         accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+            f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
             "critical_analysis_duration",
             analysis_duration_ms,
             "ms",
@@ -340,7 +340,7 @@ class CertaintyReasoner:
             new_observations_saved = 0
 
         accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+            f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
             "new_observation_count",
             new_observations_saved,
             "",
@@ -354,7 +354,7 @@ class CertaintyReasoner:
                 time.perf_counter() - update_peer_card_start
             ) * 1000
             accumulate_metric(
-                f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+                f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
                 "update_peer_card",
                 update_peer_card_duration,
                 "ms",

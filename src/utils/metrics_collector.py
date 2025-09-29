@@ -105,8 +105,6 @@ class MetricsCollector:
 
             self.metrics_by_type[metric_key].append(numeric_value)
 
-    # Debug print removed for cleaner output
-
     def load_from_file(self, filepath: Path) -> None:
         """
         Load metrics from a file into this collector.
@@ -268,7 +266,7 @@ class MetricsCollector:
                 max_str = f"{stat['max']:.2f}"
 
             print(
-                f"{metric_name:<30} {stat['count']:<8} {mean_str:<12} {median_str:<12} {min_str:<12} {max_str:<12} {unit_display}"
+                f"{metric_name:<40} {stat['count']:<8} {mean_str:<12} {median_str:<12} {min_str:<12} {max_str:<12} {unit_display}"
             )
 
         print(f"{'=' * 80}")

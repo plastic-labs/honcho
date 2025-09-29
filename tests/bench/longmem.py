@@ -58,6 +58,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
@@ -87,6 +88,7 @@ class QueryResult(TypedDict):
     expected_answer: str
     actual_response: str
     judgment: dict[str, Any]
+    token_efficiency: dict[str, Any] | None
 
 
 class TestResult(TypedDict):
@@ -176,6 +178,62 @@ class LongMemEvalRunner:
                 seconds_rounded = 0
             return f"{minutes}m{seconds_rounded:02d}s"
         return f"{total_seconds:.2f}s"
+
+    def _calculate_total_tokens(
+        self, haystack_sessions: list[list[dict[str, str]]]
+    ) -> int:
+        """Calculate total tokens from all messages in all sessions.
+
+        Args:
+            haystack_sessions: List of sessions, each containing messages
+
+        Returns:
+            Total number of tokens across all messages
+        """
+        tokenizer = tiktoken.get_encoding("cl100k_base")
+        total_tokens = 0
+
+        for session_messages in haystack_sessions:
+            for msg in session_messages:
+                content = msg.get("content", "")
+                total_tokens += len(tokenizer.encode(content))
+
+        return total_tokens
+
+    def _get_latest_tokens_used(self) -> int | None:
+        """Get the tokens_used_estimate from the most recent dialectic_chat metric.
+
+        Returns:
+            Number of tokens used, or None if not found
+        """
+        metrics_file = Path(settings.LOCAL_METRICS_FILE)
+        if not metrics_file.exists():
+            return None
+
+        # Read the file and find the most recent dialectic_chat metric
+        try:
+            with open(metrics_file) as f:
+                lines = f.readlines()
+
+            # Search backwards through the file for the most recent dialectic_chat
+            for line in reversed(lines):
+                if not line.strip():
+                    continue
+                try:
+                    data = json.loads(line)
+                    task_name = data.get("task_name", "")
+                    if task_name.startswith("dialectic_chat_"):
+                        for metric in data.get("metrics", []):
+                            metric_name = metric.get("name", "")
+                            if metric_name.endswith("tokens_used_estimate"):
+                                return int(metric.get("value", 0))
+                except (json.JSONDecodeError, KeyError, ValueError):
+                    continue
+
+        except Exception as e:
+            self.logger.warning(f"Error reading metrics file: {e}")
+
+        return None
 
     def _parse_date(self, date_str: str) -> datetime:
         """Parse longmemeval date format to datetime.
@@ -413,8 +471,11 @@ Evaluate whether the actual response correctly answers the question based on the
 
             haystack_total_messages = sum(len(session) for session in haystack_sessions)
 
+            # Calculate total tokens available in the sessions for this question
+            total_available_tokens = self._calculate_total_tokens(haystack_sessions)
+
             print(
-                f"[{workspace_id}] processing {len(haystack_sessions)} sessions with {haystack_total_messages} total messages"
+                f"[{workspace_id}] processing {len(haystack_sessions)} sessions with {haystack_total_messages} total messages ({total_available_tokens} total tokens)"
             )
 
             # Determine which peer should be observed based on question type
@@ -513,7 +574,21 @@ Evaluate whether the actual response correctly answers the question based on the
 
                 actual_response = actual_response if actual_response is not None else ""
 
-                # Judge the response
+                tokens_used = self._get_latest_tokens_used()
+
+                token_efficiency = None
+                if tokens_used is not None and total_available_tokens > 0:
+                    efficiency_ratio = tokens_used / total_available_tokens
+                    token_efficiency = {
+                        "total_available_tokens": total_available_tokens,
+                        "tokens_used": tokens_used,
+                        "efficiency_ratio": efficiency_ratio,
+                        "efficiency_percentage": efficiency_ratio * 100,
+                    }
+                    output_lines.append(
+                        f"  token efficiency: {efficiency_ratio:.4f} ({tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"
+                    )
+
                 judgment = await self.judge_response(
                     question_with_date, expected_answer, actual_response
                 )
@@ -523,6 +598,7 @@ Evaluate whether the actual response correctly answers the question based on the
                     "expected_answer": expected_answer,
                     "actual_response": actual_response,
                     "judgment": judgment,
+                    "token_efficiency": token_efficiency,
                 }
 
                 results["query_executed"] = query_result
@@ -550,6 +626,7 @@ Evaluate whether the actual response correctly answers the question based on the
                         "passed": False,
                         "reasoning": f"Question execution failed: {e}",
                     },
+                    token_efficiency=None,
                 )
                 results["query_executed"] = query_result
                 results["passed"] = False
@@ -655,6 +732,25 @@ Evaluate whether the actual response correctly answers the question based on the
         print(f"Success Rate: {(passed_questions / total_questions) * 100:.1f}%")
         print(f"Total Test Time: {self._format_duration(total_test_time)}")
 
+        efficiency_ratios: list[float] = []
+        for result in results:
+            query = result.get("query_executed")
+            if query:
+                token_eff = query.get("token_efficiency")
+                if token_eff:
+                    efficiency_ratios.append(token_eff["efficiency_ratio"])
+
+        if efficiency_ratios:
+            avg_efficiency = sum(efficiency_ratios) / len(efficiency_ratios)
+            min_efficiency = min(efficiency_ratios)
+            max_efficiency = max(efficiency_ratios)
+            print("\nToken Efficiency:")
+            print(
+                f"  Average: {avg_efficiency:.4f} ({avg_efficiency * 100:.2f}% of available tokens used)"
+            )
+            print(f"  Min: {min_efficiency:.4f} ({min_efficiency * 100:.2f}%)")
+            print(f"  Max: {max_efficiency:.4f} ({max_efficiency * 100:.2f}%)")
+
         print("\nDetailed Results:")
         print(
             f"{'Question ID':<15} {'Type':<20} {'Status':<8} {'Duration':<10} {'Workspace ID':<30}"
@@ -727,6 +823,35 @@ Evaluate whether the actual response correctly answers the question based on the
             },
         }
 
+        # Calculate token efficiency statistics
+        efficiency_ratios: list[float] = []
+        total_available_tokens_list: list[int] = []
+        tokens_used_list: list[int] = []
+        for result in results:
+            query = result.get("query_executed")
+            if query:
+                eff = query.get("token_efficiency")
+                if eff:
+                    efficiency_ratios.append(eff["efficiency_ratio"])
+                    total_available_tokens_list.append(eff["total_available_tokens"])
+                    tokens_used_list.append(eff["tokens_used"])
+
+        token_efficiency_stats = None
+        if efficiency_ratios:
+            token_efficiency_stats = {
+                "mean_efficiency_ratio": sum(efficiency_ratios)
+                / len(efficiency_ratios),
+                "min_efficiency_ratio": min(efficiency_ratios),
+                "max_efficiency_ratio": max(efficiency_ratios),
+                "median_efficiency_ratio": sorted(efficiency_ratios)[
+                    len(efficiency_ratios) // 2
+                ],
+                "mean_tokens_available": sum(total_available_tokens_list)
+                / len(total_available_tokens_list),
+                "mean_tokens_used": sum(tokens_used_list) / len(tokens_used_list),
+                "total_questions_with_metrics": len(efficiency_ratios),
+            }
+
         # Create the full summary
         summary = {
             "metadata": {
@@ -750,6 +875,7 @@ Evaluate whether the actual response correctly answers the question based on the
                 "statistics_by_type": type_stats,
             },
             "timing": timing_stats,
+            "token_efficiency": token_efficiency_stats,
             "detailed_results": [
                 {
                     "question_id": result["question_id"],
