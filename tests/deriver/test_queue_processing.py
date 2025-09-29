@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -8,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.deriver.queue_manager import QueueManager, WorkerOwnership
+from src.deriver.utils import get_work_unit_key
 
 
 @pytest.mark.asyncio
@@ -271,7 +273,6 @@ class TestQueueProcessing:
         create_queue_payload: Callable[..., Any],
     ) -> None:
         """Test that representation tasks are batched based on token limits"""
-        from unittest.mock import patch
 
         session, peers = sample_session_with_peers
         peer = peers[0]
@@ -309,9 +310,6 @@ class TestQueueProcessing:
             )
             for msg in messages
         ]
-
-        # Add items with token counts
-        from src.deriver.utils import get_work_unit_key
 
         queue_items: list[models.QueueItem] = []
         for payload in payloads:
@@ -370,6 +368,268 @@ class TestQueueProcessing:
         assert all(b["task_type"] == "representation" for b in processed_batches)
 
     @pytest.mark.asyncio
+    async def test_token_batching_filters_by_work_unit(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that messages are batched chronologically across all peers, then filtered by work unit"""
+
+        session, peers = sample_session_with_peers
+        alice, bob, steve = peers[0], peers[1], peers[2]
+
+        # Create messages from different peers with specific token counts
+        # Message sequence: alice(250), bob(400), steve(300), alice(500), bob(500), alice(40), steve(100)
+        # Token limit: 2000 - should batch messages 1-6 (1990 tokens)
+        messages_data = [
+            (alice, 250),
+            (bob, 400),
+            (steve, 300),
+            (alice, 500),
+            (bob, 500),
+            (alice, 40),
+            (steve, 100),
+        ]
+
+        messages: list[models.Message] = []
+        for peer, token_count in messages_data:
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Message from {peer.name}",
+                token_count=token_count,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+        for message in messages:
+            await db_session.refresh(message)
+
+        # Create queue items for alice's work unit (representation)
+
+        alice_queue_items: list[models.QueueItem] = []
+        bob_queue_items: list[models.QueueItem] = []
+        steve_queue_items: list[models.QueueItem] = []
+
+        for i, message in enumerate(messages):
+            peer = messages_data[i][0]
+            target = alice  # All observing alice for simplicity
+
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=message,
+                task_type="representation",
+                sender_name=peer.name,
+                target_name=target.name,
+            )
+            work_unit_key = get_work_unit_key("representation", payload)
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+            )
+            db_session.add(queue_item)
+
+            # Track items by peer
+            if peer == alice:
+                alice_queue_items.append(queue_item)
+            elif peer == bob:
+                bob_queue_items.append(queue_item)
+            else:
+                steve_queue_items.append(queue_item)
+
+        await db_session.commit()
+        for item in alice_queue_items + bob_queue_items + steve_queue_items:
+            await db_session.refresh(item)
+
+        qm = QueueManager()
+
+        # Mock the token limit to 2000 for this test
+        with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 2000):
+            # Test alice's work unit
+            alice_work_unit_key = alice_queue_items[0].work_unit_key
+            alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
+            db_session.add(alice_aqs)
+            await db_session.commit()
+            await db_session.refresh(alice_aqs)
+
+            alice_batch = await qm.get_message_batch(
+                task_type="representation",
+                work_unit_key=alice_work_unit_key,
+                aqs_id=alice_aqs.id,
+            )
+
+            # Alice should get messages 1, 4, 6 (indices 0, 3, 5 in our list)
+            assert len(alice_batch) == 3
+            alice_message_ids = {msg.payload["message_id"] for msg in alice_batch}
+            expected_alice_ids = {
+                messages[0].id,
+                messages[3].id,
+                messages[5].id,
+            }
+            assert alice_message_ids == expected_alice_ids
+
+            # Test bob's work unit
+            bob_work_unit_key = bob_queue_items[0].work_unit_key
+            bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
+            db_session.add(bob_aqs)
+            await db_session.commit()
+            await db_session.refresh(bob_aqs)
+
+            bob_batch = await qm.get_message_batch(
+                task_type="representation",
+                work_unit_key=bob_work_unit_key,
+                aqs_id=bob_aqs.id,
+            )
+
+            # Bob should get messages 2, 5 (indices 1, 4)
+            assert len(bob_batch) == 2
+            bob_message_ids = {msg.payload["message_id"] for msg in bob_batch}
+            expected_bob_ids = {messages[1].id, messages[4].id}
+            assert bob_message_ids == expected_bob_ids
+
+            # Test steve's work unit
+            steve_work_unit_key = steve_queue_items[0].work_unit_key
+            steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
+            db_session.add(steve_aqs)
+            await db_session.commit()
+            await db_session.refresh(steve_aqs)
+
+            steve_batch = await qm.get_message_batch(
+                task_type="representation",
+                work_unit_key=steve_work_unit_key,
+                aqs_id=steve_aqs.id,
+            )
+
+            # Steve should get message 3 (index 2) - message 7 is outside token batch
+            assert len(steve_batch) == 1
+            assert steve_batch[0].payload["message_id"] == messages[2].id
+
+    @pytest.mark.asyncio
+    async def test_work_unit_returns_first_message_outside_token_limit_batch(
+        self,
+        db_session: AsyncSession,
+        sample_session_with_peers: tuple[models.Session, list[models.Peer]],
+        create_queue_payload: Callable[..., Any],
+    ) -> None:
+        """Test that work unit returns at least one message even if outside token-limited batch"""
+
+        session, peers = sample_session_with_peers
+        bob, steve, alice = peers[0], peers[1], peers[2]
+
+        # Create messages: bob(800), steve(800), alice(100), alice(200)
+        # Token limit: 1500 - should allow messages 1-2 (1600 tokens, first always included)
+        # Alice's messages (3-4) are outside the chronological batch
+        # BUT fallback logic should return alice's first message to prevent starvation
+        messages_data = [
+            (bob, 800),
+            (steve, 800),
+            (alice, 100),
+            (alice, 200),
+        ]
+
+        messages: list[models.Message] = []
+        for peer, token_count in messages_data:
+            message = models.Message(
+                session_name=session.name,
+                workspace_name=session.workspace_name,
+                peer_name=peer.name,
+                content=f"Message from {peer.name}",
+                token_count=token_count,
+            )
+            db_session.add(message)
+            messages.append(message)
+
+        await db_session.commit()
+        for message in messages:
+            await db_session.refresh(message)
+
+        # Create queue items
+
+        alice_queue_items: list[models.QueueItem] = []
+        bob_queue_items: list[models.QueueItem] = []
+
+        for i, message in enumerate(messages):
+            peer = messages_data[i][0]
+            target = alice  # All observing alice
+
+            payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
+                message=message,
+                task_type="representation",
+                sender_name=peer.name,
+                target_name=target.name,
+            )
+            work_unit_key = get_work_unit_key("representation", payload)
+
+            queue_item = models.QueueItem(
+                session_id=session.id,
+                task_type="representation",
+                work_unit_key=work_unit_key,
+                payload=payload,
+                processed=False,
+            )
+            db_session.add(queue_item)
+
+            if peer == alice:
+                alice_queue_items.append(queue_item)
+            elif peer == bob:
+                bob_queue_items.append(queue_item)
+
+        await db_session.commit()
+        for item in alice_queue_items + bob_queue_items:
+            await db_session.refresh(item)
+
+        qm = QueueManager()
+
+        # Mock the token limit to 1500 for this test
+        with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 1500):
+            # Test alice's work unit - should get 1 message (her first, via row_num=1)
+            # Even though her messages are outside the token budget chronologically,
+            # row_num=1 per work_unit ensures each work unit's first message is included
+            if alice_queue_items:
+                alice_work_unit_key = alice_queue_items[0].work_unit_key
+                alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
+                db_session.add(alice_aqs)
+                await db_session.commit()
+                await db_session.refresh(alice_aqs)
+
+                alice_batch = await qm.get_message_batch(
+                    task_type="representation",
+                    work_unit_key=alice_work_unit_key,
+                    aqs_id=alice_aqs.id,
+                )
+
+                # Alice gets her first message via row_num=1 (partitioned by work_unit)
+                # This ensures forward progress without needing the fallback
+                assert len(alice_batch) == 1
+                assert (
+                    alice_batch[0].payload["message_id"] == messages[2].id
+                )  # First alice message
+
+            # Test bob's work unit - should get message 1
+            if bob_queue_items:
+                bob_work_unit_key = bob_queue_items[0].work_unit_key
+                bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
+                db_session.add(bob_aqs)
+                await db_session.commit()
+                await db_session.refresh(bob_aqs)
+
+                bob_batch = await qm.get_message_batch(
+                    task_type="representation",
+                    work_unit_key=bob_work_unit_key,
+                    aqs_id=bob_aqs.id,
+                )
+
+                # Bob should get the first message
+                assert len(bob_batch) == 1
+                assert bob_batch[0].payload["message_id"] == messages[0].id
+
+    @pytest.mark.asyncio
     async def test_single_message_processing(
         self,
         db_session: AsyncSession,
@@ -377,7 +637,6 @@ class TestQueueProcessing:
         create_queue_payload: Callable[..., Any],
     ) -> None:
         """Test that multiple summary messages in same work unit are processed separately"""
-        from unittest.mock import patch
 
         session, peers = sample_session_with_peers
         peer = peers[0]
@@ -408,7 +667,6 @@ class TestQueueProcessing:
                 message, "summary", message_seq_in_session=i + 1
             )
             payload["token_count"] = token_counts[i]
-            from src.deriver.utils import get_work_unit_key
 
             work_unit_key = get_work_unit_key("summary", payload)
 
@@ -491,7 +749,6 @@ class TestQueueProcessing:
         create_queue_payload: Callable[..., Any],
     ) -> None:
         """Test that if the first message exceeds BATCH_MAX_TOKENS, it's still included alone"""
-        from unittest.mock import patch
 
         session, peers = sample_session_with_peers
         peer = peers[0]
@@ -531,7 +788,6 @@ class TestQueueProcessing:
         ]
 
         # Add items to queue
-        from src.deriver.utils import get_work_unit_key
 
         queue_items: list[models.QueueItem] = []
         for payload in payloads:
@@ -598,7 +854,6 @@ class TestQueueProcessing:
         create_queue_payload: Callable[..., Any],
     ) -> None:
         """Test boundary condition when cumulative sum exactly equals limit"""
-        from unittest.mock import patch
 
         session, peers = sample_session_with_peers
         peer = peers[0]
@@ -642,7 +897,6 @@ class TestQueueProcessing:
         ]
 
         # Add items to queue
-        from src.deriver.utils import get_work_unit_key
 
         queue_items: list[models.QueueItem] = []
         for payload in payloads:

@@ -428,20 +428,27 @@ class QueueManager:
                 result = await db.execute(query)
                 messages = result.scalars().all()
             else:
-                # For representation tasks, get a batch based on token count.
-                # Always get at least the first message, then include additional messages
-                # as long as cumulative token count stays within limit.
-                # Join with messages table to get the actual token_count
+                # For representation tasks, get a batch based on token limit.
+                # Step 1: Parse work_unit_key to get session context
+                parsed_key = parse_work_unit_key(work_unit_key)
+                session_name = parsed_key["session_name"]
+                workspace_name = parsed_key["workspace_name"]
 
-                # Create CTE with row numbers and cumulative token counts
+                # Step 2: Create CTE with chronological batching across all messages in the session
+                # This batches messages chronologically (by message.id) within token limit,
+                # regardless of work_unit_key
                 cte = (
                     select(
                         models.QueueItem.id,
+                        models.QueueItem.work_unit_key,
                         func.row_number()
-                        .over(order_by=models.QueueItem.id)
+                        .over(
+                            partition_by=models.QueueItem.work_unit_key,
+                            order_by=models.Message.id,
+                        )
                         .label("row_num"),
                         func.sum(models.Message.token_count)
-                        .over(order_by=models.QueueItem.id)
+                        .over(order_by=models.Message.id)
                         .label("cumulative_token_count"),
                     )
                     .select_from(
@@ -454,16 +461,18 @@ class QueueManager:
                             == models.Message.id,
                         )
                     )
-                    .where(models.QueueItem.work_unit_key == work_unit_key)
+                    .where(models.Message.session_name == session_name)
+                    .where(models.Message.workspace_name == workspace_name)
                     .where(~models.QueueItem.processed)
-                    .order_by(models.QueueItem.id)
+                    .order_by(models.Message.id)
                     .cte()
                 )
 
-                # Select messages where either:
-                # 1. It's the first message (row_num = 1), OR
-                # 2. The cumulative token count is within the limit
+                # Step 3: Select messages from the batch that fit within token limit
+                # (either first message per work_unit OR within cumulative token budget)
+                # Step 4: Filter to only the target work_unit_key
                 # Also ensure worker ownership verification by joining with ActiveQueueSession
+                # Note: row_num=1 ensures each work unit's first message is always included
                 query = (
                     select(models.QueueItem)
                     .join(
@@ -482,6 +491,7 @@ class QueueManager:
                             )
                         )
                     )
+                    .where(models.QueueItem.work_unit_key == work_unit_key)
                     .where(*aqs_conditions)
                     .order_by(models.QueueItem.id)
                 )
