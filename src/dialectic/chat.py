@@ -326,6 +326,6 @@ async def chat(
         f"dialectic_chat_{dialectic_chat_uuid}", "total_duration", elapsed, "ms"
     )
 
-    log_performance_metrics(f"dialectic_chat_{dialectic_chat_uuid}")
+    log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
     # Convert AnthropicCallResponse to string for compatibility
     return str(response)

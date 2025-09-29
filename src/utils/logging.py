@@ -131,16 +131,21 @@ def accumulate_metric(
 
 
 def log_performance_metrics(
+    task_slug: str,
     task_name: str,
     metrics: list[tuple[str, str | int | float, str]] | None = None,
     title: str = "⚡ PERFORMANCE",
 ) -> None:
     """
     Log performance metrics in a clean table and optionally send to global collector.
+
     Args:
+        task_slug: Slug of the task that generated these metrics
+        task_name: Name of the task that generated these metrics
         metrics: Dictionary of metric names and (value, unit) tuples
         title: Table title
     """
+    task_name = f"{task_slug}_{task_name}"
     if not accumulated_metrics.get(task_name) and not metrics:
         return
     if metrics is None:
@@ -149,7 +154,7 @@ def log_performance_metrics(
     accumulated_metrics[task_name].clear()
 
     if COLLECT_METRICS_LOCAL:
-        append_metrics_to_file(task_name, metrics)
+        append_metrics_to_file(task_slug, task_name, metrics)
 
     table = Table(
         title=f"{title} - {task_name}",

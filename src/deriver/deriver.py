@@ -229,7 +229,7 @@ async def process_representation_tasks_batch(
     )
 
     log_performance_metrics(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}"
+        "deriver", f"{latest_payload.message_id}_{latest_payload.target_name}"
     )
 
     if settings.LANGFUSE_PUBLIC_KEY:

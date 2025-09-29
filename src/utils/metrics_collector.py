@@ -110,12 +110,15 @@ class MetricsCollector:
     def load_from_file(self, filepath: Path) -> None:
         """
         Load metrics from a file into this collector.
+        Creates the file if it doesn't exist.
 
         Args:
             filepath: Path to the metrics file to load
         """
         if not filepath.exists():
-            return
+            filepath.touch()
+            with open(filepath, "w") as f:
+                f.write("")
 
         file_metrics = load_metrics_from_file(filepath)
         for _task_name, metrics_list in file_metrics:
@@ -236,10 +239,10 @@ class MetricsCollector:
 
         print("\nAggregated Performance Metrics:")
         print(
-            f"{'Metric':<30} {'Count':<8} {'Mean':<12} {'Median':<12} {'Min':<12} {'Max':<12} {'Unit'}"
+            f"{'Metric':<40} {'Count':<8} {'Mean':<12} {'Median':<12} {'Min':<12} {'Max':<12} {'Unit'}"
         )
         print(
-            f"{'-' * 30} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}"
+            f"{'-' * 40} {'-' * 8} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 12} {'-' * 8}"
         )
 
         # Sort metrics by name for consistent display
@@ -293,12 +296,15 @@ def get_metrics_file_path() -> Path | None:
 
 
 def append_metrics_to_file(
-    task_name: str, metrics_list: list[tuple[str, str | int | float, str]]
+    task_slug: str,
+    task_name: str,
+    metrics_list: list[tuple[str, str | int | float, str]],
 ) -> None:
     """
     Append metrics to the shared metrics file for cross-process collection.
 
     Args:
+        task_slug: Slug of the task that generated these metrics
         task_name: Name of the task that generated these metrics
         metrics_list: List of (metric_name, value, unit) tuples
     """
@@ -313,9 +319,9 @@ def append_metrics_to_file(
     timestamp = time.time()
     metrics_entry = {
         "timestamp": timestamp,
-        "task_name": task_name,
+        "task_name": f"{task_slug}_{task_name}",
         "metrics": [
-            {"name": name, "value": value, "unit": unit}
+            {"name": f"{task_slug}_{name}", "value": value, "unit": unit}
             for name, value, unit in metrics_list
         ],
     }
