@@ -227,7 +227,7 @@ async def chat(
         working_rep_duration,
         "s",
     )
-    logger.info("Retrieved working representation:\n%s\n", working_representation)
+    # logger.info("Retrieved working representation:\n%s\n", working_representation)
     context_window_size -= len(tokenizer.encode(str(working_representation)))
 
     # 2. Additional context (long-term semantic search) ------------------------
@@ -256,7 +256,7 @@ async def chat(
         "s",
     )
 
-    logger.info("Retrieved additional context:\n%s", additional_context)
+    # logger.info("Retrieved additional context:\n%s", additional_context)
     context_window_size -= len(tokenizer.encode(additional_context))
 
     # 3. Recent conversation history --------------------------------------------
@@ -272,10 +272,10 @@ async def chat(
                     include_summary=True,
                 )
             )
-        logger.info("Retrieved recent conversation history")
+        # logger.info("Retrieved recent conversation history")
     else:
         recent_conversation_history = None
-        logger.info("Query is not session-scoped, skipping recent conversation history")
+        # logger.info("Query is not session-scoped, skipping recent conversation history")
 
     context_window_size -= len(tokenizer.encode(recent_conversation_history or ""))
 
@@ -296,10 +296,10 @@ async def chat(
         else:
             target_peer_card = None
 
-    if target_peer_card:
-        logger.info("Retrieved peer cards:\n%s\n%s", peer_card, target_peer_card)
-    else:
-        logger.info("Retrieved peer card:\n%s", peer_card)
+    # if target_peer_card:
+    #     logger.info("Retrieved peer cards:\n%s\n%s", peer_card, target_peer_card)
+    # else:
+    #     logger.info("Retrieved peer card:\n%s", peer_card)
 
     # 5. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = asyncio.get_event_loop().time()

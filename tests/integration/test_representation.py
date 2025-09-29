@@ -216,12 +216,14 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
+        precomputed_embedding = [0.123] * 1536
         document, is_duplicate = await crud.create_document(
             db_session,
             doc_schema,
             workspace.name,
             peer.name,
             collection_name,
+            embedding=precomputed_embedding,
         )
 
         assert not is_duplicate
@@ -258,12 +260,14 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
+        precomputed_embedding = [0.123] * 1536
         original_doc, is_duplicate = await crud.create_document(
             db_session,
             doc_schema,
             workspace.name,
             peer.name,
             collection_name,
+            embedding=precomputed_embedding,
         )
 
         assert not is_duplicate
@@ -282,6 +286,7 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
+        precomputed_embedding = [0.123] * 1536
         duplicate_doc, is_duplicate = await crud.create_document(
             db_session,
             similar_doc_schema,
@@ -289,6 +294,7 @@ class TestDocumentCreationWorkflow:
             peer.name,
             collection_name,
             duplicate_threshold=0.95,  # 95% similarity threshold
+            embedding=precomputed_embedding,
         )
 
         assert is_duplicate

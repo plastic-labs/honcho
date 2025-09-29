@@ -108,6 +108,13 @@ def peer_card_prompt(
     """
     Generate the peer card prompt for the deriver.
     Currently optimized for GPT-5 mini/nano.
+
+    Args:
+        old_peer_card: Existing biographical card lines, if any.
+        new_observations: Pre-formatted observations block (multiple lines).
+
+    Returns:
+        Formatted prompt string for (re)generating the peer card JSON.
     """
     old_peer_card_section = (
         f"""

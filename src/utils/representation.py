@@ -51,9 +51,13 @@ class DeductiveObservation(Observation):
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
         return f"[{self.created_at.replace(microsecond=0)}] {self.conclusion}\n{premises_text}"
 
+    def str_no_timestamps(self) -> str:
+        premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
+        return f"{self.conclusion}\n{premises_text}"
+
     def __hash__(self) -> int:
         """
-        Make DeductiveObservation hashable for use in sets.
+        Make DeductiveObservation hashable for use in sets. NOTE: premises are not included in the hash.
         """
         return hash(
             (self.conclusion, self.created_at, self.message_id, self.session_name)
@@ -62,7 +66,7 @@ class DeductiveObservation(Observation):
     def __eq__(self, other: object) -> bool:
         """
         Define equality for DeductiveObservation objects.
-        Two observations are equal if all their fields match.
+        Two observations are equal if all their fields match -- NOTE: premises are not included in the equality check.
         """
         if not isinstance(other, DeductiveObservation):
             return False
@@ -199,7 +203,7 @@ class Representation(BaseModel):
 
         parts.append("DEDUCTIVE:\n")
         for i, observation in enumerate(self.deductive, 1):
-            parts.append(f"{i}. {observation}")
+            parts.append(f"{i}. {observation.str_no_timestamps()}")
         parts.append("")
 
         return "\n".join(parts)

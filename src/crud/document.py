@@ -131,10 +131,8 @@ async def create_document(
                 models.Document.embedding.cosine_distance(embedding)
             ).where(models.Document.id == duplicate.id)
             distance_result = await db.execute(distance_stmt)
-            actual_distance = distance_result.scalar()
-            actual_similarity = (
-                1 - actual_distance if actual_distance is not None else None
-            )
+            actual_distance = distance_result.scalar() or 0.0
+            actual_similarity = float(1 - actual_distance)
 
             logger.info(
                 f"Duplicate found: '{document.content}' matched with '{duplicate.content}'. "

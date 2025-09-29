@@ -11,6 +11,7 @@ from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.embedding_client import embedding_client
+from src.exceptions import ValidationException
 from src.utils.formatting import format_datetime_utc
 from src.utils.logging import conditional_observe
 from src.utils.representation import DeductiveObservation, Representation
@@ -67,7 +68,12 @@ class EmbeddingStore:
             obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
             for obs in all_observations
         ]
-        embeddings = await embedding_client.simple_batch_embed(observation_texts)
+        try:
+            embeddings = await embedding_client.simple_batch_embed(observation_texts)
+        except ValueError as e:
+            raise ValidationException(
+                f"Observation content exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+            ) from e
 
         # Batch create document objects
         async with tracked_db("ed_embedding_store.save_representation") as db:
