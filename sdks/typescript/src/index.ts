@@ -13,6 +13,11 @@ export {
   Summary,
   SummaryData,
 } from './session_context'
+export {
+  type DialecticStreamChunk,
+  type DialecticStreamDelta,
+  DialecticStreamResponse,
+} from './types'
 
 // Export validation types for advanced usage
 export type {

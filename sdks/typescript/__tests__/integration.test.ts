@@ -165,7 +165,7 @@ describe('Honcho SDK Integration Tests', () => {
         'assistant',
         {
           query: 'How are you?',
-          stream: undefined,
+          stream: false,
           target: undefined,
           session_id: undefined,
         }

@@ -10,6 +10,7 @@ from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from ..types import DialecticStreamResponse
 from .pagination import AsyncPage
 
 if TYPE_CHECKING:
@@ -108,7 +109,7 @@ class AsyncPeer(BaseModel):
         stream: bool = False,
         target: str | AsyncPeer | None = None,
         session_id: str | None = None,
-    ) -> str | AsyncGenerator[str, None] | None:
+    ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -126,23 +127,50 @@ class AsyncPeer(BaseModel):
                         If provided, only information from that session is considered
 
         Returns:
-            Response string containing the answer to the query, or None if no
-            relevant information is available
+            For non-streaming: Response string containing the answer, or None if no relevant information
+            For streaming: DialecticStreamResponse object that can be iterated over and provides final response
         """
         if stream:
 
-            async def stream_response() -> AsyncGenerator[str, None]:
-                async with self._client.workspaces.peers.with_streaming_response.chat(
-                    peer_id=self.id,
-                    workspace_id=self.workspace_id,
-                    query=query,
-                    target=str(target.id) if isinstance(target, AsyncPeer) else target,
-                    session_id=session_id,
-                ) as response:
-                    async for text in response.iter_text():
-                        yield text
+            async def stream_response() -> AsyncGenerator[str]:
+                import json
 
-            return stream_response()
+                # Use undocumented request until stainless SDK is regenerated
+                body = {
+                    "query": query,
+                    "stream": True,
+                }
+                if isinstance(target, AsyncPeer):
+                    body["target"] = target.id
+                elif target:
+                    body["target"] = target
+                if session_id:
+                    body["session_id"] = session_id
+
+                # Access the underlying httpx client directly
+                url = f"{self._client.base_url}/v2/workspaces/{self.workspace_id}/peers/{self.id}/chat"
+
+                async with self._client._client.stream(
+                    "POST",
+                    url,
+                    json=body,
+                    headers={"Accept": "text/event-stream"},
+                ) as response:
+                    async for line in response.aiter_lines():
+                        if line.startswith("data: "):
+                            json_str = line[6:]  # Remove "data: " prefix
+                            try:
+                                chunk_data = json.loads(json_str)
+                                if chunk_data.get("done"):
+                                    break
+                                delta_obj = chunk_data.get("delta", {})
+                                content = delta_obj.get("content")
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                continue
+
+            return DialecticStreamResponse(stream_response())
 
         response = await self._client.workspaces.peers.chat(
             peer_id=self.id,
