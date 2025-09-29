@@ -161,8 +161,8 @@ async def process_representation_tasks_batch(
             latest_payload.workspace_name,
             latest_payload.target_name,
             latest_payload.sender_name,
-            include_semantic_query=latest_payload.content,
-            include_most_derived=False,
+            # include_semantic_query=latest_payload.content,
+            # include_most_derived=False,
         )
 
     logger.info(
@@ -330,21 +330,20 @@ class CertaintyReasoner:
             reasoning_response
         )
         if not new_observations.is_empty():
-            new_observations_saved = await self.embedding_store.save_representation(
+            await self.embedding_store.save_representation(
                 new_observations,
                 latest_payload.message_id,
                 latest_payload.session_name,
                 latest_payload.created_at,
             )
-        else:
-            new_observations_saved = 0
 
-        accumulate_metric(
-            f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
-            "new_observation_count",
-            new_observations_saved,
-            "",
-        )
+        # not currently deduplicating at the save_representation step, so this isn't useful
+        # accumulate_metric(
+        #     f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        #     "new_observation_count",
+        #     new_observations_saved,
+        #     "count",
+        # )
 
         if settings.DERIVER.USE_PEER_CARD:
             update_peer_card_start = time.perf_counter()

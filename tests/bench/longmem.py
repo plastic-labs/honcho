@@ -583,7 +583,6 @@ Evaluate whether the actual response correctly answers the question based on the
                         "total_available_tokens": total_available_tokens,
                         "tokens_used": tokens_used,
                         "efficiency_ratio": efficiency_ratio,
-                        "efficiency_percentage": efficiency_ratio * 100,
                     }
                     output_lines.append(
                         f"  token efficiency: {efficiency_ratio:.4f} ({tokens_used}/{total_available_tokens} tokens, {efficiency_ratio * 100:.2f}%)"

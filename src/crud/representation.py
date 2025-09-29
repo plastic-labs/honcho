@@ -156,6 +156,7 @@ async def get_working_representation(
             workspace_name=workspace_name,
             peer_name=observer_name,
             collection_name=collection_name,
+            db=db,
         ).get_relevant_observations(
             query=include_semantic_query,
             top_k=semantic_observations,
@@ -170,12 +171,12 @@ async def get_working_representation(
     if include_most_derived:
         stmt = (
             select(models.Document)
+            .limit(top_observations)
             .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.collection_name == collection_name,
             )
             .order_by(models.Document.internal_metadata["times_derived"].desc())
-            .limit(top_observations)
         )
 
         result = await db.execute(stmt)
@@ -185,6 +186,7 @@ async def get_working_representation(
 
     stmt = (
         select(models.Document)
+        .limit(max_observations)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.collection_name == collection_name,
@@ -198,7 +200,6 @@ async def get_working_representation(
             ),
         )
         .order_by(models.Document.created_at.desc())
-        .limit(max_observations)
     )
 
     result = await db.execute(stmt)
