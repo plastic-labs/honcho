@@ -10,7 +10,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import BigInteger, delete, select, update
+from sqlalchemy import BigInteger, case, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -456,13 +456,13 @@ class QueueManager:
                     await db.commit()
                     return []
 
-                # Step 2: Create CTE with chronological messages and track if focused sender appears
-                # We need to know:
-                # 1. Cumulative token count up to each message
-                # 2. Whether we've seen a message from the focused sender yet
-                # 3. Whether this message IS from the focused sender
-                from sqlalchemy import case
+                # Step 2: Build a single SQL query that:
+                # 1. Finds all unprocessed messages in chronological order
+                # 2. Tracks cumulative tokens and focused sender position
+                # 3. Returns empty if focused sender is beyond token limit
+                # 4. Otherwise returns messages up to token limit + first focused sender message
 
+                # CTE to track cumulative tokens and focused sender position
                 cte = (
                     select(
                         models.QueueItem.id,
@@ -512,27 +512,58 @@ class QueueManager:
                     .cte()
                 )
 
-                # Step 3: Select messages following this logic:
-                # Include message if:
-                # - We're under the token limit, OR
-                # - We haven't seen any focused sender message yet (keep going to find it), OR
-                # - This IS the first focused sender message (even if over limit)
+                # Subquery to find the cumulative token count at the first focused sender message
+                first_focused_cumulative_subquery = (
+                    select(cte.c.cumulative_token_count)
+                    .where(cte.c.is_focused_sender == 1)
+                    .order_by(cte.c.message_id)
+                    .limit(1)
+                    .scalar_subquery()
+                )
+
+                # Subquery to find the token count of just the first focused sender message itself
+                # (not cumulative - just that message's token_count)
+                first_focused_token_count_subquery = (
+                    select(cte.c.token_count)
+                    .where(cte.c.is_focused_sender == 1)
+                    .order_by(cte.c.message_id)
+                    .limit(1)
+                    .scalar_subquery()
+                )
+
+                # Main query: Include messages if first focused sender is reachable
+                # If reachable, include all messages up to token limit to allow batching
                 query = (
                     select(models.QueueItem)
                     .where(
                         models.QueueItem.id.in_(
                             select(cte.c.id).where(
-                                # Include if under token limit
+                                # Only proceed if first focused sender is reachable:
+                                # 1. No focused sender exists (None), OR
+                                # 2. First focused sender IS the first message (cumulative == token_count), OR
+                                # 3. First focused sender cumulative is within limit
                                 (
-                                    cte.c.cumulative_token_count
-                                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                                    (first_focused_cumulative_subquery.is_(None))
+                                    | (
+                                        first_focused_cumulative_subquery
+                                        == first_focused_token_count_subquery
+                                    )
+                                    | (
+                                        first_focused_cumulative_subquery
+                                        <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                                    )
                                 )
-                                # OR if we haven't seen any focused sender message yet (keep going)
-                                | (cte.c.focused_sender_count == 0)
-                                # OR if this is the first focused sender message (guarantees at least one)
-                                | (
-                                    (cte.c.is_focused_sender == 1)
-                                    & (cte.c.focused_sender_count == 1)
+                                & (
+                                    # Include messages up to token limit
+                                    # OR if this is the first focused sender message (even if huge)
+                                    (
+                                        cte.c.cumulative_token_count
+                                        <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                                    )
+                                    | (
+                                        (cte.c.is_focused_sender == 1)
+                                        & (cte.c.focused_sender_count == 1)
+                                    )
                                 )
                             )
                         )

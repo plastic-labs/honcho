@@ -600,9 +600,9 @@ class TestQueueProcessing:
         with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 1500):
             # Test alice's work unit
             # Messages: bob(800), steve(800), alice(100), alice(200)
-            # Alice's batch should include: bob(800), steve(800), alice(100)
-            # - bob and steve are under the limit (1600 cumulative)
-            # - alice's first message is included even though cumulative > limit because it's her first
+            # Alice's first message appears at cumulative 1700, which exceeds the 1500 limit
+            # Therefore, Alice's batch should be EMPTY - will be retried later when other
+            # messages are processed and Alice's messages move closer to the front
             if alice_queue_items:
                 alice_work_unit_key = alice_queue_items[0].work_unit_key
                 alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
@@ -616,12 +616,9 @@ class TestQueueProcessing:
                     aqs_id=alice_aqs.id,
                 )
 
-                assert len(alice_batch) == 3
-                assert alice_batch[0].payload["message_id"] == messages[0].id  # bob
-                assert alice_batch[1].payload["message_id"] == messages[1].id  # steve
                 assert (
-                    alice_batch[2].payload["message_id"] == messages[2].id
-                )  # alice's first
+                    len(alice_batch) == 0
+                )  # Empty batch - Alice is beyond token limit
 
             # Test bob's work unit
             # Bob's batch should include: bob(800) only
@@ -644,9 +641,8 @@ class TestQueueProcessing:
                 assert bob_batch[0].payload["message_id"] == messages[0].id  # bob only
 
             # Test steve's work unit
-            # Steve's batch should include: bob(800), steve(800)
-            # - bob and steve are under the limit (1600 cumulative)
-            # - steve's message is included even though cumulative > limit because it's his first
+            # Steve's first message appears at cumulative 1600, which exceeds the 1500 limit
+            # Therefore, Steve's batch should be EMPTY - will be retried later
             if steve_queue_items:
                 steve_work_unit_key = steve_queue_items[0].work_unit_key
                 steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
@@ -660,9 +656,9 @@ class TestQueueProcessing:
                     aqs_id=steve_aqs.id,
                 )
 
-                assert len(steve_batch) == 2
-                assert steve_batch[0].payload["message_id"] == messages[0].id  # bob
-                assert steve_batch[1].payload["message_id"] == messages[1].id  # steve
+                assert (
+                    len(steve_batch) == 0
+                )  # Empty batch - Steve is beyond token limit
 
     @pytest.mark.asyncio
     async def test_single_message_processing(
