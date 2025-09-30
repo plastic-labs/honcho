@@ -333,15 +333,14 @@ class TestQueueProcessing:
         # Mock process_items to capture batches
         processed_batches: list[dict[str, Any]] = []
 
-        async def mock_process_items(
-            task_type: str,
+        async def mock_process_representation_batch(
             queue_payloads: list[dict[str, Any]],
             sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
             target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
-                    "task_type": task_type,
+                    "task_type": "representation",
                     "payload_count": len(queue_payloads),
                 }
             )
@@ -359,8 +358,8 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_items",
-            side_effect=mock_process_items,
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=mock_process_representation_batch,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
@@ -716,15 +715,11 @@ class TestQueueProcessing:
         # Mock and process work unit
         processed_batches: list[dict[str, Any]] = []
 
-        async def mock_process_items(
+        async def mock_process_item(
             task_type: str,
-            queue_payloads: list[dict[str, Any]],
-            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            queue_payload: dict[str, Any],  # pyright: ignore[reportUnusedParameter]
         ) -> None:
-            processed_batches.append(
-                {"task_type": task_type, "payload_count": len(queue_payloads)}
-            )
+            processed_batches.append({"task_type": task_type, "payload_count": 1})
 
         qm = QueueManager()
         work_unit_key = queue_items[0].work_unit_key
@@ -738,8 +733,8 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_items",
-            side_effect=mock_process_items,
+            "src.deriver.queue_manager.process_item",
+            side_effect=mock_process_item,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
@@ -845,15 +840,14 @@ class TestQueueProcessing:
         # Mock process_items to capture batches
         processed_batches: list[dict[str, Any]] = []
 
-        async def mock_process_items(
-            task_type: str,
+        async def mock_process_representation_batch(
             queue_payloads: list[dict[str, Any]],
             sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
             target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
-                    "task_type": task_type,
+                    "task_type": "representation",
                     "payload_count": len(queue_payloads),
                 }
             )
@@ -870,8 +864,8 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_items",
-            side_effect=mock_process_items,
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=mock_process_representation_batch,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
@@ -957,15 +951,14 @@ class TestQueueProcessing:
         # Mock process_items to capture batches
         processed_batches: list[dict[str, Any]] = []
 
-        async def mock_process_items(
-            task_type: str,
+        async def mock_process_representation_batch(
             queue_payloads: list[dict[str, Any]],
             sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
             target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
-                    "task_type": task_type,
+                    "task_type": "representation",
                     "payload_count": len(queue_payloads),
                 }
             )
@@ -982,8 +975,8 @@ class TestQueueProcessing:
         )
 
         with patch(
-            "src.deriver.queue_manager.process_items",
-            side_effect=mock_process_items,
+            "src.deriver.queue_manager.process_representation_batch",
+            side_effect=mock_process_representation_batch,
         ):
             await qm.process_work_unit(work_unit_key, worker_id)
 
