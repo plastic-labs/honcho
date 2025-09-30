@@ -320,7 +320,17 @@ class QueueManager:
                         break
                     try:
                         payloads = [msg.payload for msg in messages_to_process]
-                        await process_items(task_type, payloads)
+                        # For representation tasks, pass sender_name from work_unit_key
+                        # so process_items knows which messages to focus on
+                        if task_type == "representation":
+                            await process_items(
+                                task_type,
+                                payloads,
+                                sender_name=parsed_key["sender_name"],
+                                target_name=parsed_key["target_name"],
+                            )
+                        else:
+                            await process_items(task_type, payloads)
                     except Exception as e:
                         logger.error(
                             f"Error processing tasks for work unit {work_unit_key}: {e}",
@@ -470,7 +480,8 @@ class QueueManager:
 
                 # Step 3: Select messages from the batch that fit within token limit
                 # (either first message per work_unit OR within cumulative token budget)
-                # Step 4: Filter to only the target work_unit_key
+                # Step 4: Return ALL messages in the batch (not filtered by work_unit_key)
+                # to provide full conversational context. Filtering happens during mark as processed.
                 # Also ensure worker ownership verification by joining with ActiveQueueSession
                 # Note: row_num=1 ensures each work unit's first message is always included
                 query = (
@@ -491,7 +502,6 @@ class QueueManager:
                             )
                         )
                     )
-                    .where(models.QueueItem.work_unit_key == work_unit_key)
                     .where(*aqs_conditions)
                     .order_by(models.QueueItem.id)
                 )
@@ -514,6 +524,7 @@ class QueueManager:
             await db.execute(
                 update(models.QueueItem)
                 .where(models.QueueItem.id.in_(message_ids))
+                .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True)
             )
             await db.execute(

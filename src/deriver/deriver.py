@@ -122,6 +122,8 @@ async def peer_card_call(
 @sentry_sdk.trace
 async def process_representation_tasks_batch(
     payloads: list[RepresentationPayload],
+    sender_name: str,
+    target_name: str,
 ) -> None:
     """
     Process a batch of representation tasks by extracting insights and updating working representations.
@@ -146,13 +148,13 @@ async def process_representation_tasks_batch(
         speaker_peer_card: list[str] | None = await crud.get_peer_card(
             db,
             latest_payload.workspace_name,
-            latest_payload.sender_name,
-            latest_payload.target_name,
+            sender_name,
+            target_name,
         )
     if speaker_peer_card is None:
-        logger.warning("No peer card found for %s", latest_payload.sender_name)
+        logger.warning("No peer card found for %s", sender_name)
     else:
-        logger.debug("Using peer card for %s", latest_payload.sender_name)
+        logger.debug("Using peer card for %s", sender_name)
 
     # Get working representation data early for token estimation
     async with tracked_db("deriver.get_working_representation_data") as db:
@@ -161,8 +163,8 @@ async def process_representation_tasks_batch(
         ) = await crud.get_working_representation_data(
             db,
             latest_payload.workspace_name,
-            latest_payload.target_name,
-            latest_payload.sender_name,
+            target_name,
+            sender_name,
             latest_payload.session_name,
         )
 
@@ -216,10 +218,8 @@ async def process_representation_tasks_batch(
     # otherwise, we're handling a directional representation task where the sender is
     # being observed by the target.
     collection_name = (
-        crud.construct_collection_name(
-            observer=latest_payload.target_name, observed=latest_payload.sender_name
-        )
-        if latest_payload.sender_name != latest_payload.target_name
+        crud.construct_collection_name(observer=target_name, observed=sender_name)
+        if sender_name != target_name
         else GLOBAL_REPRESENTATION_COLLECTION_NAME
     )
 
@@ -229,19 +229,24 @@ async def process_representation_tasks_batch(
             db,
             latest_payload.workspace_name,
             collection_name,
-            latest_payload.sender_name,
+            sender_name,
         )
         collection_name_loaded = collection.name
 
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
         workspace_name=latest_payload.workspace_name,
-        peer_name=latest_payload.sender_name,
+        peer_name=sender_name,
         collection_name=collection_name_loaded,
     )
 
     # Create reasoner instance
-    reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payloads)
+    reasoner = CertaintyReasoner(
+        embedding_store=embedding_store,
+        ctx=payloads,
+        sender_name=sender_name,
+        target_name=target_name,
+    )
 
     # Time context preparation
     context_prep_start = time.perf_counter()
@@ -331,7 +336,7 @@ async def process_representation_tasks_batch(
             )
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_representation_{latest_payload.message_id}_{target_name}",
         "context_preparation",
         context_prep_duration,
         "ms",
@@ -358,11 +363,13 @@ async def process_representation_tasks_batch(
     log_observations_tree(final_obs_dict)
 
     # Always save working representation to peer for dialectic access
-    await save_working_representation_to_peer(latest_payload, final_observations)
+    await save_working_representation_to_peer(
+        latest_payload, final_observations, sender_name, target_name
+    )
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_representation_{latest_payload.message_id}_{target_name}",
         "total_processing_time",
         overall_duration,
         "ms",
@@ -371,13 +378,13 @@ async def process_representation_tasks_batch(
     total_observations = sum(len(obs_list) for obs_list in final_obs_dict.values())
 
     accumulate_metric(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_representation_{latest_payload.message_id}_{target_name}",
         "final_observation_count",
         total_observations,
         "count",
     )
     log_performance_metrics(
-        f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}"
+        f"deriver_representation_{latest_payload.message_id}_{target_name}"
     )
 
     if settings.LANGFUSE_PUBLIC_KEY:
@@ -386,24 +393,25 @@ async def process_representation_tasks_batch(
         )
 
 
-# The old function now just calls the batch processor with a single payload
-async def process_representation_task(
-    payload: RepresentationPayload,
-) -> None:
-    await process_representation_tasks_batch([payload])
-
-
 class CertaintyReasoner:
     """Certainty reasoner for analyzing and deriving insights."""
 
     embedding_store: EmbeddingStore
     ctx: list[RepresentationPayload]
+    sender_name: str
+    target_name: str
 
     def __init__(
-        self, embedding_store: EmbeddingStore, ctx: list[RepresentationPayload]
+        self,
+        embedding_store: EmbeddingStore,
+        ctx: list[RepresentationPayload],
+        sender_name: str,
+        target_name: str,
     ) -> None:
         self.embedding_store = embedding_store
         self.ctx = ctx
+        self.sender_name = sender_name
+        self.target_name = target_name
 
     @conditional_observe
     @sentry_sdk.trace
@@ -446,7 +454,7 @@ class CertaintyReasoner:
 
         try:
             response_obj = await critical_analysis_call(
-                peer_id=latest_payload.sender_name,
+                peer_id=self.sender_name,
                 peer_card=speaker_peer_card,
                 message_created_at=latest_payload.created_at,
                 working_representation=formatted_working_representation,
@@ -543,7 +551,7 @@ class CertaintyReasoner:
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
         accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+            f"deriver_representation_{latest_payload.message_id}_{self.target_name}",
             "critical_analysis_duration",
             analysis_duration_ms,
             "ms",
@@ -560,7 +568,7 @@ class CertaintyReasoner:
             time.perf_counter() - save_observations_start
         ) * 1000
         accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+            f"deriver_representation_{latest_payload.message_id}_{self.target_name}",
             "save_new_observations",
             save_observations_duration,
             "ms",
@@ -579,7 +587,7 @@ class CertaintyReasoner:
             time.perf_counter() - update_peer_card_start
         ) * 1000
         accumulate_metric(
-            f"deriver_representation_{latest_payload.message_id}_{latest_payload.target_name}",
+            f"deriver_representation_{latest_payload.message_id}_{self.target_name}",
             "update_peer_card",
             update_peer_card_duration,
             "ms",
@@ -679,8 +687,8 @@ class CertaintyReasoner:
                 await crud.set_peer_card(
                     db,
                     self.ctx[0].workspace_name,
-                    self.ctx[0].sender_name,
-                    self.ctx[0].target_name,
+                    self.sender_name,
+                    self.target_name,
                     new_peer_card,
                 )
         except Exception as e:
@@ -720,6 +728,8 @@ def observation_context_to_reasoning_response(
 async def save_working_representation_to_peer(
     payload: RepresentationPayload,
     final_observations: ReasoningResponseWithThinking,
+    sender_name: str,
+    target_name: str,
 ) -> None:
     """Save working representation to peer internal_metadata for dialectic access."""
 
@@ -747,8 +757,8 @@ async def save_working_representation_to_peer(
             db,
             working_rep_data,
             payload.workspace_name,
-            payload.target_name,
-            payload.sender_name,
+            target_name,
+            sender_name,
             payload.session_name,
         )
 

@@ -28,12 +28,25 @@ console = Console(markup=True)
 lf = get_client()
 
 
-async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) -> None:
+async def process_items(
+    task_type: str,
+    queue_payloads: list[dict[str, Any]],
+    sender_name: str | None = None,
+    target_name: str | None = None,
+) -> None:
     """Validate incoming queue payloads and dispatch to the appropriate handler.
 
     This function centralizes payload validation using a simple mapping from
     task type to Pydantic model. After validation, routes the request to
     the correct processor without repeating type checks elsewhere.
+
+    Args:
+        task_type: The type of task to process
+        queue_payloads: List of payload dictionaries to process
+        sender_name (optional): For representation tasks, the sender_name from work_unit_key
+                     to identify which messages should be focused on
+        target_name (optional): For representation tasks, the target_name from work_unit_key
+                     to identify which messages should be focused on
     """
     if not queue_payloads or not queue_payloads[0]:
         logger.debug("process_items received no payloads for task type %s", task_type)
@@ -97,7 +110,15 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
 
-        await process_representation_tasks_batch(validated_payloads.payloads)
+        # Validate that sender_name and target_name are provided for representation tasks
+        if sender_name is None or target_name is None:
+            raise ValueError(
+                "sender_name and target_name are required for representation tasks"
+            )
+
+        await process_representation_tasks_batch(
+            validated_payloads.payloads, sender_name, target_name
+        )
 
     else:
         raise ValueError(f"Invalid task type: {task_type}")

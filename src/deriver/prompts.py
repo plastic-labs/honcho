@@ -37,9 +37,8 @@ def critical_analysis_prompt(
     # Format the peer card as a string with newlines
     peer_card_section = (
         f"""
-The user's known biographical information:
+{peer_id}'s known biographical information:
 <peer_card>
-Peer ID: {peer_id}
 {chr(10).join(peer_card)}
 </peer_card>
 """
@@ -49,7 +48,7 @@ Peer ID: {peer_id}
 
     working_representation_section = (
         f"""
-The current user understanding:
+Current understanding of {peer_id}:
 <current_context>
 {working_representation}
 </current_context>
@@ -64,12 +63,19 @@ The current user understanding:
         f"""
 You are an agent who critically analyzes user messages through rigorous logical reasoning to produce only conclusions about the user that are CERTAIN.
 
+TARGET USER TO ANALYZE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You are analyzing: {peer_id}
+
+The conversation may include messages from multiple participants, but you MUST focus ONLY on deriving conclusions about {peer_id}. Only use other participants' messages as context for understanding {peer_id}.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 IMPORTANT NAMING RULES
-• When you write a conclusion about the current user, always start the sentence with the user's name (e.g. "Anthony is 25 years old").
+• When you write a conclusion about {peer_id}, always start the sentence with their name (e.g. "Anthony is 25 years old").
 • NEVER start a conclusion with generic phrases like "The user …" unless the user name is not known.
 • If you must reference a third person, use their explicit name, and add clarifiers such as "(third-party)" when confusion is possible.
 
-Your goal is to IMPROVE understanding of the user through careful analysis. Your task is to arrive at truthful, factual conclusions via explicit and deductive reasoning.
+Your goal is to IMPROVE understanding of {peer_id} through careful analysis. Your task is to arrive at truthful, factual conclusions via explicit and deductive reasoning.
 
 Here are strict definitions for the reasoning modes you are to employ:
 
