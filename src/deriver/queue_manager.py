@@ -439,27 +439,61 @@ class QueueManager:
                 messages = result.scalars().all()
             else:
                 # For representation tasks, get a batch based on token limit.
-                # Step 1: Parse work_unit_key to get session context
+                # Step 1: Parse work_unit_key to get session context and focused sender
                 parsed_key = parse_work_unit_key(work_unit_key)
                 session_name = parsed_key["session_name"]
                 workspace_name = parsed_key["workspace_name"]
+                focused_sender = parsed_key["sender_name"]
 
-                # Step 2: Create CTE with chronological batching across all messages in the session
-                # This batches messages chronologically (by message.id) within token limit,
-                # regardless of work_unit_key
+                # Verify worker still owns the work_unit_key
+                ownership_check = await db.execute(
+                    select(models.ActiveQueueSession.id)
+                    .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                    .where(models.ActiveQueueSession.id == aqs_id)
+                )
+                if not ownership_check.scalar_one_or_none():
+                    # Worker lost ownership, return empty
+                    await db.commit()
+                    return []
+
+                # Step 2: Create CTE with chronological messages and track if focused sender appears
+                # We need to know:
+                # 1. Cumulative token count up to each message
+                # 2. Whether we've seen a message from the focused sender yet
+                # 3. Whether this message IS from the focused sender
+                from sqlalchemy import case
+
                 cte = (
                     select(
                         models.QueueItem.id,
                         models.QueueItem.work_unit_key,
-                        func.row_number()
-                        .over(
-                            partition_by=models.QueueItem.work_unit_key,
-                            order_by=models.Message.id,
-                        )
-                        .label("row_num"),
+                        models.Message.id.label("message_id"),
+                        models.Message.token_count,
                         func.sum(models.Message.token_count)
                         .over(order_by=models.Message.id)
                         .label("cumulative_token_count"),
+                        # Check if this message is from the focused sender (1 if true, 0 if false)
+                        case(
+                            (
+                                models.QueueItem.payload["sender_name"].astext
+                                == focused_sender,
+                                1,
+                            ),
+                            else_=0,
+                        ).label("is_focused_sender"),
+                        # Running total of focused sender messages seen so far
+                        func.sum(
+                            case(
+                                (
+                                    models.QueueItem.payload["sender_name"].astext
+                                    == focused_sender,
+                                    1,
+                                ),
+                                else_=0,
+                            )
+                        )
+                        .over(order_by=models.Message.id)
+                        .label("focused_sender_count"),
                     )
                     .select_from(
                         models.QueueItem.__table__.join(
@@ -478,31 +512,31 @@ class QueueManager:
                     .cte()
                 )
 
-                # Step 3: Select messages from the batch that fit within token limit
-                # (either first message per work_unit OR within cumulative token budget)
-                # Step 4: Return ALL messages in the batch (not filtered by work_unit_key)
-                # to provide full conversational context. Filtering happens during mark as processed.
-                # Also ensure worker ownership verification by joining with ActiveQueueSession
-                # Note: row_num=1 ensures each work unit's first message is always included
+                # Step 3: Select messages following this logic:
+                # Include message if:
+                # - We're under the token limit, OR
+                # - We haven't seen any focused sender message yet (keep going to find it), OR
+                # - This IS the first focused sender message (even if over limit)
                 query = (
                     select(models.QueueItem)
-                    .join(
-                        models.ActiveQueueSession,
-                        models.QueueItem.work_unit_key
-                        == models.ActiveQueueSession.work_unit_key,
-                    )
                     .where(
                         models.QueueItem.id.in_(
                             select(cte.c.id).where(
-                                (cte.c.row_num == 1)
-                                | (
+                                # Include if under token limit
+                                (
                                     cte.c.cumulative_token_count
                                     <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                                )
+                                # OR if we haven't seen any focused sender message yet (keep going)
+                                | (cte.c.focused_sender_count == 0)
+                                # OR if this is the first focused sender message (guarantees at least one)
+                                | (
+                                    (cte.c.is_focused_sender == 1)
+                                    & (cte.c.focused_sender_count == 1)
                                 )
                             )
                         )
                     )
-                    .where(*aqs_conditions)
                     .order_by(models.QueueItem.id)
                 )
 

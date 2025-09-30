@@ -334,7 +334,10 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_items(
-            task_type: str, queue_payloads: list[dict[str, Any]]
+            task_type: str,
+            queue_payloads: list[dict[str, Any]],
+            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
@@ -464,17 +467,21 @@ class TestQueueProcessing:
                 aqs_id=alice_aqs.id,
             )
 
-            # Alice should get messages 1, 4, 6 (indices 0, 3, 5 in our list)
-            assert len(alice_batch) == 3
+            # All work units should get ALL 6 messages in the chronological batch (messages 1-6)
+            # Message 7 is outside the token limit batch
+            assert len(alice_batch) == 6
             alice_message_ids = {msg.payload["message_id"] for msg in alice_batch}
-            expected_alice_ids = {
-                messages[0].id,
-                messages[3].id,
-                messages[5].id,
+            expected_batch_ids = {
+                messages[0].id,  # alice(250)
+                messages[1].id,  # bob(400)
+                messages[2].id,  # steve(300)
+                messages[3].id,  # alice(500)
+                messages[4].id,  # bob(500)
+                messages[5].id,  # alice(40)
             }
-            assert alice_message_ids == expected_alice_ids
+            assert alice_message_ids == expected_batch_ids
 
-            # Test bob's work unit
+            # Test bob's work unit - should get same batch
             bob_work_unit_key = bob_queue_items[0].work_unit_key
             bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
             db_session.add(bob_aqs)
@@ -487,13 +494,12 @@ class TestQueueProcessing:
                 aqs_id=bob_aqs.id,
             )
 
-            # Bob should get messages 2, 5 (indices 1, 4)
-            assert len(bob_batch) == 2
+            # Bob should also get all 6 messages for context
+            assert len(bob_batch) == 6
             bob_message_ids = {msg.payload["message_id"] for msg in bob_batch}
-            expected_bob_ids = {messages[1].id, messages[4].id}
-            assert bob_message_ids == expected_bob_ids
+            assert bob_message_ids == expected_batch_ids
 
-            # Test steve's work unit
+            # Test steve's work unit - should get same batch
             steve_work_unit_key = steve_queue_items[0].work_unit_key
             steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
             db_session.add(steve_aqs)
@@ -506,9 +512,10 @@ class TestQueueProcessing:
                 aqs_id=steve_aqs.id,
             )
 
-            # Steve should get message 3 (index 2) - message 7 is outside token batch
-            assert len(steve_batch) == 1
-            assert steve_batch[0].payload["message_id"] == messages[2].id
+            # Steve should also get all 6 messages for context
+            assert len(steve_batch) == 6
+            steve_message_ids = {msg.payload["message_id"] for msg in steve_batch}
+            assert steve_message_ids == expected_batch_ids
 
     @pytest.mark.asyncio
     async def test_work_unit_returns_first_message_outside_token_limit_batch(
@@ -553,6 +560,7 @@ class TestQueueProcessing:
 
         alice_queue_items: list[models.QueueItem] = []
         bob_queue_items: list[models.QueueItem] = []
+        steve_queue_items: list[models.QueueItem] = []
 
         for i, message in enumerate(messages):
             peer = messages_data[i][0]
@@ -579,18 +587,22 @@ class TestQueueProcessing:
                 alice_queue_items.append(queue_item)
             elif peer == bob:
                 bob_queue_items.append(queue_item)
+            elif peer == steve:
+                steve_queue_items.append(queue_item)
 
         await db_session.commit()
-        for item in alice_queue_items + bob_queue_items:
+        for item in alice_queue_items + bob_queue_items + steve_queue_items:
             await db_session.refresh(item)
 
         qm = QueueManager()
 
         # Mock the token limit to 1500 for this test
         with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 1500):
-            # Test alice's work unit - should get 1 message (her first, via row_num=1)
-            # Even though her messages are outside the token budget chronologically,
-            # row_num=1 per work_unit ensures each work unit's first message is included
+            # Test alice's work unit
+            # Messages: bob(800), steve(800), alice(100), alice(200)
+            # Alice's batch should include: bob(800), steve(800), alice(100)
+            # - bob and steve are under the limit (1600 cumulative)
+            # - alice's first message is included even though cumulative > limit because it's her first
             if alice_queue_items:
                 alice_work_unit_key = alice_queue_items[0].work_unit_key
                 alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
@@ -604,14 +616,17 @@ class TestQueueProcessing:
                     aqs_id=alice_aqs.id,
                 )
 
-                # Alice gets her first message via row_num=1 (partitioned by work_unit)
-                # This ensures forward progress without needing the fallback
-                assert len(alice_batch) == 1
+                assert len(alice_batch) == 3
+                assert alice_batch[0].payload["message_id"] == messages[0].id  # bob
+                assert alice_batch[1].payload["message_id"] == messages[1].id  # steve
                 assert (
-                    alice_batch[0].payload["message_id"] == messages[2].id
-                )  # First alice message
+                    alice_batch[2].payload["message_id"] == messages[2].id
+                )  # alice's first
 
-            # Test bob's work unit - should get message 1
+            # Test bob's work unit
+            # Bob's batch should include: bob(800) only
+            # - bob's message is under the limit and it's his first message
+            # - adding steve would exceed the limit and we already have Bob's message, so stop
             if bob_queue_items:
                 bob_work_unit_key = bob_queue_items[0].work_unit_key
                 bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
@@ -625,9 +640,29 @@ class TestQueueProcessing:
                     aqs_id=bob_aqs.id,
                 )
 
-                # Bob should get the first message
                 assert len(bob_batch) == 1
-                assert bob_batch[0].payload["message_id"] == messages[0].id
+                assert bob_batch[0].payload["message_id"] == messages[0].id  # bob only
+
+            # Test steve's work unit
+            # Steve's batch should include: bob(800), steve(800)
+            # - bob and steve are under the limit (1600 cumulative)
+            # - steve's message is included even though cumulative > limit because it's his first
+            if steve_queue_items:
+                steve_work_unit_key = steve_queue_items[0].work_unit_key
+                steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
+                db_session.add(steve_aqs)
+                await db_session.commit()
+                await db_session.refresh(steve_aqs)
+
+                steve_batch = await qm.get_message_batch(
+                    task_type="representation",
+                    work_unit_key=steve_work_unit_key,
+                    aqs_id=steve_aqs.id,
+                )
+
+                assert len(steve_batch) == 2
+                assert steve_batch[0].payload["message_id"] == messages[0].id  # bob
+                assert steve_batch[1].payload["message_id"] == messages[1].id  # steve
 
     @pytest.mark.asyncio
     async def test_single_message_processing(
@@ -686,7 +721,10 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_items(
-            task_type: str, queue_payloads: list[dict[str, Any]]
+            task_type: str,
+            queue_payloads: list[dict[str, Any]],
+            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {"task_type": task_type, "payload_count": len(queue_payloads)}
@@ -812,7 +850,10 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_items(
-            task_type: str, queue_payloads: list[dict[str, Any]]
+            task_type: str,
+            queue_payloads: list[dict[str, Any]],
+            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
@@ -921,7 +962,10 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_items(
-            task_type: str, queue_payloads: list[dict[str, Any]]
+            task_type: str,
+            queue_payloads: list[dict[str, Any]],
+            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {

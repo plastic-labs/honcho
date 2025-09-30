@@ -188,7 +188,9 @@ class TestDeriverProcessing:
                 )
             )
 
-        await process_representation_tasks_batch(payloads)
+        await process_representation_tasks_batch(
+            payloads, sender_name="alice", target_name="alice"
+        )
 
         # Verify that the earliest message ID was used as the cutoff
         assert captured_cutoffs == [payloads[0].message_id]
