@@ -321,9 +321,9 @@ class QueueManager:
                             logger.debug(
                                 f"Worker {worker_id} retrieved {len(messages_context)} messages and {len(items_to_process)} queue items for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
                             )
-                            if not messages_context:
+                            if not items_to_process:
                                 logger.debug(
-                                    f"No more messages to process for work unit {work_unit_key} for worker {worker_id}"
+                                    f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
                                 break
 
@@ -331,6 +331,7 @@ class QueueManager:
                             sender_name = parsed_key["sender_name"]
                             target_name = parsed_key["target_name"]
 
+                            # TODO: skip this to isolate queue manager logs
                             await process_representation_batch(
                                 messages_context,
                                 sender_name=sender_name,
@@ -490,20 +491,16 @@ class QueueManager:
                 return [], []
 
             # Step 2: Build a single SQL query that:
-            # 1. Finds all unprocessed messages in chronological order
-            # 2. Tracks cumulative tokens and focused sender position
-            # 3. Returns empty if focused sender is beyond token limit
-            # 4. Otherwise returns messages up to token limit + first focused sender message
+            # 1. Finds the earliest unprocessed message for this work_unit_key
+            # 2. Gets ALL messages from that point forward (for conversational context)
+            # 3. Tracks cumulative tokens and focused sender position
+            # 4. Returns empty if focused sender is beyond token limit
+            # 5. Otherwise returns messages up to token limit + first focused sender message
 
-            # Single-query approach: build message-centric CTE + fetch both messages and
-            # current work unit's queue items in one roundtrip.
-
-            message_ids_subq = (
-                select(
-                    func.cast(
-                        models.QueueItem.payload["message_id"].astext, BigInteger
-                    ).label("message_id")
-                )
+            # Find the minimum message_id with an unprocessed queue item across the session
+            min_unprocessed_message_id_subq = (
+                select(func.min(models.Message.id))
+                .select_from(models.QueueItem)
                 .join(
                     models.Message,
                     func.cast(models.QueueItem.payload["message_id"].astext, BigInteger)
@@ -512,10 +509,11 @@ class QueueManager:
                 .where(~models.QueueItem.processed)
                 .where(models.Message.session_name == session_name)
                 .where(models.Message.workspace_name == workspace_name)
-                .distinct()
-                .subquery()
+                .scalar_subquery()
             )
 
+            # Build CTE with ALL messages starting from the earliest unprocessed message
+            # This includes interleaving messages for conversational context
             cte = (
                 select(
                     models.Message.id.label("message_id"),
@@ -525,9 +523,9 @@ class QueueManager:
                     .over(order_by=models.Message.id)
                     .label("cumulative_token_count"),
                 )
-                .where(models.Message.id.in_(select(message_ids_subq.c.message_id)))
                 .where(models.Message.session_name == session_name)
                 .where(models.Message.workspace_name == workspace_name)
+                .where(models.Message.id >= min_unprocessed_message_id_subq)
                 .order_by(models.Message.id)
                 .cte()
             )
