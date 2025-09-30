@@ -1,3 +1,4 @@
+import time
 from collections.abc import Sequence
 from datetime import datetime
 from logging import getLogger
@@ -6,11 +7,15 @@ from typing import Any, Final, cast
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src import crud as crud_module
 from src import exceptions, models, schemas
 from src.config import settings
 from src.crud.peer import get_peer
+from src.utils.dynamic_tables import create_dynamic_document_model
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import parse_datetime_iso
+from src.utils.logging import accumulate_metric
+from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -105,10 +110,7 @@ async def set_peer_card(
 
 async def get_working_representation(
     db: AsyncSession,
-    workspace_name: str,
-    observer_name: str,
-    observed_name: str,
-    session_name: str | None = None,
+    payload: RepresentationPayload,
     include_semantic_query: str | None = None,
     semantic_search_top_k: int | None = None,
     semantic_search_max_distance: float | None = None,
@@ -120,7 +122,7 @@ async def get_working_representation(
     """
     # Determine metadata key based on observer/observed relationship
     collection_name = construct_collection_name(
-        observer=observer_name, observed=observed_name
+        observer=payload.target_name, observed=payload.sender_name
     )
 
     if include_semantic_query and include_most_derived:
@@ -153,8 +155,8 @@ async def get_working_representation(
 
     if include_semantic_query:
         semantically_relevant_representation = await EmbeddingStore(
-            workspace_name=workspace_name,
-            peer_name=observer_name,
+            workspace_name=payload.workspace_name,
+            peer_name=payload.sender_name,
             collection_name=collection_name,
             db=db,
         ).get_relevant_observations(
@@ -168,49 +170,58 @@ async def get_working_representation(
     else:
         representation = Representation()
 
-    if include_most_derived:
-        stmt = (
-            select(models.Document)
-            .limit(top_observations)
-            .where(
-                models.Document.workspace_name == workspace_name,
-                models.Document.collection_name == collection_name,
+    # Get the collection to access its ID
+    collection = await crud_module.get_or_create_collection(
+        db,
+        payload.workspace_name,
+        collection_name,
+        payload.sender_name,
+    )
+    DocumentModel = create_dynamic_document_model(collection.id)
+
+    try:
+        if include_most_derived:
+            stmt = (
+                select(DocumentModel)
+                .limit(top_observations)
+                .where(
+                    DocumentModel.workspace_name == payload.workspace_name,
+                )
+                .order_by(DocumentModel.times_derived.desc())
             )
-            .order_by(models.Document.internal_metadata["times_derived"].desc())
+
+            result = await db.execute(stmt)
+            documents = result.scalars().all()
+
+            representation.merge_representation(
+                representation_from_documents(documents)
+            )
+
+        stmt = (
+            select(DocumentModel)
+            .limit(max_observations)
+            .where(DocumentModel.workspace_name == payload.workspace_name)
+            .order_by(DocumentModel.created_at.desc())
         )
 
         result = await db.execute(stmt)
         documents = result.scalars().all()
 
+        if not documents:
+            logger.warning(
+                f"No observations for {payload.sender_name} (observer: {payload.target_name}) found. Normal if brand-new peer."
+            )
+
         representation.merge_representation(representation_from_documents(documents))
 
-    stmt = (
-        select(models.Document)
-        .limit(max_observations)
-        .where(
-            models.Document.workspace_name == workspace_name,
-            models.Document.collection_name == collection_name,
-            *(
-                [
-                    models.Document.internal_metadata["session_name"].astext
-                    == session_name
-                ]
-                if session_name is not None
-                else []
-            ),
-        )
-        .order_by(models.Document.created_at.desc())
-    )
-
-    result = await db.execute(stmt)
-    documents = result.scalars().all()
-
-    if not documents:
-        logger.warning(
-            f"No observations for {observed_name} (observer: {observer_name}) found. Normal if brand-new peer."
-        )
-
-    representation.merge_representation(representation_from_documents(documents))
+    except Exception as e:
+        # Table doesn't exist - return empty representation
+        if "does not exist" in str(e):
+            logger.warning(
+                f"Table for collection {collection.id} doesn't exist, returning empty representation. This is normal for new peers or after migration."
+            )
+            return representation
+        raise
 
     return representation
 
@@ -232,7 +243,7 @@ def _safe_datetime_from_metadata(
 
 
 def representation_from_documents(
-    documents: Sequence[models.Document],
+    documents: Sequence[Any],
 ) -> Representation:
     return Representation(
         explicit=[

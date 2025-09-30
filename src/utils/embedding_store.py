@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models, schemas
+from src import crud, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
@@ -44,6 +44,7 @@ class EmbeddingStore:
         self.peer_name: str = peer_name
         self.collection_name: str = collection_name
         self.db: AsyncSession | None = db
+        self.collection_id: str | None = None
 
     @conditional_observe
     async def save_representation(
@@ -138,6 +139,9 @@ class EmbeddingStore:
             self.peer_name,
         )
 
+        # Cache the collection_id for later use
+        self.collection_id = collection.id
+
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
         for obs in all_observations:
@@ -164,7 +168,7 @@ class EmbeddingStore:
             )
 
         # Use bulk creation with NO duplicate detection
-        _created_documents, new_documents = await crud.create_documents_bulk(
+        new_documents = await crud.create_documents_bulk(
             db,
             documents_to_create,
             collection,
@@ -238,9 +242,20 @@ class EmbeddingStore:
         max_distance: float,
         level: str | None,
         conversation_context: str,
-    ) -> list[models.Document]:
+    ) -> list[Any]:
         """Internal method that does the actual observation retrieval."""
         try:
+            # Ensure we have the collection_id AND the table exists
+            if not self.collection_id:
+                # Get or create the collection (this will create the table if needed and commit)
+                collection = await crud.get_or_create_collection(
+                    db,
+                    self.workspace_name,
+                    self.collection_name,
+                    self.peer_name,
+                )
+                self.collection_id = collection.id
+
             if level:
                 return await self._query_documents_for_level(
                     db,
@@ -256,6 +271,7 @@ class EmbeddingStore:
                     workspace_name=self.workspace_name,
                     peer_name=self.peer_name,
                     collection_name=self.collection_name,
+                    collection_id=self.collection_id,
                     query=self._build_truncated_query(query, ""),
                     max_distance=max_distance,
                     top_k=top_k,
@@ -275,15 +291,19 @@ class EmbeddingStore:
         conversation_context: str,
         max_distance: float,
         count: int,
-    ) -> list[models.Document]:
+    ) -> list[Any]:
         """Query documents for a specific level."""
         # Construct the combined query with truncation to prevent token limit errors
+
+        if not self.collection_id:
+            raise ValueError("collection_id not initialized")
 
         documents = await crud.query_documents(
             db,
             workspace_name=self.workspace_name,
             peer_name=self.peer_name,
             collection_name=self.collection_name,
+            collection_id=self.collection_id,
             query=self._build_truncated_query(query, conversation_context),
             max_distance=max_distance,
             top_k=count * FILTER_OVERSAMPLING_FACTOR,
@@ -291,7 +311,7 @@ class EmbeddingStore:
         )
 
         # Sort by creation time and return top count
-        docs_sorted: list[models.Document] = sorted(
+        docs_sorted: list[Any] = sorted(
             list(documents), key=lambda x: x.created_at, reverse=True
         )
         return docs_sorted[:count]

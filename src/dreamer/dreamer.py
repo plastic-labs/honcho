@@ -1,10 +1,11 @@
 import logging
 from collections.abc import Sequence
+from typing import Any
 
 import sentry_sdk
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models, schemas
+from src import crud, schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.prompts import consolidation_prompt
@@ -68,8 +69,17 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.sender_name
 
     # get all documents in the collection
     async with tracked_db("dream_consolidate") as db:
+        # First get the collection to obtain its ID
+        collection = await crud.get_collection(
+            db, payload.workspace_name, payload.collection_name, payload.sender_name
+        )
+
         documents = await crud.get_all_documents(
-            db, payload.workspace_name, payload.sender_name, payload.collection_name
+            db,
+            payload.workspace_name,
+            payload.sender_name,
+            payload.collection_name,
+            collection.id,
         )
 
         logger.info("found %d documents to consolidate", len(documents))
@@ -92,7 +102,7 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.sender_name
 
 
 async def _consolidate_cluster(
-    cluster: Sequence[models.Document],
+    cluster: Sequence[Any],
     workspace_name: str,
     peer_name: str,
     collection_name: str,

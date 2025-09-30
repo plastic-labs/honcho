@@ -86,11 +86,7 @@ async def dialectic_call(
         retry_attempts=3,
     )
 
-    logger.debug("=== DIALECTIC PROMPT ===")
-    logger.debug(prompt)
-    logger.debug("=== END DIALECTIC PROMPT ===")
-
-    return response.content
+    return response
 
 
 async def dialectic_stream(
@@ -264,15 +260,6 @@ async def chat(
         recent_conversation_history = None
         logger.info("Query is not session-scoped, skipping recent conversation history")
 
-    context_window_size -= len(tokenizer.encode(recent_conversation_history or ""))
-
-    accumulate_metric(
-        f"dialectic_chat_{dialectic_chat_uuid}",
-        "tokens_used_estimate",
-        settings.DIALECTIC.CONTEXT_WINDOW_SIZE - context_window_size,
-        "tokens",
-    )
-
     # 3. Peer card(s) ----------------------------------------------------------
     async with tracked_db("chat.get_peer_card") as db:
         peer_card = await crud.get_peer_card(db, workspace_name, peer_name, peer_name)
@@ -291,6 +278,7 @@ async def chat(
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = asyncio.get_event_loop().time()
     if stream:
+        log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
         return await dialectic_stream(
             query,
             working_representation_str,
@@ -320,6 +308,13 @@ async def chat(
         "ms",
     )
 
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "tokens_used_estimate",
+        response.input_tokens,
+        "tokens",
+    )
+
     elapsed = (asyncio.get_event_loop().time() - start_time) * 1000
 
     accumulate_metric(
@@ -328,4 +323,4 @@ async def chat(
 
     log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
     # Convert AnthropicCallResponse to string for compatibility
-    return str(response)
+    return str(response.content)

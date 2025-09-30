@@ -158,10 +158,8 @@ async def process_representation_tasks_batch(
     async with tracked_db("deriver.get_working_representation_data") as db:
         working_representation = await crud.get_working_representation(
             db,
-            latest_payload.workspace_name,
-            latest_payload.target_name,
-            latest_payload.sender_name,
-            # include_semantic_query=latest_payload.content,
+            latest_payload,
+            include_semantic_query=latest_payload.content,
             # include_most_derived=False,
         )
 

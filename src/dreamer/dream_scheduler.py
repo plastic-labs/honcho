@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import models
 from src.config import settings
 from src.dependencies import tracked_db
+from src.utils.dynamic_tables import create_dynamic_document_model
 from src.utils.queue_payload import create_dream_payload
 from src.utils.work_unit import get_work_unit_key, parse_work_unit_key
 
@@ -254,10 +255,11 @@ async def check_and_schedule_dream(
     last_dream_at = dream_metadata.get("last_dream_at")
 
     # Count current documents in the collection
-    count_stmt = select(models.Document).where(
-        models.Document.workspace_name == collection.workspace_name,
-        models.Document.peer_name == collection.peer_name,
-        models.Document.collection_name == collection.name,
+    DocumentModel = create_dynamic_document_model(collection.id)
+    count_stmt = select(DocumentModel).where(
+        DocumentModel.workspace_name == collection.workspace_name,
+        DocumentModel.peer_name == collection.peer_name,
+        DocumentModel.collection_name == collection.name,
     )
     count_result = await db.execute(count_stmt)
     current_document_count = len(count_result.scalars().all())

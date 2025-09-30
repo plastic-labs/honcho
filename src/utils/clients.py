@@ -76,6 +76,7 @@ class HonchoLLMCallResponse(BaseModel, Generic[T]):
     """
 
     content: T
+    input_tokens: int
     output_tokens: int
     finish_reasons: list[str]
 
@@ -379,6 +380,7 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=parsed_content,
+                    input_tokens=usage.prompt_tokens if usage else 0,
                     output_tokens=usage.completion_tokens if usage else 0,
                     finish_reasons=[finish_reason] if finish_reason else [],
                 )
@@ -412,6 +414,11 @@ async def honcho_llm_call_inner(
 
                 # Safely extract response data
                 text_content = gemini_response.text if gemini_response.text else ""
+                input_tokens = (
+                    gemini_response.usage_metadata.prompt_token_count or 0
+                    if gemini_response.usage_metadata
+                    else 0
+                )
                 token_count = (
                     gemini_response.candidates[0].token_count or 0
                     if gemini_response.candidates
@@ -426,6 +433,7 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=text_content,
+                    input_tokens=input_tokens,
                     output_tokens=token_count,
                     finish_reasons=[finish_reason],
                 )
@@ -440,6 +448,11 @@ async def honcho_llm_call_inner(
                     },
                 )
 
+                input_tokens = (
+                    gemini_response.usage_metadata.prompt_token_count or 0
+                    if gemini_response.usage_metadata
+                    else 0
+                )
                 token_count = (
                     gemini_response.candidates[0].token_count or 0
                     if gemini_response.candidates
@@ -460,6 +473,7 @@ async def honcho_llm_call_inner(
 
                 return HonchoLLMCallResponse(
                     content=gemini_response.parsed,
+                    input_tokens=input_tokens,
                     output_tokens=token_count,
                     finish_reasons=[finish_reason],
                 )
