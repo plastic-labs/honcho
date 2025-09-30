@@ -8,13 +8,12 @@ from rich.console import Console
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
+from src.models import Message
 from src.utils import summarizer
 from src.utils.logging import log_performance_metrics
 from src.webhooks import webhook_delivery
 
 from .queue_payload import (
-    RepresentationPayload,
-    RepresentationPayloads,
     SummaryPayload,
     WebhookPayload,
 )
@@ -66,7 +65,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
 
 
 async def process_representation_batch(
-    payloads: list[dict[str, Any]],
+    messages: list[Message],
     sender_name: str | None,
     target_name: str | None,
 ) -> None:
@@ -84,7 +83,7 @@ async def process_representation_batch(
         target_name (optional): For representation tasks, the target_name from work_unit_key
                      to identify which messages should be focused on
     """
-    if not payloads or not payloads[0]:
+    if not messages or not messages[0]:
         logger.debug("process_representation_batch received no payloads")
         return
 
@@ -95,7 +94,7 @@ async def process_representation_batch(
 
     logger.debug(
         "process_representation_batch received %s payloads",
-        len(payloads),
+        len(messages),
     )
 
     if settings.LANGFUSE_PUBLIC_KEY:
@@ -104,18 +103,5 @@ async def process_representation_batch(
                 "critical_analysis_model": settings.DERIVER.MODEL,
             }
         )
-    try:
-        validated_payloads = RepresentationPayloads(
-            payloads=[RepresentationPayload(**payload) for payload in payloads]
-        )
-    except ValidationError as e:
-        logger.error(
-            "Invalid representation payloads received: %s. Payloads: %s",
-            str(e),
-            payloads,
-        )
-        raise ValueError(f"Invalid payload structure: {str(e)}") from e
 
-    await process_representation_tasks_batch(
-        validated_payloads.payloads, sender_name, target_name
-    )
+    await process_representation_tasks_batch(sender_name, target_name, messages)

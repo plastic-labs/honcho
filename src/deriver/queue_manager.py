@@ -4,13 +4,13 @@ from asyncio import Task
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import BigInteger, case, delete, select, update
+from sqlalchemy import BigInteger, and_, delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
@@ -312,27 +312,36 @@ class QueueManager:
                         break
                     try:
                         if task_type == "representation":
-                            messages_to_process = await self.get_message_batch(
+                            (
+                                messages_context,
+                                items_to_process,
+                            ) = await self.get_message_batch(
                                 task_type, work_unit_key, ownership.aqs_id
                             )
                             logger.debug(
-                                f"Worker {worker_id} retrieved {len(messages_to_process)} messages for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
+                                f"Worker {worker_id} retrieved {len(messages_context)} messages and {len(items_to_process)} queue items for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
                             )
-                            if not messages_to_process:
+                            if not messages_context:
                                 logger.debug(
                                     f"No more messages to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
                                 break
-                            payloads: list[dict[str, Any]] = [
-                                msg.payload for msg in messages_to_process
-                            ]
-                            # For representation tasks, pass sender_name from work_unit_key
-                            # so process_items knows which messages to focus on
+
+                            # Build payloads from the unique messages context window
+                            sender_name = parsed_key["sender_name"]
+                            target_name = parsed_key["target_name"]
+
                             await process_representation_batch(
-                                payloads,
-                                sender_name=parsed_key["sender_name"],
-                                target_name=parsed_key["target_name"],
+                                messages_context,
+                                sender_name=sender_name,
+                                target_name=target_name,
                             )
+
+                            await self.mark_messages_as_processed(
+                                items_to_process, work_unit_key
+                            )
+                            message_count += len(items_to_process)
+
                         else:
                             messages_to_process = await self.get_next_message(
                                 task_type, work_unit_key, ownership.aqs_id
@@ -342,12 +351,14 @@ class QueueManager:
                                     f"No more messages to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
                                 break
-                            await process_item(task_type, messages_to_process[0])
+                            await process_item(
+                                task_type, messages_to_process[0].payload
+                            )
+                            await self.mark_messages_as_processed(
+                                messages_to_process, work_unit_key
+                            )
+                            message_count += len(messages_to_process)
 
-                        await self.mark_messages_as_processed(
-                            messages_to_process, work_unit_key
-                        )
-                        message_count += len(messages_to_process)
                     except Exception as e:
                         logger.error(
                             f"Error processing tasks for work unit {work_unit_key}: {e}",
@@ -449,19 +460,11 @@ class QueueManager:
     @sentry_sdk.trace
     async def get_message_batch(
         self, task_type: str, work_unit_key: str, aqs_id: str
-    ) -> list[QueueItem]:
+    ) -> tuple[list[models.Message], list[QueueItem]]:
         """
-        Get a batch of unprocessed messages for a specific work unit ordered by id.
-        For representation tasks, this will be a batch of messages up to REPRESENTATION_BATCH_MAX_TOKENS.
-        For other tasks, it will be a single message.
-
-        Args:
-            task_type: The type of task to process
-            work_unit_key: The key of the work unit to process
-            aqs_id: The ID of the active queue session to process
-
-        Returns:
-            A list of QueueItem objects
+        Representation-only: returns a tuple of (messages_context, items_to_process).
+        - messages_context: unique Message rows (conversation turns) forming the context window
+        - items_to_process: QueueItems for the current work_unit_key within that window
         """
         if task_type != "representation":
             raise ValueError(
@@ -484,7 +487,7 @@ class QueueManager:
             if not ownership_check.scalar_one_or_none():
                 # Worker lost ownership, return empty
                 await db.commit()
-                return []
+                return [], []
 
             # Step 2: Build a single SQL query that:
             # 1. Finds all unprocessed messages in chronological order
@@ -492,77 +495,57 @@ class QueueManager:
             # 3. Returns empty if focused sender is beyond token limit
             # 4. Otherwise returns messages up to token limit + first focused sender message
 
-            # CTE to track cumulative tokens and focused sender position
+            # Single-query approach: build message-centric CTE + fetch both messages and
+            # current work unit's queue items in one roundtrip.
+
+            message_ids_subq = (
+                select(
+                    func.cast(
+                        models.QueueItem.payload["message_id"].astext, BigInteger
+                    ).label("message_id")
+                )
+                .join(
+                    models.Message,
+                    func.cast(models.QueueItem.payload["message_id"].astext, BigInteger)
+                    == models.Message.id,
+                )
+                .where(~models.QueueItem.processed)
+                .where(models.Message.session_name == session_name)
+                .where(models.Message.workspace_name == workspace_name)
+                .distinct()
+                .subquery()
+            )
+
             cte = (
                 select(
-                    models.QueueItem.id,
-                    models.QueueItem.work_unit_key,
                     models.Message.id.label("message_id"),
-                    models.Message.token_count,
+                    models.Message.token_count.label("token_count"),
+                    models.Message.peer_name.label("sender_name"),
                     func.sum(models.Message.token_count)
                     .over(order_by=models.Message.id)
                     .label("cumulative_token_count"),
-                    # Check if this message is from the focused sender (1 if true, 0 if false)
-                    case(
-                        (
-                            models.QueueItem.payload["sender_name"].astext
-                            == focused_sender,
-                            1,
-                        ),
-                        else_=0,
-                    ).label("is_focused_sender"),
-                    # Running total of focused sender messages seen so far
-                    func.sum(
-                        case(
-                            (
-                                models.QueueItem.payload["sender_name"].astext
-                                == focused_sender,
-                                1,
-                            ),
-                            else_=0,
-                        )
-                    )
-                    .over(order_by=models.Message.id)
-                    .label("focused_sender_count"),
                 )
-                .select_from(
-                    models.QueueItem.__table__.join(
-                        models.Message.__table__,
-                        func.cast(
-                            models.QueueItem.payload["message_id"].astext,
-                            BigInteger,
-                        )
-                        == models.Message.id,
-                    )
-                )
+                .where(models.Message.id.in_(select(message_ids_subq.c.message_id)))
                 .where(models.Message.session_name == session_name)
                 .where(models.Message.workspace_name == workspace_name)
-                .where(~models.QueueItem.processed)
                 .order_by(models.Message.id)
                 .cte()
             )
 
-            # Subquery to find the message_id of the first focused sender message
-            first_focused_message_id_subquery = (
-                select(cte.c.message_id)
-                .where(cte.c.is_focused_sender == 1)
-                .order_by(cte.c.message_id)
-                .limit(1)
-                .scalar_subquery()
-            )
-
-            # Subquery to find the earliest (minimum) message_id in the unprocessed set
             earliest_message_id_subquery = (
                 select(cte.c.message_id)
                 .order_by(cte.c.message_id)
                 .limit(1)
                 .scalar_subquery()
             )
+            first_focused_message_id_subquery = (
+                select(cte.c.message_id)
+                .where(cte.c.sender_name == focused_sender)
+                .order_by(cte.c.message_id)
+                .limit(1)
+                .scalar_subquery()
+            )
 
-            # Allowed selection condition for rows:
-            # - Any row within the cumulative token limit
-            # - OR rows that belong to the first focused-sender message, but ONLY if
-            #   that focused message is also the earliest unprocessed message
             allowed_condition = (
                 cte.c.cumulative_token_count
                 <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
@@ -571,30 +554,51 @@ class QueueManager:
                 & (first_focused_message_id_subquery == earliest_message_id_subquery)
             )
 
-            # Main query:
-            # 1) Select allowed rows
-            # 2) Ensure the selected set includes at least one focused-sender row;
-            #    otherwise return []
+            focused_exists = (
+                select(1)
+                .where(and_(allowed_condition, cte.c.sender_name == focused_sender))
+                .limit(1)
+                .exists()
+            )
+
             query = (
-                select(models.QueueItem)
-                .where(
-                    models.QueueItem.id.in_(select(cte.c.id).where(allowed_condition))
+                select(models.Message, models.QueueItem)
+                .select_from(cte)
+                .join(models.Message, models.Message.id == cte.c.message_id)
+                .outerjoin(
+                    models.QueueItem,
+                    and_(
+                        models.QueueItem.work_unit_key == work_unit_key,
+                        ~models.QueueItem.processed,
+                        func.cast(
+                            models.QueueItem.payload["message_id"].astext, BigInteger
+                        )
+                        == models.Message.id,
+                    ),
                 )
-                .where(
-                    select(1)
-                    .where(allowed_condition & (cte.c.is_focused_sender == 1))
-                    .exists()
-                )
-                .order_by(models.QueueItem.id)
+                .where(allowed_condition)
+                .where(focused_exists)
+                .order_by(models.Message.id, models.QueueItem.id)
             )
 
             result = await db.execute(query)
-            messages = result.scalars().all()
+            rows = result.all()
+            if not rows:
+                await db.commit()
+                return [], []
 
-            # Important: commit to avoid tracked_db's rollback expiring the instance
-            # We rely on expire_on_commit=False to keep attributes accessible post-close
+            messages_context: list[models.Message] = []
+            items_to_process: list[QueueItem] = []
+            seen_messages: set[int] = set()
+            for m, qi in rows:
+                if m.id not in seen_messages:
+                    messages_context.append(m)
+                    seen_messages.add(m.id)
+                if qi is not None:
+                    items_to_process.append(qi)
+
             await db.commit()
-            return list(messages)
+            return messages_context, items_to_process
 
     async def mark_messages_as_processed(
         self, messages: list[QueueItem], work_unit_key: str

@@ -171,23 +171,23 @@ class TestQueueProcessing:
         await db_session.commit()
         await db_session.refresh(aqs)
 
-        batch = await qm.get_message_batch(
+        _, items_to_process = await qm.get_message_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
         )
-        nxt = batch[0] if batch else None
+        nxt = items_to_process[0] if items_to_process else None
         assert nxt is not None and nxt.id == first.id
 
         # Mark first processed, next should be the second
         first.processed = True
         await db_session.commit()
-        batch2 = await qm.get_message_batch(
+        _, items_to_process2 = await qm.get_message_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
         )
-        nxt2 = batch2[0] if batch2 else None
+        nxt2 = items_to_process2[0] if items_to_process2 else None
         assert nxt2 is not None and nxt2.id == second.id
 
     @pytest.mark.asyncio
@@ -334,14 +334,14 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_representation_batch(
-            queue_payloads: list[dict[str, Any]],
+            messages: list[models.Message],
             sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
             target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
                     "task_type": "representation",
-                    "payload_count": len(queue_payloads),
+                    "payload_count": len(messages),
                 }
             )
 
@@ -460,7 +460,7 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(alice_aqs)
 
-            alice_batch = await qm.get_message_batch(
+            alice_messages, _ = await qm.get_message_batch(
                 task_type="representation",
                 work_unit_key=alice_work_unit_key,
                 aqs_id=alice_aqs.id,
@@ -468,8 +468,8 @@ class TestQueueProcessing:
 
             # All work units should get ALL 6 messages in the chronological batch (messages 1-6)
             # Message 7 is outside the token limit batch
-            assert len(alice_batch) == 6
-            alice_message_ids = {msg.payload["message_id"] for msg in alice_batch}
+            assert len(alice_messages) == 6
+            alice_message_ids: set[int] = {m.id for m in alice_messages}
             expected_batch_ids = {
                 messages[0].id,  # alice(250)
                 messages[1].id,  # bob(400)
@@ -487,15 +487,15 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(bob_aqs)
 
-            bob_batch = await qm.get_message_batch(
+            bob_messages, _ = await qm.get_message_batch(
                 task_type="representation",
                 work_unit_key=bob_work_unit_key,
                 aqs_id=bob_aqs.id,
             )
 
             # Bob should also get all 6 messages for context
-            assert len(bob_batch) == 6
-            bob_message_ids = {msg.payload["message_id"] for msg in bob_batch}
+            assert len(bob_messages) == 6
+            bob_message_ids: set[int] = {m.id for m in bob_messages}
             assert bob_message_ids == expected_batch_ids
 
             # Test steve's work unit - should get same batch
@@ -505,15 +505,15 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(steve_aqs)
 
-            steve_batch = await qm.get_message_batch(
+            steve_messages, _ = await qm.get_message_batch(
                 task_type="representation",
                 work_unit_key=steve_work_unit_key,
                 aqs_id=steve_aqs.id,
             )
 
             # Steve should also get all 6 messages for context
-            assert len(steve_batch) == 6
-            steve_message_ids = {msg.payload["message_id"] for msg in steve_batch}
+            assert len(steve_messages) == 6
+            steve_message_ids: set[int] = {m.id for m in steve_messages}
             assert steve_message_ids == expected_batch_ids
 
     @pytest.mark.asyncio
@@ -609,14 +609,14 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(alice_aqs)
 
-                alice_batch = await qm.get_message_batch(
+                alice_messages2, _ = await qm.get_message_batch(
                     task_type="representation",
                     work_unit_key=alice_work_unit_key,
                     aqs_id=alice_aqs.id,
                 )
 
                 assert (
-                    len(alice_batch) == 0
+                    len(alice_messages2) == 0
                 )  # Empty batch - Alice is beyond token limit
 
             # Test bob's work unit
@@ -630,14 +630,14 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(bob_aqs)
 
-                bob_batch = await qm.get_message_batch(
+                bob_messages2, _ = await qm.get_message_batch(
                     task_type="representation",
                     work_unit_key=bob_work_unit_key,
                     aqs_id=bob_aqs.id,
                 )
 
-                assert len(bob_batch) == 1
-                assert bob_batch[0].payload["message_id"] == messages[0].id  # bob only
+                assert len(bob_messages2) == 1
+                assert bob_messages2[0].id == messages[0].id  # bob only
 
             # Test steve's work unit
             # Steve's first message appears at cumulative 1600, which exceeds the 1500 limit
@@ -649,14 +649,14 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(steve_aqs)
 
-                steve_batch = await qm.get_message_batch(
+                steve_messages2, _ = await qm.get_message_batch(
                     task_type="representation",
                     work_unit_key=steve_work_unit_key,
                     aqs_id=steve_aqs.id,
                 )
 
                 assert (
-                    len(steve_batch) == 0
+                    len(steve_messages2) == 0
                 )  # Empty batch - Steve is beyond token limit
 
     @pytest.mark.asyncio
@@ -841,14 +841,14 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_representation_batch(
-            queue_payloads: list[dict[str, Any]],
+            messages: list[models.Message],
             sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
             target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
                     "task_type": "representation",
-                    "payload_count": len(queue_payloads),
+                    "payload_count": len(messages),
                 }
             )
 
@@ -952,14 +952,14 @@ class TestQueueProcessing:
         processed_batches: list[dict[str, Any]] = []
 
         async def mock_process_representation_batch(
-            queue_payloads: list[dict[str, Any]],
+            messages: list[models.Message],
             sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
             target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
                     "task_type": "representation",
-                    "payload_count": len(queue_payloads),
+                    "payload_count": len(messages),
                 }
             )
 
