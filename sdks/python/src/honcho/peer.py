@@ -6,6 +6,7 @@ from collections.abc import Generator
 
 from honcho_core import Honcho as HonchoCore
 from honcho_core._types import NOT_GIVEN
+from honcho_core.types.workspaces import PeerCardResponse
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -119,26 +120,14 @@ class Peer(BaseModel):
             def stream_response() -> Generator[str, None, None]:
                 import json
 
-                # Use undocumented request until stainless SDK is regenerated
-                body = {
-                    "query": query,
-                    "stream": True,
-                }
-                if isinstance(target, Peer):
-                    body["target"] = target.id
-                elif target:
-                    body["target"] = target
-                if session_id:
-                    body["session_id"] = session_id
-
-                # Access the underlying httpx client directly
-                url = f"{self._client.base_url}/v2/workspaces/{self.workspace_id}/peers/{self.id}/chat"
-
-                with self._client._client.stream(
-                    "POST",
-                    url,
-                    json=body,
-                    headers={"Accept": "text/event-stream"},
+                # Use core SDK with_streaming_response
+                with self._client.workspaces.peers.with_streaming_response.chat(
+                    peer_id=self.id,
+                    workspace_id=self.workspace_id,
+                    query=query,
+                    stream=True,
+                    target=str(target.id) if isinstance(target, Peer) else target,
+                    session_id=session_id,
                 ) as response:
                     for line in response.iter_lines():
                         if line.startswith("data: "):
@@ -348,6 +337,43 @@ class Peer(BaseModel):
             filters=filters,
             limit=limit,
         )
+
+    def card(
+        self,
+        target: str | Peer | None = None,
+    ) -> str:
+        """
+        Get the peer card for this peer.
+
+        Makes an API call to retrieve the peer card, which contains a representation
+        of what this peer knows. If a target is provided, returns this peer's local
+        representation of the target peer.
+
+        Args:
+            target: Optional target peer for local card. If provided, returns this
+                    peer's card of the target peer. Can be a Peer object or peer ID string.
+
+        Returns:
+            A PeerCardResponse object containing the peer card
+        """
+        # Validate target parameter
+        if target is not None and not isinstance(target, (str, Peer)):
+            raise TypeError(f"target must be str, Peer, or None, got {type(target)}")
+
+        if isinstance(target, str) and len(target.strip()) == 0:
+            raise ValueError("target string cannot be empty")
+
+        response: PeerCardResponse = self._client.workspaces.peers.card(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            target=str(target.id) if isinstance(target, Peer) else target,
+        )
+        if response.peer_card is None:
+            return ""
+
+        items: list[str] = response.peer_card
+
+        return "\n".join(items)
 
     def __repr__(self) -> str:
         """

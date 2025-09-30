@@ -49,10 +49,15 @@ class DialecticStreamResponse:
 
     # Sync iterator protocol
     def __iter__(self):
-        return self
+        if isinstance(self._iterator, Iterator):
+            return self
+        else:
+            raise TypeError("iterator must be an sync iterator, got async iterator")
 
     def __next__(self) -> str:
         try:
+            if not isinstance(self._iterator, Iterator):
+                raise TypeError("iterator must be an sync iterator, got async iterator")
             chunk = next(self._iterator)  # type: ignore
             self._accumulated_content.append(chunk)
             return chunk
@@ -62,10 +67,15 @@ class DialecticStreamResponse:
 
     # Async iterator protocol
     def __aiter__(self):
-        return self
+        if isinstance(self._iterator, AsyncIterator):
+            return self
+        else:
+            raise TypeError("iterator must be an async iterator, got sync iterator")
 
     async def __anext__(self) -> str:
         try:
+            if not isinstance(self._iterator, AsyncIterator):
+                raise TypeError("iterator must be an async iterator, got sync iterator")
             chunk = await self._iterator.__anext__()  # type: ignore
             self._accumulated_content.append(chunk)
             return chunk

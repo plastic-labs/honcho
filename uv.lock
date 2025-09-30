@@ -766,6 +766,7 @@ dependencies = [
     { name = "honcho-core" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "typing-extensions" },
 ]
 
 [package.dev-dependencies]
@@ -775,9 +776,10 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.4.0" },
+    { name = "honcho-core", directory = "../dev-sdks/honcho-python" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
+    { name = "typing-extensions", specifier = ">=4.12.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -786,7 +788,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 [[package]]
 name = "honcho-core"
 version = "1.4.0"
-source = { registry = "https://pypi.org/simple" }
+source = { directory = "../dev-sdks/honcho-python" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -795,10 +797,19 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/71/c2/4d3737d5c0a75e2f59f324bed7428a9593c8edfcb7500cf402c46ad7378a/honcho_core-1.4.0.tar.gz", hash = "sha256:b30de9247763c01c3c37ed22b5d04d3c611440dd1983168f3d7d93f2cc0ecf7d", size = 126164, upload-time = "2025-08-12T19:06:54.828Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c1/ac/6eb2e38376736bb1dfd26bbdfd96490bfbb6f0ddcb00b39913e93799e7d8/honcho_core-1.4.0-py3-none-any.whl", hash = "sha256:a84397fd9daf546a04f5458d7233ebd5eeafcb97af75ec60a9327db89abdaf03", size = 117602, upload-time = "2025-08-12T19:06:53.667Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'aiohttp'" },
+    { name = "anyio", specifier = ">=3.5.0,<5" },
+    { name = "distro", specifier = ">=1.7.0,<2" },
+    { name = "httpx", specifier = ">=0.23.0,<1" },
+    { name = "httpx-aiohttp", marker = "extra == 'aiohttp'", specifier = ">=0.1.8" },
+    { name = "pydantic", specifier = ">=1.9.0,<3" },
+    { name = "sniffio" },
+    { name = "typing-extensions", specifier = ">=4.10,<5" },
 ]
+provides-extras = ["aiohttp"]
 
 [[package]]
 name = "httpcore"

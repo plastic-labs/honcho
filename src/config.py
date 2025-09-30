@@ -188,7 +188,7 @@ class DeriverSettings(HonchoSettings):
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
     PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash"
+    MODEL: str = "gemini-2.5-flash-lite"
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
     # Thinking budget tokens are only applied when using Anthropic as provider
