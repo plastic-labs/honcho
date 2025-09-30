@@ -58,6 +58,7 @@ async def critical_analysis_call(
         track_name="Critical Analysis Call",
         response_model=PromptRepresentation,
         json_mode=True,
+        stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
         enable_retry=True,
         retry_attempts=3,
