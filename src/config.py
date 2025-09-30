@@ -258,6 +258,13 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
+class MetricsSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    NAMESPACE: str = "honcho"
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -290,6 +297,7 @@ class AppSettings(HonchoSettings):
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
+    METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

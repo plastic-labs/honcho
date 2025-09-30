@@ -91,3 +91,8 @@ MODEL = "gemini-1.5-flash-latest"
 MAX_TOKENS_SHORT = 1000
 MAX_TOKENS_LONG = 2000
 THINKING_BUDGET_TOKENS = 512
+
+# Metrics settings
+[metrics]
+ENABLED = false
+NAMESPACE = "honcho"

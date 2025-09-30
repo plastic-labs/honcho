@@ -29,6 +29,7 @@ dependencies = [
     "google-generativeai>=0.8.5",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
+    "prometheus-client>=0.20.0",
 ]
 [tool.uv]
 dev-dependencies = [

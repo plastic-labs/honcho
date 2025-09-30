@@ -16,7 +16,7 @@ from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from src import crud, schemas
+from src import crud, prometheus, schemas
 from src.config import settings
 from src.dependencies import db
 from src.deriver import enqueue
@@ -72,6 +72,10 @@ async def create_messages_for_session(
 
         # Enqueue all messages in one call
         background_tasks.add_task(enqueue, payloads)
+        prometheus.MESSAGES_CREATED.labels(
+            session_name=session_id,
+            workspace_name=workspace_id,
+        ).inc()
         return created_messages
     except ValueError as e:
         logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
@@ -135,6 +139,10 @@ async def create_messages_with_file(
     logger.info(
         f"Batch of {len(created_messages)} messages created from file uploads and queued for processing"
     )
+    prometheus.MESSAGES_CREATED.labels(
+        session_name=session_id,
+        workspace_name=form_data.peer_id,
+    ).inc()
 
     return created_messages
 
