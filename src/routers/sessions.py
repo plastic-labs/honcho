@@ -378,7 +378,7 @@ async def get_session_context(
     *,
     last_message: str | None = Query(
         None,
-        description="The most recent message, used to fetch semantically relevant observations",
+        description="The most recent message, used to fetch semantically relevant observations and returned as part of the context object",
     ),
     include_summary: bool = Query(
         default=True,
@@ -435,6 +435,8 @@ async def get_session_context(
         include_most_derived=True,
     )
 
+    representation = None if representation.is_empty() else str(representation)
+
     card = await crud.get_peer_card(
         db,
         workspace_name=workspace_id,
@@ -447,13 +449,13 @@ async def get_session_context(
     try:
         tokenizer = tiktoken.get_encoding("cl100k_base")
         if representation:
-            token_limit -= len(tokenizer.encode(str(representation)))
+            token_limit -= len(tokenizer.encode(representation))
         if card:
             token_limit -= len(tokenizer.encode("\n".join(card)))
     except Exception:
         # Fallback to rough character-based estimation
         if representation:
-            token_limit -= len(str(representation)) // 4
+            token_limit -= len(representation) // 4
         if card:
             token_limit -= len("\n".join(card)) // 4
 

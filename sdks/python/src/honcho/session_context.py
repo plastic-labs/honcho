@@ -58,6 +58,14 @@ class SessionContext(BaseModel):
     summary: Summary | None = Field(
         None, description="Summary of the session history prior to the message cutoff"
     )
+    peer_representation: str | None = Field(
+        None,
+        description="The peer representation, if context is requested from a specific perspective",
+    )
+    peer_card: list[str] | None = Field(
+        None,
+        description="The peer card, if context is requested from a specific perspective",
+    )
 
     @validate_call
     def __init__(
@@ -72,6 +80,14 @@ class SessionContext(BaseModel):
             None,
             description="Summary of the session history prior to the message cutoff",
         ),
+        peer_representation: str | None = Field(
+            None,
+            description="The peer representation, if context is requested from a specific perspective",
+        ),
+        peer_card: list[str] | None = Field(
+            None,
+            description="The peer card, if context is requested from a specific perspective",
+        ),
     ) -> None:
         """
         Initialize a new SessionContext.
@@ -84,6 +100,8 @@ class SessionContext(BaseModel):
             session_id=session_id,
             messages=messages,
             summary=summary,
+            peer_representation=peer_representation,
+            peer_card=peer_card,
         )
 
     def to_openai(
@@ -118,12 +136,27 @@ class SessionContext(BaseModel):
             for message in self.messages
         ]
 
+        if self.peer_representation:
+            peer_representation_message = {
+                "role": "system",
+                "content": f"<peer_representation>{self.peer_representation}</peer_representation>",
+            }
+            messages.insert(0, peer_representation_message)
+
+        if self.peer_card:
+            peer_card_message = {
+                "role": "system",
+                "content": f"<peer_card>{self.peer_card}</peer_card>",
+            }
+            messages.insert(0, peer_card_message)
+
         if self.summary:
             summary_message = {
                 "role": "system",
                 "content": f"<summary>{self.summary.content}</summary>",
             }
-            return [summary_message, *messages]
+            messages.insert(0, summary_message)
+
         return messages
 
     def to_anthropic(
@@ -165,12 +198,27 @@ class SessionContext(BaseModel):
             for message in self.messages
         ]
 
+        if self.peer_representation:
+            peer_representation_message = {
+                "role": "user",
+                "content": f"<peer_representation>{self.peer_representation}</peer_representation>",
+            }
+            messages.insert(0, peer_representation_message)
+
+        if self.peer_card:
+            peer_card_message = {
+                "role": "user",
+                "content": f"<peer_card>{self.peer_card}</peer_card>",
+            }
+            messages.insert(0, peer_card_message)
+
         if self.summary:
             summary_message = {
                 "role": "user",
                 "content": f"<summary>{self.summary.content}</summary>",
             }
-            return [summary_message, *messages]
+            messages.insert(0, summary_message)
+
         return messages
 
     def __len__(self) -> int:
