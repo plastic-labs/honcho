@@ -331,7 +331,6 @@ class QueueManager:
                             sender_name = parsed_key["sender_name"]
                             target_name = parsed_key["target_name"]
 
-                            # TODO: skip this to isolate queue manager logs
                             await process_representation_batch(
                                 messages_context,
                                 sender_name=sender_name,
