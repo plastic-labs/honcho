@@ -119,8 +119,11 @@ async def process_representation_tasks_batch(
         earliest_payload.message_id,
     )
 
+    # Time context preparation
+    context_prep_start = time.perf_counter()
+
     # Use get_session_context_formatted with configurable token limit
-    async with tracked_db("deriver.get_session_context") as db:
+    async with tracked_db("deriver.get_context+representation+peer_card") as db:
         formatted_history = await summarizer.get_session_context_formatted(
             db,
             latest_payload.workspace_name,
@@ -129,6 +132,47 @@ async def process_representation_tasks_batch(
             cutoff=latest_payload.message_id,
             include_summary=True,
         )
+
+        working_representation = await crud.get_working_representation(
+            db,
+            latest_payload.workspace_name,
+            latest_payload.target_name,
+            latest_payload.sender_name,
+            # include_semantic_query=latest_payload.content,
+            # include_most_derived=False,
+        )
+
+        if settings.DERIVER.USE_PEER_CARD:
+            speaker_peer_card: list[str] | None = await crud.get_peer_card(
+                db,
+                latest_payload.workspace_name,
+                latest_payload.sender_name,
+                latest_payload.target_name,
+            )
+            if speaker_peer_card is None:
+                logger.warning(
+                    "No peer card found for %s. Normal if brand-new peer.",
+                    latest_payload.sender_name,
+                )
+            else:
+                logger.info("Using peer card: %s", speaker_peer_card)
+        else:
+            speaker_peer_card = None
+
+    # got working representation and peer card, log timing
+    context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
+    accumulate_metric(
+        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        "context_preparation",
+        context_prep_duration,
+        "ms",
+    )
+
+    logger.info(
+        "Using working representation with %s explicit, %s deductive observations",
+        len(working_representation.explicit),
+        len(working_representation.deductive),
+    )
 
     # instantiate embedding store from collection
     # if the sender is also the target, we're handling a global representation task.
@@ -151,53 +195,6 @@ async def process_representation_tasks_batch(
 
     # Create reasoner instance
     reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payloads)
-
-    # Time context preparation
-    context_prep_start = time.perf_counter()
-
-    # Check for existing working representation first, fall back to global search
-    async with tracked_db("deriver.get_working_representation_data") as db:
-        working_representation = await crud.get_working_representation(
-            db,
-            latest_payload.workspace_name,
-            latest_payload.target_name,
-            latest_payload.sender_name,
-            # include_semantic_query=latest_payload.content,
-            # include_most_derived=False,
-        )
-
-    logger.info(
-        "Using working representation with %s explicit, %s deductive observations",
-        len(working_representation.explicit),
-        len(working_representation.deductive),
-    )
-
-    if settings.DERIVER.USE_PEER_CARD:
-        async with tracked_db("deriver.get_peer_card") as db:
-            speaker_peer_card: list[str] | None = await crud.get_peer_card(
-                db,
-                latest_payload.workspace_name,
-                latest_payload.sender_name,
-                latest_payload.target_name,
-            )
-        if speaker_peer_card is None:
-            logger.warning(
-                "No peer card found for %s. Normal if brand-new peer.",
-                latest_payload.sender_name,
-            )
-        else:
-            logger.info("Using peer card: %s", speaker_peer_card)
-    else:
-        speaker_peer_card = None
-
-    # got working representation and peer card, log timing
-    context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
-    accumulate_metric(
-        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
-        "context_preparation",
-        context_prep_duration,
-        "ms",
-    )
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
