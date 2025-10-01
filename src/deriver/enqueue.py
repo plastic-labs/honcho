@@ -284,7 +284,7 @@ async def generate_queue_records(
 
     records: list[dict[str, Any]] = []
 
-    if (
+    if settings.SUMMARY.ENABLED and (
         message_seq_in_session % settings.SUMMARY.MESSAGES_PER_SHORT_SUMMARY == 0
         or message_seq_in_session % settings.SUMMARY.MESSAGES_PER_LONG_SUMMARY == 0
     ):

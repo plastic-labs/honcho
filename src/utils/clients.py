@@ -1,3 +1,5 @@
+import json
+import logging
 from collections.abc import AsyncIterator, Callable
 from functools import wraps
 from typing import Any, Generic, Literal, TypeVar, cast, overload
@@ -10,13 +12,17 @@ from google.genai.types import GenerateContentResponse
 from groq import AsyncGroq
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sentry_sdk.ai.monitoring import ai_track
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from src.config import settings
+from src.utils.json_parser import validate_and_repair_json
 from src.utils.langfuse_client import get_langfuse_client
+from src.utils.representation import PromptRepresentation
 from src.utils.types import SupportedProviders
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
@@ -44,6 +50,13 @@ if settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
         base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
     )
 
+if settings.LLM.OPENAI_COMPATIBLE_API_KEY:
+    CLIENTS["vllm"] = AsyncOpenAI(
+        api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
+        base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
+    )
+
+
 if settings.LLM.GEMINI_API_KEY:
     google = genai.client.Client(api_key=settings.LLM.GEMINI_API_KEY)
     CLIENTS["google"] = google
@@ -56,7 +69,6 @@ SELECTED_PROVIDERS = [
     ("Dialectic", settings.DIALECTIC.PROVIDER),
     ("Summary", settings.SUMMARY.PROVIDER),
     ("Deriver", settings.DERIVER.PROVIDER),
-    ("Query Generation Provider", settings.DIALECTIC.QUERY_GENERATION_PROVIDER),
 ]
 
 for provider_name, provider_value in SELECTED_PROVIDERS:
@@ -105,6 +117,7 @@ async def honcho_llm_call(
     *,
     response_model: type[M],
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -124,6 +137,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: None = None,
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -143,6 +157,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -161,6 +176,7 @@ async def honcho_llm_call(
     track_name: str | None = None,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -198,6 +214,7 @@ async def honcho_llm_call(
             max_tokens,
             response_model,
             json_mode,
+            stop_seqs,
             reasoning_effort,
             verbosity,
             thinking_budget_tokens,
@@ -211,6 +228,7 @@ async def honcho_llm_call(
             max_tokens,
             response_model,
             json_mode,
+            stop_seqs,
             reasoning_effort,
             verbosity,
             thinking_budget_tokens,
@@ -226,6 +244,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[M],
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -242,6 +261,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: None = None,
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -258,6 +278,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -273,6 +294,7 @@ async def honcho_llm_call_inner(
     max_tokens: int,
     response_model: type[BaseModel] | None = None,
     json_mode: bool = False,
+    stop_seqs: list[str] | None = None,
     reasoning_effort: Literal["low", "medium", "high", "minimal"]
     | None = None,  # OpenAI only
     verbosity: Literal["low", "medium", "high"] | None = None,  # OpenAI only
@@ -342,11 +364,14 @@ async def honcho_llm_call_inner(
                 output_tokens=usage.output_tokens if usage else 0,  # pyright: ignore
                 finish_reasons=[stop_reason] if stop_reason else [],
             )
+
         case AsyncOpenAI():
             openai_params: dict[str, Any] = {
                 "model": params["model"],
                 "messages": params["messages"],
             }
+            if stop_seqs:
+                openai_params["stop"] = stop_seqs
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
                 if reasoning_effort:
@@ -355,9 +380,85 @@ async def honcho_llm_call_inner(
                     openai_params["verbosity"] = verbosity
             else:
                 openai_params["max_tokens"] = params["max_tokens"]
-            if json_mode:
+
+            if json_mode and provider != "vllm":
                 openai_params["response_format"] = {"type": "json_object"}
-            if response_model:
+
+            # custom shim for vLLM response model formatting
+            # NOTE: this is all specific to the Representation model.
+            # Do not call with any other response model.
+            if provider == "vllm" and response_model:
+                openai_params["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": response_model.__name__,
+                        "schema": response_model.model_json_schema(),
+                    },
+                }
+                response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
+                    **openai_params
+                )
+
+                test_rep = ""
+                if response.choices[0].message.content is not None:  # pyright: ignore
+                    test_rep = response.choices[0].message.content  # pyright: ignore
+
+                final = validate_and_repair_json(test_rep)  # pyright: ignore
+
+                usage = response.usage  # pyright: ignore
+                finish_reason = response.choices[0].finish_reason  # pyright: ignore
+
+                # Schema-aware repair: ensure deductive observations have required fields
+                try:
+                    repaired_data = json.loads(final)
+
+                    # Fix deductive observations that might be missing conclusion
+                    if "deductive" in repaired_data and isinstance(
+                        repaired_data["deductive"], list
+                    ):
+                        for i, item in enumerate(repaired_data["deductive"]):
+                            if isinstance(item, dict):
+                                # If conclusion is missing but premises exist, create a placeholder
+                                if "conclusion" not in item and "premises" in item:
+                                    logger.warning(
+                                        f"Deductive observation {i} missing conclusion, adding placeholder"
+                                    )
+                                    # Try to generate a conclusion from premises if possible
+                                    if item["premises"]:
+                                        item["conclusion"] = (
+                                            f"[Incomplete reasoning from premises: {item['premises'][0][:100]}...]"
+                                        )
+                                    else:
+                                        item["conclusion"] = (
+                                            "[Incomplete reasoning - conclusion missing]"
+                                        )
+                                # If premises is missing, add empty list (it's optional with default)
+                                if "premises" not in item:
+                                    item["premises"] = []
+
+                    final = json.dumps(repaired_data)
+                except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    logger.warning(f"Could not perform schema-aware repair: {e}")
+                    # Continue with original final value if repair fails
+
+                try:
+                    response_obj = PromptRepresentation.model_validate_json(final)
+                except ValidationError as e:
+                    logger.error(f"Validation error after repair: {e}")
+                    logger.debug(f"Problematic JSON: {final}")
+
+                    # Fallback: return empty response rather than failing
+                    logger.warning(
+                        "Using fallback empty Representation due to validation error"
+                    )
+                    response_obj = PromptRepresentation(explicit=[], deductive=[])
+
+                return HonchoLLMCallResponse(
+                    content=response_obj,
+                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    finish_reasons=[finish_reason] if finish_reason else [],
+                )
+            elif response_model:
                 openai_params["response_format"] = response_model
                 response: ChatCompletion = await client.chat.completions.parse(  # pyright: ignore
                     **openai_params
@@ -367,9 +468,14 @@ async def honcho_llm_call_inner(
                 if parsed_content is None:
                     raise ValueError("No parsed content in structured response")
 
-                # Safely extract usage and finish_reason
                 usage = response.usage
                 finish_reason = response.choices[0].finish_reason
+
+                # Validate that parsed content matches the response model
+                if not isinstance(parsed_content, response_model):
+                    raise ValueError(
+                        f"Parsed content does not match the response model: {parsed_content} != {response_model}"
+                    )
 
                 return HonchoLLMCallResponse(
                     content=parsed_content,
@@ -381,7 +487,6 @@ async def honcho_llm_call_inner(
                     **openai_params
                 )
 
-                # Safely extract usage and finish_reason
                 usage = response.usage  # pyright: ignore
                 finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
@@ -390,6 +495,7 @@ async def honcho_llm_call_inner(
                     output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                     finish_reasons=[finish_reason] if finish_reason else [],
                 )
+
         case genai.Client():
             if response_model is None:
                 gemini_response: GenerateContentResponse = (
@@ -446,6 +552,12 @@ async def honcho_llm_call_inner(
                     else "stop"
                 )
 
+                # Validate that parsed content matches the response model
+                if not isinstance(gemini_response.parsed, response_model):
+                    raise ValueError(
+                        f"Parsed content does not match the response model: {gemini_response.parsed} != {response_model}"
+                    )
+
                 return HonchoLLMCallResponse(
                     content=gemini_response.parsed,
                     output_tokens=token_count,
@@ -464,6 +576,7 @@ async def honcho_llm_call_inner(
             elif json_mode:
                 groq_params["response_format"] = {"type": "json_object"}
 
+            # TODO: figure out why groq returns unknown type and fix it
             response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                 **groq_params
             )
@@ -474,11 +587,27 @@ async def honcho_llm_call_inner(
             usage = response.usage  # pyright: ignore
             finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
-            return HonchoLLMCallResponse(
-                content=response.choices[0].message.content,  # pyright: ignore
-                output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
-                finish_reasons=[finish_reason] if finish_reason else [],
-            )
+            # Handle response model parsing for Groq
+            if response_model:
+                try:
+                    json_content = json.loads(response.choices[0].message.content)  # pyright: ignore
+                    parsed_content = response_model.model_validate(json_content)
+
+                    return HonchoLLMCallResponse(
+                        content=parsed_content,
+                        output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                        finish_reasons=[finish_reason] if finish_reason else [],
+                    )
+                except (json.JSONDecodeError, ValueError) as e:
+                    raise ValueError(
+                        f"Failed to parse Groq response as {response_model}: {e}. Raw content: {response.choices[0].message.content}"  # pyright: ignore
+                    ) from e
+            else:
+                return HonchoLLMCallResponse(
+                    content=response.choices[0].message.content,  # pyright: ignore
+                    output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
+                    finish_reasons=[finish_reason] if finish_reason else [],
+                )
 
 
 async def handle_streaming_response(

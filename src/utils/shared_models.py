@@ -23,11 +23,3 @@ class PeerCardQuery(BaseModel):
         default=None,
         description="Optional additional notes from the model; may include non-actionable info.",
     )
-
-
-class SemanticQueries(BaseModel):
-    """Model for semantic query generation responses."""
-
-    queries: list[str] = Field(
-        description="List of semantic search queries to retrieve relevant observations"
-    )

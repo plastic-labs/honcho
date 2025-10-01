@@ -148,6 +148,7 @@ class QueueManager:
 
             query = (
                 select(models.QueueItem.work_unit_key)
+                .limit(limit)
                 .outerjoin(
                     models.ActiveQueueSession,
                     models.QueueItem.work_unit_key
@@ -157,7 +158,6 @@ class QueueManager:
                 .where(models.QueueItem.work_unit_key.isnot(None))
                 .where(models.ActiveQueueSession.work_unit_key.is_(None))
                 .distinct()
-                .limit(limit)
             )
 
             result = await db.execute(query)
@@ -334,10 +334,10 @@ class QueueManager:
                 # For non-representation tasks, just get the next single message.
                 query = (
                     select(models.QueueItem)
+                    .limit(1)
                     .where(models.QueueItem.work_unit_key == work_unit_key)
                     .where(~models.QueueItem.processed)
                     .order_by(models.QueueItem.id)
-                    .limit(1)
                 )
                 result = await db.execute(query)
                 messages = result.scalars().all()

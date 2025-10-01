@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 import tomllib
 from dotenv import load_dotenv
@@ -175,6 +175,8 @@ class LLMSettings(HonchoSettings):
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
+    EMBEDDING_PROVIDER: Literal["openai", "gemini"] = "openai"
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
@@ -195,6 +197,7 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
+    USE_PEER_CARD: bool = True
     PEER_CARD_PROVIDER: SupportedProviders = "openai"
     PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
     # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
@@ -257,6 +260,8 @@ class DialecticSettings(HonchoSettings):
 class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
+    ENABLED: bool = True
+
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
@@ -312,6 +317,9 @@ class AppSettings(HonchoSettings):
     )
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
+
+    COLLECT_METRICS_LOCAL: bool = True
+    LOCAL_METRICS_FILE: str = "metrics.jsonl"
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)

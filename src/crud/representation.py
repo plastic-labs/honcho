@@ -1,6 +1,7 @@
 from collections.abc import Sequence
+from datetime import datetime
 from logging import getLogger
-from typing import Final, cast
+from typing import Any, Final, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,6 +10,7 @@ from src import exceptions, models, schemas
 from src.config import settings
 from src.crud.peer import get_peer
 from src.utils.embedding_store import EmbeddingStore
+from src.utils.formatting import parse_datetime_iso
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -108,7 +110,10 @@ async def get_working_representation(
     observed_name: str,
     session_name: str | None = None,
     include_semantic_query: str | None = None,
+    semantic_search_top_k: int | None = None,
+    semantic_search_max_distance: float | None = None,
     include_most_derived: bool = False,
+    max_observations: int = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS,
 ) -> Representation:
     """
     Get raw working representation data from the relevant document collection.
@@ -118,16 +123,22 @@ async def get_working_representation(
         observer=observer_name, observed=observed_name
     )
 
-    max_observations = settings.DERIVER.WORKING_REPRESENTATION_MAX_OBSERVATIONS
-
     if include_semantic_query and include_most_derived:
         # three-way blend of semantically relevant, most rederived, and most recent observations
-        semantic_observations = max_observations // 3
+        semantic_observations = (
+            max_observations // 3
+            if semantic_search_top_k is None
+            else semantic_search_top_k
+        )
         top_observations = max_observations - semantic_observations
         max_observations -= top_observations + semantic_observations
     elif include_semantic_query:
         # two-way blend of semantically relevant and most recent observations
-        semantic_observations = max_observations // 2
+        semantic_observations = (
+            max_observations // 2
+            if semantic_search_top_k is None
+            else semantic_search_top_k
+        )
         top_observations = 0
         max_observations -= semantic_observations
     elif include_most_derived:
@@ -145,9 +156,13 @@ async def get_working_representation(
             workspace_name=workspace_name,
             peer_name=observer_name,
             collection_name=collection_name,
+            db=db,
         ).get_relevant_observations(
             query=include_semantic_query,
             top_k=semantic_observations,
+            max_distance=semantic_search_max_distance
+            if semantic_search_max_distance is not None
+            else 0.3,
         )
         representation = semantically_relevant_representation
     else:
@@ -156,12 +171,12 @@ async def get_working_representation(
     if include_most_derived:
         stmt = (
             select(models.Document)
+            .limit(top_observations)
             .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.collection_name == collection_name,
             )
             .order_by(models.Document.internal_metadata["times_derived"].desc())
-            .limit(top_observations)
         )
 
         result = await db.execute(stmt)
@@ -171,6 +186,7 @@ async def get_working_representation(
 
     stmt = (
         select(models.Document)
+        .limit(max_observations)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.collection_name == collection_name,
@@ -184,7 +200,6 @@ async def get_working_representation(
             ),
         )
         .order_by(models.Document.created_at.desc())
-        .limit(max_observations)
     )
 
     result = await db.execute(stmt)
@@ -200,13 +215,31 @@ async def get_working_representation(
     return representation
 
 
+def _safe_datetime_from_metadata(
+    internal_metadata: dict[str, Any], fallback_datetime: datetime
+) -> datetime:
+    message_created_at = internal_metadata.get("message_created_at")
+    if message_created_at is None:
+        return fallback_datetime.replace(microsecond=0)
+
+    if isinstance(message_created_at, str):
+        try:
+            return parse_datetime_iso(message_created_at)
+        except ValueError:
+            return fallback_datetime.replace(microsecond=0)
+
+    return message_created_at.replace(microsecond=0)
+
+
 def representation_from_documents(
     documents: Sequence[models.Document],
 ) -> Representation:
     return Representation(
         explicit=[
             ExplicitObservation(
-                created_at=doc.created_at.replace(microsecond=0),
+                created_at=_safe_datetime_from_metadata(
+                    doc.internal_metadata, doc.created_at
+                ),
                 content=doc.content,
                 message_id=doc.internal_metadata.get("message_id"),
                 session_name=doc.internal_metadata.get("session_name"),
@@ -216,7 +249,9 @@ def representation_from_documents(
         ],
         deductive=[
             DeductiveObservation(
-                created_at=doc.created_at.replace(microsecond=0),
+                created_at=_safe_datetime_from_metadata(
+                    doc.internal_metadata, doc.created_at
+                ),
                 conclusion=doc.content,
                 message_id=doc.internal_metadata.get("message_id"),
                 session_name=doc.internal_metadata.get("session_name"),

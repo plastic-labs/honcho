@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import time
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,8 +15,12 @@ from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.utils.formatting import format_datetime_utc
 from src.utils.langfuse_client import get_langfuse_client
-from src.utils.logging import conditional_observe
-from src.utils.representation import DeductiveObservation, Representation
+from src.utils.logging import accumulate_metric, conditional_observe
+from src.utils.representation import (
+    DeductiveObservation,
+    ExplicitObservation,
+    Representation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +34,17 @@ class EmbeddingStore:
     """Embedding store specialized for observation-based reasoning with structured metadata."""
 
     def __init__(
-        self, workspace_name: str, peer_name: str, collection_name: str
+        self,
+        workspace_name: str,
+        peer_name: str,
+        collection_name: str,
+        *,
+        db: AsyncSession | None = None,
     ) -> None:
         self.workspace_name: str = workspace_name
         self.peer_name: str = peer_name
         self.collection_name: str = collection_name
+        self.db: AsyncSession | None = db
 
     @conditional_observe
     async def save_representation(
@@ -65,6 +76,8 @@ class EmbeddingStore:
         all_observations = representation.deductive + representation.explicit
 
         # Batch embed all observations
+        batch_embed_start = time.perf_counter()
+
         observation_texts = [
             obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
             for obs in all_observations
@@ -76,49 +89,100 @@ class EmbeddingStore:
                 f"Observation content exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
             ) from e
 
+        batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
+        accumulate_metric(
+            f"deriver_{message_id}_{self.peer_name}",
+            "embed_new_observations",
+            batch_embed_duration,
+            "ms",
+        )
+
         # Batch create document objects
-        async with tracked_db("embedding_store.save_representation") as db:
-            # get_or_create_collection already handles IntegrityError with rollback and a retry
-            collection = await crud.get_or_create_collection(
-                db,
-                self.workspace_name,
-                self.collection_name,
-                self.peer_name,
+        create_document_start = time.perf_counter()
+        if self.db:
+            new_documents = await self._save_representation_internal(
+                self.db,
+                all_observations,
+                embeddings,
+                message_id,
+                session_name,
+                message_created_at,
+            )
+        else:
+            async with tracked_db("embedding_store.save_representation") as db:
+                new_documents = await self._save_representation_internal(
+                    db,
+                    all_observations,
+                    embeddings,
+                    message_id,
+                    session_name,
+                    message_created_at,
+                )
+
+        create_document_duration = (time.perf_counter() - create_document_start) * 1000
+        accumulate_metric(
+            f"deriver_{message_id}_{self.peer_name}",
+            "save_new_observations",
+            create_document_duration,
+            "ms",
+        )
+
+        return new_documents
+
+    async def _save_representation_internal(
+        self,
+        db: AsyncSession,
+        all_observations: list[ExplicitObservation | DeductiveObservation],
+        embeddings: list[list[float]],
+        message_id: int,
+        session_name: str,
+        message_created_at: datetime.datetime,
+    ) -> int:
+        # get_or_create_collection already handles IntegrityError with rollback and a retry
+        collection = await crud.get_or_create_collection(
+            db,
+            self.workspace_name,
+            self.collection_name,
+            self.peer_name,
+        )
+
+        # Prepare all documents for bulk creation
+        documents_to_create: list[schemas.DocumentCreate] = []
+        for obs in all_observations:
+            # NOTE: will add additional levels of reasoning in the future
+            if isinstance(obs, DeductiveObservation):
+                obs_level = "deductive"
+                obs_content = obs.conclusion
+                obs_premises = obs.premises
+            else:
+                obs_level = "explicit"
+                obs_content = obs.content
+                obs_premises = None
+
+            metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
+                message_id=message_id,
+                session_name=session_name,
+                level=obs_level,
+                premises=obs_premises,
+                message_created_at=format_datetime_utc(message_created_at),
             )
 
-            for obs, embedding in zip(all_observations, embeddings, strict=True):
-                # NOTE: will add additional levels of reasoning in the future
-                if isinstance(obs, DeductiveObservation):
-                    obs_level = "deductive"
-                    obs_content = obs.conclusion
-                    obs_premises = obs.premises
-                else:
-                    obs_level = "explicit"
-                    obs_content = obs.content
-                    obs_premises = None
+            documents_to_create.append(
+                schemas.DocumentCreate(content=obs_content, metadata=metadata)
+            )
 
-                metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
-                    message_id=message_id,
-                    session_name=session_name,
-                    level=obs_level,
-                    premises=obs_premises,
-                    message_created_at=format_datetime_utc(message_created_at),
-                )
+        # Use bulk creation with NO duplicate detection
+        _created_documents, new_documents = await crud.create_documents_bulk(
+            db,
+            documents_to_create,
+            collection,
+            embeddings,
+        )
 
-                _honcho_document, is_duplicate = await crud.create_document(
-                    db,
-                    schemas.DocumentCreate(content=obs_content, metadata=metadata),
-                    collection=collection,
-                    embedding=embedding,
-                    duplicate_threshold=0.95,
-                )
-                if not is_duplicate:
-                    new_documents += 1
-
-            try:
-                await check_and_schedule_dream(db, collection)
-            except Exception as e:
-                logger.warning(f"Failed to check dream scheduling: {e}")
+        try:
+            await check_and_schedule_dream(db, collection)
+        except Exception as e:
+            logger.warning(f"Failed to check dream scheduling: {e}")
 
         return new_documents
 

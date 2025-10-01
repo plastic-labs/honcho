@@ -2,8 +2,6 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from src.utils.formatting import parse_datetime_iso, utc_now_iso
-
 
 class Observation(BaseModel):
     created_at: datetime
@@ -262,19 +260,20 @@ class PromptRepresentation(BaseModel):
         default_factory=list,
     )
 
-    def to_representation(self, message_id: int, session_name: str) -> Representation:
+    def to_representation(
+        self, message_id: int, session_name: str, timestamp: datetime
+    ) -> Representation:
         """
         Convert a PromptRepresentation object to a Representation object.
 
         NOTE: all observations produced by this method will have the same timestamp, so
         only use it on the output of a single inference call.
         """
-        created_at = parse_datetime_iso(utc_now_iso())
         return Representation(
             explicit=[
                 ExplicitObservation(
                     content=e,
-                    created_at=created_at,
+                    created_at=timestamp,
                     message_id=message_id,
                     session_name=session_name,
                 )
@@ -282,7 +281,7 @@ class PromptRepresentation(BaseModel):
             ],
             deductive=[
                 DeductiveObservation(
-                    created_at=created_at,
+                    created_at=timestamp,
                     message_id=message_id,
                     session_name=session_name,
                     conclusion=d.conclusion,

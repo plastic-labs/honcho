@@ -66,6 +66,8 @@ PROVIDER = "google"
 MODEL = "gemini-2.0-flash-lite"
 MAX_OUTPUT_TOKENS = 2500
 THINKING_BUDGET_TOKENS = 1024 # only applied when using Anthropic
+
+USE_PEER_CARD = true
 PEER_CARD_PROVIDER = "openai"
 PEER_CARD_MODEL = "gpt-5-nano-2025-08-07"
 PEER_CARD_MAX_OUTPUT_TOKENS = 2000
@@ -88,6 +90,7 @@ CONTEXT_WINDOW_SIZE = 100000
 
 # Summary settings
 [summary]
+ENABLED = true
 MESSAGES_PER_SHORT_SUMMARY = 20
 MESSAGES_PER_LONG_SUMMARY = 60
 PROVIDER = "google"

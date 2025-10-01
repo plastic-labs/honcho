@@ -180,5 +180,5 @@ class TestDeriverProcessing:
 
         await process_representation_tasks_batch(payloads)
 
-        # Verify that the earliest message ID was used as the cutoff
-        assert captured_cutoffs == [payloads[0].message_id]
+        # Verify that the latest message ID was used as the cutoff
+        assert captured_cutoffs == [payloads[-1].message_id]
