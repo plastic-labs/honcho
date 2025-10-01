@@ -77,11 +77,13 @@ describe('Page', () => {
       }
       const page = new Page(mockOriginalPage, errorTransform)
 
-      await expect(async () => {
+      const iterate = async () => {
         for await (const item of page) {
           // This should throw
         }
-      }).rejects.toThrow('Transform error')
+      }
+
+      await expect(iterate()).rejects.toThrow('Transform error')
     })
   })
 
@@ -245,7 +247,7 @@ describe('Page', () => {
         page: 2,
         pages: 4,
         hasNextPage: false,
-        [Symbol.asyncIterator]: async function* () {
+        [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item
           }
@@ -293,7 +295,7 @@ describe('Page', () => {
     it('should propagate transform function to next page', async () => {
       const nextPageData = {
         items: [{ id: 'item4', name: 'Item 4' }],
-        [Symbol.asyncIterator]: async function* () {
+        [Symbol.asyncIterator]: async function*() {
           for (const item of this.items) {
             yield item
           }
@@ -320,7 +322,9 @@ describe('Page', () => {
         .mockRejectedValue(new Error('Failed to get next page'))
       const page = new Page(mockOriginalPage)
 
-      await expect(page.getNextPage()).rejects.toThrow('Failed to get next page')
+      await expect(page.getNextPage()).rejects.toThrow(
+        'Failed to get next page'
+      )
     })
   })
 })

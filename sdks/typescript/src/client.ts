@@ -16,6 +16,7 @@ import {
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
+  MessageMetadataSchema,
   type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
@@ -465,6 +466,7 @@ export class Honcho {
     metadata: Record<string, unknown>,
     sessionId?: string
   ): Promise<Message> {
+    const validatedMetadata = MessageMetadataSchema.parse(metadata)
     let messageId: string
     let resolvedSessionId: string
 
@@ -484,7 +486,7 @@ export class Honcho {
       resolvedSessionId,
       messageId,
       {
-        metadata,
+        metadata: validatedMetadata,
       }
     )
   }

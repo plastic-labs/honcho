@@ -44,21 +44,24 @@ class AsyncPage(Generic[T, U]):
 
     def __getitem__(self, index: int) -> U | T:
         """Get a transformed item by index on the current page."""
-        item = self._original_page.items[index]
+        items = self._original_page.items or []
+        item = items[index]
         if self._transform_func is not None:
             return self._transform_func(item)
         return item
 
     def __len__(self) -> int:
         """Get the number of items on the current page."""
-        return len(self._original_page.items)
+        items = self._original_page.items or []
+        return len(items)
 
     @property
     def items(self) -> list[U] | list[T]:
         """Get all transformed items on the current page."""
+        items = self._original_page.items or []
         if self._transform_func is not None:
-            return [self._transform_func(item) for item in self._original_page.items]
-        return self._original_page.items
+            return [self._transform_func(item) for item in items]
+        return items
 
     @property
     def total(self) -> int | None:

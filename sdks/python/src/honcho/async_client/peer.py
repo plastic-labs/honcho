@@ -145,6 +145,7 @@ class AsyncPeer(BaseModel):
                     target=str(target.id) if isinstance(target, AsyncPeer) else target,
                     session_id=session_id,
                 ) as response:
+                    _check = response.http_response.raise_for_status()
                     async for line in response.iter_lines():
                         if line.startswith("data: "):
                             json_str = line[6:]  # Remove "data: " prefix
@@ -371,7 +372,7 @@ class AsyncPeer(BaseModel):
                     peer's card of the target peer. Can be an AsyncPeer object or peer ID string.
 
         Returns:
-            A PeerCardResponse object containing the peer card
+            A string containing the peer card joined with newlines, or an empty string if none is available
         """
         # Validate target parameter
         if isinstance(target, str) and len(target.strip()) == 0:
