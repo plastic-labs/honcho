@@ -108,9 +108,9 @@ describe('Page', () => {
     it('should handle out of bounds index', () => {
       const page = new Page(mockOriginalPage)
 
-      const item = page.get(999)
-
-      expect(item).toBeUndefined()
+      expect(() => page.get(999)).toThrow(
+        'Index 999 is out of bounds for page with 3 items'
+      )
     })
   })
 

@@ -673,7 +673,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "2.3.1"
+version = "2.3.3"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
@@ -766,7 +766,7 @@ dependencies = [
     { name = "honcho-core" },
     { name = "httpx" },
     { name = "pydantic" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'" },
 ]
 
 [package.dev-dependencies]
@@ -779,7 +779,7 @@ requires-dist = [
     { name = "honcho-core", specifier = ">=1.4.1a0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
-    { name = "typing-extensions", specifier = ">=4.12.0" },
+    { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
 ]
 
 [package.metadata.requires-dev]

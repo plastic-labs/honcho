@@ -1,8 +1,7 @@
 // Main entry point for the Honcho TypeScript SDK
 // Exports all main classes and types
 
-import { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
-export { Message }
+export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 export { Honcho } from './client'
 export { Page } from './pagination'
 export { Peer } from './peer'

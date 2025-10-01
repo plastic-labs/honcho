@@ -146,7 +146,7 @@ class AsyncPeer(BaseModel):
                     target=str(target.id) if isinstance(target, AsyncPeer) else target,
                     session_id=session_id,
                 ) as response:
-                    _check = response.http_response.raise_for_status()
+                    response.http_response.raise_for_status()
                     async for line in response.iter_lines():
                         if line.startswith("data: "):
                             json_str = line[6:]  # Remove "data: " prefix

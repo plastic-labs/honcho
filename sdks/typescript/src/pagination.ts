@@ -40,6 +40,11 @@ export class Page<T, TOriginal = any> implements AsyncIterable<T> {
    */
   get(index: number): T {
     const items = this._originalPage.items || []
+    if (index < 0 || index >= items.length) {
+      throw new RangeError(
+        `Index ${index} is out of bounds for page with ${items.length} items`
+      )
+    }
     const item = items[index]
     return this._transformFunc
       ? this._transformFunc(item)

@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.3.1"
+version = "2.3.3"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},

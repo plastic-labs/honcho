@@ -9,7 +9,9 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
-def with_sentry_transaction(name: str, op: str):
+def with_sentry_transaction(
+    name: str, op: str
+) -> Callable[[Callable[P, T]], Callable[P, T]]:
     """Decorator to wrap a function in a Sentry transaction.
 
     Args:
@@ -29,7 +31,7 @@ def with_sentry_transaction(name: str, op: str):
         if asyncio.iscoroutinefunction(func):
 
             @wraps(func)
-            async def async_wrapper(*args: P.args, **kwargs: P.kwargs):
+            async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
                 with sentry_sdk.start_transaction(name=name, op=op):
                     return await func(*args, **kwargs)
 
