@@ -41,6 +41,7 @@ Optional arguments:
 --honcho-url: URL of the running Honcho instance (default: http://localhost:8000)
 --batch-size: Number of questions to run concurrently in each batch (default: 10)
 --json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file in tests/bench/eval_results)
+--merge-sessions: Merge all sessions within a question into a single session (default: False)
 ```
 
 ## Other notes
@@ -117,6 +118,7 @@ class LongMemEvalRunner:
         honcho_url: str = "http://localhost:8000",
         anthropic_api_key: str | None = None,
         timeout_seconds: int | None = None,
+        merge_sessions: bool = False,
     ):
         """
         Initialize the test runner.
@@ -124,12 +126,15 @@ class LongMemEvalRunner:
         Args:
             honcho_url: URL of the running Honcho instance
             anthropic_api_key: Anthropic API key for judging responses
+            timeout_seconds: Timeout for deriver queue in seconds
+            merge_sessions: If True, merge all sessions within a question into one session
         """
         self.honcho_url: str = honcho_url
         self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 10000
         )
+        self.merge_sessions: bool = merge_sessions
 
         # Initialize metrics collector
         self.metrics_collector: MetricsCollector = MetricsCollector()
@@ -481,15 +486,13 @@ Evaluate whether the actual response correctly answers the question based on the
             # Determine which peer should be observed based on question type
             is_assistant_type = question_type == "single-session-assistant"
 
-            # Zip together dates, session IDs, and session content
-            for session_date, session_id, session_messages in zip(
-                parsed_dates, haystack_session_ids, haystack_sessions, strict=True
-            ):
-                session = await honcho_client.session(id=session_id)
+            if self.merge_sessions:
+                # Create a single merged session for all messages
+                merged_session_id = f"{workspace_id}_merged"
+                session = await honcho_client.session(id=merged_session_id)
 
                 # Configure peer observation based on question type
                 if is_assistant_type:
-                    # For assistant questions, observe the assistant peer
                     await session.add_peers(
                         [
                             (
@@ -507,7 +510,6 @@ Evaluate whether the actual response correctly answers the question based on the
                         ]
                     )
                 else:
-                    # For user questions, observe the user peer (default behavior)
                     await session.add_peers(
                         [
                             (
@@ -525,27 +527,104 @@ Evaluate whether the actual response correctly answers the question based on the
                         ]
                     )
 
-                honcho_messages: list[MessageCreateParam] = []
-                for msg in session_messages:
-                    role = msg["role"]
-                    content = msg["content"]
+                # Collect all messages from all sessions in chronological order
+                all_messages: list[MessageCreateParam] = []
+                for session_date, session_messages in zip(
+                    parsed_dates, haystack_sessions, strict=True
+                ):
+                    for msg in session_messages:
+                        role = msg["role"]
+                        content = msg["content"]
 
-                    # Use the session date as the timestamp for all messages in this session
-                    if role == "user":
-                        honcho_messages.append(
-                            user_peer.message(content, created_at=session_date)
-                        )
-                    elif role == "assistant":
-                        honcho_messages.append(
-                            assistant_peer.message(content, created_at=session_date)
-                        )
+                        if role == "user":
+                            all_messages.append(
+                                user_peer.message(content, created_at=session_date)
+                            )
+                        elif role == "assistant":
+                            all_messages.append(
+                                assistant_peer.message(content, created_at=session_date)
+                            )
 
-                if honcho_messages:
-                    await session.add_messages(honcho_messages)
+                # Add messages in batches of 100 (max supported by add_messages)
+                if all_messages:
+                    for i in range(0, len(all_messages), 100):
+                        batch = all_messages[i : i + 100]
+                        await session.add_messages(batch)
 
                 results["sessions_created"].append(
-                    SessionResult(name=session_id, message_count=len(honcho_messages))
+                    SessionResult(
+                        name=merged_session_id, message_count=len(all_messages)
+                    )
                 )
+            else:
+                # create separate sessions
+                # Zip together dates, session IDs, and session content
+                for session_date, session_id, session_messages in zip(
+                    parsed_dates, haystack_session_ids, haystack_sessions, strict=True
+                ):
+                    session = await honcho_client.session(id=session_id)
+
+                    # Configure peer observation based on question type
+                    if is_assistant_type:
+                        # For assistant questions, observe the assistant peer
+                        await session.add_peers(
+                            [
+                                (
+                                    user_peer,
+                                    SessionPeerConfig(
+                                        observe_me=False, observe_others=False
+                                    ),
+                                ),
+                                (
+                                    assistant_peer,
+                                    SessionPeerConfig(
+                                        observe_me=True, observe_others=False
+                                    ),
+                                ),
+                            ]
+                        )
+                    else:
+                        # For user questions, observe the user peer (default behavior)
+                        await session.add_peers(
+                            [
+                                (
+                                    user_peer,
+                                    SessionPeerConfig(
+                                        observe_me=True, observe_others=False
+                                    ),
+                                ),
+                                (
+                                    assistant_peer,
+                                    SessionPeerConfig(
+                                        observe_me=False, observe_others=False
+                                    ),
+                                ),
+                            ]
+                        )
+
+                    honcho_messages: list[MessageCreateParam] = []
+                    for msg in session_messages:
+                        role = msg["role"]
+                        content = msg["content"]
+
+                        # Use the session date as the timestamp for all messages in this session
+                        if role == "user":
+                            honcho_messages.append(
+                                user_peer.message(content, created_at=session_date)
+                            )
+                        elif role == "assistant":
+                            honcho_messages.append(
+                                assistant_peer.message(content, created_at=session_date)
+                            )
+
+                    if honcho_messages:
+                        await session.add_messages(honcho_messages)
+
+                    results["sessions_created"].append(
+                        SessionResult(
+                            name=session_id, message_count=len(honcho_messages)
+                        )
+                    )
 
             print(
                 f"[{workspace_id}] fired all messages.\nwaiting for deriver queue to be empty... will time out in {self.timeout_seconds} seconds"
@@ -950,6 +1029,12 @@ Examples:
         help="Path to write JSON summary results for analytics (optional)",
     )
 
+    parser.add_argument(
+        "--merge-sessions",
+        action="store_true",
+        help="Merge all sessions within a question into a single session (default: False)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -966,6 +1051,7 @@ Examples:
         honcho_url=args.honcho_url,
         anthropic_api_key=args.anthropic_api_key,
         timeout_seconds=args.timeout,
+        merge_sessions=args.merge_sessions,
     )
 
     try:

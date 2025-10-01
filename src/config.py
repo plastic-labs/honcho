@@ -260,6 +260,8 @@ class DialecticSettings(HonchoSettings):
 class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
+    ENABLED: bool = True
+
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
