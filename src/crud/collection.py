@@ -38,6 +38,8 @@ async def get_collection(
     )
     if peer_name:
         stmt = stmt.where(models.Collection.peer_name == peer_name)
+    else:
+        stmt = stmt.where(models.Collection.peer_name.is_(None))
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:

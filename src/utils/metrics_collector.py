@@ -91,8 +91,8 @@ class MetricsCollector:
             # Normalize metric names to be consistent
             normalized_name = metric_name.lower().replace(" ", "_")
 
-            # skip metrics whose unit is "id" or "count"
-            if unit in ["id", "count"]:
+            # skip metrics whose unit is "id" (more in future possibly)
+            if unit in ["id"]:
                 continue
 
             # Convert value to float for aggregation
