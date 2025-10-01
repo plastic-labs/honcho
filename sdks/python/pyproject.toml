@@ -49,6 +49,16 @@ readme = {file = ["README.md"], content-type = "text/markdown"}
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
 
+[tool.basedpyright]
+# BasedPyright currently seems like the best type checker option, much faster
+# https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
+include = ["src"]
+reportUnusedCallResult = false
+reportCallInDefaultInitializer = false
+reportAny = false
+reportExplicitAny = false
+reportImportCycles = false
+
 [[tool.uv.index]]
 name = "testpypi"
 url = "https://test.pypi.org/simple/"
