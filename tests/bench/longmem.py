@@ -536,14 +536,36 @@ Evaluate whether the actual response correctly answers the question based on the
                         role = msg["role"]
                         content = msg["content"]
 
-                        if role == "user":
-                            all_messages.append(
-                                user_peer.message(content, created_at=session_date)
-                            )
-                        elif role == "assistant":
-                            all_messages.append(
-                                assistant_peer.message(content, created_at=session_date)
-                            )
+                        # Split message if it exceeds 25000 characters
+                        if len(content) > 25000:
+                            chunks = [
+                                content[i : i + 25000]
+                                for i in range(0, len(content), 25000)
+                            ]
+                            for chunk in chunks:
+                                if role == "user":
+                                    all_messages.append(
+                                        user_peer.message(
+                                            chunk, created_at=session_date
+                                        )
+                                    )
+                                elif role == "assistant":
+                                    all_messages.append(
+                                        assistant_peer.message(
+                                            chunk, created_at=session_date
+                                        )
+                                    )
+                        else:
+                            if role == "user":
+                                all_messages.append(
+                                    user_peer.message(content, created_at=session_date)
+                                )
+                            elif role == "assistant":
+                                all_messages.append(
+                                    assistant_peer.message(
+                                        content, created_at=session_date
+                                    )
+                                )
 
                 # Add messages in batches of 100 (max supported by add_messages)
                 if all_messages:
@@ -607,15 +629,38 @@ Evaluate whether the actual response correctly answers the question based on the
                         role = msg["role"]
                         content = msg["content"]
 
-                        # Use the session date as the timestamp for all messages in this session
-                        if role == "user":
-                            honcho_messages.append(
-                                user_peer.message(content, created_at=session_date)
-                            )
-                        elif role == "assistant":
-                            honcho_messages.append(
-                                assistant_peer.message(content, created_at=session_date)
-                            )
+                        # Split message if it exceeds 25000 characters
+                        if len(content) > 25000:
+                            chunks = [
+                                content[i : i + 25000]
+                                for i in range(0, len(content), 25000)
+                            ]
+                            for chunk in chunks:
+                                # Use the session date as the timestamp for all messages in this session
+                                if role == "user":
+                                    honcho_messages.append(
+                                        user_peer.message(
+                                            chunk, created_at=session_date
+                                        )
+                                    )
+                                elif role == "assistant":
+                                    honcho_messages.append(
+                                        assistant_peer.message(
+                                            chunk, created_at=session_date
+                                        )
+                                    )
+                        else:
+                            # Use the session date as the timestamp for all messages in this session
+                            if role == "user":
+                                honcho_messages.append(
+                                    user_peer.message(content, created_at=session_date)
+                                )
+                            elif role == "assistant":
+                                honcho_messages.append(
+                                    assistant_peer.message(
+                                        content, created_at=session_date
+                                    )
+                                )
 
                     if honcho_messages:
                         await session.add_messages(honcho_messages)
