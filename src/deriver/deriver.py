@@ -27,7 +27,6 @@ from src.utils.formatting import (
 from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
-    format_reasoning_inputs_as_markdown,
     format_reasoning_response_as_markdown,
     log_observations_tree,
     log_performance_metrics,
@@ -423,15 +422,15 @@ class CertaintyReasoner:
         # For logging, we can just show the content of the last message
         latest_message = self.ctx[-1]
 
-        if settings.LANGFUSE_PUBLIC_KEY:
-            lf.update_current_generation(
-                input=format_reasoning_inputs_as_markdown(
-                    working_representation,
-                    history,
-                    latest_message.content,
-                    latest_message.created_at,
-                )
-            )
+        # if settings.LANGFUSE_PUBLIC_KEY:
+        #     lf.update_current_generation(
+        #         input=format_reasoning_inputs_as_markdown(
+        #             working_representation,
+        #             history,
+        #             latest_message.content,
+        #             latest_message.created_at,
+        #         )
+        #     )
 
         new_turns = [
             format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
@@ -513,10 +512,10 @@ class CertaintyReasoner:
             len(thinking) if thinking else 0,
         )
 
-        if settings.LANGFUSE_PUBLIC_KEY:
-            lf.update_current_generation(
-                output=format_reasoning_response_as_markdown(response),
-            )
+        # if settings.LANGFUSE_PUBLIC_KEY:
+        #     lf.update_current_generation(
+        #         output=format_reasoning_response_as_markdown(response),
+        #     )
 
         return response
 
