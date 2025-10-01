@@ -48,6 +48,16 @@ class WebhookPayload(BasePayload):
     data: dict[str, Any]
 
 
+class DreamPayload(BasePayload):
+    """Payload for dream tasks."""
+
+    task_type: Literal["dream"] = "dream"
+    workspace_name: str
+    sender_name: str
+    collection_name: str
+    dream_type: Literal["consolidate"] = "consolidate"
+
+
 def create_webhook_payload(
     workspace_name: str,
     event_type: str,
@@ -55,6 +65,20 @@ def create_webhook_payload(
 ) -> dict[str, Any]:
     return WebhookPayload(
         workspace_name=workspace_name, event_type=event_type, data=data
+    ).model_dump(mode="json")
+
+
+def create_dream_payload(
+    workspace_name: str,
+    sender_name: str,
+    collection_name: str,
+    dream_type: Literal["consolidate"] = "consolidate",
+) -> dict[str, Any]:
+    return DreamPayload(
+        workspace_name=workspace_name,
+        sender_name=sender_name,
+        collection_name=collection_name,
+        dream_type=dream_type,
     ).model_dump(mode="json")
 
 

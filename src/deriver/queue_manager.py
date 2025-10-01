@@ -17,8 +17,9 @@ from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import process_items
-from src.deriver.utils import parse_work_unit_key
+from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.models import QueueItem
+from src.utils.work_unit import parse_work_unit_key
 
 logger = getLogger(__name__)
 
@@ -35,6 +36,9 @@ class QueueManager:
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
+
+        # Initialize dream scheduler
+        self.dream_scheduler: DreamScheduler = DreamScheduler()
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
@@ -65,6 +69,8 @@ class QueueManager:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
+        set_dream_scheduler(self.dream_scheduler)
+
         # Set up signal handlers
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)
@@ -85,6 +91,9 @@ class QueueManager:
         """Handle graceful shutdown"""
         logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
+
+        # Cancel all pending dreams
+        await self.dream_scheduler.shutdown()
 
         if self.active_tasks:
             logger.info(
@@ -231,6 +240,7 @@ class QueueManager:
     async def process_work_unit(self, work_unit_key: str):
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
+        work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
             message_count = 0
             try:
@@ -284,18 +294,17 @@ class QueueManager:
                             publish_webhook_event,
                         )
 
-                        parsed_key = parse_work_unit_key(work_unit_key)
-                        if parsed_key["task_type"] in ["representation", "summary"]:
+                        if work_unit["task_type"] in ["representation", "summary"]:
                             logger.info(
                                 f"Publishing queue.empty event for {work_unit_key}"
                             )
                             await publish_webhook_event(
                                 QueueEmptyEvent(
-                                    workspace_id=parsed_key["workspace_name"],
-                                    queue_type=parsed_key["task_type"],
-                                    session_id=parsed_key["session_name"],
-                                    sender_name=parsed_key["sender_name"],
-                                    observer_name=parsed_key["target_name"],
+                                    workspace_id=work_unit["workspace_name"],
+                                    queue_type=work_unit["task_type"],
+                                    session_id=work_unit["session_name"],
+                                    sender_name=work_unit["sender_name"],
+                                    observer_name=work_unit["target_name"],
                                 )
                             )
                         else:

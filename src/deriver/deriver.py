@@ -3,7 +3,6 @@ import logging
 import time
 
 import sentry_sdk
-from langfuse import get_client
 
 from src import crud, exceptions
 from src.config import settings
@@ -13,6 +12,7 @@ from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import format_new_turn_with_timestamp
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
@@ -20,16 +20,16 @@ from src.utils.logging import (
     log_performance_metrics,
     log_representation,
 )
+from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.shared_models import PeerCardQuery
 
 from .prompts import critical_analysis_prompt, peer_card_prompt
-from .queue_payload import RepresentationPayload
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
-lf = get_client()
+lf = get_langfuse_client()
 
 
 async def critical_analysis_call(
@@ -141,21 +141,11 @@ async def process_representation_tasks_batch(
         else GLOBAL_REPRESENTATION_COLLECTION_NAME
     )
 
-    # get_or_create_collection already handles IntegrityError with rollback and a retry
-    async with tracked_db("deriver.get_or_create_collection") as db:
-        collection = await crud.get_or_create_collection(
-            db,
-            latest_payload.workspace_name,
-            collection_name,
-            latest_payload.sender_name,
-        )
-        collection_name_loaded = collection.name
-
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
         workspace_name=latest_payload.workspace_name,
         peer_name=latest_payload.sender_name,
-        collection_name=collection_name_loaded,
+        collection_name=collection_name,
     )
 
     # Create reasoner instance
@@ -189,7 +179,10 @@ async def process_representation_tasks_batch(
             latest_payload.target_name,
         )
     if speaker_peer_card is None:
-        logger.warning("No peer card found for %s", latest_payload.sender_name)
+        logger.warning(
+            "No peer card found for %s. Normal if brand-new peer.",
+            latest_payload.sender_name,
+        )
     else:
         logger.info("Using peer card: %s", speaker_peer_card)
 
@@ -394,6 +387,7 @@ class CertaintyReasoner:
         """
         try:
             response = await peer_card_call(old_peer_card, new_observations)
+            logger.info("Jettisoned notes from peer card: %s", response.notes)
             new_peer_card = response.card
             if not new_peer_card:
                 logger.info("No changes to peer card")
@@ -402,7 +396,7 @@ class CertaintyReasoner:
             new_peer_card = [
                 observation
                 for observation in new_peer_card
-                if not observation.lower().startswith("notes")
+                if not observation.lower().startswith(("note", "notes"))
             ]
             logger.info("New peer card: %s", new_peer_card)
             async with tracked_db("deriver.update_peer_card") as db:

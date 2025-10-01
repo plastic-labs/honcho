@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
+from src.embedding_client import embedding_client
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -216,14 +217,21 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
-        precomputed_embedding = [0.123] * 1536
+        collection = await crud.get_or_create_collection(
+            db_session,
+            workspace.name,
+            collection_name,
+            peer.name,
+        )
+
+        embedding = await embedding_client.embed(doc_schema.content)
+
         document, is_duplicate = await crud.create_document(
             db_session,
             doc_schema,
-            workspace.name,
-            peer.name,
-            collection_name,
-            embedding=precomputed_embedding,
+            collection,
+            embedding,
+            duplicate_threshold=0.95,
         )
 
         assert not is_duplicate
@@ -260,14 +268,20 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
-        precomputed_embedding = [0.123] * 1536
+        collection = await crud.get_or_create_collection(
+            db_session,
+            workspace.name,
+            collection_name,
+            peer.name,
+        )
+        embedding = await embedding_client.embed(doc_schema.content)
+
         original_doc, is_duplicate = await crud.create_document(
             db_session,
             doc_schema,
-            workspace.name,
-            peer.name,
-            collection_name,
-            embedding=precomputed_embedding,
+            collection,
+            embedding,
+            duplicate_threshold=0.95,
         )
 
         assert not is_duplicate
@@ -286,15 +300,20 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
-        precomputed_embedding = [0.123] * 1536
+        collection = await crud.get_or_create_collection(
+            db_session,
+            workspace.name,
+            collection_name,
+            peer.name,
+        )
+        embedding = await embedding_client.embed(similar_doc_schema.content)
+
         duplicate_doc, is_duplicate = await crud.create_document(
             db_session,
             similar_doc_schema,
-            workspace.name,
-            peer.name,
-            collection_name,
-            duplicate_threshold=0.95,  # 95% similarity threshold
-            embedding=precomputed_embedding,
+            collection,
+            embedding,
+            duplicate_threshold=0.95,
         )
 
         assert is_duplicate
@@ -331,14 +350,19 @@ class TestDocumentCreationWorkflow:
             ),
         )
 
+        collection = await crud.get_or_create_collection(
+            db_session,
+            workspace.name,
+            collection_name,
+            peer.name,
+        )
+
         precomputed_embedding = [0.5] * 1536  # Different from the mock
 
         document, is_duplicate = await crud.create_document(
             db_session,
             doc_schema,
-            workspace.name,
-            peer.name,
-            collection_name,
+            collection,
             embedding=precomputed_embedding,
         )
 
@@ -413,12 +437,19 @@ class TestWorkingRepresentationRetrieval:
             ),
         )
 
+        collection = await crud.get_or_create_collection(
+            db_session,
+            workspace.name,
+            collection_name,
+            observer_peer.name,
+        )
+        embedding = await embedding_client.embed(explicit_doc_schema.content)
+
         await crud.create_document(
             db_session,
             explicit_doc_schema,
-            workspace.name,
-            observer_peer.name,
-            collection_name,
+            collection,
+            embedding,
         )
 
         # Create deductive observation document
@@ -435,12 +466,10 @@ class TestWorkingRepresentationRetrieval:
             ),
         )
 
+        embedding = await embedding_client.embed(deductive_doc_schema.content)
+
         await crud.create_document(
-            db_session,
-            deductive_doc_schema,
-            workspace.name,
-            observer_peer.name,
-            collection_name,
+            db_session, deductive_doc_schema, collection, embedding
         )
 
         # Retrieve working representation

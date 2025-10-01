@@ -4,21 +4,22 @@ import datetime
 import logging
 from typing import Any
 
-from langfuse import get_client
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
 from src.config import settings
 from src.dependencies import tracked_db
+from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.utils.formatting import format_datetime_utc
+from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import conditional_observe
 from src.utils.representation import DeductiveObservation, Representation
 
 logger = logging.getLogger(__name__)
 
-lf = get_client()
+lf = get_langfuse_client()
 
 # Fetch extra documents to ensure we have enough after filtering
 FILTER_OVERSAMPLING_FACTOR = 3
@@ -76,7 +77,15 @@ class EmbeddingStore:
             ) from e
 
         # Batch create document objects
-        async with tracked_db("ed_embedding_store.save_representation") as db:
+        async with tracked_db("embedding_store.save_representation") as db:
+            # get_or_create_collection already handles IntegrityError with rollback and a retry
+            collection = await crud.get_or_create_collection(
+                db,
+                self.workspace_name,
+                self.collection_name,
+                self.peer_name,
+            )
+
             for obs, embedding in zip(all_observations, embeddings, strict=True):
                 # NOTE: will add additional levels of reasoning in the future
                 if isinstance(obs, DeductiveObservation):
@@ -99,14 +108,17 @@ class EmbeddingStore:
                 _honcho_document, is_duplicate = await crud.create_document(
                     db,
                     schemas.DocumentCreate(content=obs_content, metadata=metadata),
-                    workspace_name=self.workspace_name,
-                    peer_name=self.peer_name,
-                    collection_name=self.collection_name,
+                    collection=collection,
                     embedding=embedding,
                     duplicate_threshold=0.95,
                 )
                 if not is_duplicate:
                     new_documents += 1
+
+            try:
+                await check_and_schedule_dream(db, collection)
+            except Exception as e:
+                logger.warning(f"Failed to check dream scheduling: {e}")
 
         return new_documents
 

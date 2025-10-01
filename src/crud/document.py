@@ -15,6 +15,23 @@ from src.utils.filter import apply_filter
 logger = getLogger(__name__)
 
 
+async def get_all_documents(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
+) -> Sequence[models.Document]:
+    """Get all documents in a collection."""
+    stmt = (
+        select(models.Document)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.peer_name == peer_name)
+        .where(models.Document.collection_name == collection_name)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
 async def query_documents(
     db: AsyncSession,
     workspace_name: str,
@@ -73,10 +90,8 @@ async def query_documents(
 async def create_document(
     db: AsyncSession,
     document: schemas.DocumentCreate,
-    workspace_name: str,
-    peer_name: str,
-    collection_name: str,
-    embedding: list[float] | None = None,
+    collection: models.Collection,
+    embedding: list[float],
     duplicate_threshold: float | None = None,
 ) -> tuple[models.Document, bool]:
     """
@@ -90,9 +105,7 @@ async def create_document(
     Args:
         db: Database session
         document: Document creation schema
-        workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        collection_name: Name of the collection
+        collection: Collection to save the document to
         embedding: Optional pre-computed embedding for the document (avoids extra API call if possible)
         duplicate_threshold: Optional similarity threshold (0-1) for checking for duplicates.
                             Values closer to 1 require higher similarity (e.g., 0.99 = 99% similar)
@@ -104,21 +117,13 @@ async def create_document(
         ResourceNotFoundException: If the collection does not exist
         ValidationException: If the document data is invalid
     """
-    if embedding is None:
-        try:
-            embedding = await embedding_client.embed(document.content)
-        except ValueError as e:
-            raise ValidationException(
-                f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
-            ) from e
-
     if duplicate_threshold is not None:
         distance = 1 - duplicate_threshold
         stmt = (
             select(models.Document)
-            .where(models.Document.workspace_name == workspace_name)
-            .where(models.Document.peer_name == peer_name)
-            .where(models.Document.collection_name == collection_name)
+            .where(models.Document.workspace_name == collection.workspace_name)
+            .where(models.Document.peer_name == collection.peer_name)
+            .where(models.Document.collection_name == collection.name)
             .where(models.Document.embedding.cosine_distance(embedding) < distance)
             .order_by(models.Document.embedding.cosine_distance(embedding))
             .limit(1)
@@ -149,9 +154,9 @@ async def create_document(
             return duplicate, True
 
     honcho_document = models.Document(
-        workspace_name=workspace_name,
-        peer_name=peer_name,
-        collection_name=collection_name,
+        workspace_name=collection.workspace_name,
+        peer_name=collection.peer_name,
+        collection_name=collection.name,
         content=document.content,
         internal_metadata=document.metadata.model_dump(exclude_none=True),
         embedding=embedding,
@@ -160,49 +165,3 @@ async def create_document(
     await db.commit()
     await db.refresh(honcho_document)
     return honcho_document, False
-
-
-async def get_duplicate_documents(
-    db: AsyncSession,
-    workspace_name: str,
-    peer_name: str,
-    collection_name: str,
-    content: str,
-    similarity_threshold: float = 0.85,
-) -> list[models.Document]:
-    """Check if a document with similar content already exists in the collection.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        collection_name: Name of the collection
-        content: Document content to check for duplicates
-        similarity_threshold: Similarity threshold (0-1) for considering documents as duplicates
-
-    Returns:
-        List of documents that are similar to the provided content
-    """
-    # Get embedding for the content
-    try:
-        embedding = await embedding_client.embed(content)
-    except ValueError as e:
-        raise ValidationException(
-            f"Query exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
-        ) from e
-
-    # Find documents with similar embeddings
-    stmt = (
-        select(models.Document)
-        .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.peer_name == peer_name)
-        .where(models.Document.collection_name == collection_name)
-        .where(
-            models.Document.embedding.cosine_distance(embedding)
-            < (1 - similarity_threshold)
-        )  # Convert similarity to distance
-        .order_by(models.Document.embedding.cosine_distance(embedding))
-    )
-
-    result = await db.execute(stmt)
-    return list(result.scalars().all())  # Convert to list to match the return type

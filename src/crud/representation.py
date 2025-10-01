@@ -206,7 +206,7 @@ def representation_from_documents(
     return Representation(
         explicit=[
             ExplicitObservation(
-                created_at=doc.created_at,
+                created_at=doc.created_at.replace(microsecond=0),
                 content=doc.content,
                 message_id=doc.internal_metadata.get("message_id"),
                 session_name=doc.internal_metadata.get("session_name"),
@@ -216,7 +216,7 @@ def representation_from_documents(
         ],
         deductive=[
             DeductiveObservation(
-                created_at=doc.created_at,
+                created_at=doc.created_at.replace(microsecond=0),
                 conclusion=doc.content,
                 message_id=doc.internal_metadata.get("message_id"),
                 session_name=doc.internal_metadata.get("session_name"),
