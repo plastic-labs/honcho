@@ -123,33 +123,35 @@ async def get_working_representation(
         observer=observer_name, observed=observed_name
     )
 
+    total = max_observations
+
+    # 0 if no semantic query, otherwise min of total // 3 and total
+    semantic_observations = (
+        min(
+            max(
+                0,
+                semantic_search_top_k
+                if semantic_search_top_k is not None
+                else total // 3,
+            ),
+            total,
+        )
+        if include_semantic_query
+        else 0
+    )
+
     if include_semantic_query and include_most_derived:
-        # three-way blend of semantically relevant, most rederived, and most recent observations
-        semantic_observations = (
-            max_observations // 3
-            if semantic_search_top_k is None
-            else semantic_search_top_k
-        )
-        top_observations = max_observations - semantic_observations
-        max_observations -= top_observations + semantic_observations
-    elif include_semantic_query:
-        # two-way blend of semantically relevant and most recent observations
-        semantic_observations = (
-            max_observations // 2
-            if semantic_search_top_k is None
-            else semantic_search_top_k
-        )
-        top_observations = 0
-        max_observations -= semantic_observations
+        # three-way blend: both semantic and derived requested
+        top_observations = min(max(0, total // 3), total - semantic_observations)
     elif include_most_derived:
-        # two-way blend of most rederived and most recent observations
-        top_observations = max_observations // 2
-        semantic_observations = 0
-        max_observations -= top_observations
+        # two-way blend: only derived requested
+        top_observations = min(max(0, total // 2), total - semantic_observations)
     else:
-        # only most recent observations
-        semantic_observations = 0
+        # no derived observations requested
         top_observations = 0
+
+    # remaining observations are recent
+    recent_observations = total - semantic_observations - top_observations
 
     if include_semantic_query:
         semantically_relevant_representation = await EmbeddingStore(
@@ -186,7 +188,7 @@ async def get_working_representation(
 
     stmt = (
         select(models.Document)
-        .limit(max_observations)
+        .limit(recent_observations)
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.collection_name == collection_name,
@@ -225,7 +227,9 @@ def _safe_datetime_from_metadata(
         except ValueError:
             return fallback_datetime.replace(microsecond=0)
 
-    return message_created_at.replace(microsecond=0)
+    if isinstance(message_created_at, datetime):
+        return message_created_at.replace(microsecond=0)
+    return fallback_datetime.replace(microsecond=0)
 
 
 def representation_from_documents(

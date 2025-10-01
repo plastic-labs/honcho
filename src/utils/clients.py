@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 M = TypeVar("M", bound=BaseModel)
 
-lf = get_langfuse_client()
+lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 CLIENTS: dict[
     SupportedProviders,
@@ -44,18 +44,18 @@ if settings.LLM.OPENAI_API_KEY:
     )
     CLIENTS["openai"] = openai_client
 
-if settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
+if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
     CLIENTS["custom"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
         base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
     )
 
-if settings.LLM.OPENAI_COMPATIBLE_API_KEY:
+# NOTE: user must know whether they want to use 'custom' or 'vllm'
+if settings.LLM.OPENAI_COMPATIBLE_API_KEY and settings.LLM.OPENAI_COMPATIBLE_BASE_URL:
     CLIENTS["vllm"] = AsyncOpenAI(
         api_key=settings.LLM.OPENAI_COMPATIBLE_API_KEY,
         base_url=settings.LLM.OPENAI_COMPATIBLE_BASE_URL,
     )
-
 
 if settings.LLM.GEMINI_API_KEY:
     google = genai.client.Client(api_key=settings.LLM.GEMINI_API_KEY)
@@ -388,6 +388,10 @@ async def honcho_llm_call_inner(
             # NOTE: this is all specific to the Representation model.
             # Do not call with any other response model.
             if provider == "vllm" and response_model:
+                if response_model is not PromptRepresentation:
+                    raise NotImplementedError(
+                        "vLLM structured output currently supports only PromptRepresentation"
+                    )
                 openai_params["response_format"] = {
                     "type": "json_schema",
                     "json_schema": {
@@ -598,7 +602,7 @@ async def honcho_llm_call_inner(
                         output_tokens=usage.completion_tokens if usage else 0,  # pyright: ignore
                         finish_reasons=[finish_reason] if finish_reason else [],
                     )
-                except (json.JSONDecodeError, ValueError) as e:
+                except (json.JSONDecodeError, ValidationError, ValueError) as e:
                     raise ValueError(
                         f"Failed to parse Groq response as {response_model}: {e}. Raw content: {response.choices[0].message.content}"  # pyright: ignore
                     ) from e
@@ -780,7 +784,8 @@ async def handle_streaming_response(
 def with_langfuse(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
-        lf.start_as_current_generation(name="LLM Call")
+        if lf:
+            lf.start_as_current_generation(name="LLM Call")
         return await func(*args, **kwargs)
 
     return wrapper

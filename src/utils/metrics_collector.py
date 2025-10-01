@@ -118,6 +118,7 @@ class MetricsCollector:
             filepath: Path to the metrics file to load
         """
         if not filepath.exists():
+            filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.touch()
             with open(filepath, "w") as f:
                 f.write("")

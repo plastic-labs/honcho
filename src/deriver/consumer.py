@@ -26,7 +26,7 @@ logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 console = Console(markup=True)
 
-lf = get_langfuse_client()
+lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 
 async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) -> None:
@@ -54,7 +54,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
             )
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_message(
-                    "Received multiple webhook payloads for task type %s. Only the first one will be processed.",
+                    f"Received multiple webhook payloads for task type {task_type}. Only the first one will be processed.",
                 )
         try:
             validated = WebhookPayload(**queue_payloads[0])
@@ -76,9 +76,9 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
             )
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_message(
-                    "Received multiple summary payloads for task type %s. Only the first one will be processed.",
+                    f"Received multiple summary payloads for task type {task_type}. Only the first one will be processed.",
                 )
-        if settings.LANGFUSE_PUBLIC_KEY:
+        if lf:
             lf.update_current_trace(  # type: ignore
                 metadata={
                     "critical_analysis_model": settings.DERIVER.MODEL,
@@ -96,7 +96,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
         await process_summary_task(validated)
 
     elif task_type == "representation":
-        if settings.LANGFUSE_PUBLIC_KEY:
+        if lf:
             lf.update_current_trace(
                 metadata={
                     "critical_analysis_model": settings.DERIVER.MODEL,
@@ -125,7 +125,7 @@ async def process_items(task_type: str, queue_payloads: list[dict[str, Any]]) ->
             )
             if settings.SENTRY.ENABLED:
                 sentry_sdk.capture_message(
-                    "Received multiple dream payloads for task type %s. Only the first one will be processed.",
+                    f"Received multiple dream payloads for task type {task_type}. Only the first one will be processed.",
                 )
         try:
             validated = DreamPayload(**queue_payloads[0])

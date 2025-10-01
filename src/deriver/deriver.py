@@ -29,7 +29,7 @@ from .prompts import critical_analysis_prompt, peer_card_prompt
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
-lf = get_langfuse_client()
+lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 
 async def critical_analysis_call(
@@ -239,7 +239,7 @@ async def process_representation_tasks_batch(
         "deriver", f"{latest_payload.message_id}_{latest_payload.target_name}"
     )
 
-    if settings.LANGFUSE_PUBLIC_KEY:
+    if lf:
         lf.update_current_trace(output=final_observations.format_as_markdown())
 
 
@@ -276,7 +276,7 @@ class CertaintyReasoner:
         latest_payload = self.ctx[-1]
 
         # Perform critical analysis to get observation lists
-        if settings.LANGFUSE_PUBLIC_KEY:
+        if lf:
             lf.update_current_generation(
                 input=format_reasoning_inputs_as_markdown(
                     working_representation,
@@ -320,7 +320,7 @@ class CertaintyReasoner:
             latest_payload.created_at,
         )
 
-        if settings.LANGFUSE_PUBLIC_KEY:
+        if lf:
             lf.update_current_generation(
                 output=reasoning_response.format_as_markdown(),
             )

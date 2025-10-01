@@ -6,8 +6,8 @@ and understand users through context synthesis of working representations and
 historical observations.
 """
 
-import asyncio
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator
 
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Create langfuse client
-lf = get_langfuse_client()
+lf = get_langfuse_client() if settings.LANGFUSE_PUBLIC_KEY else None
 
 
 async def dialectic_call(
@@ -189,7 +189,7 @@ async def chat(
 
     context_window_size -= len(tokenizer.encode(query))
 
-    if settings.LANGFUSE_PUBLIC_KEY:
+    if lf:
         lf.update_current_trace(
             metadata={
                 "query_generation_model": settings.DIALECTIC.QUERY_GENERATION_MODEL,
@@ -204,11 +204,11 @@ async def chat(
         f", target: {target_name}" if target_name else "",
         f", session: {session_name}" if session_name else "",
     )
-    start_time = asyncio.get_event_loop().time()
+    start_time = time.perf_counter()
 
     async with tracked_db("chat.get_working_representation+context+peer_card") as db:
         # 1. Working representation (short-term) -----------------------------------
-        working_rep_start_time = asyncio.get_event_loop().time()
+        working_rep_start_time = time.perf_counter()
         # If no target specified, get global representation (peer observing themselves)
         target_peer = target_name if target_name is not None else peer_name
         working_representation: Representation = await crud.get_working_representation(
@@ -222,9 +222,7 @@ async def chat(
             semantic_search_max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
             include_most_derived=True,
         )
-        working_rep_duration = (
-            asyncio.get_event_loop().time() - working_rep_start_time
-        ) * 1000
+        working_rep_duration = (time.perf_counter() - working_rep_start_time) * 1000
         accumulate_metric(
             f"dialectic_chat_{dialectic_chat_uuid}",
             "retrieve_working_rep",
@@ -239,7 +237,7 @@ async def chat(
 
         working_representation_str = str(working_representation)
 
-        context_window_size -= len(tokenizer.encode(working_representation_str))
+        context_window_size -= max(0, len(tokenizer.encode(working_representation_str)))
 
         logger.info(
             "Constructed working representation:\n%s\n",
@@ -249,23 +247,21 @@ async def chat(
         # 2. Recent conversation history --------------------------------------------
         # If query is session-scoped, get recent conversation history from that session
         if session_name:
-            recent_conversation_history = (
-                await summarizer.get_session_context_formatted(
-                    db,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    token_limit=context_window_size,
-                    include_summary=True,
-                )
+            recent_history = await summarizer.get_session_context_formatted(
+                db,
+                workspace_name=workspace_name,
+                session_name=session_name,
+                token_limit=context_window_size,
+                include_summary=True,
             )
             logger.info("Retrieved recent conversation history")
         else:
-            recent_conversation_history = None
+            recent_history = None
             logger.info(
                 "Query is not session-scoped, skipping recent conversation history"
             )
 
-        context_window_size -= len(tokenizer.encode(recent_conversation_history or ""))
+        context_window_size -= max(0, len(tokenizer.encode(recent_history or "")))
 
         accumulate_metric(
             f"dialectic_chat_{dialectic_chat_uuid}",
@@ -289,12 +285,12 @@ async def chat(
     #     logger.info("Retrieved peer card:\n%s", peer_card)
 
     # 4. Dialectic call --------------------------------------------------------
-    dialectic_call_start_time = asyncio.get_event_loop().time()
+    dialectic_call_start_time = time.perf_counter()
     if stream:
         return await dialectic_stream(
             query,
             working_representation_str,
-            recent_conversation_history,
+            recent_history,
             peer_name,
             peer_card,
             target_name,
@@ -304,15 +300,13 @@ async def chat(
     response = await dialectic_call(
         query,
         working_representation_str,
-        recent_conversation_history,
+        recent_history,
         peer_name,
         peer_card,
         target_name,
         target_peer_card,
     )
-    dialectic_call_duration = (
-        asyncio.get_event_loop().time() - dialectic_call_start_time
-    ) * 1000
+    dialectic_call_duration = (time.perf_counter() - dialectic_call_start_time) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
         "dialectic_call",
@@ -320,7 +314,7 @@ async def chat(
         "ms",
     )
 
-    elapsed = (asyncio.get_event_loop().time() - start_time) * 1000
+    elapsed = (time.perf_counter() - start_time) * 1000
 
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}", "total_duration", elapsed, "ms"

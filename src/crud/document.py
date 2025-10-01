@@ -21,7 +21,11 @@ async def get_all_documents(
     peer_name: str,
     collection_name: str,
 ) -> Sequence[models.Document]:
-    """Get all documents in a collection."""
+    """
+    Get all documents in a collection.
+
+    NOTE: Order is nondeterministic. Also this may return a massive amount of documents. Don't use this on large collections.
+    """
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
@@ -124,7 +128,7 @@ async def create_document(
             .where(models.Document.workspace_name == collection.workspace_name)
             .where(models.Document.peer_name == collection.peer_name)
             .where(models.Document.collection_name == collection.name)
-            .where(models.Document.embedding.cosine_distance(embedding) < distance)
+            .where(models.Document.embedding.cosine_distance(embedding) <= distance)
             .order_by(models.Document.embedding.cosine_distance(embedding))
             .limit(1)
         )

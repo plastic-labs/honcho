@@ -17,7 +17,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, models, schemas
-from src.embedding_client import embedding_client
 from src.utils.representation import (
     DeductiveObservation,
     ExplicitObservation,
@@ -25,6 +24,19 @@ from src.utils.representation import (
     PromptRepresentation,
     Representation,
 )
+
+
+@pytest.fixture
+def fixed_embedding_vector() -> list[float]:
+    """
+    Fixture providing a deterministic embedding vector for hermetic tests.
+
+    Returns a 1536-dimensional vector with predictable values to avoid
+    network calls to external embedding services during testing.
+    """
+    # Create a deterministic 1536-dimensional embedding vector
+    # Using a simple pattern that's easy to verify in tests
+    return [0.1 * (i % 10) for i in range(1536)]
 
 
 @pytest.mark.asyncio
@@ -190,7 +202,9 @@ class TestRepresentationWorkflow:
 class TestDocumentCreationWorkflow:
     """Test document creation with embedding and duplicate detection"""
 
-    async def test_document_creation_without_duplicates(self, db_session: AsyncSession):
+    async def test_document_creation_without_duplicates(
+        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
+    ):
         """Test standard document creation without duplicate checking"""
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
         collection_name = "test_collection"
@@ -232,7 +246,7 @@ class TestDocumentCreationWorkflow:
             peer.name,
         )
 
-        embedding = await embedding_client.embed(doc_schema.content)
+        embedding = fixed_embedding_vector
 
         document, is_duplicate = await crud.create_document(
             db_session,
@@ -248,7 +262,7 @@ class TestDocumentCreationWorkflow:
         assert document.session_name == "test_session"
 
     async def test_document_creation_with_duplicate_detection(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
     ):
         """Test document creation with duplicate threshold checking"""
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
@@ -290,7 +304,7 @@ class TestDocumentCreationWorkflow:
             collection_name,
             peer.name,
         )
-        embedding = await embedding_client.embed(doc_schema.content)
+        embedding = fixed_embedding_vector
 
         original_doc, is_duplicate = await crud.create_document(
             db_session,
@@ -322,7 +336,7 @@ class TestDocumentCreationWorkflow:
             collection_name,
             peer.name,
         )
-        embedding = await embedding_client.embed(similar_doc_schema.content)
+        embedding = fixed_embedding_vector
 
         duplicate_doc, is_duplicate = await crud.create_document(
             db_session,
@@ -426,7 +440,9 @@ class TestDocumentCreationWorkflow:
 class TestWorkingRepresentationRetrieval:
     """Test working representation retrieval with different strategies"""
 
-    async def test_get_working_representation_basic(self, db_session: AsyncSession):
+    async def test_get_working_representation_basic(
+        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
+    ):
         """Test basic working representation retrieval"""
         workspace, observer_peer = await self.create_test_workspace_and_peer(db_session)
         _, observed_peer = await self.create_test_workspace_and_peer(
@@ -467,7 +483,7 @@ class TestWorkingRepresentationRetrieval:
             collection_name,
             observer_peer.name,
         )
-        embedding = await embedding_client.embed(explicit_doc_schema.content)
+        embedding = fixed_embedding_vector
 
         await crud.create_document(
             db_session,
@@ -490,7 +506,7 @@ class TestWorkingRepresentationRetrieval:
             ),
         )
 
-        embedding = await embedding_client.embed(deductive_doc_schema.content)
+        embedding = fixed_embedding_vector
 
         await crud.create_document(
             db_session, deductive_doc_schema, collection, embedding

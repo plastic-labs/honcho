@@ -14,7 +14,6 @@ from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.utils.formatting import format_datetime_utc
-from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import accumulate_metric, conditional_observe
 from src.utils.representation import (
     DeductiveObservation,
@@ -23,8 +22,6 @@ from src.utils.representation import (
 )
 
 logger = logging.getLogger(__name__)
-
-lf = get_langfuse_client()
 
 # Fetch extra documents to ensure we have enough after filtering
 FILTER_OVERSAMPLING_FACTOR = 3
@@ -266,7 +263,7 @@ class EmbeddingStore:
                     workspace_name=self.workspace_name,
                     peer_name=self.peer_name,
                     collection_name=self.collection_name,
-                    query=self._build_truncated_query(query, ""),
+                    query=self._build_truncated_query(query, conversation_context),
                     max_distance=max_distance,
                     top_k=top_k,
                 )

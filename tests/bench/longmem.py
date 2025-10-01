@@ -303,7 +303,7 @@ class LongMemEvalRunner:
         start_time = time.time()
         while True:
             try:
-                status = await honcho_client.get_deriver_status(session_id)
+                status = await honcho_client.get_deriver_status(session_id=session_id)
             except Exception as _e:
                 await asyncio.sleep(1)
                 elapsed_time = time.time() - start_time
@@ -1016,6 +1016,7 @@ Evaluate whether the actual response correctly answers the question based on the
         }
 
         if output_file:
+            output_file.parent.mkdir(parents=True, exist_ok=True)
             with open(output_file, "w") as f:
                 json.dump(summary, f, indent=2, default=str)
             print(f"\nJSON summary written to: {output_file}")
@@ -1038,7 +1039,8 @@ Examples:
     parser.add_argument(
         "--test-file",
         type=Path,
-        help="Path to longmemeval JSON file",
+        required=True,
+        help="Path to longmemeval JSON file (required)",
     )
 
     parser.add_argument(
@@ -1105,8 +1107,6 @@ Examples:
             args.test_file, args.batch_size
         )
         runner.print_summary(results, total_elapsed_seconds=total_elapsed)
-
-        runner.metrics_collector.load_from_file(Path(settings.LOCAL_METRICS_FILE))
 
         # Print metrics summary
         runner.metrics_collector.print_summary()
