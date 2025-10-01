@@ -5,7 +5,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from honcho_core import Honcho as HonchoCore
-from honcho_core._types import NOT_GIVEN
+from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
@@ -96,12 +96,12 @@ class Session(BaseModel):
         )
         self._client = client
 
-        if config or metadata:
+        if config is not None or metadata is not None:
             self._client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
-                configuration=config if config is not None else NOT_GIVEN,
-                metadata=metadata if metadata is not None else NOT_GIVEN,
+                configuration=config if config is not None else omit,
+                metadata=metadata if metadata is not None else omit,
             )
 
     def add_peers(
@@ -280,10 +280,10 @@ class Session(BaseModel):
             peer_id=str(peer.id) if isinstance(peer, Peer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            observe_others=NOT_GIVEN
+            observe_others=omit
             if config.observe_others is None
             else config.observe_others,
-            observe_me=NOT_GIVEN if config.observe_me is None else config.observe_me,
+            observe_me=omit if config.observe_me is None else config.observe_me,
         )
 
     @validate_call
@@ -433,7 +433,7 @@ class Session(BaseModel):
         context = self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            tokens=tokens if tokens is not None else NOT_GIVEN,
+            tokens=tokens if tokens is not None else omit,
             summary=summary,
         )
 

@@ -83,3 +83,18 @@ class AsyncPage(Generic[T, U]):
     def has_next_page(self) -> bool:
         """Check if there's a next page."""
         return self._original_page.has_next_page()
+
+    async def get_next_page(self) -> "AsyncPage[T, U] | None":
+        """
+        Fetch the next page of results.
+
+        Returns None if there are no more pages.
+        """
+        if not hasattr(self._original_page, "get_next_page"):
+            return None
+
+        next_original_page = await self._original_page.get_next_page()
+        if not next_original_page:
+            return None
+
+        return AsyncPage(next_original_page, self._transform_func)

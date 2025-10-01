@@ -183,6 +183,11 @@ describe('Honcho SDK Integration Tests', () => {
         total: 2,
         size: 2,
         hasNextPage: false,
+        [Symbol.asyncIterator]: async function* () {
+          for (const item of this.items) {
+            yield item
+          }
+        },
       }
 
       mockWorkspacesApi.workspaces.getOrCreate.mockResolvedValue({
@@ -302,8 +307,15 @@ describe('Honcho SDK Integration Tests', () => {
         ],
         total: 4,
         size: 2,
+        page: 1,
+        pages: 2,
         hasNextPage: true,
-        nextPage: jest.fn(),
+        getNextPage: jest.fn(),
+        [Symbol.asyncIterator]: async function* () {
+          for (const item of this.items) {
+            yield item
+          }
+        },
       }
 
       const secondPageData = {
@@ -313,11 +325,18 @@ describe('Honcho SDK Integration Tests', () => {
         ],
         total: 4,
         size: 2,
+        page: 2,
+        pages: 2,
         hasNextPage: false,
-        nextPage: jest.fn().mockResolvedValue(null),
+        getNextPage: jest.fn().mockResolvedValue(null),
+        [Symbol.asyncIterator]: async function* () {
+          for (const item of this.items) {
+            yield item
+          }
+        },
       }
 
-      firstPageData.nextPage.mockResolvedValue(secondPageData)
+      firstPageData.getNextPage.mockResolvedValue(secondPageData)
       mockWorkspacesApi.workspaces.peers.list.mockResolvedValue(firstPageData)
 
       // Step 1: Get first page
@@ -327,20 +346,25 @@ describe('Honcho SDK Integration Tests', () => {
       expect(firstPage.hasNextPage).toBe(true)
 
       // Step 2: Get data from first page
-      const firstPageData_ = await firstPage.data()
+      const firstPageData_ = firstPage.items
       expect(firstPageData_).toHaveLength(2)
+      expect(firstPageData_[0]).toBeInstanceOf(Peer)
+      expect(firstPageData_[0].id).toBe('peer1')
 
       // Step 3: Get next page
-      const secondPage = await firstPage.nextPage()
+      const secondPage = await firstPage.getNextPage()
       expect(secondPage).not.toBeNull()
       expect(secondPage!.hasNextPage).toBe(false)
+      expect(secondPage!.page).toBe(2)
 
       // Step 4: Get data from second page
-      const secondPageData_ = await secondPage!.data()
+      const secondPageData_ = secondPage!.items
       expect(secondPageData_).toHaveLength(2)
+      expect(secondPageData_[0]).toBeInstanceOf(Peer)
+      expect(secondPageData_[0].id).toBe('peer3')
 
       // Step 5: Verify no more pages
-      const thirdPage = await secondPage!.nextPage()
+      const thirdPage = await secondPage!.getNextPage()
       expect(thirdPage).toBeNull()
     })
 
@@ -405,7 +429,7 @@ describe('Honcho SDK Integration Tests', () => {
 
       // Test empty peers list
       const peersPage = await honcho.getPeers()
-      const peersList = await peersPage.data()
+      const peersList = peersPage.items
       expect(peersList).toEqual([])
 
       // Test empty context

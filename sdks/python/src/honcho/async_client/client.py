@@ -9,6 +9,8 @@ import httpx
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types import DeriverStatus
+from honcho_core.types.workspaces.peer import Peer as PeerCore
+from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -201,7 +203,7 @@ class AsyncHoncho(BaseModel):
 
     async def get_peers(
         self, filters: dict[str, object] | None = None
-    ) -> AsyncPage[AsyncPeer]:
+    ) -> AsyncPage[PeerCore, AsyncPeer]:
         """
         Get all peers in the current workspace.
 
@@ -265,7 +267,7 @@ class AsyncHoncho(BaseModel):
 
     async def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> AsyncPage[AsyncSession]:
+    ) -> AsyncPage[SessionCore, AsyncSession]:
         """
         Get all sessions in the current workspace.
 

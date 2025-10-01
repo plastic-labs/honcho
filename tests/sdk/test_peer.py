@@ -164,20 +164,12 @@ async def test_peer_card_validation(client_fixture: tuple[Honcho | AsyncHoncho, 
         assert isinstance(honcho_client, AsyncHoncho)
         peer = await honcho_client.peer(id="test-card-validation-peer")
 
-        # Test with invalid target type
-        with pytest.raises(TypeError, match="target must be str, AsyncPeer, or None"):
-            await peer.card(target=123)  # type: ignore
-
         # Test with empty string
         with pytest.raises(ValueError, match="target string cannot be empty"):
             await peer.card(target="")
     else:
         assert isinstance(honcho_client, Honcho)
         peer = honcho_client.peer(id="test-card-validation-peer")
-
-        # Test with invalid target type
-        with pytest.raises(TypeError, match="target must be str, Peer, or None"):
-            peer.card(target=123)  # type: ignore
 
         # Test with empty string
         with pytest.raises(ValueError, match="target string cannot be empty"):
@@ -220,7 +212,7 @@ async def test_peer_chat_streaming(client_fixture: tuple[Honcho | AsyncHoncho, s
             assert isinstance(result, DialecticStreamResponse)
 
             # Collect chunks
-            chunks = []
+            chunks: list[str] = []
             async for chunk in result:
                 assert isinstance(chunk, str)
                 chunks.append(chunk)

@@ -776,7 +776,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", directory = "../dev-sdks/honcho-python" },
+    { name = "honcho-core", specifier = ">=1.4.1a0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", specifier = ">=4.12.0" },
@@ -787,8 +787,8 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.4.0"
-source = { directory = "../dev-sdks/honcho-python" }
+version = "1.4.1a0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
@@ -797,19 +797,10 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiohttp", marker = "extra == 'aiohttp'" },
-    { name = "anyio", specifier = ">=3.5.0,<5" },
-    { name = "distro", specifier = ">=1.7.0,<2" },
-    { name = "httpx", specifier = ">=0.23.0,<1" },
-    { name = "httpx-aiohttp", marker = "extra == 'aiohttp'", specifier = ">=0.1.8" },
-    { name = "pydantic", specifier = ">=1.9.0,<3" },
-    { name = "sniffio" },
-    { name = "typing-extensions", specifier = ">=4.10,<5" },
+sdist = { url = "https://files.pythonhosted.org/packages/2d/2f/fbf3ca017ffcdaef92e26fe84b77268c1c0b26f95e282d8684f50932d81a/honcho_core-1.4.1a0.tar.gz", hash = "sha256:e0023f46c65500d727e3fb1275781ae1e0b162c226a01352afd45c421c5f350b", size = 130826, upload-time = "2025-10-01T03:23:27.143Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/83/5f/2aa746b7fd92690ef782dcacc56a5c47a19a999b9729597c04c7cc509e52/honcho_core-1.4.1a0-py3-none-any.whl", hash = "sha256:8b4c86e3ac3964ff56fe6a449b9fa23be49530609c34bdf35c9ecde7cd871bba", size = 121704, upload-time = "2025-10-01T03:23:25.66Z" },
 ]
-provides-extras = ["aiohttp"]
 
 [[package]]
 name = "httpcore"

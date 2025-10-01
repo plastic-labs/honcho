@@ -422,4 +422,96 @@ describe('Peer', () => {
       await expect(peer.search('test')).rejects.toThrow();
     });
   });
+
+  describe('card', () => {
+    beforeEach(() => {
+      mockClient.workspaces.peers.card = jest.fn();
+    });
+
+    it('should get peer card without target', async () => {
+      const mockCardResponse = {
+        peer_card: ['Fact 1 about peer', 'Fact 2 about peer', 'Fact 3 about peer'],
+      };
+      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
+
+      const result = await peer.card();
+
+      expect(result).toBe('Fact 1 about peer\nFact 2 about peer\nFact 3 about peer');
+      expect(mockClient.workspaces.peers.card).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-peer',
+        { target: undefined }
+      );
+    });
+
+    it('should get peer card with target as string', async () => {
+      const mockCardResponse = {
+        peer_card: ['What peer knows about target'],
+      };
+      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
+
+      const result = await peer.card('target-peer');
+
+      expect(result).toBe('What peer knows about target');
+      expect(mockClient.workspaces.peers.card).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-peer',
+        { target: 'target-peer' }
+      );
+    });
+
+    it('should get peer card with target as Peer object', async () => {
+      const targetPeer = new Peer('target-peer', 'test-workspace', mockClient);
+      const mockCardResponse = {
+        peer_card: ['What peer knows about target peer'],
+      };
+      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
+
+      const result = await peer.card(targetPeer);
+
+      expect(result).toBe('What peer knows about target peer');
+      expect(mockClient.workspaces.peers.card).toHaveBeenCalledWith(
+        'test-workspace',
+        'test-peer',
+        { target: 'target-peer' }
+      );
+    });
+
+    it('should return empty string when peer_card is null', async () => {
+      const mockCardResponse = {
+        peer_card: null,
+      };
+      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
+
+      const result = await peer.card();
+
+      expect(result).toBe('');
+    });
+
+    it('should return empty string when peer_card is undefined', async () => {
+      const mockCardResponse = {};
+      mockClient.workspaces.peers.card.mockResolvedValue(mockCardResponse);
+
+      const result = await peer.card();
+
+      expect(result).toBe('');
+    });
+
+    it('should throw error for empty string target', async () => {
+      await expect(peer.card('')).rejects.toThrow('target string cannot be empty');
+      await expect(peer.card('   ')).rejects.toThrow('target string cannot be empty');
+    });
+
+    it('should throw error for invalid target type', async () => {
+      await expect(peer.card(123 as any)).rejects.toThrow('target must be string, Peer, or undefined');
+      await expect(peer.card(null as any)).rejects.toThrow('target must be string, Peer, or undefined');
+      await expect(peer.card({} as any)).rejects.toThrow('target must be string, Peer, or undefined');
+    });
+
+    it('should handle API errors', async () => {
+      mockClient.workspaces.peers.card.mockRejectedValue(new Error('Card fetch failed'));
+
+      await expect(peer.card()).rejects.toThrow('Card fetch failed');
+    });
+  });
 });

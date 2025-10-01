@@ -2,6 +2,7 @@ import { Honcho } from '../src/client';
 import { Peer } from '../src/peer';
 import { Session } from '../src/session';
 import { Page } from '../src/pagination';
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages';
 
 // Mock the @honcho-ai/core module
 jest.mock('@honcho-ai/core', () => {
@@ -479,6 +480,95 @@ describe('Honcho Client', () => {
       mockClient.workspaces.deriverStatus.mockResolvedValue(mockStatusPending);
 
       await expect(honcho.pollDeriverStatus({ timeoutMs: 100 })).rejects.toThrow();
+    });
+  });
+
+  describe('updateMessage', () => {
+    beforeEach(() => {
+      mockClient.workspaces.sessions = {
+        messages: {
+          update: jest.fn(),
+        },
+      };
+    });
+
+    it('should update message metadata using Message object', async () => {
+      const mockMessage: Message = {
+        id: 'msg-123',
+        session_id: 'session-456',
+        content: 'Test message',
+        peer_id: 'peer-789',
+        created_at: '2024-01-01T00:00:00Z',
+        token_count: 10,
+        workspace_id: 'test-workspace',
+      };
+      const metadata = { updated: true, importance: 'high' };
+      const mockUpdatedMessage = { ...mockMessage, metadata };
+
+      mockClient.workspaces.sessions.messages.update.mockResolvedValue(mockUpdatedMessage);
+
+      const result = await honcho.updateMessage(mockMessage, metadata);
+
+      expect(result).toEqual(mockUpdatedMessage);
+      expect(mockClient.workspaces.sessions.messages.update).toHaveBeenCalledWith(
+        'test-workspace',
+        'session-456',
+        'msg-123',
+        { metadata }
+      );
+    });
+
+    it('should update message metadata using message ID and session ID', async () => {
+      const messageId = 'msg-123';
+      const sessionId = 'session-456';
+      const metadata = { updated: true, importance: 'high' };
+      const mockUpdatedMessage = {
+        id: messageId,
+        session_id: sessionId,
+        content: 'Test message',
+        peer_id: 'peer-789',
+        metadata,
+      };
+
+      mockClient.workspaces.sessions.messages.update.mockResolvedValue(mockUpdatedMessage);
+
+      const result = await honcho.updateMessage(messageId, metadata, sessionId);
+
+      expect(result).toEqual(mockUpdatedMessage);
+      expect(mockClient.workspaces.sessions.messages.update).toHaveBeenCalledWith(
+        'test-workspace',
+        sessionId,
+        messageId,
+        { metadata }
+      );
+    });
+
+    it('should throw error when message is string ID but session ID is not provided', async () => {
+      const messageId = 'msg-123';
+      const metadata = { updated: true };
+
+      await expect(honcho.updateMessage(messageId, metadata)).rejects.toThrow(
+        'sessionId is required when message is a string ID'
+      );
+    });
+
+    it('should handle API errors', async () => {
+      const mockMessage: Message = {
+        id: 'msg-123',
+        session_id: 'session-456',
+        content: 'Test message',
+        peer_id: 'peer-789',
+        created_at: '2024-01-01T00:00:00Z',
+        token_count: 10,
+        workspace_id: 'test-workspace',
+      };
+      const metadata = { updated: true };
+
+      mockClient.workspaces.sessions.messages.update.mockRejectedValue(
+        new Error('Update failed')
+      );
+
+      await expect(honcho.updateMessage(mockMessage, metadata)).rejects.toThrow('Update failed');
     });
   });
 });

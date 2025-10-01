@@ -42,9 +42,13 @@ class DialecticStreamResponse:
         ```
     """
 
+    _iterator: Iterator[str] | AsyncIterator[str]
+    _accumulated_content: list[str]
+    _is_complete: bool
+
     def __init__(self, iterator: Iterator[str] | AsyncIterator[str]):
         self._iterator = iterator
-        self._accumulated_content: list[str] = []
+        self._accumulated_content = []
         self._is_complete = False
 
     # Sync iterator protocol

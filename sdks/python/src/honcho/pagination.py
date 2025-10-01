@@ -58,7 +58,7 @@ class SyncPage(Generic[T, U]):
     def items(self) -> list[U] | list[T]:
         """Get all transformed items on the current page."""
         if self._transform_func is not None:
-            return [self._transform_func(item) for item in self._original_page.items]  # pyright: ignore[reportAny]
+            return [self._transform_func(item) for item in self._original_page.items]
         return self._original_page.items
 
     @property
@@ -84,3 +84,18 @@ class SyncPage(Generic[T, U]):
     def has_next_page(self) -> bool:
         """Check if there's a next page."""
         return self._original_page.has_next_page()
+
+    def get_next_page(self) -> "SyncPage[T, U] | None":
+        """
+        Fetch the next page of results.
+
+        Returns None if there are no more pages.
+        """
+        if not hasattr(self._original_page, "get_next_page"):
+            return None
+
+        next_original_page = self._original_page.get_next_page()
+        if not next_original_page:
+            return None
+
+        return SyncPage(next_original_page, self._transform_func)

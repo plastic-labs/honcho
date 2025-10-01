@@ -7,6 +7,8 @@ from typing import Any, Literal
 import httpx
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types import DeriverStatus
+from honcho_core.types.workspaces.peer import Peer as PeerCore
+from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -185,7 +187,9 @@ class Honcho(BaseModel):
             id, self.workspace_id, self._client, config=config, metadata=metadata
         )
 
-    def get_peers(self, filters: dict[str, object] | None = None) -> SyncPage[Peer]:
+    def get_peers(
+        self, filters: dict[str, object] | None = None
+    ) -> SyncPage[PeerCore, Peer]:
         """
         Get all peers in the current workspace.
 
@@ -247,7 +251,7 @@ class Honcho(BaseModel):
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[Session]:
+    ) -> SyncPage[SessionCore, Session]:
         """
         Get all sessions in the current workspace.
 

@@ -82,7 +82,6 @@ export class Peer {
     })
 
     if (chatParams.stream) {
-      // Use undocumented request until stainless SDK is regenerated
       const body = {
         query: chatParams.query,
         stream: true,
@@ -338,6 +337,50 @@ export class Peer {
         limit: validatedLimit,
       }
     )
+  }
+
+  /**
+   * Get the peer card for this peer.
+   *
+   * Makes an API call to retrieve the peer card, which contains a representation
+   * of what this peer knows. If a target is provided, returns this peer's local
+   * representation of the target peer.
+   *
+   * @param target - Optional target peer for local card. If provided, returns this
+   *                 peer's card of the target peer. Can be a Peer object or peer ID string.
+   * @returns Promise resolving to a string containing the peer card
+   */
+  async card(target?: string | Peer): Promise<string> {
+    // Validate target parameter
+    if (
+      target !== undefined &&
+      typeof target !== 'string' &&
+      !(target instanceof Peer)
+    ) {
+      throw new TypeError(
+        `target must be string, Peer, or undefined, got ${typeof target}`
+      )
+    }
+
+    if (typeof target === 'string' && target.trim().length === 0) {
+      throw new Error('target string cannot be empty')
+    }
+
+    const response = await this._client.workspaces.peers.card(
+      this.workspaceId,
+      this.id,
+      {
+        target: target instanceof Peer ? target.id : target,
+      }
+    )
+
+    if (!response.peer_card) {
+      return ''
+    }
+
+    const items: string[] = response.peer_card
+
+    return items.join('\n')
   }
 
   /**

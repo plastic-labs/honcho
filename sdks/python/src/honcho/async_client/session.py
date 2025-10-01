@@ -6,7 +6,7 @@ import time
 import logging
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
-from honcho_core._types import NOT_GIVEN
+from honcho_core._types import omit
 from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
@@ -111,12 +111,12 @@ class AsyncSession(BaseModel):
         """
         session = cls(session_id, workspace_id, client)
 
-        if config or metadata:
+        if config is not None or metadata is not None:
             await client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
-                configuration=config if config is not None else NOT_GIVEN,
-                metadata=metadata if metadata is not None else NOT_GIVEN,
+                configuration=config if config is not None else omit,
+                metadata=metadata if metadata is not None else omit,
             )
 
         return session
@@ -302,10 +302,10 @@ class AsyncSession(BaseModel):
             peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            observe_others=NOT_GIVEN
+            observe_others=omit
             if config.observe_others is None
             else config.observe_others,
-            observe_me=NOT_GIVEN if config.observe_me is None else config.observe_me,
+            observe_me=omit if config.observe_me is None else config.observe_me,
         )
 
     @validate_call
@@ -453,7 +453,7 @@ class AsyncSession(BaseModel):
         context = await self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            tokens=tokens if tokens is not None else NOT_GIVEN,
+            tokens=tokens if tokens is not None else omit,
             summary=summary,
         )
 

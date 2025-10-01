@@ -5,8 +5,9 @@ from typing import TYPE_CHECKING
 from collections.abc import Generator
 
 from honcho_core import Honcho as HonchoCore
-from honcho_core._types import NOT_GIVEN
+from honcho_core._types import omit
 from honcho_core.types.workspaces import PeerCardResponse
+from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -79,12 +80,12 @@ class Peer(BaseModel):
         super().__init__(id=peer_id, workspace_id=workspace_id)
         self._client = client
 
-        if config or metadata:
+        if config is not None or metadata is not None:
             self._client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
-                configuration=config if config is not None else NOT_GIVEN,
-                metadata=metadata if metadata is not None else NOT_GIVEN,
+                configuration=config if config is not None else omit,
+                metadata=metadata if metadata is not None else omit,
             )
 
     def chat(
@@ -159,7 +160,7 @@ class Peer(BaseModel):
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[Session]:
+    ) -> SyncPage[SessionCore, Session]:
         """
         Get all sessions this peer is a member of.
 
@@ -357,9 +358,6 @@ class Peer(BaseModel):
             A PeerCardResponse object containing the peer card
         """
         # Validate target parameter
-        if target is not None and not isinstance(target, (str, Peer)):
-            raise TypeError(f"target must be str, Peer, or None, got {type(target)}")
-
         if isinstance(target, str) and len(target.strip()) == 0:
             raise ValueError("target string cannot be empty")
 

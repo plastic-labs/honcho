@@ -450,6 +450,46 @@ export class Honcho {
   }
 
   /**
+   * Update the metadata of a message.
+   *
+   * Makes an API call to update the metadata of a specific message within a session.
+   *
+   * @param message - Either a Message object or a message ID string
+   * @param metadata - The metadata to update for the message
+   * @param sessionId - The ID of the session (required if message is a string ID, ignored if message is a Message object)
+   * @returns Promise resolving to the updated Message object
+   * @throws Error if message is a string ID but sessionId is not provided
+   */
+  async updateMessage(
+    message: Message | string,
+    metadata: Record<string, unknown>,
+    sessionId?: string
+  ): Promise<Message> {
+    let messageId: string
+    let resolvedSessionId: string
+
+    if (typeof message === 'string') {
+      messageId = message
+      if (!sessionId) {
+        throw new Error('sessionId is required when message is a string ID')
+      }
+      resolvedSessionId = sessionId
+    } else {
+      messageId = message.id
+      resolvedSessionId = message.session_id
+    }
+
+    return await this._client.workspaces.sessions.messages.update(
+      this.workspaceId,
+      resolvedSessionId,
+      messageId,
+      {
+        metadata,
+      }
+    )
+  }
+
+  /**
    * Return a string representation of the Honcho client.
    *
    * @returns A string representation suitable for debugging
