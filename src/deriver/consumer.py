@@ -51,15 +51,38 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        await summarizer.summarize_if_needed(
-            validated.workspace_name,
-            validated.session_name,
-            validated.message_id,
-            validated.message_seq_in_session,
-        )
-        log_performance_metrics(
-            f"summary_{validated.workspace_name}_{validated.message_id}"
-        )
+
+        if settings.LANGFUSE_PUBLIC_KEY:
+            with lf.start_as_current_span(
+                name="summary_processing",
+                input={
+                    "workspace_name": validated.workspace_name,
+                    "session_name": validated.session_name,
+                    "message_id": validated.message_id,
+                },
+                metadata={
+                    "summary_model": settings.SUMMARY.MODEL,
+                },
+            ):
+                await summarizer.summarize_if_needed(
+                    validated.workspace_name,
+                    validated.session_name,
+                    validated.message_id,
+                    validated.message_seq_in_session,
+                )
+                log_performance_metrics(
+                    f"summary_{validated.workspace_name}_{validated.message_id}"
+                )
+        else:
+            await summarizer.summarize_if_needed(
+                validated.workspace_name,
+                validated.session_name,
+                validated.message_id,
+                validated.message_seq_in_session,
+            )
+            log_performance_metrics(
+                f"summary_{validated.workspace_name}_{validated.message_id}"
+            )
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
@@ -98,10 +121,23 @@ async def process_representation_batch(
     )
 
     if settings.LANGFUSE_PUBLIC_KEY:
-        lf.update_current_trace(
+        with lf.start_as_current_span(
+            name="representation_processing",
+            input={
+                "payloads": [
+                    {
+                        "message_id": msg.id,
+                        "sender_name": sender_name,
+                        "target_name": target_name,
+                        "session_name": msg.session_name,
+                    }
+                    for msg in messages
+                ]
+            },
             metadata={
                 "critical_analysis_model": settings.DERIVER.MODEL,
-            }
-        )
-
-    await process_representation_tasks_batch(sender_name, target_name, messages)
+            },
+        ):
+            await process_representation_tasks_batch(sender_name, target_name, messages)
+    else:
+        await process_representation_tasks_batch(sender_name, target_name, messages)
