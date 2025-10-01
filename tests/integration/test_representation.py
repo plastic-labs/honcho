@@ -75,13 +75,13 @@ class TestRepresentationWorkflow:
         explicit_obs1 = ExplicitObservation(
             content="User likes dogs",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="test_session",
         )
         explicit_obs2 = ExplicitObservation(
             content="User has a pet named Rover",
             created_at=datetime(2025, 1, 1, 12, 1, 0, tzinfo=timezone.utc),
-            message_id=2,
+            message_ids=[(2, 2)],
             session_name="test_session",
         )
 
@@ -90,7 +90,7 @@ class TestRepresentationWorkflow:
             conclusion="User probably has a dog named Rover",
             premises=["User likes dogs", "User has a pet named Rover"],
             created_at=datetime(2025, 1, 1, 12, 2, 0, tzinfo=timezone.utc),
-            message_id=3,
+            message_ids=[(3, 3)],
             session_name="test_session",
         )
 
@@ -131,7 +131,7 @@ class TestRepresentationWorkflow:
                 ExplicitObservation(
                     content="User likes cats",
                     created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
-                    message_id=1,
+                    message_ids=[(1, 1)],
                     session_name="session1",
                 )
             ]
@@ -143,13 +143,13 @@ class TestRepresentationWorkflow:
                 ExplicitObservation(
                     content="User likes cats",  # Duplicate
                     created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
-                    message_id=1,
+                    message_ids=[(1, 1)],
                     session_name="session1",
                 ),
                 ExplicitObservation(
                     content="User likes dogs",  # New
                     created_at=datetime(2025, 1, 1, 11, 0, 0, tzinfo=timezone.utc),
-                    message_id=2,
+                    message_ids=[(2, 2)],
                     session_name="session1",
                 ),
             ]
@@ -173,7 +173,7 @@ class TestRepresentationWorkflow:
                 ExplicitObservation(
                     content="User likes birds",
                     created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-                    message_id=3,
+                    message_ids=[(3, 3)],
                     session_name="session1",
                 )
             ]
@@ -195,6 +195,14 @@ class TestDocumentCreationWorkflow:
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
         collection_name = "test_collection"
 
+        # Create session for foreign key constraint
+        session = models.Session(
+            name="test_session",
+            workspace_name=workspace.name,
+        )
+        db_session.add(session)
+        await db_session.flush()
+
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
             name=collection_name,
@@ -210,7 +218,7 @@ class TestDocumentCreationWorkflow:
             metadata=schemas.DocumentMetadata(
                 level="explicit",
                 session_name="test_session",
-                message_id=1,
+                message_ids=[(1, 1)],
                 message_created_at=datetime(
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
@@ -236,8 +244,8 @@ class TestDocumentCreationWorkflow:
 
         assert not is_duplicate
         assert document.content == "Test observation content"
-        assert document.internal_metadata["message_id"] == 1
-        assert document.internal_metadata["session_name"] == "test_session"
+        assert document.internal_metadata["message_ids"] == [[1, 1]]
+        assert document.session_name == "test_session"
 
     async def test_document_creation_with_duplicate_detection(
         self, db_session: AsyncSession
@@ -245,6 +253,14 @@ class TestDocumentCreationWorkflow:
         """Test document creation with duplicate threshold checking"""
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
         collection_name = "test_collection"
+
+        # Create session for foreign key constraint
+        session = models.Session(
+            name="test_session",
+            workspace_name=workspace.name,
+        )
+        db_session.add(session)
+        await db_session.flush()
 
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
@@ -261,7 +277,7 @@ class TestDocumentCreationWorkflow:
             metadata=schemas.DocumentMetadata(
                 level="explicit",
                 session_name="test_session",
-                message_id=1,
+                message_ids=[(1, 1)],
                 message_created_at=datetime(
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
@@ -293,7 +309,7 @@ class TestDocumentCreationWorkflow:
             metadata=schemas.DocumentMetadata(
                 level="explicit",
                 session_name="test_session2",
-                message_id=1,
+                message_ids=[(1, 1)],
                 message_created_at=datetime(
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
@@ -328,6 +344,14 @@ class TestDocumentCreationWorkflow:
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
         collection_name = "test_collection"
 
+        # Create session for foreign key constraint
+        session = models.Session(
+            name="test_session",
+            workspace_name=workspace.name,
+        )
+        db_session.add(session)
+        await db_session.flush()
+
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
             name=collection_name,
@@ -343,7 +367,7 @@ class TestDocumentCreationWorkflow:
             metadata=schemas.DocumentMetadata(
                 level="explicit",
                 session_name="test_session",
-                message_id=1,
+                message_ids=[(1, 1)],
                 message_created_at=datetime(
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
@@ -430,7 +454,7 @@ class TestWorkingRepresentationRetrieval:
             metadata=schemas.DocumentMetadata(
                 level="explicit",
                 session_name=session.name,
-                message_id=1,
+                message_ids=[(1, 1)],
                 message_created_at=datetime(
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
@@ -458,7 +482,7 @@ class TestWorkingRepresentationRetrieval:
             metadata=schemas.DocumentMetadata(
                 level="deductive",
                 session_name=session.name,
-                message_id=1,
+                message_ids=[(1, 1)],
                 message_created_at=datetime(
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
@@ -507,7 +531,7 @@ class TestWorkingRepresentationRetrieval:
                 ExplicitObservation(
                     content="User likes dogs",
                     created_at=datetime.now(timezone.utc),
-                    message_id=1,
+                    message_ids=[(1, 1)],
                     session_name="test_session",
                 )
             ]
@@ -602,9 +626,9 @@ class TestWorkingRepresentationRetrieval:
             content="User said they like programming",
             internal_metadata={
                 "level": "explicit",
-                "message_id": 1,
-                "session_name": "test_session",
+                "message_ids": [(1, 1)],
             },
+            session_name="test_session",
             embedding=[0.1] * 1536,
             created_at=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
         )
@@ -616,10 +640,10 @@ class TestWorkingRepresentationRetrieval:
             content="User is likely a software developer",
             internal_metadata={
                 "level": "deductive",
-                "message_id": 1,
-                "session_name": "test_session",
+                "message_ids": [(1, 1)],
                 "premises": ["User said they like programming"],
             },
+            session_name="test_session",
             embedding=[0.2] * 1536,
             created_at=datetime(2025, 1, 1, 10, 1, 0, tzinfo=timezone.utc),
         )
@@ -634,13 +658,13 @@ class TestWorkingRepresentationRetrieval:
 
         explicit_obs = representation.explicit[0]
         assert explicit_obs.content == "User said they like programming"
-        assert explicit_obs.message_id == 1
+        assert explicit_obs.message_ids == [(1, 1)]
         assert explicit_obs.session_name == "test_session"
 
         deductive_obs = representation.deductive[0]
         assert deductive_obs.conclusion == "User is likely a software developer"
         assert deductive_obs.premises == ["User said they like programming"]
-        assert deductive_obs.message_id == 1
+        assert deductive_obs.message_ids == [(1, 1)]
         assert deductive_obs.session_name == "test_session"
 
     async def create_test_workspace_and_peer(
@@ -703,7 +727,7 @@ class TestPromptRepresentationConversion:
         timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
         representation = prompt_rep.to_representation(
-            message_id=123, session_name="test_session", timestamp=timestamp
+            message_ids=(123, 123), session_name="test_session", timestamp=timestamp
         )
 
         assert len(representation.explicit) == 2
@@ -711,7 +735,7 @@ class TestPromptRepresentationConversion:
 
         # Check explicit observations
         assert representation.explicit[0].content == "User likes coffee"
-        assert representation.explicit[0].message_id == 123
+        assert representation.explicit[0].message_ids == [(123, 123)]
         assert representation.explicit[0].session_name == "test_session"
         assert representation.explicit[1].content == "User works remotely"
         assert representation.explicit[0].created_at == timestamp
@@ -723,7 +747,7 @@ class TestPromptRepresentationConversion:
             == "User probably works from a coffee shop sometimes"
         )
         assert deductive_obs.premises == ["User likes coffee", "User works remotely"]
-        assert deductive_obs.message_id == 123
+        assert deductive_obs.message_ids == [(123, 123)]
         assert deductive_obs.session_name == "test_session"
         assert deductive_obs.created_at == timestamp
 
@@ -731,7 +755,7 @@ class TestPromptRepresentationConversion:
         """Test converting empty PromptRepresentation"""
         empty_prompt_rep = PromptRepresentation()
         representation = empty_prompt_rep.to_representation(
-            message_id=1,
+            message_ids=(1, 1),
             session_name="test",
             timestamp=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
@@ -750,21 +774,21 @@ class TestRepresentationHashingAndEquality:
         obs1 = ExplicitObservation(
             content="Test content",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="session1",
         )
 
         obs2 = ExplicitObservation(
             content="Test content",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="session1",
         )
 
         obs3 = ExplicitObservation(
             content="Different content",
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="session1",
         )
 
@@ -783,7 +807,7 @@ class TestRepresentationHashingAndEquality:
             conclusion="Test conclusion",
             premises=["premise1", "premise2"],
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="session1",
         )
 
@@ -791,7 +815,7 @@ class TestRepresentationHashingAndEquality:
             conclusion="Test conclusion",
             premises=["premise1", "premise2"],
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="session1",
         )
 
@@ -799,7 +823,7 @@ class TestRepresentationHashingAndEquality:
             conclusion="Different conclusion",
             premises=["premise1", "premise2"],
             created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="session1",
         )
 

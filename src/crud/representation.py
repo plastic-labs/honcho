@@ -191,10 +191,7 @@ async def get_working_representation(
             models.Document.workspace_name == workspace_name,
             models.Document.collection_name == collection_name,
             *(
-                [
-                    models.Document.internal_metadata["session_name"].astext
-                    == session_name
-                ]
+                [models.Document.session_name == session_name]
                 if session_name is not None
                 else []
             ),
@@ -241,8 +238,8 @@ def representation_from_documents(
                     doc.internal_metadata, doc.created_at
                 ),
                 content=doc.content,
-                message_id=doc.internal_metadata.get("message_id"),
-                session_name=doc.internal_metadata.get("session_name"),
+                message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                session_name=doc.session_name,
             )
             for doc in documents
             if doc.internal_metadata.get("level") == "explicit"
@@ -253,8 +250,8 @@ def representation_from_documents(
                     doc.internal_metadata, doc.created_at
                 ),
                 conclusion=doc.content,
-                message_id=doc.internal_metadata.get("message_id"),
-                session_name=doc.internal_metadata.get("session_name"),
+                message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                session_name=doc.session_name,
                 premises=doc.internal_metadata.get("premises", []),
             )
             for doc in documents

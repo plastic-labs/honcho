@@ -153,13 +153,17 @@ async def create_document(
             await db.refresh(duplicate)
             return duplicate, True
 
+    metadata_dict = document.metadata.model_dump(exclude_none=True)
+    session_name = metadata_dict.pop("session_name", None)
+
     honcho_document = models.Document(
         workspace_name=collection.workspace_name,
         peer_name=collection.peer_name,
         collection_name=collection.name,
         content=document.content,
-        internal_metadata=document.metadata.model_dump(exclude_none=True),
+        internal_metadata=metadata_dict,
         embedding=embedding,
+        session_name=session_name,
     )
     db.add(honcho_document)
     await db.commit()
@@ -192,17 +196,21 @@ async def create_documents_bulk(
     if len(documents) != len(embeddings):
         raise ValidationException("Number of documents must match number of embeddings")
 
-    honcho_documents = [
-        models.Document(
-            workspace_name=workspace_name,
-            peer_name=peer_name,
-            collection_name=collection_name,
-            content=doc.content,
-            internal_metadata=doc.metadata.model_dump(exclude_none=True),
-            embedding=embedding,
+    honcho_documents: list[models.Document] = []
+    for doc, embedding in zip(documents, embeddings, strict=True):
+        metadata_dict = doc.metadata.model_dump(exclude_none=True)
+        session_name = metadata_dict.pop("session_name", None)
+        honcho_documents.append(
+            models.Document(
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+                collection_name=collection_name,
+                content=doc.content,
+                internal_metadata=metadata_dict,
+                embedding=embedding,
+                session_name=session_name,
+            )
         )
-        for doc, embedding in zip(documents, embeddings, strict=True)
-    ]
     db.add_all(honcho_documents)
     await db.commit()
 

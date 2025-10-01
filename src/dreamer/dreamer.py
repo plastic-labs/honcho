@@ -145,7 +145,7 @@ async def _consolidate_cluster(
 
         metadata = schemas.DocumentMetadata(
             times_derived=total_times_derived,
-            message_id=obs.message_id or 0,
+            message_ids=obs.message_ids,
             message_created_at=format_datetime_utc(obs.created_at),
             session_name=obs.session_name or "",
             level=level,

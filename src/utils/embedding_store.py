@@ -50,7 +50,7 @@ class EmbeddingStore:
     async def save_representation(
         self,
         representation: Representation,
-        message_id: int,
+        message_id_range: tuple[int, int],
         session_name: str,
         message_created_at: datetime.datetime,
     ) -> int:
@@ -59,7 +59,7 @@ class EmbeddingStore:
 
         Args:
             representation: Representation object
-            message_id: Message ID to link with observations
+            message_id_range: Message ID range to link with observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
 
@@ -91,7 +91,7 @@ class EmbeddingStore:
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id}_{self.peer_name}",
+            f"deriver_{message_id_range[1]}_{self.peer_name}",
             "embed_new_observations",
             batch_embed_duration,
             "ms",
@@ -104,7 +104,7 @@ class EmbeddingStore:
                 self.db,
                 all_observations,
                 embeddings,
-                message_id,
+                message_id_range,
                 session_name,
                 message_created_at,
             )
@@ -114,14 +114,14 @@ class EmbeddingStore:
                     db,
                     all_observations,
                     embeddings,
-                    message_id,
+                    message_id_range,
                     session_name,
                     message_created_at,
                 )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id}_{self.peer_name}",
+            f"deriver_{message_id_range[1]}_{self.peer_name}",
             "save_new_observations",
             create_document_duration,
             "ms",
@@ -134,7 +134,7 @@ class EmbeddingStore:
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
         embeddings: list[list[float]],
-        message_id: int,
+        message_id_range: tuple[int, int],
         session_name: str,
         message_created_at: datetime.datetime,
     ) -> int:
@@ -152,7 +152,7 @@ class EmbeddingStore:
                 obs_premises = None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
-                message_id=message_id,
+                message_ids=[message_id_range],
                 session_name=session_name,
                 level=obs_level,
                 premises=obs_premises,

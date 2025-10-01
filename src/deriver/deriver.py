@@ -272,6 +272,7 @@ class CertaintyReasoner:
         """
         analysis_start = time.perf_counter()
         # For logging, we can just show the content of the last message
+        earliest_payload = self.ctx[0]
         latest_payload = self.ctx[-1]
 
         # Perform critical analysis to get observation lists
@@ -314,7 +315,7 @@ class CertaintyReasoner:
             ) from e
 
         reasoning_response = reasoning_response.to_representation(
-            latest_payload.message_id,
+            (earliest_payload.message_id, latest_payload.message_id),
             latest_payload.session_name,
             latest_payload.created_at,
         )
@@ -339,7 +340,7 @@ class CertaintyReasoner:
         if not new_observations.is_empty():
             await self.embedding_store.save_representation(
                 new_observations,
-                latest_payload.message_id,
+                (earliest_payload.message_id, latest_payload.message_id),
                 latest_payload.session_name,
                 latest_payload.created_at,
             )

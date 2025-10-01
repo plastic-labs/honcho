@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class Observation(BaseModel):
     created_at: datetime
-    message_id: int | None
+    message_ids: list[tuple[int, int]]
     session_name: str | None
 
 
@@ -19,7 +19,7 @@ class ExplicitObservation(Observation):
         """
         Make ExplicitObservation hashable for use in sets.
         """
-        return hash((self.content, self.created_at, self.message_id, self.session_name))
+        return hash((self.content, self.created_at, self.session_name))
 
     def __eq__(self, other: object) -> bool:
         """
@@ -31,7 +31,6 @@ class ExplicitObservation(Observation):
         return (
             self.content == other.content
             and self.created_at == other.created_at
-            and self.message_id == other.message_id
             and self.session_name == other.session_name
         )
 
@@ -57,9 +56,7 @@ class DeductiveObservation(Observation):
         """
         Make DeductiveObservation hashable for use in sets. NOTE: premises are not included in the hash.
         """
-        return hash(
-            (self.conclusion, self.created_at, self.message_id, self.session_name)
-        )
+        return hash((self.conclusion, self.created_at, self.session_name))
 
     def __eq__(self, other: object) -> bool:
         """
@@ -71,7 +68,6 @@ class DeductiveObservation(Observation):
         return (
             self.conclusion == other.conclusion
             and self.created_at == other.created_at
-            and self.message_id == other.message_id
             and self.session_name == other.session_name
         )
 
@@ -261,7 +257,7 @@ class PromptRepresentation(BaseModel):
     )
 
     def to_representation(
-        self, message_id: int, session_name: str, timestamp: datetime
+        self, message_ids: tuple[int, int], session_name: str, timestamp: datetime
     ) -> Representation:
         """
         Convert a PromptRepresentation object to a Representation object.
@@ -274,7 +270,7 @@ class PromptRepresentation(BaseModel):
                 ExplicitObservation(
                     content=e,
                     created_at=timestamp,
-                    message_id=message_id,
+                    message_ids=[message_ids],
                     session_name=session_name,
                 )
                 for e in self.explicit
@@ -282,7 +278,7 @@ class PromptRepresentation(BaseModel):
             deductive=[
                 DeductiveObservation(
                     created_at=timestamp,
-                    message_id=message_id,
+                    message_ids=[message_ids],
                     session_name=session_name,
                     conclusion=d.conclusion,
                     premises=d.premises,
