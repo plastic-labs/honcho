@@ -60,7 +60,7 @@ async def critical_analysis_call(
     working_representation: str | None,
     history: str,
     new_turns: list[str],
-) -> ReasoningResponse:
+) -> ReasoningResponse | None:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
         peer_card=peer_card,
