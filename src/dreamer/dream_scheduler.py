@@ -7,7 +7,7 @@ import sentry_sdk
 from sqlalchemy import insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.utils.queue_payload import create_dream_payload
@@ -227,9 +227,7 @@ class DreamScheduler:
 
 async def check_and_schedule_dream(
     db: AsyncSession,
-    workspace_name: str,
-    collection_name: str,
-    peer_name: str,
+    collection: models.Collection,
 ) -> bool:
     """
     Check if a collection has reached the document threshold and schedule a timer-based dream.
@@ -249,14 +247,6 @@ async def check_and_schedule_dream(
     """
     if not settings.DREAM.ENABLED:
         return False
-
-    # get_or_create_collection already handles IntegrityError with rollback and a retry
-    collection = await crud.get_or_create_collection(
-        db,
-        workspace_name,
-        collection_name,
-        peer_name,
-    )
 
     # Get dream metadata from internal_metadata
     dream_metadata = collection.internal_metadata.get("dream", {})

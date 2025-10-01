@@ -138,6 +138,14 @@ class EmbeddingStore:
         session_name: str,
         message_created_at: datetime.datetime,
     ) -> int:
+        # get_or_create_collection already handles IntegrityError with rollback and a retry
+        collection = await crud.get_or_create_collection(
+            db,
+            self.workspace_name,
+            self.collection_name,
+            self.peer_name,
+        )
+
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
         for obs in all_observations:
@@ -174,9 +182,7 @@ class EmbeddingStore:
         )
 
         try:
-            await check_and_schedule_dream(
-                db, self.workspace_name, self.collection_name, self.peer_name
-            )
+            await check_and_schedule_dream(db, collection)
         except Exception as e:
             logger.warning(f"Failed to check dream scheduling: {e}")
 
