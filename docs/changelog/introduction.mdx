@@ -34,6 +34,31 @@ Welcome to the Honcho changelog! This section documents all notable changes to t
         - Sentry tracing in the deriver
         </Update>
 
+        <Update label="v2.3.2">
+        ### Added
+
+        - Get peer cards endpoint (`GET /v2/peers/{peer_id}/peer-card`) for retrieving targeted peer context information
+
+        ### Changed
+
+        - Replaced Mirascope dependency with small client implementation for better control
+        - Optimized deriver performance by using joins on messages table instead of storing token count in queue payload
+        - Database scope optimization for various operations
+        - Batch representation task processing for ~10x speed improvement in practice
+
+        ### Fixed
+
+        - Separated clean and claim work units in queue manager to prevent race conditions
+        - Skip locked ActiveQueueSession rows on delete operations
+        - Langfuse SDK integration updates for compatibility
+        - Added configurable maximum message size to prevent token overflow in deriver
+        - Various minor bugfixes
+        </Update>
+        <Update label="v2.3.1">
+        ### Fixed
+
+        - Added max message count to deriver in order to not overflow token limits
+        </Update>
         <Update label="v2.3.0">
         ### Added
 
