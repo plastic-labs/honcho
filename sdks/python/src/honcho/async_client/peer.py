@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core._types import omit
+from honcho_core.types.workspaces import PeerCardResponse
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
@@ -378,7 +379,7 @@ class AsyncPeer(BaseModel):
         if isinstance(target, str) and len(target.strip()) == 0:
             raise ValueError("target string cannot be empty")
 
-        response = await self._client.workspaces.peers.card(
+        response: PeerCardResponse = await self._client.workspaces.peers.card(
             peer_id=self.id,
             workspace_id=self.workspace_id,
             target=str(target.id) if isinstance(target, AsyncPeer) else target,
