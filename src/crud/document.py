@@ -170,7 +170,9 @@ async def create_document(
 async def create_documents_bulk(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
-    collection: models.Collection,
+    workspace_name: str,
+    collection_name: str,
+    peer_name: str,
     embeddings: list[list[float]],
 ) -> tuple[list[models.Document], int]:
     """
@@ -179,7 +181,9 @@ async def create_documents_bulk(
     Args:
         db: Database session
         documents: List of document creation schemas
-        collection: Collection to save documents to
+        workspace_name: Name of the workspace
+        collection_name: Name of the collection
+        peer_name: Name of the peer
         embeddings: Pre-computed embeddings for each document
 
     Returns:
@@ -190,9 +194,9 @@ async def create_documents_bulk(
 
     honcho_documents = [
         models.Document(
-            workspace_name=collection.workspace_name,
-            peer_name=collection.peer_name,
-            collection_name=collection.name,
+            workspace_name=workspace_name,
+            peer_name=peer_name,
+            collection_name=collection_name,
             content=doc.content,
             internal_metadata=doc.metadata.model_dump(exclude_none=True),
             embedding=embedding,
