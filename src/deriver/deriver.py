@@ -464,8 +464,12 @@ class CertaintyReasoner:
                 new_turns=new_turns,
             ) from e
 
+        # Handle None response from LLM
+        if response_obj is None:
+            logger.warning("LLM returned None response, using empty insights")
+            new_insights = ReasoningResponse(explicit=[], deductive=[])
         # If response is a string, try to parse as JSON
-        if isinstance(response_obj, str):
+        elif isinstance(response_obj, str):
             try:
                 response_data = json.loads(response_obj)
                 new_insights = ReasoningResponse(
