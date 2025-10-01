@@ -60,23 +60,23 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
             logger.info(
                 "Fetching message public ID for message %s", validated.message_id
             )
-        async with tracked_db("summary_fallback") as db:
-            stmt = (
-                select(models.Message)
-                .where(models.Message.workspace_name == validated.workspace_name)
-                .where(models.Message.session_name == validated.session_name)
-                .where(models.Message.id == validated.message_id)
-            )
-            result = await db.execute(stmt)
-
-            message = result.scalar_one_or_none()
-            if message is None:
-                logger.error(
-                    "Failed to fetch message with ID %s for process_summary_task",
-                    validated.message_id,
+            async with tracked_db(operation_name="summary_fallback") as db:
+                stmt = (
+                    select(models.Message)
+                    .where(models.Message.workspace_name == validated.workspace_name)
+                    .where(models.Message.session_name == validated.session_name)
+                    .where(models.Message.id == validated.message_id)
                 )
-                return
-            message_public_id = message.public_id
+                result = await db.execute(stmt)
+
+                message = result.scalar_one_or_none()
+                if message is None:
+                    logger.error(
+                        "Failed to fetch message with ID %s for process_summary_task",
+                        validated.message_id,
+                    )
+                    return
+                message_public_id = message.public_id
 
         with sentry_sdk.start_transaction(name="process_summary_task", op="deriver"):
             if settings.LANGFUSE_PUBLIC_KEY:
