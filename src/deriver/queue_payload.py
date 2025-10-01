@@ -37,6 +37,7 @@ class SummaryPayload(BasePayload):
     session_name: str
     message_id: int
     message_seq_in_session: int
+    message_public_id: str
 
 
 class WebhookPayload(BasePayload):
@@ -125,11 +126,20 @@ def create_payload(
             if message_seq_in_session is None:
                 raise ValueError("message_seq_in_session is required for summary tasks")
 
+            message_public_id = message.get("message_public_id")
+            if message_public_id is None:
+                raise ValueError("message_public_id is required for summary tasks")
+            elif (
+                not isinstance(message_public_id, str) or not message_public_id.strip()
+            ):
+                raise ValueError("message_public_id must be a non-empty string")
+
             validated_payload = SummaryPayload(
                 workspace_name=workspace_name,
                 session_name=session_name,
                 message_id=message_id,
                 message_seq_in_session=message_seq_in_session,
+                message_public_id=message_public_id,
             )
 
         # Convert back to dict for compatibility with JSON serialization

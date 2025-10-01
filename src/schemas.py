@@ -151,6 +151,7 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
+    id: int = Field(exclude=True)
     public_id: str = Field(serialization_alias="id")
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
@@ -235,7 +236,12 @@ class Session(SessionBase):
 class Summary(BaseModel):
     content: str = Field(description="The summary text")
     message_id: int = Field(
-        description="The ID of the message that this summary covers up to"
+        description="The internal ID of the message that this summary covers up to",
+        exclude=True,
+    )
+    message_public_id: str = Field(
+        description="The public ID of the message that this summary covers up to",
+        serialization_alias="message_id",
     )
     summary_type: str = Field(description="The type of summary (short or long)")
     created_at: str = Field(
