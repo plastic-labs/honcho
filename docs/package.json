@@ -15,6 +15,6 @@
     "honcho-ai": "^0.0.11"
   },
   "devDependencies": {
-    "mint": "^4.2.13"
+    "mint": "^4.2.123"
   }
 }

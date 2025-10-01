@@ -696,7 +696,9 @@ Evaluate whether the actual response correctly answers the question based on the
                     # For user questions, use the user peer (default behavior)
                     actual_response = await user_peer.chat(question_with_date)
 
-                actual_response = actual_response if actual_response is not None else ""
+                actual_response = (
+                    actual_response if isinstance(actual_response, str) else ""
+                )
 
                 tokens_used = self._get_latest_tokens_used()
 

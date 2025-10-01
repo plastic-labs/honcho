@@ -137,11 +137,15 @@ async def get_sessions_for_peer(
 
 @router.post(
     "/{peer_id}/chat",
-    response_model=schemas.DialecticResponse,
     responses={
         200: {
             "description": "Response to a question informed by Honcho's User Representation",
-            "content": {"text/event-stream": {}},
+            "content": {
+                "application/json": {
+                    "schema": schemas.DialecticResponse.model_json_schema()
+                },
+                "text/event-stream": {},
+            },
         },
     },
     dependencies=[
@@ -186,7 +190,17 @@ async def chat(
             )
             if isinstance(stream, AsyncIterator):
                 async for chunk in stream:
-                    yield chunk.content
+                    if chunk.content:
+                        # Send each chunk as JSON with nested delta object
+                        stream_chunk = schemas.DialecticStreamChunk(
+                            delta=schemas.DialecticStreamDelta(content=chunk.content)
+                        )
+                        yield f"data: {stream_chunk.model_dump_json()}\n\n"
+                # Send final done message
+                final_chunk = schemas.DialecticStreamChunk(
+                    delta=schemas.DialecticStreamDelta(), done=True
+                )
+                yield f"data: {final_chunk.model_dump_json()}\n\n"
             else:
                 raise HTTPException(status_code=500, detail="Invalid stream type")
         except Exception as e:

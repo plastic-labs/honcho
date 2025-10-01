@@ -552,13 +552,21 @@ except Exception as e:
             # Backup .env file to prevent it from overriding our environment variables
             self.backup_env_file()
 
-            # Copy .env file from tests/bench to the project root
+            # Copy .env file from tests/bench to the project root for FastAPI
             shutil.copy(
-                self.project_root / "tests" / "bench" / ".env", self.project_root
+                self.project_root / "tests" / "bench" / ".env",
+                self.project_root / ".env",
             )
 
             # Create temporary docker-compose.yml
             self.create_temp_docker_compose()
+
+            # Create an empty .env file in temp directory to satisfy docker-compose
+            # (even though the database service doesn't actually use it)
+            if self.temp_dir and self.temp_dir.exists():
+                (self.temp_dir / ".env").touch()
+            else:
+                raise Exception("Temporary directory does not exist")
 
             # Start database
             self.start_database()

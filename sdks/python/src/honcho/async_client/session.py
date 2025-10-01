@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+import asyncio
+import time
+import logging
 
 from honcho_core import AsyncHoncho as AsyncHonchoCore
-from honcho_core._types import NOT_GIVEN
+from honcho_core._types import omit
+from honcho_core.types import DeriverStatus
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
@@ -14,6 +18,8 @@ from .pagination import AsyncPage
 
 if TYPE_CHECKING:
     from .peer import AsyncPeer
+
+logger = logging.getLogger(__name__)
 
 
 class SessionPeerConfig(BaseModel):
@@ -105,12 +111,12 @@ class AsyncSession(BaseModel):
         """
         session = cls(session_id, workspace_id, client)
 
-        if config or metadata:
+        if config is not None or metadata is not None:
             await client.workspaces.sessions.get_or_create(
                 workspace_id=workspace_id,
                 id=session_id,
-                configuration=config if config is not None else NOT_GIVEN,
-                metadata=metadata if metadata is not None else NOT_GIVEN,
+                configuration=config if config is not None else omit,
+                metadata=metadata if metadata is not None else omit,
             )
 
         return session
@@ -296,10 +302,10 @@ class AsyncSession(BaseModel):
             peer_id=str(peer.id) if isinstance(peer, AsyncPeer) else peer,
             workspace_id=self.workspace_id,
             session_id=self.id,
-            observe_others=NOT_GIVEN
+            observe_others=omit
             if config.observe_others is None
             else config.observe_others,
-            observe_me=NOT_GIVEN if config.observe_me is None else config.observe_me,
+            observe_me=omit if config.observe_me is None else config.observe_me,
         )
 
     @validate_call
@@ -361,6 +367,17 @@ class AsyncSession(BaseModel):
             filters=filters,
         )
         return AsyncPage(messages_page)
+
+    async def delete(self) -> None:
+        """
+        Delete this session.
+
+        Makes an async API call to delete this session.
+        """
+        await self._client.workspaces.sessions.delete(
+            session_id=self.id,
+            workspace_id=self.workspace_id,
+        )
 
     async def get_metadata(self) -> dict[str, object]:
         """
@@ -436,7 +453,7 @@ class AsyncSession(BaseModel):
         context = await self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
-            tokens=tokens if tokens is not None else NOT_GIVEN,
+            tokens=tokens if tokens is not None else omit,
             summary=summary,
         )
 
@@ -614,6 +631,100 @@ class AsyncSession(BaseModel):
             session_id=self.id,
             target=str(target.id) if isinstance(target, AsyncPeer) else target,
         )
+
+    @validate_call
+    async def get_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+    ) -> DeriverStatus:
+        """
+        Get the deriver processing status, optionally scoped to an observer, sender, and/or session
+        """
+        return await self._client.workspaces.deriver_status(
+            workspace_id=self.workspace_id,
+            observer_id=observer_id,
+            sender_id=sender_id,
+            session_id=self.id,
+        )
+
+    @validate_call
+    async def poll_deriver_status(
+        self,
+        observer_id: str | None = None,
+        sender_id: str | None = None,
+        timeout: float = Field(
+            300.0,
+            gt=0,
+            description="Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).",
+        ),
+    ) -> DeriverStatus:
+        """
+        Poll get_deriver_status until pending_work_units and in_progress_work_units are both 0.
+        This allows you to guarantee that all messages have been processed by the deriver for
+        use with the dialectic endpoint.
+
+        The polling estimates sleep time by assuming each work unit takes 1 second.
+
+        Args:
+            observer_id: Optional observer ID to scope the status check
+            sender_id: Optional sender ID to scope the status check
+            timeout: Maximum time to poll in seconds. Defaults to 5 minutes (300 seconds).
+
+        Returns:
+            DeriverStatus when all work units are complete
+
+        Raises:
+            TimeoutError: If timeout is exceeded before work units complete
+            Exception: If get_deriver_status fails repeatedly
+        """
+        start_time = time.time()
+
+        while True:
+            try:
+                status = await self.get_deriver_status(observer_id, sender_id)
+            except Exception as e:
+                logger.warning(f"Failed to get deriver status: {e}")
+                # Sleep briefly before retrying
+                await asyncio.sleep(1)
+
+                # Check timeout after error
+                elapsed_time = time.time() - start_time
+                if elapsed_time >= timeout:
+                    raise TimeoutError(
+                        f"Polling timeout exceeded after {timeout}s. "
+                        + f"Error during status check: {e}"
+                    ) from e
+                continue
+
+            if status.pending_work_units == 0 and status.in_progress_work_units == 0:
+                return status
+
+            # Check timeout before sleeping
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= timeout:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            # Sleep for the expected time to complete all current work units
+            # Assuming each pending and in-progress work unit takes 1 second
+            total_work_units = status.pending_work_units + status.in_progress_work_units
+            sleep_time = max(1, total_work_units)
+
+            # Don't sleep past the timeout
+            remaining_time = timeout - elapsed_time
+            sleep_time = min(sleep_time, remaining_time)
+            if sleep_time <= 0:
+                raise TimeoutError(
+                    f"Polling timeout exceeded after {timeout}s. "
+                    + f"Current status: {status.pending_work_units} pending, "
+                    + f"{status.in_progress_work_units} in progress work units."
+                )
+
+            await asyncio.sleep(sleep_time)
 
     def __repr__(self) -> str:
         """

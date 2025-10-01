@@ -7,6 +7,8 @@ from typing import Any, Literal
 import httpx
 from honcho_core import Honcho as HonchoCore
 from honcho_core.types import DeriverStatus
+from honcho_core.types.workspaces.peer import Peer as PeerCore
+from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
@@ -185,7 +187,9 @@ class Honcho(BaseModel):
             id, self.workspace_id, self._client, config=config, metadata=metadata
         )
 
-    def get_peers(self, filters: dict[str, object] | None = None) -> SyncPage[Peer]:
+    def get_peers(
+        self, filters: dict[str, object] | None = None
+    ) -> SyncPage[PeerCore, Peer]:
         """
         Get all peers in the current workspace.
 
@@ -247,7 +251,7 @@ class Honcho(BaseModel):
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[Session]:
+    ) -> SyncPage[SessionCore, Session]:
         """
         Get all sessions in the current workspace.
 
@@ -437,6 +441,53 @@ class Honcho(BaseModel):
                 )
 
             time.sleep(sleep_time)
+
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+    def update_message(
+        self,
+        message: Message | str = Field(
+            ..., description="The Message object or message ID to update"
+        ),
+        metadata: dict[str, object] = Field(
+            ..., description="The metadata to update for the message"
+        ),
+        session_id: str | None = Field(
+            None,
+            min_length=1,
+            description="The ID of the session (required if message is a string ID)",
+        ),
+    ) -> Message:
+        """
+        Update the metadata of a message.
+
+        Makes an API call to update the metadata of a specific message within a session.
+
+        Args:
+            message: Either a Message object or a message ID string
+            metadata: The metadata to update for the message
+            session_id: The ID of the session (required if message is a string ID, ignored if message is a Message object)
+
+        Returns:
+            The updated Message object
+
+        Raises:
+            ValidationError: If message is a string ID but session_id is not provided
+        """
+        if isinstance(message, Message):
+            message_id = message.id
+            resolved_session_id = message.session_id
+        else:
+            message_id = message
+            if not session_id:
+                raise ValueError("session_id is required when message is a string ID")
+            resolved_session_id = session_id
+
+        return self._client.workspaces.sessions.messages.update(
+            message_id=message_id,
+            workspace_id=self.workspace_id,
+            session_id=resolved_session_id,
+            metadata=metadata,
+        )
 
     def __repr__(self) -> str:
         """

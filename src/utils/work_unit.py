@@ -1,6 +1,9 @@
 """Work unit utility functions for generating and parsing work unit keys."""
 
+import tiktoken
 from typing_extensions import Any, TypedDict
+
+tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
 class ParsedWorkUnit(TypedDict):
@@ -105,3 +108,15 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
         }
 
     raise ValueError(f"Invalid task type in work_unit_key: {task_type}")
+
+
+def estimate_tokens(text: str | list[str] | None) -> int:
+    """Estimate token count using tiktoken for text or list of strings."""
+    if not text:
+        return 0
+    if isinstance(text, list):
+        text = "\n".join(text)
+    try:
+        return len(tokenizer.encode(text))
+    except Exception:
+        return len(text) // 4

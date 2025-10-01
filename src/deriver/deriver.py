@@ -8,6 +8,7 @@ from src import crud, exceptions
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
+from src.models import Message
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
@@ -16,15 +17,19 @@ from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
-    format_reasoning_inputs_as_markdown,
     log_performance_metrics,
     log_representation,
 )
-from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import PromptRepresentation, Representation
 from src.utils.shared_models import PeerCardQuery
+from src.utils.tracing import with_sentry_transaction
+from src.utils.work_unit import estimate_tokens
 
-from .prompts import critical_analysis_prompt, peer_card_prompt
+from .prompts import (
+    critical_analysis_prompt,
+    estimate_base_prompt_tokens,
+    peer_card_prompt,
+)
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
@@ -96,32 +101,34 @@ async def peer_card_call(
     return response.content
 
 
-@sentry_sdk.trace
+@with_sentry_transaction("process_representation_tasks_batch", op="deriver")
 async def process_representation_tasks_batch(
-    payloads: list[RepresentationPayload],
+    sender_name: str,
+    target_name: str,
+    messages: list[Message],
 ) -> None:
     """
     Process a batch of representation tasks by extracting insights and updating working representations.
     """
-    if not payloads or len(payloads) == 0:
+    if not messages or len(messages) == 0:
         return
 
-    payloads.sort(key=lambda x: x.message_id)
+    messages.sort(key=lambda x: x.id)
 
-    latest_payload = payloads[-1]
-    earliest_payload = payloads[0]
+    latest_message = messages[-1]
+    earliest_message = messages[0]
 
     accumulate_metric(
-        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_message.id}_{target_name}",
         "starting_message_id",
-        earliest_payload.message_id,
+        earliest_message.id,
         "id",
     )
 
     accumulate_metric(
-        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_message.id}_{target_name}",
         "ending_message_id",
-        latest_payload.message_id,
+        latest_message.id,
         "id",
     )
 
@@ -133,45 +140,86 @@ async def process_representation_tasks_batch(
 
     # Use get_session_context_formatted with configurable token limit
     async with tracked_db("deriver.get_context+representation+peer_card") as db:
-        formatted_history = await summarizer.get_session_context_formatted(
-            db,
-            latest_payload.workspace_name,
-            latest_payload.session_name,
-            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-            cutoff=latest_payload.message_id,
-            include_summary=True,
-        )
-
         working_representation = await crud.get_working_representation(
             db,
-            latest_payload.workspace_name,
-            latest_payload.target_name,
-            latest_payload.sender_name,
-            # include_semantic_query=latest_payload.content,
+            latest_message.workspace_name,
+            target_name,
+            sender_name,
+            # include_semantic_query=latest_message.content,
             # include_most_derived=False,
         )
 
         if settings.DERIVER.USE_PEER_CARD:
             speaker_peer_card: list[str] | None = await crud.get_peer_card(
                 db,
-                latest_payload.workspace_name,
-                latest_payload.sender_name,
-                latest_payload.target_name,
+                latest_message.workspace_name,
+                sender_name,
+                target_name,
             )
             if speaker_peer_card is None:
                 logger.warning(
                     "No peer card found for %s. Normal if brand-new peer.",
-                    latest_payload.sender_name,
+                    sender_name,
                 )
             else:
                 logger.info("Using peer card: %s", speaker_peer_card)
         else:
             speaker_peer_card = None
 
+        # Estimate tokens for deriver input
+        peer_card_tokens = estimate_tokens(speaker_peer_card)
+        working_rep_tokens = estimate_tokens(
+            str(working_representation)
+            if not working_representation.is_empty()
+            else None
+        )
+        base_prompt_tokens = estimate_base_prompt_tokens()
+
+        # Estimate tokens for new conversation turns
+        new_turns = [
+            format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
+            for m in messages
+        ]
+        new_turns_tokens = estimate_tokens(new_turns)
+
+        estimated_input_tokens = (
+            peer_card_tokens
+            + working_rep_tokens
+            + base_prompt_tokens
+            + new_turns_tokens
+        )
+
+        # Calculate available tokens for context
+        safety_buffer = 500
+        available_context_tokens = max(
+            0,
+            settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+        )
+
+        logger.debug(
+            "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
+            + "New turns: %d, Total estimated: %d, Available for context: %d",
+            peer_card_tokens,
+            working_rep_tokens,
+            base_prompt_tokens,
+            new_turns_tokens,
+            estimated_input_tokens,
+            available_context_tokens,
+        )
+
+        formatted_history = await summarizer.get_session_context_formatted(
+            db,
+            latest_message.workspace_name,
+            latest_message.session_name,
+            token_limit=available_context_tokens,
+            cutoff=earliest_message.id,
+            include_summary=True,
+        )
+
     # got working representation and peer card, log timing
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
-        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_message.id}_{target_name}",
         "context_preparation",
         context_prep_duration,
         "ms",
@@ -188,22 +236,25 @@ async def process_representation_tasks_batch(
     # otherwise, we're handling a directional representation task where the sender is
     # being observed by the target.
     collection_name = (
-        crud.construct_collection_name(
-            observer=latest_payload.target_name, observed=latest_payload.sender_name
-        )
-        if latest_payload.sender_name != latest_payload.target_name
+        crud.construct_collection_name(observer=target_name, observed=sender_name)
+        if sender_name != target_name
         else GLOBAL_REPRESENTATION_COLLECTION_NAME
     )
 
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
-        workspace_name=latest_payload.workspace_name,
-        peer_name=latest_payload.sender_name,
+        workspace_name=latest_message.workspace_name,
+        peer_name=sender_name,
         collection_name=collection_name,
     )
 
     # Create reasoner instance
-    reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payloads)
+    reasoner = CertaintyReasoner(
+        embedding_store=embedding_store,
+        ctx=messages,
+        sender_name=sender_name,
+        target_name=target_name,
+    )
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
@@ -218,7 +269,7 @@ async def process_representation_tasks_batch(
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_message.id}_{target_name}",
         "total_processing_time",
         overall_duration,
         "ms",
@@ -229,15 +280,13 @@ async def process_representation_tasks_batch(
     )
 
     accumulate_metric(
-        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        f"deriver_{latest_message.id}_{target_name}",
         "observation_count",
         total_observations,
         "count",
     )
 
-    log_performance_metrics(
-        "deriver", f"{latest_payload.message_id}_{latest_payload.target_name}"
-    )
+    log_performance_metrics("deriver", f"{latest_message.id}_{target_name}")
 
     if lf:
         lf.update_current_trace(output=final_observations.format_as_markdown())
@@ -247,13 +296,21 @@ class CertaintyReasoner:
     """Certainty reasoner for analyzing and deriving insights."""
 
     embedding_store: EmbeddingStore
-    ctx: list[RepresentationPayload]
+    ctx: list[Message]
+    sender_name: str
+    target_name: str
 
     def __init__(
-        self, embedding_store: EmbeddingStore, ctx: list[RepresentationPayload]
+        self,
+        embedding_store: EmbeddingStore,
+        ctx: list[Message],
+        sender_name: str,
+        target_name: str,
     ) -> None:
         self.embedding_store = embedding_store
         self.ctx = ctx
+        self.sender_name = sender_name
+        self.target_name = target_name
 
     @conditional_observe
     @sentry_sdk.trace
@@ -271,37 +328,26 @@ class CertaintyReasoner:
             Representation: Final observations
         """
         analysis_start = time.perf_counter()
-        # For logging, we can just show the content of the last message
-        earliest_payload = self.ctx[0]
-        latest_payload = self.ctx[-1]
 
-        # Perform critical analysis to get observation lists
-        if lf:
-            lf.update_current_generation(
-                input=format_reasoning_inputs_as_markdown(
-                    working_representation,
-                    history,
-                    latest_payload.content,
-                    latest_payload.created_at,
-                )
-            )
+        earliest_message = self.ctx[0]
+        latest_message = self.ctx[-1]
 
         new_turns = [
-            format_new_turn_with_timestamp(p.content, p.created_at, p.sender_name)
-            for p in self.ctx
+            format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
+            for m in self.ctx
         ]
 
         logger.debug(
             "CRITICAL ANALYSIS: message_created_at='%s', new_turns_count=%s",
-            latest_payload.created_at,
+            latest_message.created_at,
             len(new_turns),
         )
 
         try:
             reasoning_response = await critical_analysis_call(
-                peer_id=latest_payload.sender_name,
+                peer_id=self.sender_name,
                 peer_card=speaker_peer_card,
-                message_created_at=latest_payload.created_at,
+                message_created_at=latest_message.created_at,
                 working_representation=working_representation,
                 history=history,
                 new_turns=new_turns,
@@ -315,9 +361,9 @@ class CertaintyReasoner:
             ) from e
 
         reasoning_response = reasoning_response.to_representation(
-            (earliest_payload.message_id, latest_payload.message_id),
-            latest_payload.session_name,
-            latest_payload.created_at,
+            (earliest_message.id, latest_message.id),
+            latest_message.session_name,
+            latest_message.created_at,
         )
 
         if lf:
@@ -327,7 +373,7 @@ class CertaintyReasoner:
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
         accumulate_metric(
-            f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+            f"deriver_{latest_message.id}_{self.target_name}",
             "critical_analysis_duration",
             analysis_duration_ms,
             "ms",
@@ -340,9 +386,9 @@ class CertaintyReasoner:
         if not new_observations.is_empty():
             await self.embedding_store.save_representation(
                 new_observations,
-                (earliest_payload.message_id, latest_payload.message_id),
-                latest_payload.session_name,
-                latest_payload.created_at,
+                (earliest_message.id, latest_message.id),
+                latest_message.session_name,
+                latest_message.created_at,
             )
 
         # not currently deduplicating at the save_representation step, so this isn't useful
@@ -361,7 +407,7 @@ class CertaintyReasoner:
                 time.perf_counter() - update_peer_card_start
             ) * 1000
             accumulate_metric(
-                f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+                f"deriver_{latest_message.id}_{self.target_name}",
                 "update_peer_card",
                 update_peer_card_duration,
                 "ms",
@@ -398,8 +444,8 @@ class CertaintyReasoner:
                 await crud.set_peer_card(
                     db,
                     self.ctx[0].workspace_name,
-                    self.ctx[0].sender_name,
-                    self.ctx[0].target_name,
+                    self.sender_name,
+                    self.target_name,
                     new_peer_card,
                 )
         except Exception as e:
