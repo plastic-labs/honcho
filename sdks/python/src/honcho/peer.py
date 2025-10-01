@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import datetime
 from typing import TYPE_CHECKING
+from collections.abc import Generator
 
 from honcho_core import Honcho as HonchoCore
-from honcho_core._types import NOT_GIVEN
+from honcho_core._types import omit
+from honcho_core.types.workspaces import PeerCardResponse
+from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions import MessageCreateParam
 from honcho_core.types.workspaces.sessions.message import Message
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, validate_call
 
+from .types import DialecticStreamResponse
 from .pagination import SyncPage
 
 if TYPE_CHECKING:
@@ -76,12 +80,12 @@ class Peer(BaseModel):
         super().__init__(id=peer_id, workspace_id=workspace_id)
         self._client = client
 
-        if config or metadata:
+        if config is not None or metadata is not None:
             self._client.workspaces.peers.get_or_create(
                 workspace_id=workspace_id,
                 id=peer_id,
-                configuration=config if config is not None else NOT_GIVEN,
-                metadata=metadata if metadata is not None else NOT_GIVEN,
+                configuration=config if config is not None else omit,
+                metadata=metadata if metadata is not None else omit,
             )
 
     def chat(
@@ -91,7 +95,7 @@ class Peer(BaseModel):
         stream: bool = False,
         target: str | Peer | None = None,
         session_id: str | None = None,
-    ) -> str | None:
+    ) -> str | DialecticStreamResponse | None:
         """
         Query the peer's representation with a natural language question.
 
@@ -109,9 +113,40 @@ class Peer(BaseModel):
                         If provided, only information from that session is considered
 
         Returns:
-            Response string containing the answer to the query, or None if no
-            relevant information is available
+            For non-streaming: Response string containing the answer, or None if no relevant information
+            For streaming: DialecticStreamResponse object that can be iterated over and provides final response
         """
+        if stream:
+
+            def stream_response() -> Generator[str, None, None]:
+                import json
+
+                # Use core SDK with_streaming_response
+                with self._client.workspaces.peers.with_streaming_response.chat(
+                    peer_id=self.id,
+                    workspace_id=self.workspace_id,
+                    query=query,
+                    stream=True,
+                    target=str(target.id) if isinstance(target, Peer) else target,
+                    session_id=session_id,
+                ) as response:
+                    response.http_response.raise_for_status()
+                    for line in response.iter_lines():
+                        if line.startswith("data: "):
+                            json_str = line[6:]  # Remove "data: " prefix
+                            try:
+                                chunk_data = json.loads(json_str)
+                                if chunk_data.get("done"):
+                                    break
+                                delta_obj = chunk_data.get("delta", {})
+                                content = delta_obj.get("content")
+                                if content:
+                                    yield content
+                            except json.JSONDecodeError:
+                                continue
+
+            return DialecticStreamResponse(stream_response())
+
         response = self._client.workspaces.peers.chat(
             peer_id=self.id,
             workspace_id=self.workspace_id,
@@ -126,7 +161,7 @@ class Peer(BaseModel):
 
     def get_sessions(
         self, filters: dict[str, object] | None = None
-    ) -> SyncPage[Session]:
+    ) -> SyncPage[SessionCore, Session]:
         """
         Get all sessions this peer is a member of.
 
@@ -304,6 +339,40 @@ class Peer(BaseModel):
             filters=filters,
             limit=limit,
         )
+
+    def card(
+        self,
+        target: str | Peer | None = None,
+    ) -> str:
+        """
+        Get the peer card for this peer.
+
+        Makes an API call to retrieve the peer card, which contains a representation
+        of what this peer knows. If a target is provided, returns this peer's local
+        representation of the target peer.
+
+        Args:
+            target: Optional target peer for local card. If provided, returns this
+                    peer's card of the target peer. Can be a Peer object or peer ID string.
+
+        Returns:
+            A string containing the peer card joined with newlines, or an empty string if none is available
+        """
+        # Validate target parameter
+        if isinstance(target, str) and len(target.strip()) == 0:
+            raise ValueError("target string cannot be empty")
+
+        response: PeerCardResponse = self._client.workspaces.peers.card(
+            peer_id=self.id,
+            workspace_id=self.workspace_id,
+            target=str(target.id) if isinstance(target, Peer) else target,
+        )
+        if response.peer_card is None:
+            return ""
+
+        items: list[str] = response.peer_card
+
+        return "\n".join(items)
 
     def __repr__(self) -> str:
         """

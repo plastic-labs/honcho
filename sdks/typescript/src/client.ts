@@ -1,10 +1,10 @@
 import HonchoCore from '@honcho-ai/core'
-import type { DefaultQuery } from '@honcho-ai/core/src/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type { DefaultQuery } from '@honcho-ai/core/core'
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import type {
   DeriverStatus,
   WorkspaceDeriverStatusParams,
-} from '@honcho-ai/core/src/resources/workspaces/workspaces'
+} from '@honcho-ai/core/resources/workspaces/workspaces'
 import { Page } from './pagination'
 import { Peer } from './peer'
 import { Session } from './session'
@@ -16,6 +16,7 @@ import {
   type HonchoConfig,
   HonchoConfigSchema,
   LimitSchema,
+  MessageMetadataSchema,
   type PeerConfig,
   PeerConfigSchema,
   PeerIdSchema,
@@ -447,6 +448,47 @@ export class Honcho {
         await new Promise((resolve) => setTimeout(resolve, actualSleepMs))
       }
     }
+  }
+
+  /**
+   * Update the metadata of a message.
+   *
+   * Makes an API call to update the metadata of a specific message within a session.
+   *
+   * @param message - Either a Message object or a message ID string
+   * @param metadata - The metadata to update for the message
+   * @param sessionId - The ID of the session (required if message is a string ID, ignored if message is a Message object)
+   * @returns Promise resolving to the updated Message object
+   * @throws Error if message is a string ID but sessionId is not provided
+   */
+  async updateMessage(
+    message: Message | string,
+    metadata: Record<string, unknown>,
+    sessionId?: string
+  ): Promise<Message> {
+    const validatedMetadata = MessageMetadataSchema.parse(metadata)
+    let messageId: string
+    let resolvedSessionId: string
+
+    if (typeof message === 'string') {
+      messageId = message
+      if (!sessionId) {
+        throw new Error('sessionId is required when message is a string ID')
+      }
+      resolvedSessionId = sessionId
+    } else {
+      messageId = message.id
+      resolvedSessionId = message.session_id
+    }
+
+    return await this._client.workspaces.sessions.messages.update(
+      this.workspaceId,
+      resolvedSessionId,
+      messageId,
+      {
+        metadata: validatedMetadata,
+      }
+    )
   }
 
   /**

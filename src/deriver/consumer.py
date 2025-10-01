@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 
+import sentry_sdk
 from langfuse import get_client
 from pydantic import ValidationError
 from rich.console import Console
@@ -51,19 +52,29 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
-
-        if settings.LANGFUSE_PUBLIC_KEY:
-            with lf.start_as_current_span(
-                name="summary_processing",
-                input={
-                    "workspace_name": validated.workspace_name,
-                    "session_name": validated.session_name,
-                    "message_id": validated.message_id,
-                },
-                metadata={
-                    "summary_model": settings.SUMMARY.MODEL,
-                },
-            ):
+        with sentry_sdk.start_transaction(name="process_summary_task", op="deriver"):
+            if settings.LANGFUSE_PUBLIC_KEY:
+                with lf.start_as_current_span(
+                    name="summary_processing",
+                    input={
+                        "workspace_name": validated.workspace_name,
+                        "session_name": validated.session_name,
+                        "message_id": validated.message_id,
+                    },
+                    metadata={
+                        "summary_model": settings.SUMMARY.MODEL,
+                    },
+                ):
+                    await summarizer.summarize_if_needed(
+                        validated.workspace_name,
+                        validated.session_name,
+                        validated.message_id,
+                        validated.message_seq_in_session,
+                    )
+                    log_performance_metrics(
+                        f"summary_{validated.workspace_name}_{validated.message_id}"
+                    )
+            else:
                 await summarizer.summarize_if_needed(
                     validated.workspace_name,
                     validated.session_name,
@@ -73,16 +84,6 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 log_performance_metrics(
                     f"summary_{validated.workspace_name}_{validated.message_id}"
                 )
-        else:
-            await summarizer.summarize_if_needed(
-                validated.workspace_name,
-                validated.session_name,
-                validated.message_id,
-                validated.message_seq_in_session,
-            )
-            log_performance_metrics(
-                f"summary_{validated.workspace_name}_{validated.message_id}"
-            )
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 

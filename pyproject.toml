@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.3.2"
+version = "2.3.3"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -79,7 +79,7 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "--strict-markers --cov=src/ --cov-report=term-missing"
+addopts = "--strict-markers --cov=src/ --cov=sdks/python/src/honcho --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
 

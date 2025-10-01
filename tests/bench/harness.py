@@ -563,8 +563,10 @@ except Exception as e:
 
             # Create an empty .env file in temp directory to satisfy docker-compose
             # (even though the database service doesn't actually use it)
-            if self.temp_dir:
+            if self.temp_dir and self.temp_dir.exists():
                 (self.temp_dir / ".env").touch()
+            else:
+                raise Exception("Temporary directory does not exist")
 
             # Start database
             self.start_database()

@@ -288,8 +288,6 @@ class QueueManager:
     ######################
     # Queue Worker Logic #
     ######################
-
-    @sentry_sdk.trace
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(
