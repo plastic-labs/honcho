@@ -460,14 +460,12 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(alice_aqs)
 
-            alice_messages, _ = await qm.get_message_batch(
+            alice_messages, alice_items = await qm.get_message_batch(
                 task_type="representation",
                 work_unit_key=alice_work_unit_key,
                 aqs_id=alice_aqs.id,
             )
 
-            # All work units should get ALL 6 messages in the chronological batch (messages 1-6)
-            # Message 7 is outside the token limit batch
             assert len(alice_messages) == 6
             alice_message_ids: set[int] = {m.id for m in alice_messages}
             expected_batch_ids = {
@@ -480,58 +478,84 @@ class TestQueueProcessing:
             }
             assert alice_message_ids == expected_batch_ids
 
-            # Test bob's work unit - should get same batch
+            # Ensure items are only for alice
+            assert all(
+                qi.payload.get("sender_name") == alice.name for qi in alice_items
+            )
+
+            # Test bob's work unit - starts at message 2 for per-work-unit anchoring
             bob_work_unit_key = bob_queue_items[0].work_unit_key
             bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
             db_session.add(bob_aqs)
             await db_session.commit()
             await db_session.refresh(bob_aqs)
 
-            bob_messages, _ = await qm.get_message_batch(
+            bob_messages, bob_items = await qm.get_message_batch(
                 task_type="representation",
                 work_unit_key=bob_work_unit_key,
                 aqs_id=bob_aqs.id,
             )
 
-            # Bob should also get all 6 messages for context
-            assert len(bob_messages) == 6
+            # Bob should get 4 messages (2..5)
+            assert len(bob_messages) == 4
             bob_message_ids: set[int] = {m.id for m in bob_messages}
-            assert bob_message_ids == expected_batch_ids
+            expected_bob_ids = {
+                messages[1].id,  # bob(400)
+                messages[2].id,  # steve(300)
+                messages[3].id,  # alice(500)
+                messages[4].id,  # bob(500)
+            }
+            assert bob_message_ids == expected_bob_ids
+            # Ensure items are only for bob
+            assert all(qi.payload.get("sender_name") == bob.name for qi in bob_items)
 
-            # Test steve's work unit - should get same batch
+            # Test steve's work unit - starts at message 3 for per-work-unit anchoring
             steve_work_unit_key = steve_queue_items[0].work_unit_key
             steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
             db_session.add(steve_aqs)
             await db_session.commit()
             await db_session.refresh(steve_aqs)
 
-            steve_messages, _ = await qm.get_message_batch(
+            steve_messages, steve_items = await qm.get_message_batch(
                 task_type="representation",
                 work_unit_key=steve_work_unit_key,
                 aqs_id=steve_aqs.id,
             )
 
-            # Steve should also get all 6 messages for context
-            assert len(steve_messages) == 6
+            # Steve should get 5 messages (3..7)
+            assert len(steve_messages) == 5
             steve_message_ids: set[int] = {m.id for m in steve_messages}
-            assert steve_message_ids == expected_batch_ids
+            expected_steve_ids = {
+                messages[2].id,  # steve(300)
+                messages[3].id,  # alice(500)
+                messages[4].id,  # bob(500)
+                messages[5].id,  # alice(40)
+                messages[6].id,  # steve(100)
+            }
+            assert steve_message_ids == expected_steve_ids
+            # Ensure items are only for steve
+            assert all(
+                qi.payload.get("sender_name") == steve.name for qi in steve_items
+            )
 
     @pytest.mark.asyncio
-    async def test_work_unit_returns_first_message_outside_token_limit_batch(
+    async def test_per_work_unit_anchoring_with_token_limits(
         self,
         db_session: AsyncSession,
         sample_session_with_peers: tuple[models.Session, list[models.Peer]],
         create_queue_payload: Callable[..., Any],
     ) -> None:
-        """Test that work unit returns at least one message even if outside token-limited batch"""
+        """Test that per-work-unit anchoring processes each sender's messages independently within token limits"""
 
         session, peers = sample_session_with_peers
         bob, steve, alice = peers[0], peers[1], peers[2]
 
         # Create messages: bob(800), steve(800), alice(100), alice(200)
-        # Token limit: 1500 - should allow messages 1-2 (1600 tokens, first always included)
-        # Alice's messages (3-4) are outside the chronological batch
-        # BUT fallback logic should return alice's first message to prevent starvation
+        # Token limit: 1500
+        # With per-work-unit anchoring:
+        # - Bob's work unit: starts at message 1, includes only bob(800)
+        # - Steve's work unit: starts at message 2, includes only steve(800)
+        # - Alice's work unit: starts at message 3, includes alice(100) + alice(200)
         messages_data = [
             (bob, 800),
             (steve, 800),
@@ -598,10 +622,8 @@ class TestQueueProcessing:
         # Mock the token limit to 1500 for this test
         with patch.object(settings.DERIVER, "REPRESENTATION_BATCH_MAX_TOKENS", 1500):
             # Test alice's work unit
-            # Messages: bob(800), steve(800), alice(100), alice(200)
-            # Alice's first message appears at cumulative 1700, which exceeds the 1500 limit
-            # Therefore, Alice's batch should be EMPTY - will be retried later when other
-            # messages are processed and Alice's messages move closer to the front
+            # With per-work-unit anchoring, Alice starts at her own first message (message 3)
+            # Alice's batch: alice(100) + alice(200) = 300 tokens, well under 1500 limit
             if alice_queue_items:
                 alice_work_unit_key = alice_queue_items[0].work_unit_key
                 alice_aqs = models.ActiveQueueSession(work_unit_key=alice_work_unit_key)
@@ -615,14 +637,16 @@ class TestQueueProcessing:
                     aqs_id=alice_aqs.id,
                 )
 
-                assert (
-                    len(alice_messages2) == 0
-                )  # Empty batch - Alice is beyond token limit
+                # Per-work-unit anchoring: Alice starts at message 3 -> [3,4]
+                assert len(alice_messages2) == 2
+                assert [m.id for m in alice_messages2] == [
+                    messages[2].id,
+                    messages[3].id,
+                ]
 
             # Test bob's work unit
-            # Bob's batch should include: bob(800) only
-            # - bob's message is under the limit and it's his first message
-            # - adding steve would exceed the limit and we already have Bob's message, so stop
+            # With per-work-unit anchoring, Bob starts at his own first message (message 1)
+            # Bob's batch: bob(800) only, under 1500 limit
             if bob_queue_items:
                 bob_work_unit_key = bob_queue_items[0].work_unit_key
                 bob_aqs = models.ActiveQueueSession(work_unit_key=bob_work_unit_key)
@@ -640,8 +664,8 @@ class TestQueueProcessing:
                 assert bob_messages2[0].id == messages[0].id  # bob only
 
             # Test steve's work unit
-            # Steve's first message appears at cumulative 1600, which exceeds the 1500 limit
-            # Therefore, Steve's batch should be EMPTY - will be retried later
+            # With per-work-unit anchoring, Steve starts at his own first message (message 2)
+            # Steve's batch: steve(800) only, under 1500 limit
             if steve_queue_items:
                 steve_work_unit_key = steve_queue_items[0].work_unit_key
                 steve_aqs = models.ActiveQueueSession(work_unit_key=steve_work_unit_key)
@@ -655,9 +679,11 @@ class TestQueueProcessing:
                     aqs_id=steve_aqs.id,
                 )
 
-                assert (
-                    len(steve_messages2) == 0
-                )  # Empty batch - Steve is beyond token limit
+                # Per-work-unit anchoring: Steve starts at message 2 -> [2]
+                assert len(steve_messages2) == 1
+                assert [m.id for m in steve_messages2] == [
+                    messages[1].id,
+                ]
 
     @pytest.mark.asyncio
     async def test_single_message_processing(

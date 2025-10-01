@@ -459,7 +459,10 @@ class QueueManager:
 
     @sentry_sdk.trace
     async def get_message_batch(
-        self, task_type: str, work_unit_key: str, aqs_id: str
+        self,
+        task_type: str,
+        work_unit_key: str,
+        aqs_id: str,
     ) -> tuple[list[models.Message], list[QueueItem]]:
         """
         Representation-only: returns a tuple of (messages_context, items_to_process).
@@ -476,7 +479,6 @@ class QueueManager:
             parsed_key = parse_work_unit_key(work_unit_key)
             session_name = parsed_key["session_name"]
             workspace_name = parsed_key["workspace_name"]
-            focused_sender = parsed_key["sender_name"]
 
             # Verify worker still owns the work_unit_key
             ownership_check = await db.execute(
@@ -508,6 +510,7 @@ class QueueManager:
                 .where(~models.QueueItem.processed)
                 .where(models.Message.session_name == session_name)
                 .where(models.Message.workspace_name == workspace_name)
+                .where(models.QueueItem.work_unit_key == work_unit_key)
                 .scalar_subquery()
             )
 
@@ -529,33 +532,14 @@ class QueueManager:
                 .cte()
             )
 
-            earliest_message_id_subquery = (
-                select(cte.c.message_id)
-                .order_by(cte.c.message_id)
-                .limit(1)
-                .scalar_subquery()
-            )
-            first_focused_message_id_subquery = (
-                select(cte.c.message_id)
-                .where(cte.c.sender_name == focused_sender)
-                .order_by(cte.c.message_id)
-                .limit(1)
-                .scalar_subquery()
-            )
-
             allowed_condition = (
-                cte.c.cumulative_token_count
-                <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
-            ) | (
-                (cte.c.message_id == first_focused_message_id_subquery)
-                & (first_focused_message_id_subquery == earliest_message_id_subquery)
-            )
-
-            focused_exists = (
-                select(1)
-                .where(and_(allowed_condition, cte.c.sender_name == focused_sender))
-                .limit(1)
-                .exists()
+                (
+                    cte.c.cumulative_token_count
+                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                )
+                | (
+                    cte.c.message_id == min_unprocessed_message_id_subq
+                )  # always include the first unprocessed message
             )
 
             query = (
@@ -574,7 +558,6 @@ class QueueManager:
                     ),
                 )
                 .where(allowed_condition)
-                .where(focused_exists)
                 .order_by(models.Message.id, models.QueueItem.id)
             )
 
@@ -594,7 +577,16 @@ class QueueManager:
                 if qi is not None:
                     items_to_process.append(qi)
 
+            if items_to_process:
+                max_queue_item_message_id = max(
+                    [qi.payload["message_id"] for qi in items_to_process]
+                )
+                messages_context = [  # remove any messages that are after the last message_id from queue items
+                    m for m in messages_context if m.id <= max_queue_item_message_id
+                ]
+
             await db.commit()
+
             return messages_context, items_to_process
 
     async def mark_messages_as_processed(
