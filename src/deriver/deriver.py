@@ -111,13 +111,22 @@ async def process_representation_tasks_batch(
     latest_payload = payloads[-1]
     earliest_payload = payloads[0]
 
+    accumulate_metric(
+        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        "starting_message_id",
+        earliest_payload.message_id,
+        "id",
+    )
+
+    accumulate_metric(
+        f"deriver_{latest_payload.message_id}_{latest_payload.target_name}",
+        "ending_message_id",
+        latest_payload.message_id,
+        "id",
+    )
+
     # Start overall timing
     overall_start = time.perf_counter()
-
-    logger.debug(
-        "Starting insight extraction for message batch starting with: %s",
-        earliest_payload.message_id,
-    )
 
     # Time context preparation
     context_prep_start = time.perf_counter()

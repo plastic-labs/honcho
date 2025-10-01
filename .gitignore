@@ -185,3 +185,5 @@ config.toml
 
 CRUSH.md
 .crush/
+
+metrics.jsonl
