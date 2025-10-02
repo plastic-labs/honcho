@@ -75,7 +75,7 @@ async def create_messages_for_session(
         prometheus.MESSAGES_CREATED.labels(
             session_name=session_id,
             workspace_name=workspace_id,
-        ).inc()
+        ).inc(len(created_messages))
         return created_messages
     except ValueError as e:
         logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
@@ -142,7 +142,7 @@ async def create_messages_with_file(
     prometheus.MESSAGES_CREATED.labels(
         session_name=session_id,
         workspace_name=form_data.peer_id,
-    ).inc()
+    ).inc(len(created_messages))
 
     return created_messages
 

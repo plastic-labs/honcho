@@ -39,6 +39,12 @@ MESSAGES_CREATED = NamespacedCounter(
     ["namespace", "workspace_name", "session_name"],
 )
 
+DIALECTIC_CALLS = NamespacedCounter(
+    "dialectic_calls_total",
+    "Total dialectic calls",
+    ["namespace", "workspace_name", "peer_name", "target_name", "session_name"],
+)
+
 
 def get_namespace() -> str:
     """Get the configured namespace for metrics labeling"""

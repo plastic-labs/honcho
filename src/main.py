@@ -199,7 +199,7 @@ async def track_request(
         response = await call_next(request)
 
         # Track Prometheus metrics if enabled
-        if prometheus.METRICS_ENABLED:
+        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
             prometheus.API_REQUESTS.labels(
                 method=request.method,
                 endpoint=request.url.path,
@@ -210,7 +210,7 @@ async def track_request(
 
     except Exception as e:
         # Track Prometheus error metrics if enabled
-        if prometheus.METRICS_ENABLED:
+        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
             prometheus.API_REQUESTS.labels(
                 method=request.method,
                 endpoint=request.url.path,
