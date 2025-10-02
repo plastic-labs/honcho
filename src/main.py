@@ -11,6 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 
+from src import prometheus
+from src.utils.logging import get_route_template
+
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
 from sentry_sdk.integrations.fastapi import FastApiIntegration
@@ -145,6 +148,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 add_pagination(app)
 
 app.include_router(workspaces.router, prefix="/v2")
@@ -153,6 +157,8 @@ app.include_router(sessions.router, prefix="/v2")
 app.include_router(messages.router, prefix="/v2")
 app.include_router(keys.router, prefix="/v2")
 app.include_router(webhooks.router, prefix="/v2")
+
+app.add_api_route("/metrics", prometheus.metrics, methods=["GET"])
 
 
 # Global exception handlers
@@ -191,6 +197,29 @@ async def track_request(
     token = request_context.set(f"api:{request_id}")
 
     try:
-        return await call_next(request)
+        response = await call_next(request)
+
+        # Track Prometheus metrics if enabled
+        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+            template = get_route_template(request)
+            prometheus.API_REQUESTS.labels(
+                method=request.method,
+                endpoint=template,
+                status_code=str(response.status_code),
+            ).inc()
+
+        return response
+
+    except Exception:
+        # Track Prometheus error metrics if enabled
+        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+            template = get_route_template(request)
+            prometheus.API_REQUESTS.labels(
+                method=request.method,
+                endpoint=template,
+                status_code="500",
+            ).inc()
+        raise
+
     finally:
         request_context.reset(token)
