@@ -7,7 +7,7 @@ info:
     name: Plastic Labs
     url: https://honcho.dev/
     email: hello@plasticlabs.ai
-  version: 2.3.0
+  version: 2.3.3
 servers:
   - url: http://localhost:8000
     description: Local Development Server
@@ -31,22 +31,22 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WorkspaceCreate'
+              $ref: "#/components/schemas/WorkspaceCreate"
               description: Workspace creation parameters
         required: true
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Workspace'
-        '422':
+                $ref: "#/components/schemas/Workspace"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       security:
         - HTTPBearer: []
         - {}
@@ -110,23 +110,23 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: '#/components/schemas/WorkspaceGet'
-                - type: 'null'
+                - $ref: "#/components/schemas/WorkspaceGet"
+                - type: "null"
               description: Filtering and pagination options for the workspaces list
               title: Options
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Workspace_'
-        '422':
+                $ref: "#/components/schemas/Page_Workspace_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -174,21 +174,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WorkspaceUpdate'
+              $ref: "#/components/schemas/WorkspaceUpdate"
               description: Updated workspace parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Workspace'
-        '422':
+                $ref: "#/components/schemas/Workspace"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -236,24 +236,24 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageSearchOptions'
-              description: 'Message search parameters '
+              $ref: "#/components/schemas/MessageSearchOptions"
+              description: "Message search parameters "
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Message'
+                  $ref: "#/components/schemas/Message"
                 title: Response Search Workspace V2 Workspaces  Workspace Id  Search Post
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -303,7 +303,7 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: Optional observer ID to filter by
             title: Observer Id
           description: Optional observer ID to filter by
@@ -313,7 +313,7 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: Optional sender ID to filter by
             title: Sender Id
           description: Optional sender ID to filter by
@@ -323,23 +323,23 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: Optional session ID to filter by
             title: Session Id
           description: Optional session ID to filter by
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeriverStatus'
-        '422':
+                $ref: "#/components/schemas/DeriverStatus"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -408,23 +408,23 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: '#/components/schemas/PeerGet'
-                - type: 'null'
+                - $ref: "#/components/schemas/PeerGet"
+                - type: "null"
               description: Filtering options for the peers list
               title: Options
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Peer_'
-        '422':
+                $ref: "#/components/schemas/Page_Peer_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -478,21 +478,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PeerCreate'
+              $ref: "#/components/schemas/PeerCreate"
               description: Peer creation parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Peer'
-        '422':
+                $ref: "#/components/schemas/Peer"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -549,21 +549,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PeerUpdate'
+              $ref: "#/components/schemas/PeerUpdate"
               description: Updated peer parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Peer'
-        '422':
+                $ref: "#/components/schemas/Peer"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -641,23 +641,23 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: '#/components/schemas/SessionGet'
-                - type: 'null'
+                - $ref: "#/components/schemas/SessionGet"
+                - type: "null"
               description: Filtering options for the sessions list
               title: Options
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Session_'
-        '422':
+                $ref: "#/components/schemas/Page_Session_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -715,22 +715,29 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DialecticOptions'
+              $ref: "#/components/schemas/DialecticOptions"
               description: Dialectic Endpoint Parameters
       responses:
-        '200':
+        "200":
           description: Response to a question informed by Honcho's User Representation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DialecticResponse'
+                properties:
+                  content:
+                    title: Content
+                    type: string
+                required:
+                  - content
+                title: DialecticResponse
+                type: object
             text/event-stream: {}
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -797,10 +804,10 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PeerRepresentationGet'
+              $ref: "#/components/schemas/PeerRepresentationGet"
               description: Options for getting the peer representation
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
@@ -810,12 +817,12 @@ paths:
                 title: >-
                   Response Get Working Representation V2 Workspaces  Workspace Id  Peers  Peer Id
                   Representation Post
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -843,6 +850,84 @@ paths:
                 session_id="session_id",
             )
             print(response)
+  /v2/workspaces/{workspace_id}/peers/{peer_id}/card:
+    get:
+      tags:
+        - peers
+      summary: Get Peer Card
+      description: |-
+        Get a peer card for a specific peer relationship.
+
+        Returns the peer card that the observer peer has for the target peer if it exists.
+        If no target is specified, returns the observer's own peer card.
+      operationId: get_peer_card_v2_workspaces__workspace_id__peers__peer_id__card_get
+      security:
+        - HTTPBearer: []
+        - {}
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: ID of the workspace
+            title: Workspace Id
+          description: ID of the workspace
+        - name: peer_id
+          in: path
+          required: true
+          schema:
+            type: string
+            description: ID of the observer peer
+            title: Peer Id
+          description: ID of the observer peer
+        - name: target
+          in: query
+          required: false
+          schema:
+            anyOf:
+              - type: string
+              - type: "null"
+            description: The peer whose card to retrieve. If not provided, returns the observer's own card
+            title: Target
+          description: The peer whose card to retrieve. If not provided, returns the observer's own card
+      responses:
+        "200":
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeerCardResponse"
+        "422":
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HTTPValidationError"
+      x-codeSamples:
+        - lang: JavaScript
+          source: |-
+            import Honcho from '@honcho-ai/core';
+
+            const client = new Honcho({
+              apiKey: 'My API Key',
+            });
+
+            const response = await client.workspaces.peers.card('workspace_id', 'peer_id');
+
+            console.log(response.peer_card);
+        - lang: Python
+          source: |-
+            from honcho_core import Honcho
+
+            client = Honcho(
+                api_key="My API Key",
+            )
+            response = client.workspaces.peers.card(
+                peer_id="peer_id",
+                workspace_id="workspace_id",
+            )
+            print(response.peer_card)
   /v2/workspaces/{workspace_id}/peers/{peer_id}/search:
     post:
       tags:
@@ -875,24 +960,24 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageSearchOptions'
-              description: 'Message search parameters '
+              $ref: "#/components/schemas/MessageSearchOptions"
+              description: "Message search parameters "
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Message'
+                  $ref: "#/components/schemas/Message"
                 title: Response Search Peer V2 Workspaces  Workspace Id  Peers  Peer Id  Search Post
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -950,21 +1035,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SessionCreate'
+              $ref: "#/components/schemas/SessionCreate"
               description: Session creation parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '422':
+                $ref: "#/components/schemas/Session"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1034,23 +1119,23 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: '#/components/schemas/SessionGet'
-                - type: 'null'
+                - $ref: "#/components/schemas/SessionGet"
+                - type: "null"
               description: Filtering and pagination options for the sessions list
               title: Options
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Session_'
-        '422':
+                $ref: "#/components/schemas/Page_Session_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1108,21 +1193,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SessionUpdate'
+              $ref: "#/components/schemas/SessionUpdate"
               description: Updated session parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '422':
+                $ref: "#/components/schemas/Session"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1174,17 +1259,17 @@ paths:
             title: Session Id
           description: ID of the session to delete
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1242,23 +1327,23 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: Message ID to cut off the clone at
             title: Message Id
           description: Message ID to cut off the clone at
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '422':
+                $ref: "#/components/schemas/Session"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1317,22 +1402,22 @@ paths:
             schema:
               type: object
               additionalProperties:
-                $ref: '#/components/schemas/SessionPeerConfig'
+                $ref: "#/components/schemas/SessionPeerConfig"
               description: List of peer IDs to add to the session
               title: Peers
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '422':
+                $ref: "#/components/schemas/Session"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -1397,22 +1482,22 @@ paths:
             schema:
               type: object
               additionalProperties:
-                $ref: '#/components/schemas/SessionPeerConfig'
+                $ref: "#/components/schemas/SessionPeerConfig"
               description: List of peer IDs to set for the session
               title: Peers
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '422':
+                $ref: "#/components/schemas/Session"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -1481,18 +1566,18 @@ paths:
               description: List of peer IDs to remove from the session
               title: Peers
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Session'
-        '422':
+                $ref: "#/components/schemas/Session"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -1570,18 +1655,18 @@ paths:
             title: Size
           description: Page size
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Peer_'
-        '422':
+                $ref: "#/components/schemas/Page_Peer_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1644,18 +1729,18 @@ paths:
             title: Peer Id
           description: ID of the peer
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionPeerConfig'
-        '422':
+                $ref: "#/components/schemas/SessionPeerConfig"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1724,20 +1809,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SessionPeerConfig'
+              $ref: "#/components/schemas/SessionPeerConfig"
               description: Peer configuration
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -1811,7 +1896,7 @@ paths:
             anyOf:
               - type: integer
                 maximum: 100000
-              - type: 'null'
+              - type: "null"
             description: >-
               Number of tokens to use for the context. Includes summary if set to true. If not provided, the
               context will be exhaustive (within 100000 tokens)
@@ -1829,18 +1914,18 @@ paths:
             title: Summary
           description: Whether or not to include a summary *if* one is available for the session
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionContext'
-        '422':
+                $ref: "#/components/schemas/SessionContext"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1897,18 +1982,18 @@ paths:
             title: Session Id
           description: ID of the session
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SessionSummaries'
-        '422':
+                $ref: "#/components/schemas/SessionSummaries"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -1965,24 +2050,24 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageSearchOptions'
+              $ref: "#/components/schemas/MessageSearchOptions"
               description: Message search parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Message'
+                  $ref: "#/components/schemas/Message"
                 title: Response Search Session V2 Workspaces  Workspace Id  Sessions  Session Id  Search Post
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -2040,25 +2125,25 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageBatchCreate'
+              $ref: "#/components/schemas/MessageBatchCreate"
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Message'
+                  $ref: "#/components/schemas/Message"
                 title: >-
                   Response Create Messages For Session V2 Workspaces  Workspace Id  Sessions  Session Id
                   Messages  Post
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2120,23 +2205,23 @@ paths:
               $ref: >-
                 #/components/schemas/Body_create_messages_with_file_v2_workspaces__workspace_id__sessions__session_id__messages_upload_post
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Message'
+                  $ref: "#/components/schemas/Message"
                 title: >-
                   Response Create Messages With File V2 Workspaces  Workspace Id  Sessions  Session Id
                   Messages Upload Post
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2199,7 +2284,7 @@ paths:
           schema:
             anyOf:
               - type: boolean
-              - type: 'null'
+              - type: "null"
             description: Whether to reverse the order of results
             default: false
             title: Reverse
@@ -2230,23 +2315,23 @@ paths:
           application/json:
             schema:
               anyOf:
-                - $ref: '#/components/schemas/MessageGet'
-                - type: 'null'
+                - $ref: "#/components/schemas/MessageGet"
+                - type: "null"
               description: Filtering options for the messages list
               title: Options
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_Message_'
-        '422':
+                $ref: "#/components/schemas/Page_Message_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -2313,18 +2398,18 @@ paths:
             title: Message Id
           description: ID of the message to retrieve
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Message'
-        '422':
+                $ref: "#/components/schemas/Message"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2393,21 +2478,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageUpdate'
+              $ref: "#/components/schemas/MessageUpdate"
               description: Updated message parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Message'
-        '422':
+                $ref: "#/components/schemas/Message"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -2454,7 +2539,7 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: ID of the workspace to scope the key to
             title: Workspace Id
           description: ID of the workspace to scope the key to
@@ -2464,7 +2549,7 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: ID of the peer to scope the key to
             title: Peer Id
           description: ID of the peer to scope the key to
@@ -2474,7 +2559,7 @@ paths:
           schema:
             anyOf:
               - type: string
-              - type: 'null'
+              - type: "null"
             description: ID of the session to scope the key to
             title: Session Id
           description: ID of the session to scope the key to
@@ -2485,20 +2570,20 @@ paths:
             anyOf:
               - type: string
                 format: date-time
-              - type: 'null'
+              - type: "null"
             title: Expires At
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2544,21 +2629,21 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WebhookEndpointCreate'
+              $ref: "#/components/schemas/WebhookEndpointCreate"
               description: Webhook endpoint parameters
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WebhookEndpoint'
-        '422':
+                $ref: "#/components/schemas/WebhookEndpoint"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: >-
@@ -2627,18 +2712,18 @@ paths:
             title: Size
           description: Page size
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Page_WebhookEndpoint_'
-        '422':
+                $ref: "#/components/schemas/Page_WebhookEndpoint_"
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2692,17 +2777,17 @@ paths:
             title: Endpoint Id
           description: Webhook endpoint ID
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2747,17 +2832,17 @@ paths:
             title: Workspace Id
           description: Workspace ID
       responses:
-        '200':
+        "200":
           description: Successful Response
           content:
             application/json:
               schema: {}
-        '422':
+        "422":
           description: Validation Error
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HTTPValidationError'
+                $ref: "#/components/schemas/HTTPValidationError"
       x-codeSamples:
         - lang: JavaScript
           source: |-
@@ -2818,9 +2903,9 @@ components:
         sessions:
           anyOf:
             - additionalProperties:
-                $ref: '#/components/schemas/SessionDeriverStatus'
+                $ref: "#/components/schemas/SessionDeriverStatus"
               type: object
-            - type: 'null'
+            - type: "null"
           title: Sessions
           description: Per-session status when not filtered by session
       type: object
@@ -2835,13 +2920,13 @@ components:
         session_id:
           anyOf:
             - type: string
-            - type: 'null'
+            - type: "null"
           title: Session Id
           description: ID of the session to scope the representation to
         target:
           anyOf:
             - type: string
-            - type: 'null'
+            - type: "null"
           title: Target
           description: Optional peer to get the representation for, from the perspective of this peer
         query:
@@ -2858,20 +2943,11 @@ components:
       required:
         - query
       title: DialecticOptions
-    DialecticResponse:
-      properties:
-        content:
-          type: string
-          title: Content
-      type: object
-      required:
-        - content
-      title: DialecticResponse
     HTTPValidationError:
       properties:
         detail:
           items:
-            $ref: '#/components/schemas/ValidationError'
+            $ref: "#/components/schemas/ValidationError"
           type: array
           title: Detail
       type: object
@@ -2918,7 +2994,7 @@ components:
       properties:
         messages:
           items:
-            $ref: '#/components/schemas/MessageCreate'
+            $ref: "#/components/schemas/MessageCreate"
           type: array
           maxItems: 100
           minItems: 1
@@ -2942,13 +3018,13 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
         created_at:
           anyOf:
             - type: string
               format: date-time
-            - type: 'null'
+            - type: "null"
           title: Created At
       type: object
       required:
@@ -2961,7 +3037,7 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Filters
       type: object
       title: MessageGet
@@ -2975,7 +3051,7 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Filters
           description: Filters to scope the search
         limit:
@@ -2995,7 +3071,7 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
       type: object
       title: MessageUpdate
@@ -3003,7 +3079,7 @@ components:
       properties:
         items:
           items:
-            $ref: '#/components/schemas/Message'
+            $ref: "#/components/schemas/Message"
           type: array
           title: Items
         total:
@@ -3032,7 +3108,7 @@ components:
       properties:
         items:
           items:
-            $ref: '#/components/schemas/Peer'
+            $ref: "#/components/schemas/Peer"
           type: array
           title: Items
         total:
@@ -3061,7 +3137,7 @@ components:
       properties:
         items:
           items:
-            $ref: '#/components/schemas/Session'
+            $ref: "#/components/schemas/Session"
           type: array
           title: Items
         total:
@@ -3090,7 +3166,7 @@ components:
       properties:
         items:
           items:
-            $ref: '#/components/schemas/WebhookEndpoint'
+            $ref: "#/components/schemas/WebhookEndpoint"
           type: array
           title: Items
         total:
@@ -3119,7 +3195,7 @@ components:
       properties:
         items:
           items:
-            $ref: '#/components/schemas/Workspace'
+            $ref: "#/components/schemas/Workspace"
           type: array
           title: Items
         total:
@@ -3170,6 +3246,18 @@ components:
         - workspace_id
         - created_at
       title: Peer
+    PeerCardResponse:
+      properties:
+        peer_card:
+          anyOf:
+            - items:
+                type: string
+              type: array
+            - type: "null"
+          title: Peer Card
+          description: The peer card content, or None if not found
+      type: object
+      title: PeerCardResponse
     PeerCreate:
       properties:
         id:
@@ -3182,13 +3270,13 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
         configuration:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Configuration
       type: object
       required:
@@ -3200,7 +3288,7 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Filters
       type: object
       title: PeerGet
@@ -3213,7 +3301,7 @@ components:
         target:
           anyOf:
             - type: string
-            - type: 'null'
+            - type: "null"
           title: Target
           description: Optional peer ID to get the representation for, from the perspective of this peer
       type: object
@@ -3226,13 +3314,13 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
         configuration:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Configuration
       type: object
       title: PeerUpdate
@@ -3273,13 +3361,13 @@ components:
           title: Id
         messages:
           items:
-            $ref: '#/components/schemas/Message'
+            $ref: "#/components/schemas/Message"
           type: array
           title: Messages
         summary:
           anyOf:
-            - $ref: '#/components/schemas/Summary'
-            - type: 'null'
+            - $ref: "#/components/schemas/Summary"
+            - type: "null"
           description: The summary if available
       type: object
       required:
@@ -3298,20 +3386,20 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
         peers:
           anyOf:
             - additionalProperties:
-                $ref: '#/components/schemas/SessionPeerConfig'
+                $ref: "#/components/schemas/SessionPeerConfig"
               type: object
-            - type: 'null'
+            - type: "null"
           title: Peers
         configuration:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Configuration
       type: object
       required:
@@ -3322,7 +3410,7 @@ components:
         session_id:
           anyOf:
             - type: string
-            - type: 'null'
+            - type: "null"
           title: Session Id
           description: Session ID if filtered by session
         total_work_units:
@@ -3354,7 +3442,7 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Filters
       type: object
       title: SessionGet
@@ -3370,7 +3458,7 @@ components:
         observe_me:
           anyOf:
             - type: boolean
-            - type: 'null'
+            - type: "null"
           title: Observe Me
           description: >-
             Whether other peers in this session should try to form a session-level theory-of-mind
@@ -3384,13 +3472,13 @@ components:
           title: Id
         short_summary:
           anyOf:
-            - $ref: '#/components/schemas/Summary'
-            - type: 'null'
+            - $ref: "#/components/schemas/Summary"
+            - type: "null"
           description: The short summary if available
         long_summary:
           anyOf:
-            - $ref: '#/components/schemas/Summary'
-            - type: 'null'
+            - $ref: "#/components/schemas/Summary"
+            - type: "null"
           description: The long summary if available
       type: object
       required:
@@ -3402,13 +3490,13 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
         configuration:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Configuration
       type: object
       title: SessionUpdate
@@ -3471,7 +3559,7 @@ components:
         workspace_id:
           anyOf:
             - type: string
-            - type: 'null'
+            - type: "null"
           title: Workspace Id
         url:
           type: string
@@ -3546,7 +3634,7 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Filters
       type: object
       title: WorkspaceGet
@@ -3556,13 +3644,13 @@ components:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Metadata
         configuration:
           anyOf:
             - additionalProperties: true
               type: object
-            - type: 'null'
+            - type: "null"
           title: Configuration
       type: object
       title: WorkspaceUpdate

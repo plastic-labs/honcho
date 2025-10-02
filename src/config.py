@@ -14,7 +14,7 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
-from src.utils.types import Providers
+from src.utils.types import SupportedProviders
 
 # Load .env file for local development.
 # Make sure this is called before AppSettings is instantiated if you rely on .env for AppSettings construction.
@@ -187,24 +187,19 @@ class DeriverSettings(HonchoSettings):
     ] = 1.0
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
-    PROVIDER: Providers = "google"
-    MODEL: str = "gemini-2.5-flash"
+    PROVIDER: SupportedProviders = "google"
+    MODEL: str = "gemini-2.5-flash-lite"
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    PEER_CARD_PROVIDER: Providers = "openai"
+    PEER_CARD_PROVIDER: SupportedProviders = "openai"
     PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
     # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
     PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
         int, Field(default=4000, gt=1000, le=10_000)
     ] = 4000
-
-    # Context token limit for get_context method
-    CONTEXT_TOKEN_LIMIT: Annotated[int, Field(default=30_000, gt=1000, le=100_000)] = (
-        30_000
-    )
 
     # Maximum number of observations to store in working representation
     # This is applied to both explicit and deductive observations
@@ -212,15 +207,33 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=500)
     ] = 100
 
+    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+        int,
+        Field(
+            default=4096,
+            ge=1,
+        ),
+    ] = 4096
+
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+
+    @model_validator(mode="after")
+    def validate_batch_tokens_vs_context_limit(self):
+        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+            raise ValueError(
+                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+            )
+        return self
+
 
 class DialecticSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DIALECTIC_", extra="ignore")  # pyright: ignore
 
-    PROVIDER: Providers = "anthropic"
+    PROVIDER: SupportedProviders = "anthropic"
     MODEL: str = "claude-sonnet-4-20250514"
 
     PERFORM_QUERY_GENERATION: bool = False
-    QUERY_GENERATION_PROVIDER: Providers = "groq"
+    QUERY_GENERATION_PROVIDER: SupportedProviders = "groq"
     QUERY_GENERATION_MODEL: str = "llama-3.1-8b-instant"
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
@@ -243,7 +256,7 @@ class SummarySettings(HonchoSettings):
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
-    PROVIDER: Providers = "openai"
+    PROVIDER: SupportedProviders = "openai"
     MODEL: str = "gpt-4o-mini-2024-07-18"
     MAX_TOKENS_SHORT: Annotated[int, Field(default=1000, gt=0, le=10_000)] = 1000
     MAX_TOKENS_LONG: Annotated[int, Field(default=4000, gt=0, le=20_000)] = 4000

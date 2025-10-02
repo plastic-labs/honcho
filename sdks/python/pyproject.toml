@@ -1,6 +1,6 @@
 [project]
 name = "honcho-ai"
-version = "1.4.0"
+version = "1.4.1"
 description = "Official DX Optimized Python SDK for Honcho"
 dynamic = ["readme"]
 license = "Apache-2.0"
@@ -8,9 +8,10 @@ authors = [
 { name = "Plastic Labs", email = "hello@plasticlabs.ai" },
 ]
 dependencies = [
-    "honcho-core>=1.4.0",
+    "honcho-core>=1.4.1-alpha.0",
     "httpx>=0.28.0, <1",
     "pydantic>=2.0.0, <3",
+    "typing-extensions>=4.12.0; python_version < \"3.12\"",
 ]
 requires-python = ">= 3.8"
 classifiers = [
@@ -47,6 +48,16 @@ readme = {file = ["README.md"], content-type = "text/markdown"}
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.basedpyright]
+# BasedPyright currently seems like the best type checker option, much faster
+# https://docs.basedpyright.com/latest/configuration/config-files/#sample-pyprojecttoml-file
+include = ["src"]
+reportUnusedCallResult = false
+reportCallInDefaultInitializer = false
+reportAny = false
+reportExplicitAny = false
+reportImportCycles = false
 
 [[tool.uv.index]]
 name = "testpypi"

@@ -3,9 +3,9 @@
   "theme": "mint",
   "name": "Honcho",
   "colors": {
-    "primary": "#FF5A7E",
-    "light": "#FF5A7E",
-    "dark": "#FF5A7E"
+    "primary": "#86BCF2",
+    "dark": "#151E27",
+    "light": "#B5D9FD"
   },
   "favicon": "/favicon.svg",
   "contextual": {
@@ -14,7 +14,7 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.3.0",
+        "version": "v2.3.3",
         "api": {
           "openapi": ["openapi.documented.yml"]
         },
@@ -68,7 +68,8 @@
                   "v2/guides/search",
                   "v2/guides/working-rep",
                   "v2/guides/streaming-response",
-                  "v2/guides/using-filters"
+                  "v2/guides/using-filters",
+                  "v2/guides/file-uploads"
                 ]
               }
             ]
@@ -113,7 +114,8 @@
                   "v2/api-reference/endpoint/peers/get-sessions-for-peer",
                   "v2/api-reference/endpoint/peers/chat",
                   "v2/api-reference/endpoint/peers/get-working-representation",
-                  "v2/api-reference/endpoint/peers/search-peer"
+                  "v2/api-reference/endpoint/peers/search-peer",
+                  "v2/api-reference/endpoint/peers/get-peer-card"
                 ]
               },
               {

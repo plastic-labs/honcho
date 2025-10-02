@@ -118,7 +118,7 @@ export const FilterSchema = z.record(z.string(), z.unknown()).optional()
  */
 export const ChatQuerySchema = z.object({
   query: SearchQuerySchema,
-  stream: z.boolean().optional(),
+  stream: z.boolean().optional().default(false),
   target: z.union([z.string(), z.object({ id: z.string() })]).optional(),
   sessionId: z.string().optional(),
 })

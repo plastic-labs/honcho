@@ -13,7 +13,7 @@ You need memory: session management, message storage, context handling. It's tab
 
 > "My agent treats everyone exactly the same"
 
-You need personalization: user modeling, preference learning, behavioral adaptation. Now you're building a [social cognition](../core-concepts/glossary#cognitive-science-terms) engine
+You need personalization: user modeling, preference learning, behavioral adaptation. Now you're building a [social cognition](../core-concepts/glossary#social-cognition) engine.
 
 > "I'm writing infrastructure instead of features"
 
@@ -39,7 +39,7 @@ insight = peer.chat("How should I explain this concept?")
 Your agents evolve from goldfish to counselor, on the same infrastructure. That's Honcho.
 
 Designed for developers and agents alike:
-- **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/glossary#storage-%26-processing) and let agents backchannel
+- **Natural Language Queries**: Chat with Honcho in natural language via the [Dialectic API](../core-concepts/architecture#dialectic-api) and let agents backchannel
 - **Automatic Context Management**: Smart summarization that respects token limits
 - **Native multi-agent support**: Break out of User/Assistant Paradigms and build complex multi-agent systems
 - **Agent-first interfaces**: MCP connections and APIs designed for agents to consume and use as tools
@@ -60,7 +60,7 @@ conversations to complex multi-agent scenarios. This also queues up messages for
 the reasoning layer to process.
 
 **Reasoning Layer**: Continuously analyzes stored interactions to build
-psychological profiles using [theory of mind](glossary#theory-of-mind)
+psychological profiles using [theory of mind](../core-concepts/glossary#theory-of-mind)
 inference, extracting patterns about communication style, decision-making
 preferences, and mental models.
 
@@ -69,7 +69,7 @@ preferences, and mental models.
 Once data is stored and generated within Honcho, the API exposes several
 different ways to retrieve and use those insights.
 
-**[Dialectic API](../guides/dialectic-endpoint)**: This is the
+**[Dialectic API](/v2/guides/dialectic-endpoint)**: This is the
 flagship endpoint that allows developers to send natural language queries to
 Honcho to chat with the representation of each user in your system to get
 dynamic, in-context actionable insights.
@@ -81,19 +81,19 @@ Example Queries
 - "How does this user prefer to receive feedback?"
 - "What are this user's core values based on our conversations?"
 
-**[Get Context](../guides/get-context)**: This endpoint abstracts context window
+**[Get Context](/v2/guides/get-context)**: This endpoint abstracts context window
 constraints and continuously retrieves the most relevant and recent data from a
-conversation. Provide a token budget and Honcho will rturn a combination of
-summaries and messages that pvoide session context. Use this for creating
+conversation. Provide a token budget and Honcho will return a combination of
+summaries and messages that provide session context. Use this for creating
 long-running conversations. We crafted our summaries to provide the most
 [coverage of a session possible](../core-concepts/summarizer).
 
-**[Search](../guides/search)**: This endpoint allows you to search across Honcho
+**[Search](/v2/guides/search)**: This endpoint allows you to search across Honcho
 for relevant messages either at the workspace, peer, or session level. This
 endpoint uses a hybrid search strategy that combines text search and cosine
 similarity.
 
-**[Working Representations](../guides/working-rep)**: Get a cached, snapshot
+**[Working Representations](/v2/guides/working-rep)**: Get a cached, snapshot
 of a user in the context of a session. Instead of waiting for an LLM to
 synthesize an in-context response via the Dialectic endpoint, use this to get
 recent insights you can plug into your context window.

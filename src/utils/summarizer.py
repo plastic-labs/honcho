@@ -2,8 +2,8 @@ import asyncio
 import logging
 import time
 from enum import Enum
+from inspect import cleandoc as c
 
-from mirascope import llm
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import TypedDict
@@ -12,7 +12,7 @@ from src import schemas
 from src.config import settings
 from src.dependencies import tracked_db
 from src.exceptions import ResourceNotFoundException
-from src.utils.clients import honcho_llm_call
+from src.utils.clients import HonchoLLMCallResponse, honcho_llm_call
 from src.utils.formatting import utc_now_iso
 from src.utils.logging import accumulate_metric
 
@@ -77,17 +77,11 @@ class SummaryType(Enum):
     LONG = "honcho_chat_summary_long"
 
 
-@honcho_llm_call(
-    provider=settings.SUMMARY.PROVIDER,
-    model=settings.SUMMARY.MODEL,
-    max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
-    return_call_response=True,
-)
 async def create_short_summary(
     messages: list[models.Message],
     input_tokens: int,
     previous_summary: str | None = None,
-):
+) -> HonchoLLMCallResponse[str]:
     # input_tokens indicates how many tokens the message list + previous summary take up
     # we want to optimize short summaries to be smaller than the actual content being summarized
     # so we ask the agent to produce a word count roughly equal to either the input, or the max
@@ -100,7 +94,7 @@ async def create_short_summary(
     else:
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
-    return f"""
+    prompt = c(f"""
 You are a system that summarizes parts of a conversation to create a concise and accurate summary. Focus on capturing:
 
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
@@ -123,19 +117,20 @@ Return only the summary without any explanation or meta-commentary.
 </conversation>
 
 Produce as thorough a summary as possible in {output_words} words or less.
-"""
+""")
+
+    return await honcho_llm_call(
+        provider=settings.SUMMARY.PROVIDER,
+        model=settings.SUMMARY.MODEL,
+        prompt=prompt,
+        max_tokens=settings.SUMMARY.MAX_TOKENS_SHORT,
+    )
 
 
-@honcho_llm_call(
-    provider=settings.SUMMARY.PROVIDER,
-    model=settings.SUMMARY.MODEL,
-    max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
-    return_call_response=True,
-)
 async def create_long_summary(
     messages: list[models.Message],
     previous_summary: str | None = None,
-):
+) -> HonchoLLMCallResponse[str]:
     # the word/token ratio is roughly 4:3 so we multiply by 0.75.
     # LLMs *seem* to respond better to getting asked for a word count but should workshop this.
     output_words = int(settings.SUMMARY.MAX_TOKENS_LONG * 0.75)
@@ -145,7 +140,7 @@ async def create_long_summary(
     else:
         previous_summary_text = "There is no previous summary -- the messages are the beginning of the conversation."
 
-    return f"""
+    prompt = c(f"""
 You are a system that creates thorough, comprehensive summaries of conversations. Focus on capturing:
 
 1. Key facts and information shared (**Capture as many explicit facts as possible**)
@@ -170,7 +165,14 @@ Return only the summary without any explanation or meta-commentary.
 </conversation>
 
 Produce as thorough a summary as possible in {output_words} words or less.
-"""
+""")
+
+    return await honcho_llm_call(
+        provider=settings.SUMMARY.PROVIDER,
+        model=settings.SUMMARY.MODEL,
+        prompt=prompt,
+        max_tokens=settings.SUMMARY.MAX_TOKENS_LONG,
+    )
 
 
 async def summarize_if_needed(
@@ -345,7 +347,7 @@ async def _create_summary(
         A full summary of the conversation up to the last message
     """
 
-    response: llm.CallResponse | None = None
+    response: HonchoLLMCallResponse[str] | None = None
     try:
         if summary_type == SummaryType.SHORT:
             response = await create_short_summary(
@@ -355,11 +357,7 @@ async def _create_summary(
             response = await create_long_summary(messages, previous_summary_text)
 
         summary_text = response.content
-        summary_tokens = (
-            response.usage.output_tokens
-            if response.usage
-            else len(response.content) // 4
-        )
+        summary_tokens = response.output_tokens
 
         # Detect potential issues with the summary
         if not summary_text.strip():
@@ -381,17 +379,8 @@ async def _create_summary(
 
     accumulate_metric(
         f"summary_{messages[-1].workspace_name}_{messages[-1].id}",
-        f"{summary_type.name}_summary_input",
-        response.usage.input_tokens if response and response.usage else "unknown",
-        "tokens",
-    )
-
-    accumulate_metric(
-        f"summary_{messages[-1].workspace_name}_{messages[-1].id}",
         f"{summary_type.name}_summary_size",
-        response.usage.output_tokens
-        if response and response.usage
-        else f"{summary_tokens} (est.)",
+        response.output_tokens if response else f"{summary_tokens} (est.)",
         "tokens",
     )
 
@@ -591,6 +580,9 @@ async def get_session_context(
         Tuple of (summary, messages) where summary is a Summary pydantic model (or None)
         and messages is the list of message objects
     """
+    if token_limit <= 0:
+        return None, []
+
     summary = None
     messages_tokens = token_limit
     messages_start_id = 0
@@ -669,6 +661,9 @@ async def get_session_context_formatted(
     This is a convenience wrapper around get_session_context that formats
     the output as a string.
     """
+    if token_limit <= 0:
+        return ""
+
     summary, messages = await get_session_context(
         db,
         workspace_name,

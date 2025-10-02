@@ -1,14 +1,13 @@
 from collections.abc import AsyncIterator, Callable
-from typing import TypeVar
 
 from honcho_core.pagination import AsyncPage as AsyncPageCore
-from pydantic import Field, validate_call
+from typing_extensions import Generic, TypeVar
 
 T = TypeVar("T")
-U = TypeVar("U")
+U = TypeVar("U", default=T)
 
 
-class AsyncPage(AsyncPageCore[U]):
+class AsyncPage(Generic[T, U]):
     """
     Async paginated result wrapper that transforms objects from type T to type U.
 
@@ -16,16 +15,13 @@ class AsyncPage(AsyncPageCore[U]):
     pagination functionality from the underlying core AsyncPage.
     """
 
-    @validate_call
+    _original_page: AsyncPageCore[T]
+    _transform_func: Callable[[T], U] | None
+
     def __init__(
         self,
-        original_page: AsyncPageCore[T] = Field(
-            ..., description="The original AsyncPage to wrap"
-        ),
-        transform_func: Callable[[T], U] | None = Field(
-            None,
-            description="Optional function to transform objects from type T to type U",
-        ),
+        original_page: AsyncPageCore[T],
+        transform_func: Callable[[T], U] | None = None,
     ) -> None:
         """
         Initialize the transformed async page.
@@ -35,57 +31,73 @@ class AsyncPage(AsyncPageCore[U]):
             transform_func: Optional function to transform objects from type T to type U.
                             If None, objects are passed through unchanged.
         """
-        super().__init__(items=original_page.items)  # pyright: ignore
-        self._original_page = original_page  # pyright: ignore
-        self._transform_func = transform_func  # pyright: ignore
+        self._original_page = original_page
+        self._transform_func = transform_func
 
-    @property
-    def items(self) -> list[U]:  # pyright: ignore
-        """Get all optionally transformed items as a list."""
-        if self._transform_func is not None:
-            return [self._transform_func(item) for item in self._original_page.items]
-        return self._original_page.items  # pyright: ignore
-
-    async def __aiter__(self) -> AsyncIterator[U]:
-        """Async iterate over optionally transformed objects."""
+    async def __aiter__(self) -> AsyncIterator[U] | AsyncIterator[T]:
+        """Async iterate over all transformed items across all pages."""
         async for item in self._original_page:
             if self._transform_func is not None:
                 yield self._transform_func(item)
             else:
-                yield item  # type: ignore # pyright: ignore
+                yield item
 
-    async def __agetitem__(self, index: int) -> U:
-        """Get an optionally transformed object by index."""
-        item = await self._original_page.__agetitem__(index)  # type: ignore # pyright: ignore
+    def __getitem__(self, index: int) -> U | T:
+        """Get a transformed item by index on the current page."""
+        items = self._original_page.items or []
+        item = items[index]
         if self._transform_func is not None:
-            return self._transform_func(item)  # pyright: ignore
-        return item  # type: ignore # pyright: ignore
+            return self._transform_func(item)
+        return item
 
     def __len__(self) -> int:
-        """Get the length of the page."""
-        return len(self._original_page)  # type: ignore # pyright: ignore
+        """Get the number of items on the current page."""
+        items = self._original_page.items or []
+        return len(items)
 
     @property
-    async def data(self) -> list[U]:
-        """Get all optionally transformed data as a list."""
-        data = await self._original_page.data  # type: ignore # pyright: ignore
+    def items(self) -> list[U] | list[T]:
+        """Get all transformed items on the current page."""
+        items = self._original_page.items or []
         if self._transform_func is not None:
-            return [self._transform_func(item) for item in data]  # pyright: ignore
-        return data  # type: ignore # pyright: ignore
+            return [self._transform_func(item) for item in items]
+        return items
 
     @property
-    def object(self) -> str:
-        """Get the object type."""
-        return self._original_page.object  # type: ignore # pyright: ignore
+    def total(self) -> int | None:
+        """Get the total number of items across all pages."""
+        return self._original_page.total
 
     @property
-    def has_next_page(self) -> bool:  # pyright: ignore
+    def page(self) -> int | None:
+        """Get the current page number."""
+        return self._original_page.page
+
+    @property
+    def size(self) -> int | None:
+        """Get the page size."""
+        return self._original_page.size
+
+    @property
+    def pages(self) -> int | None:
+        """Get the total number of pages."""
+        return self._original_page.pages
+
+    def has_next_page(self) -> bool:
         """Check if there's a next page."""
-        return self._original_page.has_next_page  # type: ignore # pyright: ignore
+        return self._original_page.has_next_page()
 
-    async def next_page(self) -> "AsyncPage[U] | None":
-        """Get the next page with optional transformation applied."""
-        next_page = await self._original_page.next_page()  # type: ignore # pyright: ignore
-        if next_page is None:
+    async def get_next_page(self) -> "AsyncPage[T, U] | None":
+        """
+        Fetch the next page of results.
+
+        Returns None if there are no more pages.
+        """
+        if not hasattr(self._original_page, "get_next_page"):
             return None
-        return AsyncPage(next_page, self._transform_func)  # pyright: ignore
+
+        next_original_page = await self._original_page.get_next_page()
+        if not next_original_page:
+            return None
+
+        return AsyncPage(next_original_page, self._transform_func)

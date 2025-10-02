@@ -1,6 +1,6 @@
 [project]
 name = "honcho"
-version = "2.3.1"
+version = "2.3.3"
 description = "Honcho Server"
 authors = [
   {name = "Plastic Labs", email = "hello@plasticlabs.ai"},
@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.111.0",
+    "groq>=0.31.0",
     "python-dotenv>=1.0.0",
     "sqlalchemy>=2.0.30",
     "fastapi-pagination>=0.12.24",
@@ -21,12 +22,13 @@ dependencies = [
     "nanoid>=2.0.0",
     "alembic>=1.14.0",
     "pyjwt>=2.10.0",
+    "tenacity>=9.1.2",
     "tiktoken>=0.9.0",
-    "mirascope[anthropic,google,groq,langfuse]>=1.25.5",
+    "langfuse>=3.3.2",
     "openai>=1.99.7",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
-    "google-generativeai>=0.8.5",
+    "google-genai>=1.32.0",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
     "prometheus-client>=0.20.0",
@@ -78,7 +80,7 @@ extend-immutable-calls = ["fastapi.Depends"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
-addopts = "--strict-markers --cov=src/ --cov-report=term-missing"
+addopts = "--strict-markers --cov=src/ --cov=sdks/python/src/honcho --cov-report=term-missing"
 testpaths = ["tests"]
 pythonpath = ["src"]
 
@@ -94,6 +96,12 @@ reportUnusedCallResult = false
 reportCallInDefaultInitializer = false
 reportAny = false
 reportExplicitAny = false
-allowedUntypedLibraries = ["langfuse", "langfuse.decorators", "mirascope"]
+allowedUntypedLibraries = ["langfuse"]
 reportImplicitOverride = false
 reportImportCycles = false
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true

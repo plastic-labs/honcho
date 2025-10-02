@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from honcho_core.types import DeriverStatus
+from honcho_core.types.workspaces.sessions.message import Message
 
 from sdks.python.src.honcho.async_client.client import AsyncHoncho
 from sdks.python.src.honcho.async_client.pagination import AsyncPage
@@ -318,3 +319,118 @@ async def test_poll_deriver_status(client_fixture: tuple[Honcho | AsyncHoncho, s
                 observer_id=peer.id, sender_id=peer.id
             )
             assert isinstance(status, DeriverStatus)
+
+
+@pytest.mark.asyncio
+async def test_update_message_with_message_object(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests updating message metadata using a Message object.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-update-msg-session")
+        peer = await honcho_client.peer(id="test-update-msg-peer")
+
+        # Create a message
+        await session.add_messages([peer.message("test message")])
+        messages = await session.get_messages()
+        assert len(messages) >= 1
+        message = messages[0]
+        assert isinstance(message, Message)
+
+        # Update using Message object
+        updated = await honcho_client.update_message(message, {"key": "value"})
+        assert isinstance(updated, Message)
+        assert updated.metadata == {"key": "value"}
+        assert updated.id == message.id
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-update-msg-session")
+        peer = honcho_client.peer(id="test-update-msg-peer")
+
+        # Create a message
+        session.add_messages([peer.message("test message")])
+        messages = session.get_messages()
+        assert len(messages) >= 1
+        message = messages[0]
+        assert isinstance(message, Message)
+
+        # Update using Message object
+        updated = honcho_client.update_message(message, {"key": "value"})
+        assert isinstance(updated, Message)
+        assert updated.metadata == {"key": "value"}
+        assert updated.id == message.id
+
+
+@pytest.mark.asyncio
+async def test_update_message_with_message_id(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests updating message metadata using message_id string.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        session = await honcho_client.session(id="test-update-msg-id-session")
+        peer = await honcho_client.peer(id="test-update-msg-id-peer")
+
+        # Create a message
+        await session.add_messages([peer.message("test message")])
+
+        messages = await session.get_messages()
+        assert len(messages) >= 1
+        message = messages[0]
+        assert message.metadata == {}
+
+        # Update using message_id string
+        updated = await honcho_client.update_message(
+            message.id, {"updated": True}, session_id=session.id
+        )
+        assert isinstance(updated, Message)
+        assert updated.metadata == {"updated": True}
+        assert updated.id == message.id
+    else:
+        assert isinstance(honcho_client, Honcho)
+        session = honcho_client.session(id="test-update-msg-id-session")
+        peer = honcho_client.peer(id="test-update-msg-id-peer")
+
+        # Create a message
+        messages = session.add_messages([peer.message("test message")])
+
+        messages = session.get_messages()
+        assert len(messages) >= 1
+        message = messages[0]
+        assert message.metadata == {}
+
+        # Update using message_id string
+        updated = honcho_client.update_message(
+            message.id, {"updated": True}, session_id=session.id
+        )
+        assert isinstance(updated, Message)
+        assert updated.metadata == {"updated": True}
+        assert updated.id == message.id
+
+
+@pytest.mark.asyncio
+async def test_update_message_validation(
+    client_fixture: tuple[Honcho | AsyncHoncho, str],
+):
+    """
+    Tests that update_message raises ValueError when message_id is provided without session_id.
+    """
+    honcho_client, client_type = client_fixture
+
+    if client_type == "async":
+        assert isinstance(honcho_client, AsyncHoncho)
+        with pytest.raises(ValueError, match="session_id is required"):
+            await honcho_client.update_message("msg_123", {"key": "value"})
+    else:
+        assert isinstance(honcho_client, Honcho)
+        with pytest.raises(ValueError, match="session_id is required"):
+            honcho_client.update_message("msg_123", {"key": "value"})

@@ -1,7 +1,7 @@
 // Main entry point for the Honcho TypeScript SDK
 // Exports all main classes and types
 
-export { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+export type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 export { Honcho } from './client'
 export { Page } from './pagination'
 export { Peer } from './peer'
@@ -12,6 +12,11 @@ export {
   Summary,
   SummaryData,
 } from './session_context'
+export {
+  type DialecticStreamChunk,
+  type DialecticStreamDelta,
+  DialecticStreamResponse,
+} from './types'
 
 // Export validation types for advanced usage
 export type {

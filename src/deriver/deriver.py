@@ -5,12 +5,14 @@ import time
 from typing import Any
 
 import sentry_sdk
-from langfuse.decorators import langfuse_context
+from langfuse import get_client
 
 from src import crud, exceptions
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
+from src.deriver.utils import estimate_tokens
+from src.models import Message
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
 from src.utils.embedding_store import EmbeddingStore
@@ -25,7 +27,6 @@ from src.utils.formatting import (
 from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
-    format_reasoning_inputs_as_markdown,
     format_reasoning_response_as_markdown,
     log_observations_tree,
     log_performance_metrics,
@@ -39,90 +40,174 @@ from src.utils.shared_models import (
     ReasoningResponseWithThinking,
     UnifiedObservation,
 )
+from src.utils.tracing import with_sentry_transaction
 
-from .prompts import critical_analysis_prompt, peer_card_prompt
-from .queue_payload import (
-    RepresentationPayload,
+from .prompts import (
+    critical_analysis_prompt,
+    estimate_base_prompt_tokens,
+    peer_card_prompt,
 )
 
 logger = logging.getLogger(__name__)
 logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
+lf = get_client()
 
-@honcho_llm_call(
-    provider=settings.DERIVER.PROVIDER,
-    model=settings.DERIVER.MODEL,
-    track_name="Critical Analysis Call",
-    response_model=ReasoningResponse,
-    json_mode=True,
-    max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS or settings.LLM.DEFAULT_MAX_TOKENS,
-    thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS
-    if settings.DERIVER.PROVIDER == "anthropic"
-    else None,
-    enable_retry=True,
-    retry_attempts=3,
-)
+
 async def critical_analysis_call(
     peer_id: str,
     peer_card: list[str] | None,
     message_created_at: datetime.datetime,
     working_representation: str | None,
     history: str,
-    new_turn: str,
-):
-    return critical_analysis_prompt(
+    new_turns: list[str],
+) -> ReasoningResponse | None:
+    prompt = critical_analysis_prompt(
         peer_id=peer_id,
         peer_card=peer_card,
         message_created_at=message_created_at,
         working_representation=working_representation,
         history=history,
-        new_turn=new_turn,
+        new_turns=new_turns,
     )
 
+    response = await honcho_llm_call(
+        provider=settings.DERIVER.PROVIDER,
+        model=settings.DERIVER.MODEL,
+        prompt=prompt,
+        max_tokens=settings.DERIVER.MAX_OUTPUT_TOKENS
+        or settings.LLM.DEFAULT_MAX_TOKENS,
+        track_name="Critical Analysis Call",
+        response_model=ReasoningResponse,
+        json_mode=True,
+        thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+        enable_retry=True,
+        retry_attempts=3,
+    )
 
-@honcho_llm_call(
-    provider=settings.DERIVER.PEER_CARD_PROVIDER,
-    model=settings.DERIVER.PEER_CARD_MODEL,
-    track_name="Peer Card Call",
-    response_model=PeerCardQuery,
-    json_mode=True,
-    max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
-    or settings.LLM.DEFAULT_MAX_TOKENS,
-    reasoning_effort="minimal",
-    enable_retry=True,
-    retry_attempts=1,  # unstructured output means we shouldn't need to retry, 1 just in case
-)
+    return response.content
+
+
 async def peer_card_call(
     old_peer_card: list[str] | None,
     new_observations: list[str],
-):
-    return peer_card_prompt(
+) -> PeerCardQuery:
+    """
+    Generate peer card prompt, call LLM with response model.
+    """
+    prompt = peer_card_prompt(
         old_peer_card=old_peer_card,
         new_observations=new_observations,
     )
 
+    response = await honcho_llm_call(
+        provider=settings.DERIVER.PEER_CARD_PROVIDER,
+        model=settings.DERIVER.PEER_CARD_MODEL,
+        prompt=prompt,
+        max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
+        or settings.LLM.DEFAULT_MAX_TOKENS,
+        track_name="Peer Card Call",
+        response_model=PeerCardQuery,
+        json_mode=True,
+        reasoning_effort="minimal",
+        enable_retry=True,
+        retry_attempts=3,
+    )
 
-@conditional_observe
-@sentry_sdk.trace
-async def process_representation_task(
-    payload: RepresentationPayload,
+    return response.content
+
+
+@with_sentry_transaction("process_representation_tasks_batch", op="deriver")
+async def process_representation_tasks_batch(
+    sender_name: str,
+    target_name: str,
+    messages: list[Message],
 ) -> None:
     """
-    Process a representation task by extracting insights and updating working representations.
+    Process a batch of representation tasks by extracting insights and updating working representations.
     """
+    if not messages or len(messages) == 0:
+        return
+
+    messages.sort(key=lambda x: x.id)
+
+    latest_message = messages[-1]
+    earliest_message = messages[0]
+
     # Start overall timing
     overall_start = time.perf_counter()
 
-    logger.debug("Starting insight extraction for user message: %s", payload.message_id)
+    logger.debug(
+        "Starting insight extraction for message batch starting with: %s",
+        earliest_message.id,
+    )
 
-    # Use get_session_context_formatted with configurable token limit
+    async with tracked_db("deriver.get_peer_card") as db:
+        speaker_peer_card: list[str] | None = await crud.get_peer_card(
+            db,
+            latest_message.workspace_name,
+            sender_name,
+            target_name,
+        )
+    if speaker_peer_card is None:
+        logger.warning("No peer card found for %s", sender_name)
+    else:
+        logger.debug("Using peer card for %s", sender_name)
+
+    # Get working representation data early for token estimation
+    async with tracked_db("deriver.get_working_representation_data") as db:
+        working_rep_data: (
+            dict[str, Any] | str | None
+        ) = await crud.get_working_representation_data(
+            db,
+            latest_message.workspace_name,
+            target_name,
+            sender_name,
+            latest_message.session_name,
+        )
+
+    # Estimate tokens for deriver input
+    peer_card_tokens = estimate_tokens(speaker_peer_card)
+    working_rep_tokens = _estimate_working_representation_tokens(working_rep_data)
+    base_prompt_tokens = estimate_base_prompt_tokens()
+
+    # Estimate tokens for new conversation turns
+    new_turns = [
+        format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
+        for m in messages
+    ]
+    new_turns_tokens = estimate_tokens(new_turns)
+
+    estimated_input_tokens = (
+        peer_card_tokens + working_rep_tokens + base_prompt_tokens + new_turns_tokens
+    )
+
+    # Calculate available tokens for context
+    safety_buffer = 500
+    available_context_tokens = max(
+        0,
+        settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+    )
+
+    logger.debug(
+        "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
+        + "New turns: %d, Total estimated: %d, Available for context: %d",
+        peer_card_tokens,
+        working_rep_tokens,
+        base_prompt_tokens,
+        new_turns_tokens,
+        estimated_input_tokens,
+        available_context_tokens,
+    )
+
+    # Use get_session_context_formatted with dynamic token limit
     async with tracked_db("deriver.get_session_context") as db:
         formatted_history = await summarizer.get_session_context_formatted(
             db,
-            payload.workspace_name,
-            payload.session_name,
-            token_limit=settings.DERIVER.CONTEXT_TOKEN_LIMIT,
-            cutoff=payload.message_id,
+            latest_message.workspace_name,
+            latest_message.session_name,
+            token_limit=available_context_tokens,
+            cutoff=earliest_message.id,
             include_summary=True,
         )
 
@@ -131,10 +216,8 @@ async def process_representation_task(
     # otherwise, we're handling a directional representation task where the sender is
     # being observed by the target.
     collection_name = (
-        crud.construct_collection_name(
-            observer=payload.target_name, observed=payload.sender_name
-        )
-        if payload.sender_name != payload.target_name
+        crud.construct_collection_name(observer=target_name, observed=sender_name)
+        if sender_name != target_name
         else GLOBAL_REPRESENTATION_COLLECTION_NAME
     )
 
@@ -142,33 +225,26 @@ async def process_representation_task(
     async with tracked_db("deriver.get_or_create_collection") as db:
         collection = await crud.get_or_create_collection(
             db,
-            payload.workspace_name,
+            latest_message.workspace_name,
             collection_name,
-            payload.sender_name,
+            sender_name,
         )
         collection_name_loaded = collection.name
 
     # Use the embedding store directly
     embedding_store = EmbeddingStore(
-        workspace_name=payload.workspace_name,
-        peer_name=payload.sender_name,
+        workspace_name=latest_message.workspace_name,
+        peer_name=sender_name,
         collection_name=collection_name_loaded,
     )
 
     # Create reasoner instance
-    reasoner = CertaintyReasoner(embedding_store=embedding_store, ctx=payload)
-
-    # Check for existing working representation first, fall back to global search
-    async with tracked_db("deriver.get_working_representation_data") as db:
-        working_rep_data: (
-            dict[str, Any] | str | None
-        ) = await crud.get_working_representation_data(
-            db,
-            payload.workspace_name,
-            payload.target_name,
-            payload.sender_name,
-            payload.session_name,
-        )
+    reasoner = CertaintyReasoner(
+        embedding_store=embedding_store,
+        ctx=messages,
+        sender_name=sender_name,
+        target_name=target_name,
+    )
 
     # Time context preparation
     context_prep_start = time.perf_counter()
@@ -200,8 +276,12 @@ async def process_representation_task(
         )
     else:
         # No existing working representation, use global search
+        query_text = [m.content for m in messages]
+        query_text = "\n".join(
+            query_text
+        )  # TODO: consider a smarter strategy than concatenation
         working_representation = await embedding_store.get_relevant_observations(
-            query=payload.content,
+            query=query_text,
             conversation_context=formatted_history,
             for_reasoning=True,
         )
@@ -210,9 +290,51 @@ async def process_representation_task(
             working_representation
         )
         logger.info("No working representation found, using global semantic search")
+
+        # Recalculate tokens now that we have a new working representation
+        new_working_rep_tokens = _estimate_working_representation_tokens(
+            {
+                "final_observations": {
+                    "thinking": working_representation.thinking,
+                    "explicit": working_representation.explicit,
+                    "deductive": [
+                        {
+                            "conclusion": obs.conclusion,
+                            "premises": obs.premises,
+                        }
+                        for obs in working_representation.deductive
+                    ],
+                }
+            }
+        )
+
+        # Update estimated input tokens with the new working representation
+        estimated_input_tokens = (
+            peer_card_tokens
+            + new_working_rep_tokens
+            + base_prompt_tokens
+            + new_turns_tokens
+        )
+
+        # Recalculate available tokens for context
+        available_context_tokens = max(
+            0,
+            settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+        )
+
+        # Recalculate formatted_history with updated token limit
+        async with tracked_db("deriver.recalc_session_context") as db:
+            formatted_history = await summarizer.get_session_context_formatted(
+                db,
+                latest_message.workspace_name,
+                latest_message.session_name,
+                token_limit=available_context_tokens,
+                cutoff=earliest_message.id,
+                include_summary=True,
+            )
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
-        f"deriver_representation_{payload.message_id}_{payload.target_name}",
+        f"deriver_representation_{latest_message.id}_{target_name}",
         "context_preparation",
         context_prep_duration,
         "ms",
@@ -222,15 +344,6 @@ async def process_representation_task(
     logger.debug(
         "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
     )
-
-    async with tracked_db("deriver.get_peer_card") as db:
-        speaker_peer_card: list[str] | None = await crud.get_peer_card(
-            db, payload.workspace_name, payload.sender_name, payload.target_name
-        )
-    if speaker_peer_card is None:
-        logger.warning("No peer card found for %s", payload.sender_name)
-    else:
-        logger.info("Using peer card: %s", speaker_peer_card)
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
@@ -248,12 +361,13 @@ async def process_representation_task(
     log_observations_tree(final_obs_dict)
 
     # Always save working representation to peer for dialectic access
-    await save_working_representation_to_peer(payload, final_observations)
-
+    await save_working_representation_to_peer(
+        latest_message, final_observations, sender_name, target_name
+    )
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
     accumulate_metric(
-        f"deriver_representation_{payload.message_id}_{payload.target_name}",
+        f"deriver_representation_{latest_message.id}_{target_name}",
         "total_processing_time",
         overall_duration,
         "ms",
@@ -262,17 +376,15 @@ async def process_representation_task(
     total_observations = sum(len(obs_list) for obs_list in final_obs_dict.values())
 
     accumulate_metric(
-        f"deriver_representation_{payload.message_id}_{payload.target_name}",
+        f"deriver_representation_{latest_message.id}_{target_name}",
         "final_observation_count",
         total_observations,
-        "",
+        "count",
     )
-    log_performance_metrics(
-        f"deriver_representation_{payload.message_id}_{payload.target_name}"
-    )
+    log_performance_metrics(f"deriver_representation_{latest_message.id}_{target_name}")
 
     if settings.LANGFUSE_PUBLIC_KEY:
-        langfuse_context.update_current_trace(
+        lf.update_current_trace(
             output=format_reasoning_response_as_markdown(final_observations)
         )
 
@@ -281,13 +393,21 @@ class CertaintyReasoner:
     """Certainty reasoner for analyzing and deriving insights."""
 
     embedding_store: EmbeddingStore
-    ctx: RepresentationPayload
+    ctx: list[Message]
+    sender_name: str
+    target_name: str
 
     def __init__(
-        self, embedding_store: EmbeddingStore, ctx: RepresentationPayload
+        self,
+        embedding_store: EmbeddingStore,
+        ctx: list[Message],
+        sender_name: str,
+        target_name: str,
     ) -> None:
         self.embedding_store = embedding_store
         self.ctx = ctx
+        self.sender_name = sender_name
+        self.target_name = target_name
 
     @conditional_observe
     @sentry_sdk.trace
@@ -300,51 +420,57 @@ class CertaintyReasoner:
         """
         Critically analyzes and revises understanding, returning structured observations.
         """
+        # For logging, we can just show the content of the last message
+        latest_message = self.ctx[-1]
 
-        if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_observation(
-                input=format_reasoning_inputs_as_markdown(
-                    working_representation,
-                    history,
-                    self.ctx.content,
-                    self.ctx.created_at,
-                )
-            )
+        # if settings.LANGFUSE_PUBLIC_KEY:
+        #     lf.update_current_generation(
+        #         input=format_reasoning_inputs_as_markdown(
+        #             working_representation,
+        #             history,
+        #             latest_message.content,
+        #             latest_message.created_at,
+        #         )
+        #     )
 
-        formatted_new_turn = format_new_turn_with_timestamp(
-            self.ctx.content,
-            self.ctx.created_at,
-            self.ctx.sender_name,
-        )
+        new_turns = [
+            format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
+            for m in self.ctx
+        ]
+
         formatted_working_representation = format_context_for_prompt(
             working_representation
         )
 
         logger.debug(
-            "CRITICAL ANALYSIS: message_created_at='%s', formatted_new_turn='%s'",
-            self.ctx.created_at,
-            formatted_new_turn,
+            "CRITICAL ANALYSIS: message_created_at='%s', new_turns_count=%s",
+            latest_message.created_at,
+            len(new_turns),
         )
 
         try:
             response_obj = await critical_analysis_call(
-                peer_id=self.ctx.sender_name,
+                peer_id=self.sender_name,
                 peer_card=speaker_peer_card,
-                message_created_at=self.ctx.created_at,
+                message_created_at=latest_message.created_at,
                 working_representation=formatted_working_representation,
                 history=history,
-                new_turn=formatted_new_turn,
+                new_turns=new_turns,
             )
         except Exception as e:
             raise exceptions.LLMError(
                 speaker_peer_card=speaker_peer_card,
                 working_representation=formatted_working_representation,
                 history=history,
-                new_turn=formatted_new_turn,
+                new_turns=new_turns,
             ) from e
 
+        # Handle None response from LLM
+        if response_obj is None:
+            logger.warning("LLM returned None response, using empty insights")
+            new_insights = ReasoningResponse(explicit=[], deductive=[])
         # If response is a string, try to parse as JSON
-        if isinstance(response_obj, str):
+        elif isinstance(response_obj, str):
             try:
                 response_data = json.loads(response_obj)
                 new_insights = ReasoningResponse(
@@ -391,10 +517,10 @@ class CertaintyReasoner:
             len(thinking) if thinking else 0,
         )
 
-        if settings.LANGFUSE_PUBLIC_KEY:
-            langfuse_context.update_current_observation(
-                output=format_reasoning_response_as_markdown(response),
-            )
+        # if settings.LANGFUSE_PUBLIC_KEY:
+        #     lf.update_current_generation(
+        #         output=format_reasoning_response_as_markdown(response),
+        #     )
 
         return response
 
@@ -410,6 +536,7 @@ class CertaintyReasoner:
         Single-pass reasoning function that critically analyzes and derives insights.
         Performs one analysis pass and returns the final observations.
         """
+        latest_message = self.ctx[-1]
         analysis_start = time.perf_counter()
 
         # Perform critical analysis to get observation lists
@@ -424,7 +551,7 @@ class CertaintyReasoner:
 
         analysis_duration_ms = (time.perf_counter() - analysis_start) * 1000
         accumulate_metric(
-            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
+            f"deriver_representation_{latest_message.id}_{self.target_name}",
             "critical_analysis_duration",
             analysis_duration_ms,
             "ms",
@@ -435,13 +562,13 @@ class CertaintyReasoner:
         new_observations_by_level: dict[
             str, list[str]
         ] = await self._save_new_observations(
-            working_representation, reasoning_response
+            working_representation, reasoning_response, latest_message
         )
         save_observations_duration = (
             time.perf_counter() - save_observations_start
         ) * 1000
         accumulate_metric(
-            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
+            f"deriver_representation_{latest_message.id}_{self.target_name}",
             "save_new_observations",
             save_observations_duration,
             "ms",
@@ -460,7 +587,7 @@ class CertaintyReasoner:
             time.perf_counter() - update_peer_card_start
         ) * 1000
         accumulate_metric(
-            f"deriver_representation_{self.ctx.message_id}_{self.ctx.target_name}",
+            f"deriver_representation_{latest_message.id}_{self.target_name}",
             "update_peer_card",
             update_peer_card_duration,
             "ms",
@@ -472,8 +599,10 @@ class CertaintyReasoner:
     @sentry_sdk.trace
     async def _save_new_observations(
         self,
-        original_working_representation: ReasoningResponse,
-        revised_observations: ReasoningResponse,
+        original_working_representation: ReasoningResponse
+        | ReasoningResponseWithThinking,
+        revised_observations: ReasoningResponse | ReasoningResponseWithThinking,
+        latest_message: Message,
     ) -> dict[str, list[str]]:
         """Save only the observations that are new compared to the original context."""
         # Use the utility function to find new observations
@@ -521,9 +650,9 @@ class CertaintyReasoner:
         if all_unified_observations:
             await self.embedding_store.save_unified_observations(
                 all_unified_observations,
-                self.ctx.message_id,
-                self.ctx.session_name,
-                self.ctx.created_at,
+                latest_message.id,
+                latest_message.session_name,
+                latest_message.created_at,
             )
         else:
             logger.debug("No new observations to save")
@@ -557,9 +686,9 @@ class CertaintyReasoner:
             async with tracked_db("deriver.update_peer_card") as db:
                 await crud.set_peer_card(
                     db,
-                    self.ctx.workspace_name,
-                    self.ctx.sender_name,
-                    self.ctx.target_name,
+                    self.ctx[0].workspace_name,
+                    self.sender_name,
+                    self.target_name,
                     new_peer_card,
                 )
         except Exception as e:
@@ -597,8 +726,10 @@ def observation_context_to_reasoning_response(
 
 @sentry_sdk.trace
 async def save_working_representation_to_peer(
-    payload: RepresentationPayload,
+    latest_message: Message,
     final_observations: ReasoningResponseWithThinking,
+    sender_name: str,
+    target_name: str,
 ) -> None:
     """Save working representation to peer internal_metadata for dialectic access."""
 
@@ -617,7 +748,7 @@ async def save_working_representation_to_peer(
 
     working_rep_data = {
         "final_observations": final_obs_dict,
-        "message_id": payload.message_id,
+        "message_id": latest_message.id,
         "created_at": utc_now_iso(),
     }
 
@@ -625,8 +756,33 @@ async def save_working_representation_to_peer(
         await crud.set_working_representation(
             db,
             working_rep_data,
-            payload.workspace_name,
-            payload.target_name,
-            payload.sender_name,
-            payload.session_name,
+            latest_message.workspace_name,
+            target_name,
+            sender_name,
+            latest_message.session_name,
         )
+
+
+def _estimate_working_representation_tokens(
+    working_rep_data: dict[str, Any] | str | None,
+) -> int:
+    """Estimate tokens for working representation data."""
+    if isinstance(working_rep_data, str):
+        return estimate_tokens(working_rep_data)
+
+    if (
+        not isinstance(working_rep_data, dict)
+        or "final_observations" not in working_rep_data
+    ):
+        return 0
+
+    final_obs = working_rep_data["final_observations"]
+
+    explicit_tokens = estimate_tokens(final_obs.get("explicit"))
+    thinking_tokens = estimate_tokens(final_obs.get("thinking"))
+    deductive_tokens = sum(
+        estimate_tokens(d.get("conclusion")) + estimate_tokens(d.get("premises"))
+        for d in final_obs.get("deductive", [])
+    )
+
+    return explicit_tokens + thinking_tokens + deductive_tokens

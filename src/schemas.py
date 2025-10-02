@@ -104,6 +104,12 @@ class PeerRepresentationGet(BaseModel):
     )
 
 
+class PeerCardResponse(BaseModel):
+    peer_card: list[str] | None = Field(
+        None, description="The peer card content, or None if not found"
+    )
+
+
 class PeerConfig(BaseModel):
     observe_me: bool = Field(
         default=True,
@@ -307,6 +313,23 @@ class DialecticOptions(BaseModel):
 
 class DialecticResponse(BaseModel):
     content: str
+
+
+class DialecticStreamDelta(BaseModel):
+    """Delta object for streaming dialectic responses."""
+
+    content: str | None = None
+    # Future fields can be added here:
+    # premises: str | None = None
+    # tokens: int | None = None
+    # analytics: dict[str, Any] | None = None
+
+
+class DialecticStreamChunk(BaseModel):
+    """Chunk in a streaming dialectic response."""
+
+    delta: DialecticStreamDelta
+    done: bool = False
 
 
 class SessionCounts(BaseModel):

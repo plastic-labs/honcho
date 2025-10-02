@@ -4,31 +4,44 @@ from asyncio import Task
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from logging import getLogger
+from typing import NamedTuple
 
 import sentry_sdk
 from dotenv import load_dotenv
+from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import delete, select, update
+from sqlalchemy import BigInteger, and_, delete, select, update
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
+from src import models
 from src.config import settings
+from src.dependencies import tracked_db
+from src.deriver.consumer import (
+    process_item,
+    process_representation_batch,
+)
+from src.deriver.utils import parse_work_unit_key
 from src.models import QueueItem
-
-from .. import models
-from ..dependencies import tracked_db
-from .consumer import process_item
 
 logger = getLogger(__name__)
 
 load_dotenv(override=True)
 
 
+class WorkerOwnership(NamedTuple):
+    """Represents the instance of a work unit that a worker is processing."""
+
+    work_unit_key: str
+    aqs_id: str  # The ID of the ActiveQueueSession that the worker is processing
+
+
 class QueueManager:
     def __init__(self):
         self.shutdown_event: asyncio.Event = asyncio.Event()
         self.active_tasks: set[asyncio.Task[None]] = set()
-        self.owned_work_units: set[str] = set()
+        self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
 
         # Initialize from settings
@@ -52,13 +65,25 @@ class QueueManager:
         self.active_tasks.add(task)
         task.add_done_callback(self.active_tasks.discard)
 
-    def track_work_unit(self, work_unit_key: str) -> None:
-        """Track a new work unit owned by this process"""
-        self.owned_work_units.add(work_unit_key)
+    def track_worker_work_unit(
+        self, worker_id: str, work_unit_key: str, aqs_id: str
+    ) -> None:
+        """Track a work unit owned by a specific worker"""
+        self.worker_ownership[worker_id] = WorkerOwnership(work_unit_key, aqs_id)
 
-    def untrack_work_unit(self, work_unit_key: str) -> None:
-        """Remove a work unit from tracking"""
-        self.owned_work_units.discard(work_unit_key)
+    def untrack_worker_work_unit(self, worker_id: str, work_unit_key: str) -> None:
+        """Remove a work unit from worker tracking"""
+        ownership = self.worker_ownership.get(worker_id)
+        if ownership and ownership.work_unit_key == work_unit_key:
+            del self.worker_ownership[worker_id]
+
+    def create_worker_id(self) -> str:
+        """Generate a unique worker ID for this processing task"""
+        return generate_nanoid()
+
+    def get_total_owned_work_units(self) -> int:
+        """Get the total number of work units owned by all workers"""
+        return len(self.worker_ownership)
 
     async def initialize(self) -> None:
         """Setup signal handlers, initialize client, and start the main polling loop"""
@@ -93,15 +118,19 @@ class QueueManager:
 
     async def cleanup(self) -> None:
         """Clean up owned work units"""
-        if self.owned_work_units:
-            logger.info(f"Cleaning up {len(self.owned_work_units)} owned work units...")
+        total_work_units = self.get_total_owned_work_units()
+        if total_work_units > 0:
+            logger.debug(f"Cleaning up {total_work_units} owned work units...")
             try:
                 # Use the tracked_db dependency for transaction safety
                 async with tracked_db("queue_cleanup") as db:
-                    for work_unit_key in self.owned_work_units:
+                    aqs_ids = [
+                        ownership.aqs_id for ownership in self.worker_ownership.values()
+                    ]
+                    if aqs_ids:
                         await db.execute(
                             delete(models.ActiveQueueSession).where(
-                                models.ActiveQueueSession.work_unit_key == work_unit_key
+                                models.ActiveQueueSession.id.in_(aqs_ids)
                             )
                         )
                     await db.commit()
@@ -110,32 +139,53 @@ class QueueManager:
                 logger.error(f"Error during cleanup: {str(e)}")
                 if settings.SENTRY.ENABLED:
                     sentry_sdk.capture_exception(e)
+            finally:
+                self.worker_ownership.clear()
 
     ##########################
     # Polling and Scheduling #
     ##########################
 
-    async def get_and_claim_work_units(self) -> Sequence[str]:
-        """
-        Get available work units that aren't being processed.
-        Returns a list of work unit keys.
-        """
-        claimed_units: list[str] = []
-
-        async with tracked_db("get_available_work_units") as db:
-            # Clean up stale work units
-            five_minutes_ago = datetime.now(timezone.utc) - timedelta(
+    async def cleanup_stale_work_units(self) -> None:
+        """Clean up stale work units"""
+        async with tracked_db("cleanup_stale_work_units") as db:
+            cutoff = datetime.now(timezone.utc) - timedelta(
                 minutes=settings.DERIVER.STALE_SESSION_TIMEOUT_MINUTES
             )
-            await db.execute(
-                delete(models.ActiveQueueSession).where(
-                    models.ActiveQueueSession.last_updated < five_minutes_ago
+
+            stale_ids = (
+                (
+                    await db.execute(
+                        select(models.ActiveQueueSession.id)
+                        .where(models.ActiveQueueSession.last_updated < cutoff)
+                        .order_by(models.ActiveQueueSession.last_updated)
+                        .with_for_update(skip_locked=True)
+                    )
                 )
+                .scalars()
+                .all()
             )
 
-            # Get number of available workers
-            limit: int = max(0, self.workers - len(self.owned_work_units))
+            # Delete only the records we successfully got locks for
+            if stale_ids:
+                await db.execute(
+                    delete(models.ActiveQueueSession).where(
+                        models.ActiveQueueSession.id.in_(stale_ids)
+                    )
+                )
+            await db.commit()
 
+    async def get_and_claim_work_units(self) -> dict[str, str]:
+        """
+        Get available work units that aren't being processed.
+        Returns a dict mapping work_unit_key to aqs_id.
+        """
+        limit: int = max(0, self.workers - self.get_total_owned_work_units())
+        if limit == 0:
+            return {}
+        async with tracked_db(
+            "get_available_work_units"
+        ) as db:  # Get number of available workers
             query = (
                 select(models.QueueItem.work_unit_key)
                 .outerjoin(
@@ -154,34 +204,38 @@ class QueueManager:
             available_units = result.scalars().all()
             if not available_units:
                 await db.commit()
-                return []
+                return {}
 
-            claimed_units = await self.claim_work_units(db, available_units)
+            claimed_mapping = await self.claim_work_units(db, available_units)
             await db.commit()
 
-            for work_unit in claimed_units:
-                self.track_work_unit(work_unit)
-
-            return claimed_units
+            return claimed_mapping
 
     async def claim_work_units(
         self, db: AsyncSession, work_unit_keys: Sequence[str]
-    ) -> list[str]:
-        from sqlalchemy.dialects.postgresql import insert
-
+    ) -> dict[str, str]:
+        """
+        Claim work units and return a mapping of work_unit_key to aqs_id.
+        Returns only the work units that were successfully claimed.
+        """
         values = [{"work_unit_key": key} for key in work_unit_keys]
 
         stmt = (
             insert(models.ActiveQueueSession)
             .values(values)
             .on_conflict_do_nothing()
-            .returning(models.ActiveQueueSession.work_unit_key)
+            .returning(
+                models.ActiveQueueSession.work_unit_key, models.ActiveQueueSession.id
+            )
         )
 
         result = await db.execute(stmt)
-        claimed_units = result.scalars().all()
-        logger.debug(f"Claimed {len(claimed_units)} work units")
-        return list(claimed_units)
+        claimed_rows = result.all()
+        claimed_mapping = {row[0]: row[1] for row in claimed_rows}
+        logger.debug(
+            f"Claimed {len(claimed_mapping)} work units: {list(claimed_mapping.keys())}"
+        )
+        return claimed_mapping
 
     async def polling_loop(self) -> None:
         """Main polling loop to find and process new work units"""
@@ -201,13 +255,20 @@ class QueueManager:
                     continue
 
                 try:
-                    new_work_units = await self.get_and_claim_work_units()
-                    if new_work_units:
-                        for work_unit in new_work_units:
+                    await self.cleanup_stale_work_units()
+                    claimed_work_units = await self.get_and_claim_work_units()
+                    if claimed_work_units:
+                        for work_unit_key, aqs_id in claimed_work_units.items():
                             # Create a new task for processing this work unit
                             if not self.shutdown_event.is_set():
+                                # Track worker ownership
+                                worker_id = self.create_worker_id()
+                                self.track_worker_work_unit(
+                                    worker_id, work_unit_key, aqs_id
+                                )
+
                                 task: Task[None] = asyncio.create_task(
-                                    self.process_work_unit(work_unit)
+                                    self.process_work_unit(work_unit_key, worker_id)
                                 )
                                 self.add_task(task)
                     else:
@@ -227,57 +288,84 @@ class QueueManager:
     ######################
     # Queue Worker Logic #
     ######################
-
-    @sentry_sdk.trace
-    async def process_work_unit(self, work_unit_key: str):
+    async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all messages for a specific work unit by routing to the correct handler."""
-        logger.debug(f"Starting to process work unit {work_unit_key}")
-        async with (
-            self.semaphore
-        ):  # Hold the semaphore for the entire work unit duration
+        logger.debug(
+            f"Worker {worker_id} starting to process work unit {work_unit_key}"
+        )
+        async with self.semaphore:
             message_count = 0
+            messages_to_process: list[QueueItem] = []
             try:
-                while not self.shutdown_event.is_set():
-                    message = await self.get_next_message(work_unit_key)
-                    if not message:
-                        logger.debug(f"No more messages for work unit {work_unit_key}")
-                        break
+                parsed_key = parse_work_unit_key(work_unit_key)
+                task_type = parsed_key["task_type"]
 
-                    message_count += 1
+                while not self.shutdown_event.is_set():
+                    # Get worker ownership info for verification
+                    ownership = self.worker_ownership.get(worker_id)
+                    if not ownership or ownership.work_unit_key != work_unit_key:
+                        logger.warning(
+                            f"Worker {worker_id} lost ownership of work unit {work_unit_key}, stopping processing {work_unit_key}"
+                        )
+                        break
                     try:
-                        logger.info(
-                            f"Processing item for task type {message.task_type} with id {message.id} from work unit {work_unit_key}"
-                        )
-                        await process_item(message.task_type, message.payload)
-                        logger.debug(
-                            f"Successfully processed queue item for task type {message.task_type} with id {message.id}"
-                        )
+                        if task_type == "representation":
+                            (
+                                messages_context,
+                                items_to_process,
+                            ) = await self.get_message_batch(
+                                task_type, work_unit_key, ownership.aqs_id
+                            )
+                            logger.debug(
+                                f"Worker {worker_id} retrieved {len(messages_context)} messages and {len(items_to_process)} queue items for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
+                            )
+                            if not items_to_process:
+                                logger.debug(
+                                    f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
+                                )
+                                break
+
+                            # Build payloads from the unique messages context window
+                            sender_name = parsed_key["sender_name"]
+                            target_name = parsed_key["target_name"]
+
+                            await process_representation_batch(
+                                messages_context,
+                                sender_name=sender_name,
+                                target_name=target_name,
+                            )
+
+                            await self.mark_messages_as_processed(
+                                items_to_process, work_unit_key
+                            )
+                            message_count += len(items_to_process)
+
+                        else:
+                            messages_to_process = await self.get_next_message(
+                                task_type, work_unit_key, ownership.aqs_id
+                            )
+                            if not messages_to_process:
+                                logger.debug(
+                                    f"No more messages to process for work unit {work_unit_key} for worker {worker_id}"
+                                )
+                                break
+                            await process_item(
+                                task_type, messages_to_process[0].payload
+                            )
+                            await self.mark_messages_as_processed(
+                                messages_to_process, work_unit_key
+                            )
+                            message_count += len(messages_to_process)
+
                     except Exception as e:
                         logger.error(
-                            f"Error processing queue item for task type {message.task_type} with id {message.id}: {str(e)}",
+                            f"Error processing tasks for work unit {work_unit_key}: {e}",
                             exc_info=True,
                         )
                         if settings.SENTRY.ENABLED:
                             sentry_sdk.capture_exception(e)
 
-                    # Prevent malformed messages from stalling queue indefinitely
-                    async with tracked_db("process_message") as db:
-                        await db.execute(
-                            update(models.QueueItem)
-                            .where(models.QueueItem.id == message.id)
-                            .values(processed=True)
-                        )
-
-                        await db.execute(
-                            update(models.ActiveQueueSession)
-                            .where(
-                                models.ActiveQueueSession.work_unit_key == work_unit_key
-                            )
-                            .values(last_updated=func.now())
-                        )
-
-                        await db.commit()
-
+                    # Check for shutdown after processing each batch
                     if self.shutdown_event.is_set():
                         logger.debug(
                             "Shutdown requested, stopping processing for work unit %s",
@@ -285,18 +373,20 @@ class QueueManager:
                         )
                         break
 
-                logger.debug(
-                    f"Completed processing work unit {work_unit_key}, processed {message_count} messages"
-                )
             finally:
                 # Remove work unit from active_queue_sessions when done
-                logger.debug(f"Removing work unit {work_unit_key} from active sessions")
-                removed = await self._cleanup_work_unit(work_unit_key)
+                ownership: WorkerOwnership | None = self.worker_ownership.get(worker_id)
+                if ownership and ownership.work_unit_key == work_unit_key:
+                    removed = await self._cleanup_work_unit(
+                        ownership.aqs_id, work_unit_key
+                    )
+                else:
+                    removed = False
 
+                self.untrack_worker_work_unit(worker_id, work_unit_key)
                 if removed and message_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        from src.deriver.utils import parse_work_unit_key
                         from src.webhooks.events import (
                             QueueEmptyEvent,
                             publish_webhook_event,
@@ -304,7 +394,7 @@ class QueueManager:
 
                         parsed_key = parse_work_unit_key(work_unit_key)
                         if parsed_key["task_type"] in ["representation", "summary"]:
-                            logger.info(
+                            logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key}"
                             )
                             await publish_webhook_event(
@@ -327,32 +417,209 @@ class QueueManager:
                         f"Work unit {work_unit_key} already cleaned up by another worker, skipping webhook"
                     )
 
-                self.untrack_work_unit(work_unit_key)
-
     @sentry_sdk.trace
-    async def get_next_message(self, work_unit_key: str) -> QueueItem | None:
-        """Get the next unprocessed message for a specific work unit."""
+    async def get_next_message(
+        self, task_type: str, work_unit_key: str, aqs_id: str
+    ) -> list[QueueItem]:
+        """Get the next message to process for a specific work unit."""
+        if task_type == "representation":
+            raise ValueError(
+                "Representation tasks are not supported for get_next_message"
+            )
         async with tracked_db("get_next_message") as db:
+            # ActiveQueueSession conditions for worker ownership verification
+            aqs_conditions = [
+                models.ActiveQueueSession.work_unit_key == work_unit_key,
+                models.ActiveQueueSession.id == aqs_id,
+            ]
+
+            # For non-representation tasks, just get the next single message.
             query = (
                 select(models.QueueItem)
+                .join(
+                    models.ActiveQueueSession,
+                    models.QueueItem.work_unit_key
+                    == models.ActiveQueueSession.work_unit_key,
+                )
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .where(~models.QueueItem.processed)
+                .where(*aqs_conditions)
                 .order_by(models.QueueItem.id)
                 .limit(1)
             )
             result = await db.execute(query)
-            message = result.scalar_one_or_none()
+            messages = result.scalars().all()
+
             # Important: commit to avoid tracked_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
             await db.commit()
-            return message
+            return list(messages)
 
-    async def _cleanup_work_unit(self, work_unit_key: str) -> bool:
+    @sentry_sdk.trace
+    async def get_message_batch(
+        self,
+        task_type: str,
+        work_unit_key: str,
+        aqs_id: str,
+    ) -> tuple[list[models.Message], list[QueueItem]]:
+        """
+        Representation-only: returns a tuple of (messages_context, items_to_process).
+        - messages_context: unique Message rows (conversation turns) forming the context window
+        - items_to_process: QueueItems for the current work_unit_key within that window
+        """
+        if task_type != "representation":
+            raise ValueError(
+                "Non-representation tasks are not supported for get_message_batch"
+            )
+        async with tracked_db("get_message_batch") as db:
+            # For representation tasks, get a batch based on token limit.
+            # Step 1: Parse work_unit_key to get session context and focused sender
+            parsed_key = parse_work_unit_key(work_unit_key)
+            session_name = parsed_key["session_name"]
+            workspace_name = parsed_key["workspace_name"]
+
+            # Verify worker still owns the work_unit_key
+            ownership_check = await db.execute(
+                select(models.ActiveQueueSession.id)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                .where(models.ActiveQueueSession.id == aqs_id)
+            )
+            if not ownership_check.scalar_one_or_none():
+                # Worker lost ownership, return empty
+                await db.commit()
+                return [], []
+
+            # Step 2: Build a single SQL query that:
+            # 1. Finds the earliest unprocessed message for this work_unit_key
+            # 2. Gets ALL messages from that point forward (for conversational context)
+            # 3. Tracks cumulative tokens and focused sender position
+            # 4. Returns empty if focused sender is beyond token limit
+            # 5. Otherwise returns messages up to token limit + first focused sender message
+
+            # Find the minimum message_id with an unprocessed queue item across the session
+            min_unprocessed_message_id_subq = (
+                select(func.min(models.Message.id))
+                .select_from(models.QueueItem)
+                .join(
+                    models.Message,
+                    func.cast(models.QueueItem.payload["message_id"].astext, BigInteger)
+                    == models.Message.id,
+                )
+                .where(~models.QueueItem.processed)
+                .where(models.Message.session_name == session_name)
+                .where(models.Message.workspace_name == workspace_name)
+                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .scalar_subquery()
+            )
+
+            # Build CTE with ALL messages starting from the earliest unprocessed message
+            # This includes interleaving messages for conversational context
+            cte = (
+                select(
+                    models.Message.id.label("message_id"),
+                    models.Message.token_count.label("token_count"),
+                    models.Message.peer_name.label("sender_name"),
+                    func.sum(models.Message.token_count)
+                    .over(order_by=models.Message.id)
+                    .label("cumulative_token_count"),
+                )
+                .where(models.Message.session_name == session_name)
+                .where(models.Message.workspace_name == workspace_name)
+                .where(models.Message.id >= min_unprocessed_message_id_subq)
+                .order_by(models.Message.id)
+                .cte()
+            )
+
+            allowed_condition = (
+                (
+                    cte.c.cumulative_token_count
+                    <= settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+                )
+                | (
+                    cte.c.message_id == min_unprocessed_message_id_subq
+                )  # always include the first unprocessed message
+            )
+
+            query = (
+                select(models.Message, models.QueueItem)
+                .select_from(cte)
+                .join(models.Message, models.Message.id == cte.c.message_id)
+                .outerjoin(
+                    models.QueueItem,
+                    and_(
+                        models.QueueItem.work_unit_key == work_unit_key,
+                        ~models.QueueItem.processed,
+                        func.cast(
+                            models.QueueItem.payload["message_id"].astext, BigInteger
+                        )
+                        == models.Message.id,
+                    ),
+                )
+                .where(allowed_condition)
+                .order_by(models.Message.id, models.QueueItem.id)
+            )
+
+            result = await db.execute(query)
+            rows = result.all()
+            if not rows:
+                await db.commit()
+                return [], []
+
+            messages_context: list[models.Message] = []
+            items_to_process: list[QueueItem] = []
+            seen_messages: set[int] = set()
+            for m, qi in rows:
+                if m.id not in seen_messages:
+                    messages_context.append(m)
+                    seen_messages.add(m.id)
+                if qi is not None:
+                    items_to_process.append(qi)
+
+            if items_to_process:
+                max_queue_item_message_id = max(
+                    [qi.payload["message_id"] for qi in items_to_process]
+                )
+                messages_context = [  # remove any messages that are after the last message_id from queue items
+                    m for m in messages_context if m.id <= max_queue_item_message_id
+                ]
+
+            await db.commit()
+
+            return messages_context, items_to_process
+
+    async def mark_messages_as_processed(
+        self, messages: list[QueueItem], work_unit_key: str
+    ) -> None:
+        if not messages:
+            return
+        async with tracked_db("process_message_batch") as db:
+            message_ids = [msg.id for msg in messages]
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id.in_(message_ids))
+                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .values(processed=True)
+            )
+            await db.execute(
+                update(models.ActiveQueueSession)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                .values(last_updated=func.now())
+            )
+            await db.commit()
+
+    async def _cleanup_work_unit(
+        self,
+        aqs_id: str,
+        work_unit_key: str,
+    ) -> bool:
+        """
+        Clean up a specific work unit session by both work_unit_key and AQS ID.
+        """
         async with tracked_db("cleanup_work_unit") as db:
             result = await db.execute(
-                delete(models.ActiveQueueSession).where(
-                    models.ActiveQueueSession.work_unit_key == work_unit_key
-                )
+                delete(models.ActiveQueueSession)
+                .where(models.ActiveQueueSession.id == aqs_id)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
             )
             await db.commit()
             return result.rowcount > 0
