@@ -1,4 +1,5 @@
 import logging
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -187,8 +188,9 @@ async def global_exception_handler(_request: Request, exc: Exception):
 async def track_request(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ):
-    # Use raw path for request_id early; template may not be resolved yet
-    request_id = f"{request.method}:{request.url.path}:{str(uuid.uuid4())[:8]}"
+    # Create a request ID that includes endpoint information
+    endpoint = re.sub(r"/[A-Za-z0-9_-]{21}", "", request.url.path).replace("/", "_")
+    request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"
 
     # Store in request state and context var
     request.state.request_id = request_id
