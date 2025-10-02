@@ -180,9 +180,6 @@ async def chat(
         if prometheus.METRICS_ENABLED:
             prometheus.DIALECTIC_CALLS.labels(
                 workspace_name=workspace_id,
-                peer_name=peer_id,
-                target_name=options.target or "",
-                session_name=options.session_id or "",
             ).inc()
 
         return schemas.DialecticResponse(content=str(response))
@@ -201,8 +198,6 @@ async def chat(
             if prometheus.METRICS_ENABLED:
                 prometheus.DIALECTIC_CALLS.labels(
                     workspace_name=workspace_id,
-                    peer_name=peer_id,
-                    target_name=options.target or "",
                     session_name=options.session_id or "",
                 ).inc()
 

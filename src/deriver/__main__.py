@@ -63,7 +63,8 @@ if __name__ == "__main__":
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
         print("[DERIVER] Running main loop")
-        start_metrics_server()
+        if settings.METRICS.ENABLED:
+            start_metrics_server()
         asyncio.run(main())
     except KeyboardInterrupt:
         print("[DERIVER] Shutdown initiated via KeyboardInterrupt")

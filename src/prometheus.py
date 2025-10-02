@@ -1,4 +1,3 @@
-from dotenv import load_dotenv
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
@@ -9,7 +8,6 @@ from starlette.responses import Response as StarletteResponse
 
 from src.config import settings
 
-load_dotenv()
 METRICS_ENABLED = settings.METRICS.ENABLED
 
 
@@ -36,13 +34,19 @@ API_REQUESTS = NamespacedCounter(
 MESSAGES_CREATED = NamespacedCounter(
     "messages_created_total",
     "Total messages created",
-    ["namespace", "workspace_name", "session_name"],
+    [
+        "namespace",
+        "workspace_name",
+    ],
 )
 
 DIALECTIC_CALLS = NamespacedCounter(
     "dialectic_calls_total",
     "Total dialectic calls",
-    ["namespace", "workspace_name", "peer_name", "target_name", "session_name"],
+    [
+        "namespace",
+        "workspace_name",
+    ],
 )
 
 

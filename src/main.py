@@ -1,5 +1,4 @@
 import logging
-import re
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -12,6 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 
 from src import prometheus
+from src.routers.utils import get_route_template
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
@@ -187,9 +187,8 @@ async def global_exception_handler(_request: Request, exc: Exception):
 async def track_request(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]
 ):
-    # Create a request ID that includes endpoint information
-    endpoint = re.sub(r"/[A-Za-z0-9_-]{21}", "", request.url.path).replace("/", "_")
-    request_id = f"{request.method}:{endpoint}:{str(uuid.uuid4())[:8]}"
+    # Use raw path for request_id early; template may not be resolved yet
+    request_id = f"{request.method}:{request.url.path}:{str(uuid.uuid4())[:8]}"
 
     # Store in request state and context var
     request.state.request_id = request_id
@@ -200,23 +199,25 @@ async def track_request(
 
         # Track Prometheus metrics if enabled
         if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+            template = get_route_template(request)
             prometheus.API_REQUESTS.labels(
                 method=request.method,
-                endpoint=request.url.path,
+                endpoint=template,
                 status_code=str(response.status_code),
             ).inc()
 
         return response
 
-    except Exception as e:
+    except Exception:
         # Track Prometheus error metrics if enabled
         if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+            template = get_route_template(request)
             prometheus.API_REQUESTS.labels(
                 method=request.method,
-                endpoint=request.url.path,
+                endpoint=template,
                 status_code="500",
             ).inc()
-        raise e
+        raise
 
     finally:
         request_context.reset(token)
