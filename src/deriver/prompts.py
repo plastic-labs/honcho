@@ -6,9 +6,11 @@ and reasoning tasks.
 """
 
 import datetime
+from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.representation import Representation
+from src.utils.work_unit import estimate_tokens
 
 
 def critical_analysis_prompt(
@@ -38,7 +40,6 @@ def critical_analysis_prompt(
         f"""
 {peer_id}'s known biographical information:
 <peer_card>
-Peer ID: {peer_id}
 {chr(10).join(peer_card)}
 </peer_card>
 """
@@ -48,7 +49,7 @@ Peer ID: {peer_id}
 
     working_representation_section = (
         f"""
-The current user understanding:
+Current understanding of {peer_id}:
 <current_context>
 {str(working_representation)}
 </current_context>
@@ -63,9 +64,16 @@ The current user understanding:
         f"""
 You are an agent who critically analyzes messages from {peer_id} through rigorous logical reasoning to produce only conclusions about them that are CERTAIN.
 
+TARGET USER TO ANALYZE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+You are analyzing: {peer_id}
+
+The conversation may include messages from multiple participants, but you MUST focus ONLY on deriving conclusions about {peer_id}. Only use other participants' messages as context for understanding {peer_id}.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 IMPORTANT NAMING RULES
-• When you write a conclusion about {peer_id}, always start the sentence with {peer_id}'s name (e.g. "Anthony is 25 years old").
-• NEVER start a conclusion with generic phrases like "{peer_id} is…" unless {peer_id}'s name is not known.
+• When you write a conclusion about {peer_id}, always start the sentence with their name (e.g. "Anthony is 25 years old").
+• NEVER start a conclusion with generic phrases like "The user …" unless the user name is not known.
 • If you must reference a third person, use their explicit name, and add clarifiers such as "(third-party)" when confusion is possible.
 
 Your goal is to IMPROVE understanding of {peer_id} through careful analysis. Your task is to arrive at truthful, factual conclusions via explicit and deductive reasoning.
@@ -147,6 +155,13 @@ def peer_card_prompt(
     """
     Generate the peer card prompt for the deriver.
     Currently optimized for GPT-5 mini/nano.
+
+    Args:
+        old_peer_card: Existing biographical card lines, if any.
+        new_observations: Pre-formatted observations block (multiple lines).
+
+    Returns:
+        Formatted prompt string for (re)generating the peer card JSON.
     """
     old_peer_card_section = (
         f"""
@@ -197,3 +212,25 @@ New observations:
 If there's no new key info, set "card" to null (or omit it) to signal no update. **NEVER** include notes or temporary information in the card itself, instead use the notes field. There are no mandatory fields -- if you can't find a value, just leave it out. **ONLY** include information that is **GIVEN**.
     """  # nosec B608 <-- this is a really dumb false positive
     )
+
+
+@cache
+def estimate_base_prompt_tokens() -> int:
+    """Estimate base prompt tokens by calling critical_analysis_prompt with empty values.
+
+    This value is cached since it only changes on redeploys when the prompt template changes.
+    """
+
+    try:
+        base_prompt = critical_analysis_prompt(
+            peer_id="",
+            peer_card=None,
+            message_created_at=datetime.datetime.now(datetime.timezone.utc),
+            working_representation=Representation(),
+            history="",
+            new_turns=[],
+        )
+        return estimate_tokens(base_prompt)
+    except Exception:
+        # Return a conservative estimate if estimation fails
+        return 500

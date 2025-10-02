@@ -4,7 +4,7 @@ from logging import getLogger
 from typing import Any
 
 import sentry_sdk
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
@@ -254,13 +254,12 @@ async def check_and_schedule_dream(
     last_dream_at = dream_metadata.get("last_dream_at")
 
     # Count current documents in the collection
-    count_stmt = select(models.Document).where(
+    count_stmt = select(func.count(models.Document.id)).where(
         models.Document.workspace_name == collection.workspace_name,
         models.Document.peer_name == collection.peer_name,
         models.Document.collection_name == collection.name,
     )
-    count_result = await db.execute(count_stmt)
-    current_document_count = len(count_result.scalars().all())
+    current_document_count = int(await db.scalar(count_stmt) or 0)
 
     # Calculate documents added since last dream
     documents_since_last_dream = current_document_count - last_dream_document_count

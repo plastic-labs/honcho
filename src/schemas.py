@@ -287,7 +287,9 @@ class DocumentMetadata(BaseModel):
         ge=1,
         description="The number of times that a semantic duplicate document to this one has been derived",
     )
-    message_id: int = Field()
+    message_ids: list[tuple[int, int]] = Field(
+        description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
+    )
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
@@ -335,6 +337,23 @@ class DialecticOptions(BaseModel):
 
 class DialecticResponse(BaseModel):
     content: str
+
+
+class DialecticStreamDelta(BaseModel):
+    """Delta object for streaming dialectic responses."""
+
+    content: str | None = None
+    # Future fields can be added here:
+    # premises: str | None = None
+    # tokens: int | None = None
+    # analytics: dict[str, Any] | None = None
+
+
+class DialecticStreamChunk(BaseModel):
+    """Chunk in a streaming dialectic response."""
+
+    delta: DialecticStreamDelta
+    done: bool = False
 
 
 class SessionCounts(BaseModel):

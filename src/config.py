@@ -191,7 +191,7 @@ class DeriverSettings(HonchoSettings):
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
     PROVIDER: SupportedProviders = "google"
-    MODEL: str = "gemini-2.5-flash"
+    MODEL: str = "gemini-2.5-flash-lite"
 
     MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     # Thinking budget tokens are only applied when using Anthropic as provider
@@ -204,11 +204,6 @@ class DeriverSettings(HonchoSettings):
     PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
         int, Field(default=4000, gt=1000, le=10_000)
     ] = 4000
-
-    # Context token limit for get_context method
-    CONTEXT_TOKEN_LIMIT: Annotated[int, Field(default=30_000, gt=1000, le=100_000)] = (
-        30_000
-    )
 
     # Maximum number of observations to store in working representation
     # This is applied to both explicit and deductive observations
@@ -224,11 +219,13 @@ class DeriverSettings(HonchoSettings):
         ),
     ] = 4096
 
+    MAX_INPUT_TOKENS: Annotated[int, Field(default=23000, gt=0, le=23000)] = 23000
+
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.CONTEXT_TOKEN_LIMIT:
+        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed CONTEXT_TOKEN_LIMIT ({self.CONTEXT_TOKEN_LIMIT})"
+                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 
@@ -260,6 +257,8 @@ class DialecticSettings(HonchoSettings):
 class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
+    ENABLED: bool = True
+
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
@@ -282,9 +281,9 @@ class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = True
-    DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 1
-    IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 1
-    MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 24
+    DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
+    IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
+    MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
     ENABLED_TYPES: list[str] = ["consolidate"]
 
     # LLM settings for dream processing

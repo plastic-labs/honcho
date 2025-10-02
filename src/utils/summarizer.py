@@ -580,6 +580,9 @@ async def get_session_context(
         Tuple of (summary, messages) where summary is a Summary pydantic model (or None)
         and messages is the list of message objects
     """
+    if token_limit <= 0:
+        return None, []
+
     summary = None
     messages_tokens = token_limit
     messages_start_id = 0
@@ -658,6 +661,9 @@ async def get_session_context_formatted(
     This is a convenience wrapper around get_session_context that formats
     the output as a string.
     """
+    if token_limit <= 0:
+        return ""
+
     summary, messages = await get_session_context(
         db,
         workspace_name,

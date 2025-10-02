@@ -185,3 +185,6 @@ config.toml
 
 CRUSH.md
 .crush/
+
+metrics.jsonl
+AGENTS.md

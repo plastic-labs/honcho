@@ -45,6 +45,7 @@ from .pagination import SyncPage
 from .peer import Peer
 from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
+from .types import DialecticStreamResponse
 
 __version__ = "1.4.0"
 __author__ = "Plastic Labs"
@@ -62,4 +63,5 @@ __all__ = [
     "SessionSummaries",
     "Summary",
     "SyncPage",
+    "DialecticStreamResponse",
 ]

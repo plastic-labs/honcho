@@ -94,7 +94,7 @@ class TestMessageValidations:
 class TestDocumentValidations:
     def test_valid_document_create(self):
         metadata = DocumentMetadata(
-            message_id=1,
+            message_ids=[(1, 1)],
             session_name="test",
             level="explicit",
             premises=[],
@@ -112,7 +112,7 @@ class TestDocumentValidations:
             DocumentCreate(
                 content="",
                 metadata=DocumentMetadata(
-                    message_id=1,
+                    message_ids=[(1, 1)],
                     session_name="test",
                     level="explicit",
                     premises=[],
@@ -127,7 +127,7 @@ class TestDocumentValidations:
             DocumentCreate(
                 content="a" * 100001,
                 metadata=DocumentMetadata(
-                    message_id=1,
+                    message_ids=[(1, 1)],
                     session_name="test",
                     level="explicit",
                     premises=[],

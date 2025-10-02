@@ -91,6 +91,10 @@ class MetricsCollector:
             # Normalize metric names to be consistent
             normalized_name = metric_name.lower().replace(" ", "_")
 
+            # skip metrics whose unit is "id" (more in future possibly)
+            if unit in ["id"]:
+                continue
+
             # Convert value to float for aggregation
             try:
                 numeric_value = float(value)
@@ -114,6 +118,7 @@ class MetricsCollector:
             filepath: Path to the metrics file to load
         """
         if not filepath.exists():
+            filepath.parent.mkdir(parents=True, exist_ok=True)
             filepath.touch()
             with open(filepath, "w") as f:
                 f.write("")

@@ -6,7 +6,7 @@ from typing import Any
 from json_repair import repair_json  # pyright: ignore
 
 logger = logging.getLogger(__name__)
-logging.getLogger("sqlalchemy.engine.Engine").disabled = True
+# logging.getLogger("sqlalchemy.engine.Engine").disabled = True
 
 
 def comprehensive_json_repair(json_str: str) -> str:
@@ -367,11 +367,11 @@ def validate_and_repair_json(json_str: str) -> str:
 
         # Validate the repair
         json.loads(repaired)
-        print("✅ JSON successfully repaired!")
+        logger.info("✅ JSON successfully repaired!")
         return repaired
 
     except json.JSONDecodeError as repair_error:
-        print(f"❌ Repair failed: {repair_error}")
+        logger.error(f"❌ Repair failed: {repair_error}")
         raise ValueError(
             f"Could not repair JSON. Original error: {repair_error.msg}, "
             + f"Repair error: {repair_error.msg}"

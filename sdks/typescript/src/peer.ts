@@ -1,7 +1,8 @@
 import type HonchoCore from '@honcho-ai/core'
-import type { Message } from '@honcho-ai/core/src/resources/workspaces/sessions/messages'
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { Page } from './pagination'
 import { Session } from './session'
+import { type DialecticStreamChunk, DialecticStreamResponse } from './types'
 import {
   ChatQuerySchema,
   FilterSchema,
@@ -61,8 +62,9 @@ export class Peer {
    *                 querying the peer's global representation
    * @param sessionId - Optional session ID to scope the query to a specific session.
    *                    If provided, only information from that session is considered
-   * @returns Promise resolving to response string containing the answer to the query,
-   *          or null if no relevant information is available
+   * @returns Promise resolving to:
+   *          - For non-streaming: response string or null if no relevant information
+   *          - For streaming: DialecticStreamResponse that can be iterated over
    */
   async chat(
     query: string,
@@ -71,19 +73,98 @@ export class Peer {
       target?: string | Peer
       sessionId?: string
     }
-  ): Promise<string | null> {
+  ): Promise<string | DialecticStreamResponse | null> {
     const chatParams = ChatQuerySchema.parse({
       query,
       stream: options?.stream,
       target: options?.target,
       sessionId: options?.sessionId,
     })
+
+    if (chatParams.stream) {
+      const body = {
+        query: chatParams.query,
+        stream: true,
+        target: chatParams.target
+          ? typeof chatParams.target === 'string'
+            ? chatParams.target
+            : chatParams.target.id
+          : undefined,
+        session_id: chatParams.sessionId,
+      }
+
+      const url = `${this._client.baseURL}/v2/workspaces/${this.workspaceId}/peers/${this.id}/chat`
+      const apiKey = this._client.apiKey
+
+      async function* streamResponse(): AsyncGenerator<
+        string,
+        void,
+        undefined
+      > {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'text/event-stream',
+            // Include auth headers if present
+            ...(apiKey && {
+              Authorization: `Bearer ${apiKey}`,
+            }),
+          },
+          body: JSON.stringify(body),
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        if (!response.body) {
+          throw new Error('Response body is null')
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+            buffer = lines.pop() || ''
+
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.slice(6) // Remove "data: " prefix
+                try {
+                  const chunkData: DialecticStreamChunk = JSON.parse(jsonStr)
+                  if (chunkData.done) {
+                    return
+                  }
+                  const content = chunkData.delta.content
+                  if (content) {
+                    yield content
+                  }
+                } catch {}
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock()
+        }
+      }
+
+      return new DialecticStreamResponse(streamResponse())
+    }
+
     const response = await this._client.workspaces.peers.chat(
       this.workspaceId,
       this.id,
       {
         query: chatParams.query,
-        stream: chatParams.stream,
+        stream: false,
         target: chatParams.target
           ? typeof chatParams.target === 'string'
             ? chatParams.target
@@ -256,6 +337,50 @@ export class Peer {
         limit: validatedLimit,
       }
     )
+  }
+
+  /**
+   * Get the peer card for this peer.
+   *
+   * Makes an API call to retrieve the peer card, which contains a representation
+   * of what this peer knows. If a target is provided, returns this peer's local
+   * representation of the target peer.
+   *
+   * @param target - Optional target peer for local card. If provided, returns this
+   *                 peer's card of the target peer. Can be a Peer object or peer ID string.
+   * @returns Promise resolving to a string containing the peer card
+   */
+  async card(target?: string | Peer): Promise<string> {
+    // Validate target parameter
+    if (
+      target !== undefined &&
+      typeof target !== 'string' &&
+      !(target instanceof Peer)
+    ) {
+      throw new TypeError(
+        `target must be string, Peer, or undefined, got ${typeof target}`
+      )
+    }
+
+    if (typeof target === 'string' && target.trim().length === 0) {
+      throw new Error('target string cannot be empty')
+    }
+
+    const response = await this._client.workspaces.peers.card(
+      this.workspaceId,
+      this.id,
+      {
+        target: target instanceof Peer ? target.id : target,
+      }
+    )
+
+    if (!response.peer_card) {
+      return ''
+    }
+
+    const items: string[] = response.peer_card
+
+    return items.join('\n')
   }
 
   /**

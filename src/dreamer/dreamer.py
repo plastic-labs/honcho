@@ -132,6 +132,9 @@ async def _consolidate_cluster(
         *consolidated_representation.deductive,
     ]
 
+    documents_to_create: list[schemas.DocumentCreate] = []
+    embeddings: list[list[float]] = []
+
     for obs in new_documents:
         if isinstance(obs, ExplicitObservation):
             content = obs.content
@@ -145,7 +148,7 @@ async def _consolidate_cluster(
 
         metadata = schemas.DocumentMetadata(
             times_derived=total_times_derived,
-            message_id=obs.message_id or 0,
+            message_ids=obs.message_ids,
             message_created_at=format_datetime_utc(obs.created_at),
             session_name=obs.session_name or "",
             level=level,
@@ -155,7 +158,13 @@ async def _consolidate_cluster(
         document_create = schemas.DocumentCreate(content=content, metadata=metadata)
 
         embedding = await embedding_client.embed(content)
-        await crud.create_document(db, document_create, collection, embedding)
+        documents_to_create.append(document_create)
+        embeddings.append(embedding)
+
+    # bulk create documents
+    await crud.create_documents_bulk(
+        db, documents_to_create, workspace_name, collection_name, peer_name, embeddings
+    )
 
     # delete old documents
     for doc in cluster:

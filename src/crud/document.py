@@ -21,7 +21,11 @@ async def get_all_documents(
     peer_name: str,
     collection_name: str,
 ) -> Sequence[models.Document]:
-    """Get all documents in a collection."""
+    """
+    Get all documents in a collection.
+
+    NOTE: Order is nondeterministic. Also this may return a massive amount of documents. Don't use this on large collections.
+    """
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
@@ -124,7 +128,7 @@ async def create_document(
             .where(models.Document.workspace_name == collection.workspace_name)
             .where(models.Document.peer_name == collection.peer_name)
             .where(models.Document.collection_name == collection.name)
-            .where(models.Document.embedding.cosine_distance(embedding) < distance)
+            .where(models.Document.embedding.cosine_distance(embedding) <= distance)
             .order_by(models.Document.embedding.cosine_distance(embedding))
             .limit(1)
         )
@@ -136,10 +140,8 @@ async def create_document(
                 models.Document.embedding.cosine_distance(embedding)
             ).where(models.Document.id == duplicate.id)
             distance_result = await db.execute(distance_stmt)
-            actual_distance = distance_result.scalar()
-            actual_similarity = (
-                1 - actual_distance if actual_distance is not None else None
-            )
+            actual_distance = distance_result.scalar() or 0.0
+            actual_similarity = float(1 - actual_distance)
 
             logger.info(
                 f"Duplicate found: '{document.content}' matched with '{duplicate.content}'. "
@@ -155,13 +157,17 @@ async def create_document(
             await db.refresh(duplicate)
             return duplicate, True
 
+    metadata_dict = document.metadata.model_dump(exclude_none=True)
+    session_name = metadata_dict.pop("session_name", None)
+
     honcho_document = models.Document(
         workspace_name=collection.workspace_name,
         peer_name=collection.peer_name,
         collection_name=collection.name,
         content=document.content,
-        internal_metadata=document.metadata.model_dump(exclude_none=True),
+        internal_metadata=metadata_dict,
         embedding=embedding,
+        session_name=session_name,
     )
     db.add(honcho_document)
     await db.commit()
@@ -172,7 +178,9 @@ async def create_document(
 async def create_documents_bulk(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
-    collection: models.Collection,
+    workspace_name: str,
+    collection_name: str,
+    peer_name: str,
     embeddings: list[list[float]],
 ) -> tuple[list[models.Document], int]:
     """
@@ -181,7 +189,9 @@ async def create_documents_bulk(
     Args:
         db: Database session
         documents: List of document creation schemas
-        collection: Collection to save documents to
+        workspace_name: Name of the workspace
+        collection_name: Name of the collection
+        peer_name: Name of the peer
         embeddings: Pre-computed embeddings for each document
 
     Returns:
@@ -190,17 +200,21 @@ async def create_documents_bulk(
     if len(documents) != len(embeddings):
         raise ValidationException("Number of documents must match number of embeddings")
 
-    honcho_documents = [
-        models.Document(
-            workspace_name=collection.workspace_name,
-            peer_name=collection.peer_name,
-            collection_name=collection.name,
-            content=doc.content,
-            internal_metadata=doc.metadata.model_dump(exclude_none=True),
-            embedding=embedding,
+    honcho_documents: list[models.Document] = []
+    for doc, embedding in zip(documents, embeddings, strict=True):
+        metadata_dict = doc.metadata.model_dump(exclude_none=True)
+        session_name = metadata_dict.pop("session_name", None)
+        honcho_documents.append(
+            models.Document(
+                workspace_name=workspace_name,
+                peer_name=peer_name,
+                collection_name=collection_name,
+                content=doc.content,
+                internal_metadata=metadata_dict,
+                embedding=embedding,
+                session_name=session_name,
+            )
         )
-        for doc, embedding in zip(documents, embeddings, strict=True)
-    ]
     db.add_all(honcho_documents)
     await db.commit()
 

@@ -8,7 +8,6 @@ import pytest
 
 from src import models
 from src.deriver.deriver import process_representation_tasks_batch
-from src.utils.queue_payload import RepresentationPayload
 from src.utils.representation import Representation
 
 
@@ -98,7 +97,9 @@ class TestDeriverProcessing:
         assert mock_embedding_store is not None
 
         # Verify we can call the mocked methods
-        await mock_embedding_store.save_representation([])
+        await mock_embedding_store.save_representation(
+            Representation(explicit=[], deductive=[])
+        )
         mock_embedding_store.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
@@ -156,27 +157,26 @@ class TestDeriverProcessing:
             AsyncMock(return_value=Representation(explicit=[], deductive=[])),
         )
 
-        # Create test payloads with different message IDs (earlier message has lower ID)
+        # Create test messages with different IDs (earlier message has lower ID)
         now = datetime.now(timezone.utc)
-        payloads: list[RepresentationPayload] = []
+        messages: list[models.Message] = []
         for i in range(8):
             message_id = 100 + i  # 100, 101, 102, ..., 107
-            payloads.append(
-                RepresentationPayload(
+            messages.append(
+                models.Message(
+                    id=message_id,
                     workspace_name="test_workspace",
                     session_name="test_session",
-                    message_id=message_id,
+                    peer_name="alice",
                     content=f"message {message_id}",
-                    sender_name="alice",
-                    target_name="alice",
-                    created_at=now
-                    - timedelta(
-                        minutes=7 - i
-                    ),  # Earlier messages have earlier timestamps
+                    token_count=0,
+                    created_at=now - timedelta(minutes=7 - i),
                 )
             )
 
-        await process_representation_tasks_batch(payloads)
+        await process_representation_tasks_batch(
+            sender_name="alice", target_name="alice", messages=messages
+        )
 
-        # Verify that the latest message ID was used as the cutoff
-        assert captured_cutoffs == [payloads[-1].message_id]
+        # Verify that the earliest message ID was used as the cutoff
+        assert captured_cutoffs == [messages[0].id]

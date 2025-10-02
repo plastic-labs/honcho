@@ -12,8 +12,8 @@ from src.config import settings
 from src.dependencies import tracked_db
 from src.dreamer.dream_scheduler import check_and_schedule_dream
 from src.embedding_client import embedding_client
+from src.exceptions import ValidationException
 from src.utils.formatting import format_datetime_utc
-from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import accumulate_metric, conditional_observe
 from src.utils.representation import (
     DeductiveObservation,
@@ -22,8 +22,6 @@ from src.utils.representation import (
 )
 
 logger = logging.getLogger(__name__)
-
-lf = get_langfuse_client()
 
 # Fetch extra documents to ensure we have enough after filtering
 FILTER_OVERSAMPLING_FACTOR = 3
@@ -49,7 +47,7 @@ class EmbeddingStore:
     async def save_representation(
         self,
         representation: Representation,
-        message_id: int,
+        message_id_range: tuple[int, int],
         session_name: str,
         message_created_at: datetime.datetime,
     ) -> int:
@@ -58,7 +56,7 @@ class EmbeddingStore:
 
         Args:
             representation: Representation object
-            message_id: Message ID to link with observations
+            message_id_range: Message ID range to link with observations
             session_name: Session name to link with existing summary context
             message_created_at: Timestamp when the message was created
 
@@ -76,14 +74,21 @@ class EmbeddingStore:
 
         # Batch embed all observations
         batch_embed_start = time.perf_counter()
+
         observation_texts = [
             obs.conclusion if isinstance(obs, DeductiveObservation) else obs.content
             for obs in all_observations
         ]
-        embeddings = await embedding_client.simple_batch_embed(observation_texts)
+        try:
+            embeddings = await embedding_client.simple_batch_embed(observation_texts)
+        except ValueError as e:
+            raise ValidationException(
+                f"Observation content exceeds maximum token limit of {settings.MAX_EMBEDDING_TOKENS}."
+            ) from e
+
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id}_{self.peer_name}",
+            f"deriver_{message_id_range[1]}_{self.peer_name}",
             "embed_new_observations",
             batch_embed_duration,
             "ms",
@@ -96,7 +101,7 @@ class EmbeddingStore:
                 self.db,
                 all_observations,
                 embeddings,
-                message_id,
+                message_id_range,
                 session_name,
                 message_created_at,
             )
@@ -106,14 +111,14 @@ class EmbeddingStore:
                     db,
                     all_observations,
                     embeddings,
-                    message_id,
+                    message_id_range,
                     session_name,
                     message_created_at,
                 )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id}_{self.peer_name}",
+            f"deriver_{message_id_range[1]}_{self.peer_name}",
             "save_new_observations",
             create_document_duration,
             "ms",
@@ -126,7 +131,7 @@ class EmbeddingStore:
         db: AsyncSession,
         all_observations: list[ExplicitObservation | DeductiveObservation],
         embeddings: list[list[float]],
-        message_id: int,
+        message_id_range: tuple[int, int],
         session_name: str,
         message_created_at: datetime.datetime,
     ) -> int:
@@ -152,7 +157,7 @@ class EmbeddingStore:
                 obs_premises = None
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
-                message_id=message_id,
+                message_ids=[message_id_range],
                 session_name=session_name,
                 level=obs_level,
                 premises=obs_premises,
@@ -167,7 +172,9 @@ class EmbeddingStore:
         _created_documents, new_documents = await crud.create_documents_bulk(
             db,
             documents_to_create,
-            collection,
+            self.workspace_name,
+            self.collection_name,
+            self.peer_name,
             embeddings,
         )
 
@@ -256,7 +263,7 @@ class EmbeddingStore:
                     workspace_name=self.workspace_name,
                     peer_name=self.peer_name,
                     collection_name=self.collection_name,
-                    query=self._build_truncated_query(query, ""),
+                    query=self._build_truncated_query(query, conversation_context),
                     max_distance=max_distance,
                     top_k=top_k,
                 )

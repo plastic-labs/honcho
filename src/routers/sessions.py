@@ -401,7 +401,9 @@ async def get_session_context(
     to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
     this. If the caller does not want a summary, we allocate all the tokens to recent messages.
     """
-    token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
+    token_limit = (
+        tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
+    )
 
     if peer_perspective and not peer_target:
         raise ValidationException(
