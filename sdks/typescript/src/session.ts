@@ -451,10 +451,20 @@ export class Session {
    * compatible with OpenAI models. The context optimization balances
    * recency and relevance to provide the best conversational context.
    *
-   * @param summary - Whether to include summary information in the context.
-   *                  When true, includes session summary if available. Defaults to true
-   * @param tokens - Maximum number of tokens to include in the context. If not provided,
-   *                 uses the server's default configuration
+   * @param options - Configuration options for context retrieval
+   * @param options.summary - Whether to include summary information in the context.
+   *                          When true, includes session summary if available. Defaults to true
+   * @param options.tokens - Maximum number of tokens to include in the context. If not provided,
+   *                         uses the server's default configuration
+   * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
+   *                                  observations and returned as part of the context object
+   * @param options.peerTarget - The target of the perspective. If given without `peerPerspective`,
+   *                             will get the Honcho-level representation and peer card for this peer.
+   *                             If given with `peerPerspective`, will get the representation and card
+   *                             for this peer from the perspective of that peer.
+   * @param options.peerPerspective - A peer to get context for. If given, response will attempt to
+   *                                  include representation and card from the perspective of that peer.
+   *                                  Must be provided with `peerTarget`.
    * @returns Promise resolving to a SessionContext object containing the optimized
    *          message history and summary (if available) that maximizes conversational
    *          context while respecting the token limit
@@ -465,10 +475,16 @@ export class Session {
   async getContext(options?: {
     summary?: boolean
     tokens?: number
+    lastUserMessage?: string
+    peerTarget?: string
+    peerPerspective?: string
   }): Promise<SessionContext> {
     const contextParams = ContextParamsSchema.parse({
       summary: options?.summary,
       tokens: options?.tokens,
+      lastUserMessage: options?.lastUserMessage,
+      peerTarget: options?.peerTarget,
+      peerPerspective: options?.peerPerspective,
     })
     const context = await this._client.workspaces.sessions.getContext(
       this.workspaceId,
@@ -476,11 +492,20 @@ export class Session {
       {
         tokens: contextParams.tokens,
         summary: contextParams.summary,
+        last_message: contextParams.lastUserMessage,
+        peer_target: contextParams.peerTarget,
+        peer_perspective: contextParams.peerPerspective,
       }
     )
     // Convert the summary response to Summary object if present
     const summary = context.summary ? new Summary(context.summary) : null
-    return new SessionContext(this.id, context.messages, summary)
+    return new SessionContext(
+      this.id,
+      context.messages,
+      summary,
+      context.peer_representation ?? null,
+      context.peer_card ?? null
+    )
   }
 
   /**
