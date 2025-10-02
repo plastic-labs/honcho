@@ -1,19 +1,16 @@
 from dotenv import load_dotenv
-from starlette.responses import Response as StarletteResponse
-
-from src.config import settings
-
-load_dotenv()
-
-METRICS_ENABLED = settings.METRICS.ENABLED
-
-
-from prometheus_client import (  # noqa: E402
+from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
     generate_latest,
 )
+from starlette.responses import Response as StarletteResponse
+
+from src.config import settings
+
+load_dotenv()
+METRICS_ENABLED = settings.METRICS.ENABLED
 
 
 class NamespacedCounter(Counter):

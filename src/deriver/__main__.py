@@ -63,7 +63,6 @@ if __name__ == "__main__":
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
         print("[DERIVER] Running main loop")
-        # Start metrics HTTP server (non-blocking) and then run main loop
         start_metrics_server()
         asyncio.run(main())
     except KeyboardInterrupt:

@@ -147,7 +147,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Prometheus metrics will be integrated into existing track_request middleware
 
 add_pagination(app)
 
