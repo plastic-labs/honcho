@@ -10,12 +10,10 @@ METRICS_ENABLED = settings.METRICS.ENABLED
 
 from prometheus_client import (  # noqa: E402
     CONTENT_TYPE_LATEST,
-    CollectorRegistry,
+    REGISTRY,
     Counter,
     generate_latest,
 )
-
-registry = CollectorRegistry()
 
 
 class NamespacedCounter(Counter):
@@ -44,9 +42,9 @@ MESSAGES_CREATED = NamespacedCounter(
     ["namespace", "workspace_name", "session_name"],
 )
 
-QUEUE_ITEMS_CREATED = NamespacedCounter(
-    "queue_items_created_total",
-    "Total queue items created",
+QUEUE_ITEM_PROCESSED = NamespacedCounter(
+    "queue_items_processed_total",
+    "Total queue items processed",
     ["namespace", "workspace_name", "session_name", "task_type"],
 )
 
@@ -64,4 +62,4 @@ def get_namespace() -> str:
 
 async def metrics() -> StarletteResponse:
     """Prometheus metrics endpoint"""
-    return StarletteResponse(generate_latest(registry), media_type=CONTENT_TYPE_LATEST)
+    return StarletteResponse(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
