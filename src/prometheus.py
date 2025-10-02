@@ -42,18 +42,6 @@ MESSAGES_CREATED = NamespacedCounter(
     ["namespace", "workspace_name", "session_name"],
 )
 
-QUEUE_ITEM_PROCESSED = NamespacedCounter(
-    "queue_items_processed_total",
-    "Total queue items processed",
-    ["namespace", "workspace_name", "session_name", "task_type"],
-)
-
-DERIVER_LLM_TOKENS = NamespacedCounter(
-    "deriver_llm_tokens_total",
-    "Total LLM tokens consumed",
-    ["namespace", "task_type", "model", "direction"],
-)
-
 
 def get_namespace() -> str:
     """Get the configured namespace for metrics labeling"""
