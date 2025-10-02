@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
 
 from src import prometheus
-from src.routers.utils import get_route_template
+from src.utils.logging import get_route_template
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint

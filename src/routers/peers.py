@@ -198,7 +198,6 @@ async def chat(
             if prometheus.METRICS_ENABLED:
                 prometheus.DIALECTIC_CALLS.labels(
                     workspace_name=workspace_id,
-                    session_name=options.session_id or "",
                 ).inc()
 
             if isinstance(stream, AsyncIterator):
