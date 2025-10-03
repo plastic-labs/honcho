@@ -13,6 +13,7 @@ from fastapi_pagination import add_pagination
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -28,6 +29,8 @@ from src.routers import (
     workspaces,
 )
 from src.security import create_admin_jwt
+
+scheduler = AsyncIOScheduler()
 
 
 def get_log_level() -> int:
