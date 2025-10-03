@@ -155,7 +155,7 @@ def build_peer_card_caller(
             provider=cast(Any, resolved_provider),
             model=candidate.model,
             prompt=prompt,
-            max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
+            max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS,
             response_model=PeerCardQuery,
             json_mode=True,
             reasoning_effort="minimal",

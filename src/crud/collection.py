@@ -14,7 +14,7 @@ async def get_collection(
     db: AsyncSession,
     workspace_name: str,
     collection_name: str,
-    peer_name: str | None = None,
+    peer_name: str,
 ) -> models.Collection:
     """
     Get a collection by name for a specific peer and workspace.
@@ -35,11 +35,8 @@ async def get_collection(
         select(models.Collection)
         .where(models.Collection.workspace_name == workspace_name)
         .where(models.Collection.name == collection_name)
+        .where(models.Collection.peer_name == peer_name)
     )
-    if peer_name:
-        stmt = stmt.where(models.Collection.peer_name == peer_name)
-    else:
-        stmt = stmt.where(models.Collection.peer_name.is_(None))
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
@@ -53,7 +50,7 @@ async def get_or_create_collection(
     db: AsyncSession,
     workspace_name: str,
     collection_name: str,
-    peer_name: str | None = None,
+    peer_name: str,
     *,
     _retry: bool = False,
 ) -> models.Collection:

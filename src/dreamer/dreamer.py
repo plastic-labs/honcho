@@ -133,7 +133,6 @@ async def _consolidate_cluster(
     ]
 
     documents_to_create: list[schemas.DocumentCreate] = []
-    embeddings: list[list[float]] = []
 
     for obs in new_documents:
         if isinstance(obs, ExplicitObservation):
@@ -155,15 +154,20 @@ async def _consolidate_cluster(
             premises=premises,
         )
 
-        document_create = schemas.DocumentCreate(content=content, metadata=metadata)
-
         embedding = await embedding_client.embed(content)
-        documents_to_create.append(document_create)
-        embeddings.append(embedding)
+
+        documents_to_create.append(
+            schemas.DocumentCreate(
+                content=content,
+                metadata=metadata,
+                peer_name=peer_name,
+                embedding=embedding,
+            )
+        )
 
     # bulk create documents
-    await crud.create_documents_bulk(
-        db, documents_to_create, workspace_name, collection_name, peer_name, embeddings
+    await crud.create_documents(
+        db, documents_to_create, workspace_name, collection_name
     )
 
     # delete old documents

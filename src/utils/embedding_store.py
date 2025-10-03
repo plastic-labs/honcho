@@ -145,7 +145,7 @@ class EmbeddingStore:
 
         # Prepare all documents for bulk creation
         documents_to_create: list[schemas.DocumentCreate] = []
-        for obs in all_observations:
+        for obs, embedding in zip(all_observations, embeddings, strict=True):
             # NOTE: will add additional levels of reasoning in the future
             if isinstance(obs, DeductiveObservation):
                 obs_level = "deductive"
@@ -165,17 +165,20 @@ class EmbeddingStore:
             )
 
             documents_to_create.append(
-                schemas.DocumentCreate(content=obs_content, metadata=metadata)
+                schemas.DocumentCreate(
+                    content=obs_content,
+                    metadata=metadata,
+                    peer_name=self.peer_name,
+                    embedding=embedding,
+                )
             )
 
         # Use bulk creation with NO duplicate detection
-        _created_documents, new_documents = await crud.create_documents_bulk(
+        _created_documents, new_documents = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
             self.collection_name,
-            self.peer_name,
-            embeddings,
         )
 
         try:

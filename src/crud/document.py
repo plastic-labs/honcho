@@ -20,14 +20,17 @@ async def get_all_documents(
     workspace_name: str,
     peer_name: str,
     collection_name: str,
+    limit: int = 1000,
 ) -> Sequence[models.Document]:
     """
     Get all documents in a collection.
 
     NOTE: Order is nondeterministic. Also this may return a massive amount of documents. Don't use this on large collections.
+    TODO: add pagination and update dreaming logic to deduplicate more effectively
     """
     stmt = (
         select(models.Document)
+        .limit(limit)
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.peer_name == peer_name)
         .where(models.Document.collection_name == collection_name)
@@ -91,11 +94,10 @@ async def query_documents(
     return result.scalars().all()
 
 
-async def create_document(
+async def _create_document(  # pyright: ignore[reportUnusedFunction]
     db: AsyncSession,
     document: schemas.DocumentCreate,
     collection: models.Collection,
-    embedding: list[float],
     duplicate_threshold: float | None = None,
 ) -> tuple[models.Document, bool]:
     """
@@ -128,8 +130,11 @@ async def create_document(
             .where(models.Document.workspace_name == collection.workspace_name)
             .where(models.Document.peer_name == collection.peer_name)
             .where(models.Document.collection_name == collection.name)
-            .where(models.Document.embedding.cosine_distance(embedding) <= distance)
-            .order_by(models.Document.embedding.cosine_distance(embedding))
+            .where(
+                models.Document.embedding.cosine_distance(document.embedding)
+                <= distance
+            )
+            .order_by(models.Document.embedding.cosine_distance(document.embedding))
             .limit(1)
         )
         result = await db.execute(stmt)
@@ -137,7 +142,7 @@ async def create_document(
         if duplicate is not None:
             # Get the actual distance for debugging
             distance_stmt = select(
-                models.Document.embedding.cosine_distance(embedding)
+                models.Document.embedding.cosine_distance(document.embedding)
             ).where(models.Document.id == duplicate.id)
             distance_result = await db.execute(distance_stmt)
             actual_distance = distance_result.scalar() or 0.0
@@ -166,7 +171,7 @@ async def create_document(
         collection_name=collection.name,
         content=document.content,
         internal_metadata=metadata_dict,
-        embedding=embedding,
+        embedding=document.embedding,
         session_name=session_name,
     )
     db.add(honcho_document)
@@ -175,13 +180,11 @@ async def create_document(
     return honcho_document, False
 
 
-async def create_documents_bulk(
+async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
     workspace_name: str,
     collection_name: str,
-    peer_name: str,
-    embeddings: list[list[float]],
 ) -> tuple[list[models.Document], int]:
     """
     Create multiple documents with NO duplicate detection.
@@ -191,27 +194,22 @@ async def create_documents_bulk(
         documents: List of document creation schemas
         workspace_name: Name of the workspace
         collection_name: Name of the collection
-        peer_name: Name of the peer
-        embeddings: Pre-computed embeddings for each document
 
     Returns:
         Tuple of (created/updated documents, count of new documents)
     """
-    if len(documents) != len(embeddings):
-        raise ValidationException("Number of documents must match number of embeddings")
-
     honcho_documents: list[models.Document] = []
-    for doc, embedding in zip(documents, embeddings, strict=True):
+    for doc in documents:
         metadata_dict = doc.metadata.model_dump(exclude_none=True)
         session_name = metadata_dict.pop("session_name", None)
         honcho_documents.append(
             models.Document(
                 workspace_name=workspace_name,
-                peer_name=peer_name,
+                peer_name=doc.peer_name,
                 collection_name=collection_name,
                 content=doc.content,
                 internal_metadata=metadata_dict,
-                embedding=embedding,
+                embedding=doc.embedding,
                 session_name=session_name,
             )
         )

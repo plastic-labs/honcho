@@ -85,10 +85,10 @@ async def peer_card_call(
     )
 
     response = await honcho_llm_call(
-        provider=settings.DERIVER.PEER_CARD_PROVIDER,
-        model=settings.DERIVER.PEER_CARD_MODEL,
+        provider=settings.PEER_CARD.PROVIDER,
+        model=settings.PEER_CARD.MODEL,
         prompt=prompt,
-        max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS
+        max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS
         or settings.LLM.DEFAULT_MAX_TOKENS,
         track_name="Peer Card Call",
         response_model=PeerCardQuery,
@@ -149,7 +149,7 @@ async def process_representation_tasks_batch(
             # include_most_derived=False,
         )
 
-        if settings.DERIVER.USE_PEER_CARD:
+        if settings.PEER_CARD.ENABLED:
             speaker_peer_card: list[str] | None = await crud.get_peer_card(
                 db,
                 latest_message.workspace_name,
@@ -399,7 +399,7 @@ class CertaintyReasoner:
         #     "count",
         # )
 
-        if settings.DERIVER.USE_PEER_CARD:
+        if settings.PEER_CARD.ENABLED:
             update_peer_card_start = time.perf_counter()
             if not new_observations.is_empty():
                 await self._update_peer_card(speaker_peer_card, new_observations)

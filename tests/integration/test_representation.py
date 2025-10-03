@@ -237,6 +237,8 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
+            peer_name=peer.name,
+            embedding=fixed_embedding_vector,
         )
 
         collection = await crud.get_or_create_collection(
@@ -246,13 +248,10 @@ class TestDocumentCreationWorkflow:
             peer.name,
         )
 
-        embedding = fixed_embedding_vector
-
-        document, is_duplicate = await crud.create_document(
+        document, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             doc_schema,
             collection,
-            embedding,
             duplicate_threshold=0.95,
         )
 
@@ -296,6 +295,8 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
+            peer_name=peer.name,
+            embedding=fixed_embedding_vector,
         )
 
         collection = await crud.get_or_create_collection(
@@ -304,13 +305,11 @@ class TestDocumentCreationWorkflow:
             collection_name,
             peer.name,
         )
-        embedding = fixed_embedding_vector
 
-        original_doc, is_duplicate = await crud.create_document(
+        original_doc, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             doc_schema,
             collection,
-            embedding,
             duplicate_threshold=0.95,
         )
 
@@ -328,6 +327,8 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
+            peer_name=peer.name,
+            embedding=fixed_embedding_vector,
         )
 
         collection = await crud.get_or_create_collection(
@@ -336,13 +337,11 @@ class TestDocumentCreationWorkflow:
             collection_name,
             peer.name,
         )
-        embedding = fixed_embedding_vector
 
-        duplicate_doc, is_duplicate = await crud.create_document(
+        duplicate_doc, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             similar_doc_schema,
             collection,
-            embedding,
             duplicate_threshold=0.95,
         )
 
@@ -375,6 +374,8 @@ class TestDocumentCreationWorkflow:
         db_session.add(collection)
         await db_session.flush()
 
+        precomputed_embedding = [0.5] * 1536  # Different from the mock
+
         # Create document with precomputed embedding
         doc_schema = schemas.DocumentCreate(
             content="Test with precomputed embedding",
@@ -386,6 +387,8 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
+            peer_name=peer.name,
+            embedding=precomputed_embedding,
         )
 
         collection = await crud.get_or_create_collection(
@@ -395,13 +398,11 @@ class TestDocumentCreationWorkflow:
             peer.name,
         )
 
-        precomputed_embedding = [0.5] * 1536  # Different from the mock
-
-        document, is_duplicate = await crud.create_document(
+        document, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             doc_schema,
             collection,
-            embedding=precomputed_embedding,
+            duplicate_threshold=0.95,
         )
 
         assert not is_duplicate
@@ -475,6 +476,8 @@ class TestWorkingRepresentationRetrieval:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
+            peer_name=observer_peer.name,
+            embedding=fixed_embedding_vector,
         )
 
         collection = await crud.get_or_create_collection(
@@ -483,13 +486,11 @@ class TestWorkingRepresentationRetrieval:
             collection_name,
             observer_peer.name,
         )
-        embedding = fixed_embedding_vector
 
-        await crud.create_document(
+        await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             explicit_doc_schema,
             collection,
-            embedding,
         )
 
         # Create deductive observation document
@@ -504,12 +505,12 @@ class TestWorkingRepresentationRetrieval:
                 ).isoformat(),
                 premises=["User mentioned they have a dog"],
             ),
+            peer_name=observer_peer.name,
+            embedding=fixed_embedding_vector,
         )
 
-        embedding = fixed_embedding_vector
-
-        await crud.create_document(
-            db_session, deductive_doc_schema, collection, embedding
+        await crud._create_document(  # pyright: ignore[reportPrivateUsage]
+            db_session, deductive_doc_schema, collection
         )
 
         # Retrieve working representation
