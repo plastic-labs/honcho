@@ -177,6 +177,7 @@ async def get_working_representation(
             .where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.collection_name == collection_name,
+                models.Document.peer_name == observer_name,
             )
             .order_by(models.Document.internal_metadata["times_derived"].desc())
         )
@@ -192,6 +193,7 @@ async def get_working_representation(
         .where(
             models.Document.workspace_name == workspace_name,
             models.Document.collection_name == collection_name,
+            models.Document.peer_name == observer_name,
             *(
                 [models.Document.session_name == session_name]
                 if session_name is not None

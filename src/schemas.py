@@ -14,7 +14,6 @@ from pydantic import (
 )
 
 from src.config import settings
-from src.utils.representation import Representation
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -250,7 +249,7 @@ class SessionContext(SessionBase):
     summary: Summary | None = Field(
         default=None, description="The summary if available"
     )
-    peer_representation: Representation | None = Field(
+    peer_representation: str | None = Field(
         default=None,
         description="The peer representation, if context is requested from a specific perspective",
     )

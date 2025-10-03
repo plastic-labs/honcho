@@ -132,6 +132,9 @@ export const ContextParamsSchema = z.object({
     .number()
     .positive('Token limit must be a positive number')
     .optional(),
+  lastUserMessage: z.string().optional(),
+  peerTarget: z.string().optional(),
+  peerPerspective: z.string().optional(),
 })
 
 /**

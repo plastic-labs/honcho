@@ -103,20 +103,36 @@ export class SessionContext {
   readonly summary: Summary | null
 
   /**
+   * The peer representation, if context is requested from a specific perspective.
+   */
+  readonly peerRepresentation: string | null
+
+  /**
+   * The peer card, if context is requested from a specific perspective.
+   */
+  readonly peerCard: string[] | null
+
+  /**
    * Initialize a new SessionContext.
    *
    * @param sessionId ID of the session this context belongs to
    * @param messages List of Message objects to include in the context
    * @param summary Summary of the session history prior to the message cutoff
+   * @param peerRepresentation The peer representation, if context is requested from a specific perspective
+   * @param peerCard The peer card, if context is requested from a specific perspective
    */
   constructor(
     sessionId: string,
     messages: Message[],
-    summary: Summary | null = null
+    summary: Summary | null = null,
+    peerRepresentation: string | null = null,
+    peerCard: string[] | null = null
   ) {
     this.sessionId = sessionId
     this.messages = messages
     this.summary = summary
+    this.peerRepresentation = peerRepresentation
+    this.peerCard = peerCard
   }
 
   /**
@@ -136,18 +152,36 @@ export class SessionContext {
     assistant: string | Peer
   ): Array<{ role: string; content: string; name?: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    const summaryMessage = this.summary
-      ? {
-          role: 'system',
-          content: `<summary>${this.summary.content}</summary>`,
-        }
-      : null
     const messages = this.messages.map((message) => ({
       role: message.peer_id === assistantId ? 'assistant' : 'user',
       name: message.peer_id,
       content: message.content,
     }))
-    return summaryMessage ? [summaryMessage, ...messages] : messages
+
+    const systemMessages: Array<{ role: string; content: string }> = []
+
+    if (this.peerRepresentation) {
+      systemMessages.push({
+        role: 'system',
+        content: `<peer_representation>${this.peerRepresentation}</peer_representation>`,
+      })
+    }
+
+    if (this.peerCard) {
+      systemMessages.push({
+        role: 'system',
+        content: `<peer_card>${this.peerCard}</peer_card>`,
+      })
+    }
+
+    if (this.summary) {
+      systemMessages.push({
+        role: 'system',
+        content: `<summary>${this.summary.content}</summary>`,
+      })
+    }
+
+    return [...systemMessages, ...messages]
   }
 
   /**
@@ -170,12 +204,6 @@ export class SessionContext {
     assistant: string | Peer
   ): Array<{ role: string; content: string }> {
     const assistantId = typeof assistant === 'string' ? assistant : assistant.id
-    const summaryMessage = this.summary
-      ? {
-          role: 'user',
-          content: `<summary>${this.summary.content}</summary>`,
-        }
-      : null
     const messages = this.messages.map((message) =>
       message.peer_id === assistantId
         ? {
@@ -187,7 +215,31 @@ export class SessionContext {
             content: `${message.peer_id}: ${message.content}`,
           }
     )
-    return summaryMessage ? [summaryMessage, ...messages] : messages
+
+    const systemMessages: Array<{ role: string; content: string }> = []
+
+    if (this.peerRepresentation) {
+      systemMessages.push({
+        role: 'user',
+        content: `<peer_representation>${this.peerRepresentation}</peer_representation>`,
+      })
+    }
+
+    if (this.peerCard) {
+      systemMessages.push({
+        role: 'user',
+        content: `<peer_card>${this.peerCard}</peer_card>`,
+      })
+    }
+
+    if (this.summary) {
+      systemMessages.push({
+        role: 'user',
+        content: `<summary>${this.summary.content}</summary>`,
+      })
+    }
+
+    return [...systemMessages, ...messages]
   }
 
   /**

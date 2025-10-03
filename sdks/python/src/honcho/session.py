@@ -407,6 +407,18 @@ class Session(BaseModel):
         tokens: int | None = Field(
             None, gt=0, description="Maximum number of tokens to include in the context"
         ),
+        last_user_message: str | None = Field(
+            None,
+            description="The most recent message, used to fetch semantically relevant observations and returned as part of the context object",
+        ),
+        peer_target: str | None = Field(
+            None,
+            description="The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.",
+        ),
+        peer_perspective: str | None = Field(
+            None,
+            description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+        ),
     ) -> SessionContext:
         """
         Get optimized context for this session within a token limit.
@@ -420,6 +432,9 @@ class Session(BaseModel):
             summary: Whether to include summary information
             tokens: Maximum number of tokens to include in the context. Will default
             to Honcho server configuration if not provided.
+            last_user_message: The most recent message, used to fetch semantically relevant observations and returned as part of the context object
+            peer_target: The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.
+            peer_perspective: A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -435,6 +450,9 @@ class Session(BaseModel):
             workspace_id=self.workspace_id,
             tokens=tokens if tokens is not None else omit,
             summary=summary,
+            last_message=last_user_message if last_user_message is not None else omit,
+            peer_target=peer_target if peer_target is not None else omit,
+            peer_perspective=peer_perspective if peer_perspective is not None else omit,
         )
 
         # Convert the honcho_core summary to our Summary if it exists
@@ -449,7 +467,11 @@ class Session(BaseModel):
             )
 
         return SessionContext(
-            session_id=self.id, messages=context.messages, summary=session_summary
+            session_id=self.id,
+            messages=context.messages,
+            summary=session_summary,
+            peer_representation=context.peer_representation,
+            peer_card=context.peer_card,
         )
 
     def get_summaries(self) -> SessionSummaries:
