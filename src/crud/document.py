@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import attributes
 
 from src import models, schemas
 from src.config import settings
@@ -11,9 +12,31 @@ from src.embedding_client import embedding_client
 from src.exceptions import ValidationException
 from src.utils.filter import apply_filter
 
-from .collection import get_collection
-
 logger = getLogger(__name__)
+
+
+async def get_all_documents(
+    db: AsyncSession,
+    workspace_name: str,
+    peer_name: str,
+    collection_name: str,
+    limit: int = 1000,
+) -> Sequence[models.Document]:
+    """
+    Get all documents in a collection.
+
+    NOTE: Order is nondeterministic. Also this may return a massive amount of documents. Don't use this on large collections.
+    TODO: add pagination and update dreaming logic to deduplicate more effectively
+    """
+    stmt = (
+        select(models.Document)
+        .limit(limit)
+        .where(models.Document.workspace_name == workspace_name)
+        .where(models.Document.peer_name == peer_name)
+        .where(models.Document.collection_name == collection_name)
+    )
+    result = await db.execute(stmt)
+    return result.scalars().all()
 
 
 async def query_documents(
@@ -39,14 +62,13 @@ async def query_documents(
         filters: Optional filters to apply
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
-        embedding: Optional pre-computed embedding for the query (avoids API call)
+        embedding: Optional pre-computed embedding for the query (avoids extra API call if possible)
 
     Returns:
         Sequence of matching documents
     """
     # Use provided embedding or generate one
     if embedding is None:
-        # Using ModelClient for embeddings
         try:
             embedding = await embedding_client.embed(query)
         except ValueError as e:
@@ -59,7 +81,6 @@ async def query_documents(
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.peer_name == peer_name)
         .where(models.Document.collection_name == collection_name)
-        # .limit(top_k)
     )
     if max_distance is not None:
         stmt = stmt.where(
@@ -73,114 +94,129 @@ async def query_documents(
     return result.scalars().all()
 
 
-async def create_document(
+async def _create_document(  # pyright: ignore[reportUnusedFunction]
     db: AsyncSession,
     document: schemas.DocumentCreate,
-    workspace_name: str,
-    peer_name: str,
-    collection_name: str,
+    collection: models.Collection,
     duplicate_threshold: float | None = None,
-) -> models.Document:
+) -> tuple[models.Document, bool]:
     """
     Embed text as a vector and create a document.
+
+    If duplicate_threshold is provided, we use the embedding to check for
+    duplicates within the threshold. If a duplicate is found, instead of
+    saving a new document, we increment the times_derived field in the
+    `internal_metadata` of the duplicate document.
 
     Args:
         db: Database session
         document: Document creation schema
-        workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        collection_name: Name of the collection
+        collection: Collection to save the document to
+        embedding: Optional pre-computed embedding for the document (avoids extra API call if possible)
+        duplicate_threshold: Optional similarity threshold (0-1) for checking for duplicates.
+                            Values closer to 1 require higher similarity (e.g., 0.99 = 99% similar)
 
     Returns:
-        The created document
+        The created or updated document, and a boolean indicating whether a duplicate was found
 
     Raises:
         ResourceNotFoundException: If the collection does not exist
         ValidationException: If the document data is invalid
     """
-
-    # This will raise ResourceNotFoundException if collection not found
-    await get_collection(
-        db,
-        workspace_name=workspace_name,
-        collection_name=collection_name,
-        peer_name=peer_name,
-    )
-
-    # Using ModelClient for embeddings
-    embedding = await embedding_client.embed(document.content)
-
     if duplicate_threshold is not None:
-        # Check if there are duplicates within the threshold
+        distance = 1 - duplicate_threshold
         stmt = (
             select(models.Document)
-            .where(models.Document.workspace_name == workspace_name)
-            .where(models.Document.peer_name == peer_name)
-            .where(models.Document.collection_name == collection_name)
+            .where(models.Document.workspace_name == collection.workspace_name)
+            .where(models.Document.peer_name == collection.peer_name)
+            .where(models.Document.collection_name == collection.name)
             .where(
-                models.Document.embedding.cosine_distance(embedding)
-                < duplicate_threshold
+                models.Document.embedding.cosine_distance(document.embedding)
+                <= distance
             )
-            .order_by(models.Document.embedding.cosine_distance(embedding))
+            .order_by(models.Document.embedding.cosine_distance(document.embedding))
             .limit(1)
         )
         result = await db.execute(stmt)
         duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
         if duplicate is not None:
-            logger.info(f"Duplicate found: {duplicate.content}. Ignoring new document.")
-            return duplicate
+            # Get the actual distance for debugging
+            distance_stmt = select(
+                models.Document.embedding.cosine_distance(document.embedding)
+            ).where(models.Document.id == duplicate.id)
+            distance_result = await db.execute(distance_stmt)
+            actual_distance = distance_result.scalar() or 0.0
+            actual_similarity = float(1 - actual_distance)
+
+            logger.info(
+                f"Duplicate found: '{document.content}' matched with '{duplicate.content}'. "
+                + f"Similarity: {actual_similarity:.4f}, Distance: {actual_distance:.4f}, "
+                + f"Threshold: {duplicate_threshold}. Incrementing times_derived."
+            )
+            if "times_derived" not in duplicate.internal_metadata:
+                duplicate.internal_metadata["times_derived"] = 2
+            else:
+                duplicate.internal_metadata["times_derived"] += 1
+            attributes.flag_modified(duplicate, "internal_metadata")
+            await db.commit()
+            await db.refresh(duplicate)
+            return duplicate, True
+
+    metadata_dict = document.metadata.model_dump(exclude_none=True)
+    session_name = metadata_dict.pop("session_name", None)
 
     honcho_document = models.Document(
-        workspace_name=workspace_name,
-        peer_name=peer_name,
-        collection_name=collection_name,
+        workspace_name=collection.workspace_name,
+        peer_name=collection.peer_name,
+        collection_name=collection.name,
         content=document.content,
-        internal_metadata=document.metadata,
-        embedding=embedding,
+        internal_metadata=metadata_dict,
+        embedding=document.embedding,
+        session_name=session_name,
     )
     db.add(honcho_document)
     await db.commit()
     await db.refresh(honcho_document)
-    return honcho_document
+    return honcho_document, False
 
 
-async def get_duplicate_documents(
+async def create_documents(
     db: AsyncSession,
+    documents: list[schemas.DocumentCreate],
     workspace_name: str,
-    peer_name: str,
     collection_name: str,
-    content: str,
-    similarity_threshold: float = 0.85,
-) -> list[models.Document]:
-    """Check if a document with similar content already exists in the collection.
+) -> tuple[list[models.Document], int]:
+    """
+    Create multiple documents with NO duplicate detection.
 
     Args:
         db: Database session
+        documents: List of document creation schemas
         workspace_name: Name of the workspace
-        peer_name: Name of the peer
         collection_name: Name of the collection
-        content: Document content to check for duplicates
-        similarity_threshold: Similarity threshold (0-1) for considering documents as duplicates
 
     Returns:
-        List of documents that are similar to the provided content
+        Tuple of (created/updated documents, count of new documents)
     """
-    # Get embedding for the content
-    # Using ModelClient for embeddings
-    embedding = await embedding_client.embed(content)
+    honcho_documents: list[models.Document] = []
+    for doc in documents:
+        metadata_dict = doc.metadata.model_dump(exclude_none=True)
+        session_name = metadata_dict.pop("session_name", None)
+        honcho_documents.append(
+            models.Document(
+                workspace_name=workspace_name,
+                peer_name=doc.peer_name,
+                collection_name=collection_name,
+                content=doc.content,
+                internal_metadata=metadata_dict,
+                embedding=doc.embedding,
+                session_name=session_name,
+            )
+        )
+    db.add_all(honcho_documents)
+    await db.commit()
 
-    # Find documents with similar embeddings
-    stmt = (
-        select(models.Document)
-        .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.peer_name == peer_name)
-        .where(models.Document.collection_name == collection_name)
-        .where(
-            models.Document.embedding.cosine_distance(embedding)
-            < (1 - similarity_threshold)
-        )  # Convert similarity to distance
-        .order_by(models.Document.embedding.cosine_distance(embedding))
-    )
+    for doc in honcho_documents:
+        await db.refresh(doc)
 
-    result = await db.execute(stmt)
-    return list(result.scalars().all())  # Convert to list to match the return type
+    return honcho_documents, len(honcho_documents)

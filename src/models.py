@@ -330,6 +330,7 @@ class Document(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
+    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
@@ -346,6 +347,11 @@ class Document(Base):
             ["peer_name", "workspace_name"],
             ["peers.name", "peers.workspace_name"],
         ),
+        # Composite foreign key constraint for sessions
+        ForeignKeyConstraint(
+            ["session_name", "workspace_name"],
+            ["sessions.name", "sessions.workspace_name"],
+        ),
         # HNSW index on embedding column
         Index(
             "idx_documents_embedding_hnsw",
@@ -359,7 +365,7 @@ class Document(Base):
     )
 
 
-TaskType = Literal["webhook", "summary", "representation"]
+TaskType = Literal["webhook", "summary", "representation", "dream"]
 
 
 @final

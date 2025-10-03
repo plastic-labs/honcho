@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.crud.webhook import list_webhook_endpoints
-from src.deriver.queue_payload import WebhookPayload
 from src.utils.formatting import utc_now_iso
+from src.utils.queue_payload import WebhookPayload
 
 logger = logging.getLogger(__name__)
 

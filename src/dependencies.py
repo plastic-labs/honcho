@@ -49,13 +49,12 @@ async def tracked_db(operation_name: str | None = None):
             )
 
         yield db
-        # Explicitly end transaction if still open
-        if db.in_transaction():
-            await db.rollback()  # Or commit if needed for write operations
     except Exception:
         await db.rollback()
         raise
     finally:
+        if db.in_transaction():
+            await db.rollback()
         await db.close()
         if token:  # Only reset if we set it
             request_context.reset(token)

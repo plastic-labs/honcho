@@ -1,6 +1,11 @@
 from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
-from .document import create_document, get_duplicate_documents, query_documents
+from .document import (
+    _create_document,  # pyright: ignore[reportPrivateUsage]
+    create_documents,
+    get_all_documents,
+    query_documents,
+)
 from .message import (
     create_messages,
     get_message,
@@ -21,9 +26,8 @@ from .representation import (
     construct_collection_name,
     get_peer_card,
     get_working_representation,
-    get_working_representation_data,
+    representation_from_documents,
     set_peer_card,
-    set_working_representation,
 )
 from .session import (
     clone_session,
@@ -53,9 +57,10 @@ __all__ = [
     # Deriver
     "get_deriver_status",
     # Document
+    "_create_document",
+    "create_documents",
+    "get_all_documents",
     "query_documents",
-    "create_document",
-    "get_duplicate_documents",
     # Message
     "create_messages",
     "get_messages",
@@ -74,9 +79,8 @@ __all__ = [
     "construct_collection_name",
     "get_peer_card",
     "get_working_representation",
-    "get_working_representation_data",
     "set_peer_card",
-    "set_working_representation",
+    "representation_from_documents",
     # Session
     "get_sessions",
     "get_or_create_session",

@@ -1,7 +1,6 @@
-# pyright: reportUnannotatedClassAttribute=false # pyright: ignore
 import datetime
 import ipaddress
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, Literal, Self
 from urllib.parse import urlparse
 
 import tiktoken
@@ -15,6 +14,7 @@ from pydantic import (
 )
 
 from src.config import settings
+from src.utils.representation import Representation
 
 RESOURCE_NAME_PATTERN = r"^[a-zA-Z0-9_-]+$"
 
@@ -250,6 +250,14 @@ class SessionContext(SessionBase):
     summary: Summary | None = Field(
         default=None, description="The summary if available"
     )
+    peer_representation: Representation | None = Field(
+        default=None,
+        description="The peer representation, if context is requested from a specific perspective",
+    )
+    peer_card: list[str] | None = Field(
+        default=None,
+        description="The peer card, if context is requested from a specific perspective",
+    )
 
     model_config = ConfigDict(  # pyright: ignore
         from_attributes=True, populate_by_name=True
@@ -274,14 +282,33 @@ class DocumentBase(BaseModel):
     pass
 
 
+class DocumentMetadata(BaseModel):
+    times_derived: int | None = Field(
+        default=None,
+        ge=1,
+        description="The number of times that a semantic duplicate document to this one has been derived",
+    )
+    message_ids: list[tuple[int, int]] = Field(
+        description="The ID range(s) of the messages that this document was derived from. Acts as a link to the primary source of the document. Note that as a document gets deduplicated, additional ranges will be added, because the same document could be derived from completely separate message ranges."
+    )
+    message_created_at: str = Field(
+        description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
+    )
+    session_name: str = Field()
+    level: Literal["explicit", "deductive"] = Field(
+        description="The level of the document (explicit or deductive)"
+    )
+    premises: list[str] | None = Field(
+        default=None,
+        description="The premises of the deduction -- only applicable for deductive observations",
+    )
+
+
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
-    metadata: dict[str, Any] = {}
-
-
-class DocumentUpdate(DocumentBase):
-    content: Annotated[str, Field(min_length=1, max_length=100000)]
-    metadata: dict[str, Any] | None = None
+    metadata: DocumentMetadata = Field()
+    peer_name: str = Field()
+    embedding: list[float] = Field()
 
 
 class MessageSearchOptions(BaseModel):

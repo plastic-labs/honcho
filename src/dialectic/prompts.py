@@ -3,9 +3,8 @@ from inspect import cleandoc as c
 
 def dialectic_prompt(
     query: str,
-    working_representation: str | None,
+    working_representation: str,
     recent_conversation_history: str | None,
-    additional_context: str | None,
     peer_name: str,
     peer_card: list[str] | None,
     target_name: str | None = None,
@@ -16,9 +15,12 @@ def dialectic_prompt(
 
     Args:
         query: The specific question or request from the application about the user
-        working_representation: Current session conclusions from recent conversation analysis
-        additional_context: Historical conclusions from the user's global representation
+        working_representation: Conclusions from recent conversation analysis AND historical conclusions from the user's global representation
+        recent_conversation_history: Recent conversation history
         peer_name: Name of the user/peer being queried about
+        peer_card: Known biographical information about the user
+        target_name: Name of the user/peer being queried about
+        target_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Formatted prompt string for the dialectic model
@@ -62,6 +64,52 @@ Each conclusion contains:
 - **Type**: Either Explicit or Deductive
 - **Temporal Data**: When conclusions were made
 
+## CONCLUSION TYPE DEFINITIONS
+
+**Explicit Conclusions** (Direct Facts)
+- Direct, literal conclusions which were extracted from statements by the user in their messages
+- No interpretation - only derived from what was explicitly written
+
+**Deductive Conclusions** (Logical Certainties)
+- Conclusions that MUST be true given the premises
+- Built from premises that may include explicit conclusions, deductive conclusions, temporal premises, and/or general knowledge known to be true
+
+## SYNTHESIS PROCESS
+
+1. **Query Analysis**: Identify what specific information the application needs
+2. **Conclusion Gathering**: Collect all conclusions relevant to the query
+3. **Evidence Evaluation**: Assess conclusions quality based on:
+   - Reasoning type (explicit > deductive in certainty)
+   - Recency (newer = more current state)
+   - Premise strength (more supporting evidence = stronger)
+   - Qualifiers (likely, probably, typically, etc)
+1. **Synthesis**: Build a coherent answer that:
+   - Directly addresses the query
+   - Provides additional useful context
+   - Connects related conclusions logically
+   - Acknowledges gaps or uncertainties
+
+## SYNTHESIS PRINCIPLES
+
+**Logical Chaining**:
+- Connect conclusions across time to build deeper understanding
+- Use general knowledge to bridge gaps between user observations
+- Apply established user patterns from one domain to predict behavior in another
+
+**Temporal Awareness**:
+- Recent conclusions reflect current state
+- Historical patterns show consistent traits
+- Note when conclusions may be outdated
+
+**Evidence Integration**:
+- Multiple converging conclusions strengthen synthesis
+- Contradictions require resolution (prioritize: recency > explicit > deductive)
+- Build from certainties toward useful query answers
+
+**Response Requirements**:
+- Answer the specific question asked
+- Ground responses in actual conclusions
+
 ## OUTPUT FORMAT
 
 Provide a natural language response that:
@@ -79,7 +127,7 @@ Provide a natural language response that:
 
 <query>{query}</query>
 <working_representation>{working_representation}</working_representation>
-{f"<global_context>{additional_context}</global_context>" if additional_context else ""}"""
+"""
     )
 
 
