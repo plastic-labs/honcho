@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src import models
+from src import models, prometheus
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
@@ -24,6 +24,10 @@ from src.deriver.consumer import (
 )
 from src.deriver.utils import parse_work_unit_key
 from src.models import QueueItem
+from src.webhooks.events import (
+    QueueEmptyEvent,
+    publish_webhook_event,
+)
 
 logger = getLogger(__name__)
 
@@ -385,27 +389,30 @@ class QueueManager:
 
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
                 if removed and message_count > 0:
-                    # Only publish webhook if we actually removed an active session
+                    # Publish webhook and increment prometheus metrics only if our current worker removed an active queue session
                     try:
-                        from src.webhooks.events import (
-                            QueueEmptyEvent,
-                            publish_webhook_event,
-                        )
-
                         parsed_key = parse_work_unit_key(work_unit_key)
-                        if parsed_key["task_type"] in ["representation", "summary"]:
+                        task_type = parsed_key["task_type"]
+                        if task_type in ["representation", "summary"]:
+                            workspace_name = parsed_key["workspace_name"]
                             logger.debug(
-                                f"Publishing queue.empty event for {work_unit_key}"
+                                f"Publishing queue.empty event for {work_unit_key} in workspace {workspace_name}"
                             )
                             await publish_webhook_event(
                                 QueueEmptyEvent(
-                                    workspace_id=parsed_key["workspace_name"],
-                                    queue_type=parsed_key["task_type"],
+                                    workspace_id=workspace_name,
+                                    queue_type=task_type,
                                     session_id=parsed_key["session_name"],
                                     sender_name=parsed_key["sender_name"],
                                     observer_name=parsed_key["target_name"],
                                 )
                             )
+
+                            prometheus.DERIVER_TASKS_COMPLETED.labels(
+                                namespace=settings.METRICS.NAMESPACE,
+                                workspace_name=workspace_name,
+                                task_type=task_type,
+                            ).inc()
                         else:
                             logger.debug(
                                 f"Skipping queue.empty event for webhook work unit {work_unit_key}"

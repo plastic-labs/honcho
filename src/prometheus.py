@@ -49,6 +49,12 @@ DIALECTIC_CALLS = NamespacedCounter(
     ],
 )
 
+DERIVER_TASKS_COMPLETED = NamespacedCounter(
+    "deriver_tasks_completed_total",
+    "Total deriver tasks completed",
+    ["namespace", "workspace_name", "task_type"],
+)
+
 
 def get_namespace() -> str:
     """Get the configured namespace for metrics labeling"""
