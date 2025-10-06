@@ -284,12 +284,12 @@ def mock_queue_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright
 
 
 @pytest.fixture
-def mock_embedding_store(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright: ignore[reportUnusedParameter]
-    """Mock the embedding store to avoid actual embedding operations"""
-    from src.utils.embedding_store import EmbeddingStore
+def mock_representation_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright: ignore[reportUnusedParameter]
+    """Mock the representation manager to avoid actual embedding operations"""
+    from src.crud.representation import RepresentationManager
 
-    mock_store = AsyncMock(spec=EmbeddingStore)
-    mock_store.save_representation.return_value = 0
-    mock_store.get_relevant_observations = AsyncMock(return_value=MagicMock())
+    mock_manager = AsyncMock(spec=RepresentationManager)
+    mock_manager.save_representation.return_value = 0
+    mock_manager.get_relevant_observations = AsyncMock(return_value=MagicMock())
 
-    return mock_store
+    return mock_manager

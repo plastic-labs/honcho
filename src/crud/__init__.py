@@ -22,10 +22,9 @@ from .peer import (
     get_sessions_for_peer,
     update_peer,
 )
+from .peer_card import get_peer_card, set_peer_card
 from .representation import (
-    get_peer_card,
     get_working_representation,
-    set_peer_card,
 )
 from .session import (
     clone_session,
@@ -73,10 +72,11 @@ __all__ = [
     "get_peers",
     "update_peer",
     "get_sessions_for_peer",
-    # Representation
+    # Peer Card
     "get_peer_card",
-    "get_working_representation",
     "set_peer_card",
+    # Representation
+    "get_working_representation",
     # Session
     "get_sessions",
     "get_or_create_session",

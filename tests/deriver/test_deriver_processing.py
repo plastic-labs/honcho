@@ -89,21 +89,21 @@ class TestDeriverProcessing:
         mock_queue_manager.initialize.assert_called_once()  # type: ignore[attr-defined]
         mock_queue_manager.shutdown.assert_called_once()  # type: ignore[attr-defined]
 
-    async def test_mock_embedding_store(
+    async def test_mock_representation_manager(
         self,
-        mock_embedding_store: Any,  # AsyncMock object
+        mock_representation_manager: Any,  # AsyncMock object
     ):
-        """Test that the embedding store is properly mocked"""
-        assert mock_embedding_store is not None
+        """Test that the representation manager is properly mocked"""
+        assert mock_representation_manager is not None
 
         # Verify we can call the mocked methods
-        await mock_embedding_store.save_representation(
+        await mock_representation_manager.save_representation(
             Representation(explicit=[], deductive=[])
         )
-        mock_embedding_store.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
+        mock_representation_manager.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
-        assert mock_embedding_store.save_representation.called  # type: ignore[attr-defined]
+        assert mock_representation_manager.save_representation.called  # type: ignore[attr-defined]
 
     async def test_representation_batch_uses_earliest_cutoff(
         self,

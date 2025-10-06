@@ -4,11 +4,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
-from src.crud.representation import (
-    construct_peer_card_label,
-    get_peer_card,
-    set_peer_card,
-)
+from src.crud.peer_card import construct_peer_card_label, get_peer_card, set_peer_card
 from src.exceptions import ResourceNotFoundException
 from src.utils.representation import (
     DeductiveObservation,

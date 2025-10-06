@@ -536,22 +536,27 @@ class TestWorkingRepresentationRetrieval:
             db_session, workspace.name
         )
 
-        # Mock semantic search to return specific representation
-        mock_representation = Representation(
-            explicit=[
-                ExplicitObservation(
-                    content="User likes dogs",
-                    created_at=datetime.now(timezone.utc),
-                    message_ids=[(1, 1)],
-                    session_name="test_session",
-                )
-            ]
+        # Mock semantic search to return specific documents
+        from src.models import Document
+
+        mock_document = Document(
+            id="test_doc_id",
+            workspace_name=workspace.name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
+            content="User likes dogs",
+            internal_metadata={
+                "level": "explicit",
+                "message_ids": [(1, 1)],
+                "session_name": "test_session",
+            },
+            created_at=datetime.now(timezone.utc),
         )
 
         with patch(
-            "src.utils.embedding_store.EmbeddingStore.get_relevant_observations"
+            "src.crud.representation.RepresentationManager._query_documents_semantic"
         ) as mock_semantic:
-            mock_semantic.return_value = mock_representation
+            mock_semantic.return_value = [mock_document]
 
             representation = await crud.get_working_representation(
                 db_session,

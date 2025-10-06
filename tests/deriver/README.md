@@ -27,7 +27,7 @@ This directory contains tests for the deriver system, which handles background p
 
 - `mock_critical_analysis_call` - Mocks the critical analysis LLM call
 - `mock_queue_manager` - Mocks the queue manager for testing
-- `mock_embedding_store` - Mocks the embedding store operations
+- `mock_representation_manager` - Mocks the representation manager operations
 
 ## Testing Patterns
 

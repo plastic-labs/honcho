@@ -6,11 +6,11 @@ import sentry_sdk
 
 from src import crud, exceptions
 from src.config import settings
+from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
 from src.models import Message
 from src.utils import summarizer
 from src.utils.clients import honcho_llm_call
-from src.utils.embedding_store import EmbeddingStore
 from src.utils.formatting import format_new_turn_with_timestamp
 from src.utils.langfuse_client import get_langfuse_client
 from src.utils.logging import (
@@ -231,13 +231,13 @@ async def process_representation_tasks_batch(
         len(working_representation.deductive),
     )
 
-    # instantiate embedding store from collection
+    # instantiate representation manager from collection
     # if the sender is also the target, we're handling a global representation task.
     # otherwise, we're handling a directional representation task where the sender is
     # being observed by the target.
 
-    # Use the embedding store directly
-    embedding_store = EmbeddingStore(
+    # Use the representation manager directly
+    representation_manager = RepresentationManager(
         workspace_name=latest_message.workspace_name,
         observer=observer,
         observed=observed,
@@ -245,7 +245,7 @@ async def process_representation_tasks_batch(
 
     # Create reasoner instance
     reasoner = CertaintyReasoner(
-        embedding_store=embedding_store,
+        representation_manager=representation_manager,
         ctx=messages,
         observed=observed,
         observer=observer,
@@ -290,20 +290,20 @@ async def process_representation_tasks_batch(
 class CertaintyReasoner:
     """Certainty reasoner for analyzing and deriving insights."""
 
-    embedding_store: EmbeddingStore
+    representation_manager: RepresentationManager
     ctx: list[Message]
     observer: str
     observed: str
 
     def __init__(
         self,
-        embedding_store: EmbeddingStore,
+        representation_manager: RepresentationManager,
         ctx: list[Message],
         *,
         observed: str,
         observer: str,
     ) -> None:
-        self.embedding_store = embedding_store
+        self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
@@ -381,7 +381,7 @@ class CertaintyReasoner:
             reasoning_response
         )
         if not new_observations.is_empty():
-            await self.embedding_store.save_representation(
+            await self.representation_manager.save_representation(
                 new_observations,
                 (earliest_message.id, latest_message.id),
                 latest_message.session_name,
