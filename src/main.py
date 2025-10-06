@@ -3,6 +3,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 import sentry_sdk
@@ -10,10 +11,15 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi_pagination import add_pagination
+from sqlalchemy.sql import delete
+
+from src.dependencies import tracked_db
+from src.models import QueueItem
 
 if TYPE_CHECKING:
     from sentry_sdk._types import Event, Hint
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
@@ -103,10 +109,30 @@ if SENTRY_ENABLED:
     )
 
 
+async def cleanup_queue_items():
+    async with tracked_db("cleanup_queue_items") as db:
+        thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+
+        await db.execute(
+            delete(QueueItem).where(
+                QueueItem.processed
+                & (
+                    QueueItem.error.is_(None)
+                    | (
+                        QueueItem.error.is_not(None)
+                        & (QueueItem.created_at < thirty_days_ago)
+                    )
+                )
+            )
+        )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Lifespan events are now handled by the respective services
+    scheduler.add_job(cleanup_queue_items, trigger=CronTrigger(hour=6, minute=0))  # pyright: ignore
+    scheduler.start()
     yield
+    scheduler.shutdown(wait=False)
     await engine.dispose()
 
 
