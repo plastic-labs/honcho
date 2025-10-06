@@ -329,16 +329,28 @@ class QueueManager:
                             sender_name = parsed_key["sender_name"]
                             target_name = parsed_key["target_name"]
 
-                            await process_representation_batch(
-                                messages_context,
-                                sender_name=sender_name,
-                                target_name=target_name,
-                            )
-
-                            await self.mark_messages_as_processed(
-                                items_to_process, work_unit_key
-                            )
-                            message_count += len(items_to_process)
+                            try:
+                                await process_representation_batch(
+                                    messages_context,
+                                    sender_name=sender_name,
+                                    target_name=target_name,
+                                )
+                                await self.mark_messages_as_processed(
+                                    items_to_process, work_unit_key
+                                )
+                                message_count += len(items_to_process)
+                            except Exception as e:
+                                # Mark the batch as failed
+                                error_msg = f"{e.__class__.__name__}: {str(e)}"
+                                await self.mark_messaged_as_errored(
+                                    items_to_process, work_unit_key, error_msg
+                                )
+                                logger.error(
+                                    f"Error processing representation batch for work unit {work_unit_key}: {e}",
+                                    exc_info=True,
+                                )
+                                if settings.SENTRY.ENABLED:
+                                    sentry_sdk.capture_exception(e)
 
                         else:
                             messages_to_process = await self.get_next_message(
@@ -349,17 +361,31 @@ class QueueManager:
                                     f"No more messages to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
                                 break
-                            await process_item(
-                                task_type, messages_to_process[0].payload
-                            )
-                            await self.mark_messages_as_processed(
-                                messages_to_process, work_unit_key
-                            )
-                            message_count += len(messages_to_process)
+
+                            try:
+                                await process_item(
+                                    task_type, messages_to_process[0].payload
+                                )
+                                await self.mark_messages_as_processed(
+                                    messages_to_process, work_unit_key
+                                )
+                                message_count += len(messages_to_process)
+                            except Exception as e:
+                                # Mark the specific message as failed
+                                error_msg = f"{e.__class__.__name__}: {str(e)}"
+                                await self.mark_messaged_as_errored(
+                                    messages_to_process, work_unit_key, error_msg
+                                )
+                                logger.error(
+                                    f"Error processing message for work unit {work_unit_key}: {e}",
+                                    exc_info=True,
+                                )
+                                if settings.SENTRY.ENABLED:
+                                    sentry_sdk.capture_exception(e)
 
                     except Exception as e:
                         logger.error(
-                            f"Error processing tasks for work unit {work_unit_key}: {e}",
+                            f"Error in processing loop for work unit {work_unit_key}: {e}",
                             exc_info=True,
                         )
                         if settings.SENTRY.ENABLED:
@@ -599,6 +625,27 @@ class QueueManager:
                 .where(models.QueueItem.id.in_(message_ids))
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True)
+            )
+            await db.execute(
+                update(models.ActiveQueueSession)
+                .where(models.ActiveQueueSession.work_unit_key == work_unit_key)
+                .values(last_updated=func.now())
+            )
+            await db.commit()
+
+    async def mark_messaged_as_errored(
+        self, messages: list[QueueItem], work_unit_key: str, error: str
+    ) -> None:
+        """Mark messages as processed with an error"""
+        if not messages:
+            return
+        async with tracked_db("mark_messages_as_errored") as db:
+            message_ids = [msg.id for msg in messages]
+            await db.execute(
+                update(models.QueueItem)
+                .where(models.QueueItem.id.in_(message_ids))
+                .where(models.QueueItem.work_unit_key == work_unit_key)
+                .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
             )
             await db.execute(
                 update(models.ActiveQueueSession)
