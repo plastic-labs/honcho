@@ -25,6 +25,10 @@ from src.deriver.consumer import (
 from src.dreamer.dream_scheduler import DreamScheduler, set_dream_scheduler
 from src.models import QueueItem
 from src.utils.work_unit import parse_work_unit_key
+from src.webhooks.events import (
+    QueueEmptyEvent,
+    publish_webhook_event,
+)
 
 logger = getLogger(__name__)
 
@@ -334,13 +338,13 @@ class QueueManager:
                                 break
 
                             # Build payloads from the unique messages context window
-                            sender_name = parsed_key["sender_name"]
-                            target_name = parsed_key["target_name"]
+                            observer = parsed_key["observer"]
+                            observed = parsed_key["observed"]
 
                             await process_representation_batch(
                                 messages_context,
-                                sender_name=sender_name,
-                                target_name=target_name,
+                                observer=observer,
+                                observed=observed,
                             )
 
                             await self.mark_messages_as_processed(
@@ -395,11 +399,6 @@ class QueueManager:
                 if removed and message_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        from src.webhooks.events import (
-                            QueueEmptyEvent,
-                            publish_webhook_event,
-                        )
-
                         if work_unit["task_type"] in ["representation", "summary"]:
                             logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key}"
@@ -409,8 +408,8 @@ class QueueManager:
                                     workspace_id=work_unit["workspace_name"],
                                     queue_type=work_unit["task_type"],
                                     session_id=work_unit["session_name"],
-                                    sender_name=work_unit["sender_name"],
-                                    observer_name=work_unit["target_name"],
+                                    observer=work_unit["observer"],
+                                    observed=work_unit["observed"],
                                 )
                             )
                         else:
@@ -525,7 +524,7 @@ class QueueManager:
                 select(
                     models.Message.id.label("message_id"),
                     models.Message.token_count.label("token_count"),
-                    models.Message.peer_name.label("sender_name"),
+                    models.Message.peer_name.label("peer_name"),
                     func.sum(models.Message.token_count)
                     .over(order_by=models.Message.id)
                     .label("cumulative_token_count"),

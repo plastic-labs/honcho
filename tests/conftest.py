@@ -503,14 +503,14 @@ def mock_crud_collection_operations():
     async def mock_get_or_create_collection(
         _: AsyncSession,
         workspace_name: str,
-        collection_name: str,
-        peer_name: str | None = None,
+        observer: str,
+        observed: str,
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
-            name=collection_name,
+            observer=observer,
+            observed=observed,
             workspace_name=workspace_name,
-            peer_name=peer_name,
         )
         mock_collection.id = generate_nanoid()
         return mock_collection

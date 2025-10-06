@@ -18,8 +18,9 @@ logger = getLogger(__name__)
 async def get_all_documents(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
-    collection_name: str,
+    *,
+    observer: str,
+    observed: str,
     limit: int = 1000,
 ) -> Sequence[models.Document]:
     """
@@ -32,8 +33,8 @@ async def get_all_documents(
         select(models.Document)
         .limit(limit)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.peer_name == peer_name)
-        .where(models.Document.collection_name == collection_name)
+        .where(models.Document.observer == observer)
+        .where(models.Document.observed == observed)
     )
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -42,9 +43,10 @@ async def get_all_documents(
 async def query_documents(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
-    collection_name: str,
     query: str,
+    *,
+    observer: str,
+    observed: str,
     filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
@@ -56,9 +58,9 @@ async def query_documents(
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        collection_name: Name of the collection
         query: Search query text
+        observer: Name of the observing peer
+        observed: Name of the observed peer
         filters: Optional filters to apply
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
@@ -79,8 +81,8 @@ async def query_documents(
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.peer_name == peer_name)
-        .where(models.Document.collection_name == collection_name)
+        .where(models.Document.observer == observer)
+        .where(models.Document.observed == observed)
     )
     if max_distance is not None:
         stmt = stmt.where(
@@ -128,8 +130,8 @@ async def _create_document(  # pyright: ignore[reportUnusedFunction]
         stmt = (
             select(models.Document)
             .where(models.Document.workspace_name == collection.workspace_name)
-            .where(models.Document.peer_name == collection.peer_name)
-            .where(models.Document.collection_name == collection.name)
+            .where(models.Document.observer == collection.observer)
+            .where(models.Document.observed == collection.observed)
             .where(
                 models.Document.embedding.cosine_distance(document.embedding)
                 <= distance
@@ -167,8 +169,8 @@ async def _create_document(  # pyright: ignore[reportUnusedFunction]
 
     honcho_document = models.Document(
         workspace_name=collection.workspace_name,
-        peer_name=collection.peer_name,
-        collection_name=collection.name,
+        observer=collection.observer,
+        observed=collection.observed,
         content=document.content,
         internal_metadata=metadata_dict,
         embedding=document.embedding,
@@ -184,7 +186,9 @@ async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
     workspace_name: str,
-    collection_name: str,
+    *,
+    observer: str,
+    observed: str,
 ) -> tuple[list[models.Document], int]:
     """
     Create multiple documents with NO duplicate detection.
@@ -193,7 +197,8 @@ async def create_documents(
         db: Database session
         documents: List of document creation schemas
         workspace_name: Name of the workspace
-        collection_name: Name of the collection
+        observer: Name of the observing peer
+        observed: Name of the observed peer
 
     Returns:
         Tuple of (created/updated documents, count of new documents)
@@ -205,8 +210,8 @@ async def create_documents(
         honcho_documents.append(
             models.Document(
                 workspace_name=workspace_name,
-                peer_name=doc.peer_name,
-                collection_name=collection_name,
+                observer=observer,
+                observed=observed,
                 content=doc.content,
                 internal_metadata=metadata_dict,
                 embedding=doc.embedding,

@@ -207,7 +207,8 @@ class TestDocumentCreationWorkflow:
     ):
         """Test standard document creation without duplicate checking"""
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        collection_name = "test_collection"
+        observer = peer.name
+        observed = peer.name
 
         # Create session for foreign key constraint
         session = models.Session(
@@ -219,9 +220,9 @@ class TestDocumentCreationWorkflow:
 
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
-            name=collection_name,
+            observer=observer,
+            observed=observed,
             workspace_name=workspace.name,
-            peer_name=peer.name,
         )
         db_session.add(collection)
         await db_session.flush()
@@ -237,15 +238,14 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
-            peer_name=peer.name,
             embedding=fixed_embedding_vector,
         )
 
-        collection = await crud.get_or_create_collection(
+        collection: models.Collection = await crud.get_or_create_collection(
             db_session,
             workspace.name,
-            collection_name,
-            peer.name,
+            observer=observer,
+            observed=observed,
         )
 
         document, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
@@ -265,7 +265,8 @@ class TestDocumentCreationWorkflow:
     ):
         """Test document creation with duplicate threshold checking"""
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        collection_name = "test_collection"
+        observer = peer.name
+        observed = peer.name
 
         # Create session for foreign key constraint
         session = models.Session(
@@ -277,9 +278,9 @@ class TestDocumentCreationWorkflow:
 
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
-            name=collection_name,
+            observer=observer,
+            observed=observed,
             workspace_name=workspace.name,
-            peer_name=peer.name,
         )
         db_session.add(collection)
         await db_session.flush()
@@ -295,21 +296,20 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
-            peer_name=peer.name,
             embedding=fixed_embedding_vector,
         )
 
-        collection = await crud.get_or_create_collection(
+        collection_2: models.Collection = await crud.get_or_create_collection(
             db_session,
             workspace.name,
-            collection_name,
-            peer.name,
+            observer=observer,
+            observed=observed,
         )
 
         original_doc, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             doc_schema,
-            collection,
+            collection_2,
             duplicate_threshold=0.95,
         )
 
@@ -327,21 +327,20 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
-            peer_name=peer.name,
             embedding=fixed_embedding_vector,
         )
 
-        collection = await crud.get_or_create_collection(
+        collection_3: models.Collection = await crud.get_or_create_collection(
             db_session,
             workspace.name,
-            collection_name,
-            peer.name,
+            observer=observer,
+            observed=observed,
         )
 
         duplicate_doc, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
             db_session,
             similar_doc_schema,
-            collection,
+            collection_3,
             duplicate_threshold=0.95,
         )
 
@@ -355,7 +354,8 @@ class TestDocumentCreationWorkflow:
     ):
         """Test document creation when embedding is provided"""
         workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        collection_name = "test_collection"
+        observer = peer.name
+        observed = peer.name
 
         # Create session for foreign key constraint
         session = models.Session(
@@ -367,9 +367,9 @@ class TestDocumentCreationWorkflow:
 
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
-            name=collection_name,
+            observer=observer,
+            observed=observed,
             workspace_name=workspace.name,
-            peer_name=peer.name,
         )
         db_session.add(collection)
         await db_session.flush()
@@ -387,15 +387,14 @@ class TestDocumentCreationWorkflow:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
-            peer_name=peer.name,
             embedding=precomputed_embedding,
         )
 
-        collection = await crud.get_or_create_collection(
+        collection: models.Collection = await crud.get_or_create_collection(
             db_session,
             workspace.name,
-            collection_name,
-            peer.name,
+            observer=observer,
+            observed=observed,
         )
 
         document, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
@@ -452,15 +451,11 @@ class TestWorkingRepresentationRetrieval:
         session = await self.create_test_session(db_session, workspace)
 
         # Create some documents for the representation
-        collection_name = crud.construct_collection_name(
-            observer=observer_peer.name, observed=observed_peer.name
-        )
-
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
-            name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
         )
         db_session.add(collection)
         await db_session.flush()
@@ -476,15 +471,14 @@ class TestWorkingRepresentationRetrieval:
                     2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
                 ).isoformat(),
             ),
-            peer_name=observer_peer.name,
             embedding=fixed_embedding_vector,
         )
 
-        collection = await crud.get_or_create_collection(
+        collection: models.Collection = await crud.get_or_create_collection(
             db_session,
             workspace.name,
-            collection_name,
-            observer_peer.name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
         )
 
         await crud._create_document(  # pyright: ignore[reportPrivateUsage]
@@ -505,7 +499,6 @@ class TestWorkingRepresentationRetrieval:
                 ).isoformat(),
                 premises=["User mentioned they have a dog"],
             ),
-            peer_name=observer_peer.name,
             embedding=fixed_embedding_vector,
         )
 
@@ -517,9 +510,9 @@ class TestWorkingRepresentationRetrieval:
         representation = await crud.get_working_representation(
             db_session,
             workspace.name,
-            observer_peer.name,
-            observed_peer.name,
-            session.name,
+            session_name=session.name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
         )
 
         assert not representation.is_empty()
@@ -562,9 +555,9 @@ class TestWorkingRepresentationRetrieval:
             representation = await crud.get_working_representation(
                 db_session,
                 workspace.name,
-                observer_peer.name,
-                observed_peer.name,
                 include_semantic_query="pets dogs animals",
+                observer=observer_peer.name,
+                observed=observed_peer.name,
             )
 
             # Should have called semantic search
@@ -581,15 +574,11 @@ class TestWorkingRepresentationRetrieval:
             db_session, workspace.name
         )
 
-        collection_name = crud.construct_collection_name(
-            observer=observer_peer.name, observed=observed_peer.name
-        )
-
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
-            name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
         )
         db_session.add(collection)
         await db_session.flush()
@@ -597,8 +586,8 @@ class TestWorkingRepresentationRetrieval:
         # Create document with high times_derived count
         highly_derived_doc = models.Document(
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
-            collection_name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             content="Highly derived observation",
             internal_metadata={"level": "explicit", "times_derived": 5},
             embedding=[0.1] * 1536,
@@ -608,8 +597,8 @@ class TestWorkingRepresentationRetrieval:
         # Create document with lower times_derived count
         less_derived_doc = models.Document(
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
-            collection_name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             content="Less derived observation",
             internal_metadata={"level": "explicit", "times_derived": 2},
             embedding=[0.2] * 1536,
@@ -622,9 +611,9 @@ class TestWorkingRepresentationRetrieval:
         representation = await crud.get_working_representation(
             db_session,
             workspace.name,
-            observer_peer.name,
-            observed_peer.name,
             include_most_derived=True,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
         )
 
         # Should prioritize highly derived observation
@@ -638,8 +627,8 @@ class TestWorkingRepresentationRetrieval:
         # Create test documents
         explicit_doc = models.Document(
             workspace_name="test_workspace",
-            peer_name="test_peer",
-            collection_name="test_collection",
+            observer="test_peer",
+            observed="test_peer",
             content="User said they like programming",
             internal_metadata={
                 "level": "explicit",
@@ -652,8 +641,8 @@ class TestWorkingRepresentationRetrieval:
 
         deductive_doc = models.Document(
             workspace_name="test_workspace",
-            peer_name="test_peer",
-            collection_name="test_collection",
+            observer="test_peer",
+            observed="test_peer",
             content="User is likely a software developer",
             internal_metadata={
                 "level": "deductive",

@@ -42,10 +42,11 @@ async def dialectic_call(
     query: str,
     working_representation: str,
     recent_conversation_history: str | None,
-    peer_name: str,
     peer_card: list[str] | None,
-    target_name: str | None = None,
-    target_peer_card: list[str] | None = None,
+    observed_peer_card: list[str] | None = None,
+    *,
+    observer: str,
+    observed: str,
 ):
     """
     Make a direct call to the dialectic model for context synthesis.
@@ -56,8 +57,8 @@ async def dialectic_call(
         recent_conversation_history: Recent conversation history
         peer_name: Name of the user/peer
         peer_card: Known biographical information about the user
-        target_name: Name of the user/peer being queried about
-        target_peer_card: Known biographical information about the target, if applicable
+        observed: Name of the user/peer being queried about
+        observed_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Model response
@@ -67,10 +68,10 @@ async def dialectic_call(
         query,
         working_representation,
         recent_conversation_history,
-        peer_name,
         peer_card,
-        target_name,
-        target_peer_card,
+        observed_peer_card,
+        observer=observer,
+        observed=observed,
     )
 
     response = await honcho_llm_call(
@@ -97,10 +98,11 @@ async def dialectic_stream(
     query: str,
     working_representation: str,
     recent_conversation_history: str | None,
-    peer_name: str,
     peer_card: list[str] | None,
-    target_name: str | None = None,
-    target_peer_card: list[str] | None = None,
+    observed_peer_card: list[str] | None = None,
+    *,
+    observer: str,
+    observed: str,
 ):
     """
     Make a streaming call to the dialectic model for context synthesis.
@@ -111,8 +113,8 @@ async def dialectic_stream(
         recent_conversation_history: Recent conversation history
         peer_name: Name of the user/peer
         peer_card: Known biographical information about the user
-        target_name: Name of the user/peer being queried about
-        target_peer_card: Known biographical information about the target, if applicable
+        observed: Name of the user/peer being queried about
+        observed_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Streaming model response
@@ -122,10 +124,10 @@ async def dialectic_stream(
         query,
         working_representation,
         recent_conversation_history,
-        peer_name,
         peer_card,
-        target_name,
-        target_peer_card,
+        observed_peer_card,
+        observer=observer,
+        observed=observed,
     )
 
     response = await honcho_llm_call(
@@ -151,11 +153,11 @@ async def dialectic_stream(
 
 async def chat(
     workspace_name: str,
-    peer_name: str,
-    target_name: str | None,
     session_name: str | None,
     query: str,
     *,
+    observer: str,
+    observed: str,
     stream: bool = False,
 ) -> str | AsyncIterator[HonchoLLMCallStreamChunk]:
     """
@@ -170,7 +172,7 @@ async def chat(
     Args:
         workspace_name: Name of the workspace
         peer_name: Name of the peer making the query
-        target_name: Optional name of the peer being queried about
+        observed: Optional name of the peer being queried about
         session_name: Optional session name for scoping
         query: Input Dialectic Query
         stream: Whether to stream the response
@@ -198,10 +200,10 @@ async def chat(
             }
         )
     logger.info(
-        "Received query:\n'%s'\nobserver: %s%s%s\n",
+        "Received query:\n'%s'\nobserver: %s, observed: %s%s\n",
         query,
-        peer_name,
-        f", target: {target_name}" if target_name else "",
+        observer,
+        observed,
         f", session: {session_name}" if session_name else "",
     )
     start_time = time.perf_counter()
@@ -210,13 +212,12 @@ async def chat(
         # 1. Working representation (short-term) -----------------------------------
         working_rep_start_time = time.perf_counter()
         # If no target specified, get global representation (peer observing themselves)
-        target_peer = target_name if target_name is not None else peer_name
         working_representation: Representation = await crud.get_working_representation(
             db,
             workspace_name,
-            peer_name,
-            target_peer,
-            session_name,
+            observer=observer,
+            observed=observed,
+            session_name=session_name,
             include_semantic_query=query,
             semantic_search_top_k=settings.DIALECTIC.SEMANTIC_SEARCH_TOP_K,
             semantic_search_max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
@@ -271,18 +272,20 @@ async def chat(
         )
 
         # 3. Peer card(s) ----------------------------------------------------------
-        peer_card = await crud.get_peer_card(db, workspace_name, peer_name, peer_name)
-        if target_name:
-            target_peer_card = await crud.get_peer_card(
-                db, workspace_name, target_name, peer_name
+        peer_card = await crud.get_peer_card(
+            db, workspace_name, observer=observer, observed=observed
+        )
+        if observer != observed:
+            observed_peer_card = await crud.get_peer_card(
+                db, workspace_name, observer=observer, observed=observed
             )
         else:
-            target_peer_card = None
+            observed_peer_card = None
 
-    # if target_peer_card:
-    #     logger.info("Retrieved peer cards:\n%s\n%s", peer_card, target_peer_card)
-    # else:
-    #     logger.info("Retrieved peer card:\n%s", peer_card)
+    if observed_peer_card:
+        logger.info("Retrieved peer cards:\n%s\n%s", peer_card, observed_peer_card)
+    else:
+        logger.info("Retrieved peer card:\n%s", peer_card)
 
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = time.perf_counter()
@@ -291,20 +294,20 @@ async def chat(
             query,
             working_representation_str,
             recent_history,
-            peer_name,
             peer_card,
-            target_name,
-            target_peer_card,
+            observed_peer_card,
+            observer=observer,
+            observed=observed,
         )
 
     response = await dialectic_call(
         query,
         working_representation_str,
         recent_history,
-        peer_name,
         peer_card,
-        target_name,
-        target_peer_card,
+        observed_peer_card,
+        observer=observer,
+        observed=observed,
     )
     dialectic_call_duration = (time.perf_counter() - dialectic_call_start_time) * 1000
     accumulate_metric(

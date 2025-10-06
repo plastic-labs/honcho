@@ -5,10 +5,11 @@ def dialectic_prompt(
     query: str,
     working_representation: str,
     recent_conversation_history: str | None,
-    peer_name: str,
-    peer_card: list[str] | None,
-    target_name: str | None = None,
-    target_peer_card: list[str] | None = None,
+    observer_peer_card: list[str] | None,
+    observed_peer_card: list[str] | None = None,
+    *,
+    observer: str,
+    observed: str,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
@@ -17,32 +18,32 @@ def dialectic_prompt(
         query: The specific question or request from the application about the user
         working_representation: Conclusions from recent conversation analysis AND historical conclusions from the user's global representation
         recent_conversation_history: Recent conversation history
-        peer_name: Name of the user/peer being queried about
         peer_card: Known biographical information about the user
-        target_name: Name of the user/peer being queried about
-        target_peer_card: Known biographical information about the target, if applicable
+        observed_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Formatted prompt string for the dialectic model
     """
 
-    if target_name:
-        query_target = f"""The query is about user {peer_name}'s understanding of {target_name}.
+    if observer != observed:
+        # this is a directional query from the observer's view of the observed
+        query_target = f"""The query is about user {observer}'s understanding of {observed}.
 
 The user's known biographical information:
-{chr(10).join(peer_card) if peer_card else "(none)"}
+{chr(10).join(observer_peer_card) if observer_peer_card else "(none)"}
 
 The target's known biographical information:
-{chr(10).join(target_peer_card) if target_peer_card else "(none)"}
+{chr(10).join(observed_peer_card) if observed_peer_card else "(none)"}
 
 If the user's name or nickname is known, exclusively refer to them by that name.
 If the target's name or nickname is known, exclusively refer to them by that name.
 """
     else:
-        query_target = f"""The query is about user {peer_name}.
+        # this is a global query: honcho's omniscient view of the observed
+        query_target = f"""The query is about user {observed}.
 
 The user's known biographical information:
-{chr(10).join(peer_card) if peer_card else "(none)"}
+{chr(10).join(observer_peer_card) if observer_peer_card else "(none)"}
 
 If the user's name or nickname is known, exclusively refer to them by that name.
 """
@@ -131,21 +132,20 @@ Provide a natural language response that:
     )
 
 
-def query_generation_prompt(query: str, target_peer_name: str) -> str:
+def query_generation_prompt(query: str, observed: str) -> str:
     """
     Generate the prompt for semantic query expansion.
 
     Args:
         query: The original user query
-        peer_name: Name of the user/peer
-        target_name: Name of the target/peer if dialectic query is targeted
+        observed: Name of the target peer
 
     Returns:
         Formatted prompt string for query generation
     """
     return c(
         f"""
-You are a query expansion agent helping AI applications understand their users. The user's name is {target_peer_name}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
+You are a query expansion agent helping AI applications understand their users. The user's name is {observed}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
 
 ## QUERY EXPANSION STRATEGY FOR SEMANTIC SIMILARITY
 

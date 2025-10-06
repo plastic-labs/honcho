@@ -31,7 +31,7 @@ async def process_dream(
         payload: The dream task payload containing workspace, peer, and dream type information
     """
     logger.info(
-        f"Processing dream task: {payload.dream_type} for {payload.workspace_name}/{payload.sender_name}/{payload.collection_name}"
+        f"Processing dream task: {payload.dream_type} for {payload.workspace_name}/{payload.observer}/{payload.observed}"
     )
 
     try:
@@ -41,7 +41,7 @@ async def process_dream(
 
     except Exception as e:
         logger.error(
-            f"Error processing dream task {payload.dream_type} for {payload.sender_name}/{payload.collection_name}: {str(e)}",
+            f"Error processing dream task {payload.dream_type} for {payload.observer}/{payload.observed}: {str(e)}",
             exc_info=True,
         )
         if settings.SENTRY.ENABLED:
@@ -62,14 +62,17 @@ async def _process_consolidate_dream(payload: DreamPayload) -> None:
     logger.info(
         f"""
 (っ- ‸ - ς)ᶻ z 𐰁 ᶻ z 𐰁 ᶻ z 𐰁\n
-DREAM: consolidating documents for {payload.workspace_name}/{payload.sender_name}/{payload.collection_name}\n
+DREAM: consolidating documents for {payload.workspace_name}/{payload.observer}/{payload.observed}\n
 𐰁 z ᶻ 𐰁 z ᶻ 𐰁 z ᶻ(っ- ‸ - ς)"""
     )
 
     # get all documents in the collection
     async with tracked_db("dream_consolidate") as db:
         documents = await crud.get_all_documents(
-            db, payload.workspace_name, payload.sender_name, payload.collection_name
+            db,
+            payload.workspace_name,
+            observer=payload.observer,
+            observed=payload.observed,
         )
 
         logger.info("found %d documents to consolidate", len(documents))
@@ -85,18 +88,19 @@ DREAM: consolidating documents for {payload.workspace_name}/{payload.sender_name
             await _consolidate_cluster(
                 cluster,
                 payload.workspace_name,
-                payload.sender_name,
-                payload.collection_name,
                 db,
+                observer=payload.observer,
+                observed=payload.observed,
             )
 
 
 async def _consolidate_cluster(
     cluster: Sequence[models.Document],
     workspace_name: str,
-    peer_name: str,
-    collection_name: str,
     db: AsyncSession,
+    *,
+    observer: str,
+    observed: str,
 ) -> None:
     """
     Consolidate a cluster of documents, treated as a Representation, into a smaller one.
@@ -113,12 +117,13 @@ async def _consolidate_cluster(
     logger.info("consolidated representation:\n%s", consolidated_representation)
 
     collection = await crud.get_collection(
-        db, workspace_name, collection_name, peer_name
+        db, workspace_name, observer=observer, observed=observed
     )
     if not collection:
         logger.error(
-            "Collection %s not found, cannot save consolidated documents",
-            collection_name,
+            "Collection for %s/%s not found, cannot save consolidated documents",
+            observer,
+            observed,
         )
         return
 
@@ -160,14 +165,13 @@ async def _consolidate_cluster(
             schemas.DocumentCreate(
                 content=content,
                 metadata=metadata,
-                peer_name=peer_name,
                 embedding=embedding,
             )
         )
 
     # bulk create documents
     await crud.create_documents(
-        db, documents_to_create, workspace_name, collection_name
+        db, documents_to_create, workspace_name, observer=observer, observed=observed
     )
 
     # delete old documents

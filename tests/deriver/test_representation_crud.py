@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models
 from src.crud.representation import (
-    construct_collection_name,
     construct_peer_card_label,
     get_peer_card,
     set_peer_card,
@@ -28,20 +27,39 @@ async def test_peer_card_get_set_roundtrip(
     workspace, peer = sample_data
 
     # Initially absent
-    assert await get_peer_card(db_session, workspace.name, peer.name, peer.name) is None
+    assert (
+        await get_peer_card(
+            db_session, workspace.name, observer=peer.name, observed=peer.name
+        )
+        is None
+    )
 
     # Set and read back
     value_1 = ["Initial peer card text"]
-    await set_peer_card(db_session, workspace.name, peer.name, peer.name, value_1)
+    await set_peer_card(
+        db_session,
+        workspace.name,
+        value_1,
+        observer=peer.name,
+        observed=peer.name,
+    )
     assert (
-        await get_peer_card(db_session, workspace.name, peer.name, peer.name) == value_1
+        await get_peer_card(
+            db_session, workspace.name, observer=peer.name, observed=peer.name
+        )
+        == value_1
     )
 
     # Update and read back
     value_2 = ["Updated peer card text", "Another line"]
-    await set_peer_card(db_session, workspace.name, peer.name, peer.name, value_2)
+    await set_peer_card(
+        db_session, workspace.name, value_2, observer=peer.name, observed=peer.name
+    )
     assert (
-        await get_peer_card(db_session, workspace.name, peer.name, peer.name) == value_2
+        await get_peer_card(
+            db_session, workspace.name, observer=peer.name, observed=peer.name
+        )
+        == value_2
     )
 
 
@@ -53,7 +71,11 @@ async def test_set_peer_card_missing_peer_raises(
     workspace, _existing_peer = sample_data
     with pytest.raises(ResourceNotFoundException):
         await set_peer_card(
-            db_session, workspace.name, "missing-peer", "missing-peer", ["card"]
+            db_session,
+            workspace.name,
+            ["card"],
+            observer="missing-peer",
+            observed="missing-peer",
         )
 
 
@@ -61,7 +83,6 @@ def test_construct_helpers_labels():
     """Helper label constructors return expected values."""
     assert construct_peer_card_label(observer="a", observed="a") == "peer_card"
     assert construct_peer_card_label(observer="a", observed="b") == "b_peer_card"
-    assert construct_collection_name(observer="obs", observed="obj") == "obs_obj"
 
 
 def test_representation_is_empty_and_diff():

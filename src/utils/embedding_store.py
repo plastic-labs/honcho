@@ -33,14 +33,14 @@ class EmbeddingStore:
     def __init__(
         self,
         workspace_name: str,
-        peer_name: str,
-        collection_name: str,
         *,
+        observer: str,
+        observed: str,
         db: AsyncSession | None = None,
     ) -> None:
         self.workspace_name: str = workspace_name
-        self.peer_name: str = peer_name
-        self.collection_name: str = collection_name
+        self.observer: str = observer
+        self.observed: str = observed
         self.db: AsyncSession | None = db
 
     @conditional_observe
@@ -88,7 +88,7 @@ class EmbeddingStore:
 
         batch_embed_duration = (time.perf_counter() - batch_embed_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id_range[1]}_{self.peer_name}",
+            f"deriver_{message_id_range[1]}_{self.observer}",
             "embed_new_observations",
             batch_embed_duration,
             "ms",
@@ -118,7 +118,7 @@ class EmbeddingStore:
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
         accumulate_metric(
-            f"deriver_{message_id_range[1]}_{self.peer_name}",
+            f"deriver_{message_id_range[1]}_{self.observer}",
             "save_new_observations",
             create_document_duration,
             "ms",
@@ -139,8 +139,8 @@ class EmbeddingStore:
         collection = await crud.get_or_create_collection(
             db,
             self.workspace_name,
-            self.collection_name,
-            self.peer_name,
+            observer=self.observer,
+            observed=self.observed,
         )
 
         # Prepare all documents for bulk creation
@@ -168,7 +168,6 @@ class EmbeddingStore:
                 schemas.DocumentCreate(
                     content=obs_content,
                     metadata=metadata,
-                    peer_name=self.peer_name,
                     embedding=embedding,
                 )
             )
@@ -178,7 +177,8 @@ class EmbeddingStore:
             db,
             documents_to_create,
             self.workspace_name,
-            self.collection_name,
+            observer=self.observer,
+            observed=self.observed,
         )
 
         try:
@@ -264,8 +264,8 @@ class EmbeddingStore:
                 documents = await crud.query_documents(
                     db,
                     workspace_name=self.workspace_name,
-                    peer_name=self.peer_name,
-                    collection_name=self.collection_name,
+                    observer=self.observer,
+                    observed=self.observed,
                     query=self._build_truncated_query(query, conversation_context),
                     max_distance=max_distance,
                     top_k=top_k,
@@ -292,8 +292,8 @@ class EmbeddingStore:
         documents = await crud.query_documents(
             db,
             workspace_name=self.workspace_name,
-            peer_name=self.peer_name,
-            collection_name=self.collection_name,
+            observer=self.observer,
+            observed=self.observed,
             query=self._build_truncated_query(query, conversation_context),
             max_distance=max_distance,
             top_k=count * FILTER_OVERSAMPLING_FACTOR,

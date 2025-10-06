@@ -41,19 +41,19 @@ class TestDeriverProcessing:
         representation_payload = {
             "workspace_name": "workspace1",
             "session_name": session.name,
-            "sender_name": peer1.name,
-            "target_name": peer2.name,
+            "observer": peer2.name,
+            "observed": peer1.name,
             "task_type": "representation",
         }
 
         # Generate work unit key for representation
         work_unit_key = get_work_unit_key(representation_payload)
         expected_key = (
-            f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
+            f"representation:workspace1:{session.name}:{peer2.name}:{peer1.name}"
         )
         assert work_unit_key == expected_key
 
-        # Create a payload for summary task (sender_name and target_name should be None)
+        # Create a payload for summary task
         summary_payload = {
             "workspace_name": "workspace1",
             "session_name": session.name,
@@ -175,7 +175,7 @@ class TestDeriverProcessing:
             )
 
         await process_representation_tasks_batch(
-            sender_name="alice", target_name="alice", messages=messages
+            observer="alice", observed="alice", messages=messages
         )
 
         # Verify that the earliest message ID was used as the cutoff

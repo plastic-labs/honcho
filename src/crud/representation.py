@@ -26,8 +26,9 @@ GLOBAL_REPRESENTATION_COLLECTION_NAME: Final[str] = "global_representation"
 async def get_peer_card(
     db: AsyncSession,
     workspace_name: str,
-    observed_name: str,
-    observer_name: str,
+    *,
+    observer: str,
+    observed: str,
 ) -> list[str] | None:
     """
     Get peer card from internal_metadata.
@@ -44,15 +45,11 @@ async def get_peer_card(
         The peer's card text if present, otherwise None (also None if peer not found).
     """
     try:
-        peer = await get_peer(
-            db, workspace_name, schemas.PeerCreate(name=observer_name)
-        )
+        peer = await get_peer(db, workspace_name, schemas.PeerCreate(name=observer))
         return cast(
             list[str] | None,
             peer.internal_metadata.get(
-                construct_peer_card_label(
-                    observer=observer_name, observed=observed_name
-                )
+                construct_peer_card_label(observer=observer, observed=observed)
             ),
         )
     except exceptions.ResourceNotFoundException:
@@ -62,9 +59,10 @@ async def get_peer_card(
 async def set_peer_card(
     db: AsyncSession,
     workspace_name: str,
-    observed_name: str,
-    observer_name: str,
     peer_card: list[str] | None,
+    *,
+    observer: str,
+    observed: str,
 ) -> None:
     """
     Set peer card for a peer.
@@ -84,12 +82,12 @@ async def set_peer_card(
     stmt = (
         update(models.Peer)
         .where(models.Peer.workspace_name == workspace_name)
-        .where(models.Peer.name == observer_name)
+        .where(models.Peer.name == observer)
         .values(
             internal_metadata=models.Peer.internal_metadata.op("||")(
                 {
                     construct_peer_card_label(
-                        observer=observer_name, observed=observed_name
+                        observer=observer, observed=observed
                     ): peer_card
                 }
             )
@@ -98,7 +96,7 @@ async def set_peer_card(
     result = await db.execute(stmt)
     if result.rowcount == 0:
         raise exceptions.ResourceNotFoundException(
-            f"Peer {observer_name} not found in workspace {workspace_name}"
+            f"Peer {observer} not found in workspace {workspace_name}"
         )
     await db.commit()
 
@@ -106,8 +104,9 @@ async def set_peer_card(
 async def get_working_representation(
     db: AsyncSession,
     workspace_name: str,
-    observer_name: str,
-    observed_name: str,
+    *,
+    observer: str,
+    observed: str,
     session_name: str | None = None,
     include_semantic_query: str | None = None,
     semantic_search_top_k: int | None = None,
@@ -118,11 +117,6 @@ async def get_working_representation(
     """
     Get raw working representation data from the relevant document collection.
     """
-    # Determine metadata key based on observer/observed relationship
-    collection_name = construct_collection_name(
-        observer=observer_name, observed=observed_name
-    )
-
     total = max_observations
 
     # 0 if no semantic query, otherwise min of total // 3 and total
@@ -156,9 +150,9 @@ async def get_working_representation(
     if include_semantic_query:
         semantically_relevant_representation = await EmbeddingStore(
             workspace_name=workspace_name,
-            peer_name=observer_name,
-            collection_name=collection_name,
             db=db,
+            observer=observer,
+            observed=observed,
         ).get_relevant_observations(
             query=include_semantic_query,
             top_k=semantic_observations,
@@ -176,7 +170,8 @@ async def get_working_representation(
             .limit(top_observations)
             .where(
                 models.Document.workspace_name == workspace_name,
-                models.Document.collection_name == collection_name,
+                models.Document.observer == observer,
+                models.Document.observed == observed,
             )
             .order_by(models.Document.internal_metadata["times_derived"].desc())
         )
@@ -191,7 +186,8 @@ async def get_working_representation(
         .limit(recent_observations)
         .where(
             models.Document.workspace_name == workspace_name,
-            models.Document.collection_name == collection_name,
+            models.Document.observer == observer,
+            models.Document.observed == observed,
             *(
                 [models.Document.session_name == session_name]
                 if session_name is not None
@@ -206,7 +202,7 @@ async def get_working_representation(
 
     if not documents:
         logger.warning(
-            f"No observations for {observed_name} (observer: {observer_name}) found. Normal if brand-new peer."
+            f"No observations for {observed} (observer: {observer}) found. Normal if brand-new peer."
         )
 
     representation.merge_representation(representation_from_documents(documents))
@@ -262,12 +258,6 @@ def representation_from_documents(
             if doc.internal_metadata.get("level") == "deductive"
         ],
     )
-
-
-def construct_collection_name(*, observer: str, observed: str) -> str:
-    if observer == observed:
-        return GLOBAL_REPRESENTATION_COLLECTION_NAME
-    return f"{observer}_{observed}"
 
 
 def construct_peer_card_label(*, observer: str, observed: str) -> str:

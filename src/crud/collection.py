@@ -13,17 +13,18 @@ logger = getLogger(__name__)
 async def get_collection(
     db: AsyncSession,
     workspace_name: str,
-    collection_name: str,
-    peer_name: str,
+    *,
+    observer: str,
+    observed: str,
 ) -> models.Collection:
     """
-    Get a collection by name for a specific peer and workspace.
+    Get a collection by observer/observed for a workspace.
 
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        collection_name: Name of the collection
+        observer: Name of the observing peer (owns the collection)
+        observed: Name of the observed peer
 
     Returns:
         The collection if found
@@ -34,34 +35,34 @@ async def get_collection(
     stmt = (
         select(models.Collection)
         .where(models.Collection.workspace_name == workspace_name)
-        .where(models.Collection.name == collection_name)
-        .where(models.Collection.peer_name == peer_name)
+        .where(models.Collection.observer == observer)
+        .where(models.Collection.observed == observed)
     )
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if collection is None:
-        raise ResourceNotFoundException(
-            "Collection not found or does not belong to peer"
-        )
+        raise ResourceNotFoundException("Collection not found")
     return collection
 
 
 async def get_or_create_collection(
     db: AsyncSession,
     workspace_name: str,
-    collection_name: str,
-    peer_name: str,
     *,
+    observer: str,
+    observed: str,
     _retry: bool = False,
 ) -> models.Collection:
     try:
-        return await get_collection(db, workspace_name, collection_name, peer_name)
+        return await get_collection(
+            db, workspace_name, observer=observer, observed=observed
+        )
     except ResourceNotFoundException:
         try:
             honcho_collection = models.Collection(
                 workspace_name=workspace_name,
-                peer_name=peer_name,
-                name=collection_name,
+                observer=observer,
+                observed=observed,
             )
             db.add(honcho_collection)
             await db.commit()
@@ -70,8 +71,8 @@ async def get_or_create_collection(
             await db.rollback()
             if _retry:
                 raise ConflictException(
-                    f"Unable to create or get collection: {collection_name}"
+                    f"Unable to create or get collection: {observer}/{observed}"
                 ) from None
             return await get_or_create_collection(
-                db, workspace_name, collection_name, peer_name, _retry=True
+                db, workspace_name, observer=observer, observed=observed, _retry=True
             )

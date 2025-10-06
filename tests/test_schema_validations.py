@@ -103,7 +103,6 @@ class TestDocumentValidations:
         doc = DocumentCreate(
             content="test content",
             metadata=metadata,
-            peer_name="test",
             embedding=[0.1, 0.2, 0.3],
         )
         assert doc.content == "test content"
@@ -120,7 +119,6 @@ class TestDocumentValidations:
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
                 ),
-                peer_name="test",
                 embedding=[0.1, 0.2, 0.3],
             )
         error_dict = exc_info.value.errors()[0]
@@ -137,7 +135,6 @@ class TestDocumentValidations:
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
                 ),
-                peer_name="test",
                 embedding=[0.1, 0.2, 0.3],
             )
         error_dict = exc_info.value.errors()[0]

@@ -30,9 +30,10 @@ router = APIRouter(
 
 async def _get_working_representation_task(
     workspace_id: str,
-    observer_name: str,
-    observed_name: str,
     last_message: str | None,
+    *,
+    observer: str,
+    observed: str,
 ) -> Representation:
     """
     Atomic task to get working representation using tracked_db.
@@ -50,17 +51,18 @@ async def _get_working_representation_task(
         return await crud.get_working_representation(
             db,
             workspace_name=workspace_id,
-            observer_name=observer_name,
-            observed_name=observed_name,
             include_semantic_query=last_message,
             include_most_derived=True,
+            observer=observer,
+            observed=observed,
         )
 
 
 async def _get_peer_card_task(
     workspace_id: str,
-    observer_name: str,
-    observed_name: str,
+    *,
+    observer: str,
+    observed: str,
 ) -> list[str] | None:
     """
     Atomic task to get peer card using tracked_db.
@@ -77,8 +79,8 @@ async def _get_peer_card_task(
         return await crud.get_peer_card(
             db,
             workspace_name=workspace_id,
-            observed_name=observed_name,
-            observer_name=observer_name,
+            observer=observer,
+            observed=observed,
         )
 
 
@@ -505,15 +507,15 @@ async def get_session_context(
             summary=summary,
         )
 
-    observer_name = peer_perspective or peer_target
-    observed_name = peer_target
+    observer = peer_perspective or peer_target
+    observed = peer_target
 
     # Run representation and card tasks in parallel
     representation, card = await asyncio.gather(
         _get_working_representation_task(
-            workspace_id, observer_name, observed_name, last_message
+            workspace_id, last_message, observer=observer, observed=observed
         ),
-        _get_peer_card_task(workspace_id, observer_name, observed_name),
+        _get_peer_card_task(workspace_id, observer=observer, observed=observed),
         return_exceptions=True,
     )
 

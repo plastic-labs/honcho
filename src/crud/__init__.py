@@ -23,7 +23,6 @@ from .peer import (
     update_peer,
 )
 from .representation import (
-    construct_collection_name,
     get_peer_card,
     get_working_representation,
     representation_from_documents,
@@ -76,7 +75,6 @@ __all__ = [
     "update_peer",
     "get_sessions_for_peer",
     # Representation
-    "construct_collection_name",
     "get_peer_card",
     "get_working_representation",
     "set_peer_card",

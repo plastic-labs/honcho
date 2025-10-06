@@ -38,8 +38,8 @@ This directory contains tests for the deriver system, which handles background p
 payload = create_queue_payload(
     message=message,
     task_type="representation",
-    sender_name=message.peer_name,
-    target_name=observer_peer.name,
+    observer=observer_peer.name,
+    observed=message.peer_name
 )
 
 # Add to queue
@@ -52,11 +52,11 @@ queue_items = await add_queue_items([payload], session.id)
 # Create a work unit
 work_unit = WorkUnit(
     session_id=session.id,
-    sender_name=sender.name,
-    target_name=target.name,
     task_type="representation",
+    observer=observer
+    observed=observed
 )
 
 # Test string representation
-assert str(work_unit) == f"({session.id}, {sender.name}, {target.name}, representation)"
+assert str(work_unit) == f"({session.id}, {observed.name}, {observer.name}, representation)"
 ```

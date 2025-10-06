@@ -307,7 +307,6 @@ class DocumentMetadata(BaseModel):
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
     metadata: DocumentMetadata = Field()
-    peer_name: str = Field()
     embedding: list[float] = Field()
 
 

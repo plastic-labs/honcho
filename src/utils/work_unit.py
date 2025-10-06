@@ -12,8 +12,8 @@ class ParsedWorkUnit(TypedDict):
     task_type: str
     workspace_name: str
     session_name: str | None
-    sender_name: str | None
-    target_name: str | None
+    observer: str | None
+    observed: str | None
 
 
 def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
@@ -37,14 +37,12 @@ def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
         )
 
     if task_type in ["representation", "summary", "dream"]:
-        sender_name = payload.get("sender_name", "None")
-        target_name = payload.get("target_name", "None")
+        observer = payload.get("observer", "None")
+        observed = payload.get("observed", "None")
         session_name = payload.get("session_name", "None")
         if task_type == "dream":
-            return f"{task_type}:{workspace_name}:{sender_name}:{target_name}"
-        return (
-            f"{task_type}:{workspace_name}:{session_name}:{sender_name}:{target_name}"
-        )
+            return f"{task_type}:{workspace_name}:{observer}:{observed}"
+        return f"{task_type}:{workspace_name}:{session_name}:{observer}:{observed}"
 
     if task_type == "webhook":
         return f"webhook:{workspace_name}"
@@ -77,8 +75,8 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             "task_type": task_type,
             "workspace_name": parts[1],
             "session_name": parts[2],
-            "sender_name": parts[3],
-            "target_name": parts[4],
+            "observer": parts[3],
+            "observed": parts[4],
         }
 
     if task_type == "dream":
@@ -90,8 +88,8 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             "task_type": task_type,
             "workspace_name": parts[1],
             "session_name": None,
-            "sender_name": parts[2],
-            "target_name": parts[3],
+            "observer": parts[2],
+            "observed": parts[3],
         }
 
     if task_type == "webhook":
@@ -103,8 +101,8 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             "task_type": task_type,
             "workspace_name": parts[1],
             "session_name": None,
-            "sender_name": None,
-            "target_name": None,
+            "observer": None,
+            "observed": None,
         }
 
     raise ValueError(f"Invalid task type in work_unit_key: {task_type}")

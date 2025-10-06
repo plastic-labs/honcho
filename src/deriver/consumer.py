@@ -103,8 +103,9 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
 
 async def process_representation_batch(
     messages: list[Message],
-    sender_name: str | None,
-    target_name: str | None,
+    *,
+    observer: str | None,
+    observed: str | None,
 ) -> None:
     """Validate incoming queue payloads and dispatch to the appropriate handler.
 
@@ -115,19 +116,17 @@ async def process_representation_batch(
     Args:
         task_type: The type of task to process
         queue_payloads: List of payload dictionaries to process
-        sender_name (optional): For representation tasks, the sender_name from work_unit_key
+        observed (optional): For representation tasks, the observed from work_unit_key
                      to identify which messages should be focused on
-        target_name (optional): For representation tasks, the target_name from work_unit_key
+        observer (optional): For representation tasks, the observer from work_unit_key
                      to identify which messages should be focused on
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no payloads")
         return
 
-    if sender_name is None or target_name is None:
-        raise ValueError(
-            "sender_name and target_name are required for representation tasks"
-        )
+    if observed is None or observer is None:
+        raise ValueError("observed and observer are required for representation tasks")
 
     logger.debug(
         "process_representation_batch received %s payloads",
@@ -141,8 +140,8 @@ async def process_representation_batch(
                 "payloads": [
                     {
                         "message_id": msg.id,
-                        "sender_name": sender_name,
-                        "target_name": target_name,
+                        "observer": observer,
+                        "observed": observed,
                         "session_name": msg.session_name,
                     }
                     for msg in messages
@@ -152,6 +151,10 @@ async def process_representation_batch(
                 "critical_analysis_model": settings.DERIVER.MODEL,
             },
         ):
-            await process_representation_tasks_batch(sender_name, target_name, messages)
+            await process_representation_tasks_batch(
+                messages, observer=observer, observed=observed
+            )
     else:
-        await process_representation_tasks_batch(sender_name, target_name, messages)
+        await process_representation_tasks_batch(
+            messages, observer=observer, observed=observed
+        )
