@@ -342,7 +342,7 @@ class QueueManager:
                             except Exception as e:
                                 # Mark the batch as failed
                                 error_msg = f"{e.__class__.__name__}: {str(e)}"
-                                await self.mark_messaged_as_errored(
+                                await self.mark_messages_as_errored(
                                     items_to_process, work_unit_key, error_msg
                                 )
                                 logger.error(
@@ -373,7 +373,7 @@ class QueueManager:
                             except Exception as e:
                                 # Mark the specific message as failed
                                 error_msg = f"{e.__class__.__name__}: {str(e)}"
-                                await self.mark_messaged_as_errored(
+                                await self.mark_messages_as_errored(
                                     messages_to_process, work_unit_key, error_msg
                                 )
                                 logger.error(
@@ -633,7 +633,7 @@ class QueueManager:
             )
             await db.commit()
 
-    async def mark_messaged_as_errored(
+    async def mark_messages_as_errored(
         self, messages: list[QueueItem], work_unit_key: str, error: str
     ) -> None:
         """Mark messages as processed with an error"""

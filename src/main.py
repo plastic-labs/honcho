@@ -125,6 +125,7 @@ async def cleanup_queue_items():
                 )
             )
         )
+        await db.commit()
 
 
 @asynccontextmanager
