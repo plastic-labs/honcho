@@ -151,7 +151,6 @@ class MessageUpdate(MessageBase):
 
 
 class Message(MessageBase):
-    id: int = Field(exclude=True)
     public_id: str = Field(serialization_alias="id")
     content: str
     peer_name: str = Field(serialization_alias="peer_id")
