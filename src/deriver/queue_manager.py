@@ -409,7 +409,6 @@ class QueueManager:
                             )
 
                             prometheus.DERIVER_TASKS_COMPLETED.labels(
-                                namespace=settings.METRICS.NAMESPACE,
                                 workspace_name=workspace_name,
                                 task_type=task_type,
                             ).inc()
