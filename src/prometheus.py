@@ -56,11 +56,6 @@ DERIVER_TASKS_COMPLETED = NamespacedCounter(
 )
 
 
-def get_namespace() -> str:
-    """Get the configured namespace for metrics labeling"""
-    return settings.METRICS.NAMESPACE
-
-
 async def metrics() -> StarletteResponse:
     """Prometheus metrics endpoint"""
     return StarletteResponse(generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
