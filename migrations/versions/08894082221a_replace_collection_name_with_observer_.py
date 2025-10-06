@@ -46,20 +46,18 @@ def upgrade() -> None:
 
     # Step 2: Populate collections observer and observed from existing name field
     # The logic is:
-    # - If name is "global_representation", observer = observed = peer_name
-    # - Otherwise, name is "{observer}_{observed}", so we need to parse it
+    # - observer = peer_name (the exact peer ID)
+    # - If name is "global_representation", observed = peer_name
+    # - Otherwise, observed = name with the "observer_" prefix stripped
     connection.execute(
         text(
             """
             UPDATE collections
             SET
-                observer = CASE
-                    WHEN name = 'global_representation' THEN peer_name
-                    ELSE split_part(name, '_', 1)
-                END,
+                observer = peer_name,
                 observed = CASE
                     WHEN name = 'global_representation' THEN peer_name
-                    ELSE substring(name from position('_' in name) + 1)
+                    ELSE substring(name from length(peer_name) + 2)
                 END
             WHERE observer IS NULL OR observed IS NULL
         """
@@ -86,21 +84,20 @@ def upgrade() -> None:
             schema=schema,
         )
 
-    # Step 5: Populate documents observer and observed from existing collection_name field
+    # Step 5: Populate documents observer and observed from collections table
+    # Join to the already-populated collections table to get authoritative values
     connection.execute(
         text(
             """
-            UPDATE documents
+            UPDATE documents d
             SET
-                observer = CASE
-                    WHEN collection_name = 'global_representation' THEN peer_name
-                    ELSE split_part(collection_name, '_', 1)
-                END,
-                observed = CASE
-                    WHEN collection_name = 'global_representation' THEN peer_name
-                    ELSE substring(collection_name from position('_' in collection_name) + 1)
-                END
-            WHERE observer IS NULL OR observed IS NULL
+                observer = c.observer,
+                observed = c.observed
+            FROM collections c
+            WHERE d.collection_name = c.name
+                AND d.peer_name = c.peer_name
+                AND d.workspace_name = c.workspace_name
+                AND (d.observer IS NULL OR d.observed IS NULL)
         """
         )
     )

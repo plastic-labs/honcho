@@ -1,12 +1,13 @@
 """Work unit utility functions for generating and parsing work unit keys."""
 
 import tiktoken
-from typing_extensions import Any, TypedDict
+from pydantic import BaseModel
+from typing_extensions import Any
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
 
-class ParsedWorkUnit(TypedDict):
+class ParsedWorkUnit(BaseModel):
     """Parsed work unit components."""
 
     task_type: str
@@ -29,8 +30,11 @@ def get_work_unit_key(payload: dict[str, Any] | ParsedWorkUnit) -> str:
     Raises:
         ValueError: If required fields are missing or task type is invalid
     """
-    workspace_name = payload.get("workspace_name")
-    task_type = payload.get("task_type")
+    if isinstance(payload, ParsedWorkUnit):
+        payload = payload.model_dump()
+
+    workspace_name: str | None = payload.get("workspace_name")
+    task_type: str | None = payload.get("task_type")
     if not workspace_name or not task_type:
         raise ValueError(
             "workspace_name and task_type are required to generate a work_unit_key"
@@ -71,39 +75,39 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
             )
-        return {
-            "task_type": task_type,
-            "workspace_name": parts[1],
-            "session_name": parts[2],
-            "observer": parts[3],
-            "observed": parts[4],
-        }
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=parts[2],
+            observer=parts[3],
+            observed=parts[4],
+        )
 
     if task_type == "dream":
         if len(parts) != 4:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
             )
-        return {
-            "task_type": task_type,
-            "workspace_name": parts[1],
-            "session_name": None,
-            "observer": parts[2],
-            "observed": parts[3],
-        }
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=None,
+            observer=parts[2],
+            observed=parts[3],
+        )
 
     if task_type == "webhook":
         if len(parts) != 2:
             raise ValueError(
                 f"Invalid work_unit_key format for task_type {task_type}: {work_unit_key}"
             )
-        return {
-            "task_type": task_type,
-            "workspace_name": parts[1],
-            "session_name": None,
-            "observer": None,
-            "observed": None,
-        }
+        return ParsedWorkUnit(
+            task_type=task_type,
+            workspace_name=parts[1],
+            session_name=None,
+            observer=None,
+            observed=None,
+        )
 
     raise ValueError(f"Invalid task type in work_unit_key: {task_type}")
 

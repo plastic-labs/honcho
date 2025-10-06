@@ -242,6 +242,7 @@ async def get_working_representation(
             workspace_id,
             observer=peer_id,
             observed=options.target if options.target is not None else peer_id,
+            session_name=options.session_id,
         )
         return {"representation": representation}
     except ValueError as e:

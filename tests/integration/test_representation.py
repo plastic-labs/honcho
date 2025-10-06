@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src import crud, models, schemas
 from src.utils.representation import (
     DeductiveObservation,
+    DeductiveObservationBase,
     ExplicitObservation,
-    PromptDeductiveObservation,
+    ExplicitObservationBase,
     PromptRepresentation,
     Representation,
 )
@@ -655,9 +656,7 @@ class TestWorkingRepresentationRetrieval:
         )
 
         # Convert to representation
-        representation = crud.representation_from_documents(
-            [explicit_doc, deductive_doc]
-        )
+        representation = Representation.from_documents([explicit_doc, deductive_doc])
 
         assert len(representation.explicit) == 1
         assert len(representation.deductive) == 1
@@ -721,9 +720,12 @@ class TestPromptRepresentationConversion:
     async def test_prompt_representation_to_representation(self):
         """Test converting PromptRepresentation to Representation"""
         prompt_rep = PromptRepresentation(
-            explicit=["User likes coffee", "User works remotely"],
+            explicit=[
+                ExplicitObservationBase(content="User likes coffee"),
+                ExplicitObservationBase(content="User works remotely"),
+            ],
             deductive=[
-                PromptDeductiveObservation(
+                DeductiveObservationBase(
                     conclusion="User probably works from a coffee shop sometimes",
                     premises=["User likes coffee", "User works remotely"],
                 )
@@ -732,8 +734,11 @@ class TestPromptRepresentationConversion:
 
         timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        representation = prompt_rep.to_representation(
-            message_ids=(123, 123), session_name="test_session", timestamp=timestamp
+        representation = Representation.from_prompt_representation(
+            prompt_rep,
+            message_ids=(123, 123),
+            session_name="test_session",
+            created_at=timestamp,
         )
 
         assert len(representation.explicit) == 2
@@ -760,10 +765,11 @@ class TestPromptRepresentationConversion:
     async def test_empty_prompt_representation_conversion(self):
         """Test converting empty PromptRepresentation"""
         empty_prompt_rep = PromptRepresentation()
-        representation = empty_prompt_rep.to_representation(
+        representation = Representation.from_prompt_representation(
+            empty_prompt_rep,
             message_ids=(1, 1),
             session_name="test",
-            timestamp=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
 
         assert representation.is_empty()

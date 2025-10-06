@@ -19,8 +19,8 @@ from src.utils.logging import (
     log_performance_metrics,
     log_representation,
 )
+from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
-from src.utils.shared_models import PeerCardQuery
 from src.utils.tracing import with_sentry_transaction
 from src.utils.work_unit import estimate_tokens
 
@@ -356,7 +356,8 @@ class CertaintyReasoner:
                 new_turns=new_turns,
             ) from e
 
-        reasoning_response = reasoning_response.to_representation(
+        reasoning_response = Representation.from_prompt_representation(
+            reasoning_response,
             (earliest_message.id, latest_message.id),
             latest_message.session_name,
             latest_message.created_at,

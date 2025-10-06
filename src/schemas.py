@@ -95,8 +95,8 @@ class Peer(PeerBase):
 
 
 class PeerRepresentationGet(BaseModel):
-    session_id: str = Field(
-        ..., description="Get the working representation within this session"
+    session_id: str | None = Field(
+        None, description="Get the working representation within this session"
     )
     target: str | None = Field(
         None,

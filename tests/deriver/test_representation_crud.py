@@ -12,8 +12,9 @@ from src.crud.representation import (
 from src.exceptions import ResourceNotFoundException
 from src.utils.representation import (
     DeductiveObservation,
+    DeductiveObservationBase,
     ExplicitObservation,
-    PromptDeductiveObservation,
+    ExplicitObservationBase,
     PromptRepresentation,
     Representation,
 )
@@ -154,14 +155,15 @@ def test_representation_formatting_methods():
 def test_prompt_representation_conversion():
     """PromptRepresentation.to_representation maps strings to observation objects."""
     pr = PromptRepresentation(
-        explicit=["A"],
-        deductive=[PromptDeductiveObservation(conclusion="C", premises=["P1"])],
+        explicit=[ExplicitObservationBase(content="A")],
+        deductive=[DeductiveObservationBase(conclusion="C", premises=["P1"])],
     )
     timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    rep = pr.to_representation(
+    rep = Representation.from_prompt_representation(
+        pr,
         message_ids=(1, 1),
         session_name="s",
-        timestamp=timestamp,
+        created_at=timestamp,
     )
     assert isinstance(rep, Representation)
     assert [e.content for e in rep.explicit] == ["A"]

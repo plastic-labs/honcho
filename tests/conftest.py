@@ -325,7 +325,8 @@ def mock_llm_call_functions():
     ):
         # Import the required models for proper mocking
         from src.utils.representation import (
-            PromptDeductiveObservation,
+            DeductiveObservationBase,
+            ExplicitObservationBase,
             PromptRepresentation,
         )
 
@@ -335,9 +336,9 @@ def mock_llm_call_functions():
 
         # Mock critical_analysis_call to return a proper object with _response attribute
         _rep = PromptRepresentation(
-            explicit=["Test explicit observation"],
+            explicit=[ExplicitObservationBase(content="Test explicit observation")],
             deductive=[
-                PromptDeductiveObservation(
+                DeductiveObservationBase(
                     conclusion="Test deductive conclusion",
                     premises=["Test premise 1", "Test premise 2"],
                 )
@@ -372,7 +373,8 @@ def mock_honcho_llm_call():
     from unittest.mock import AsyncMock, MagicMock
 
     from src.utils.representation import (
-        PromptDeductiveObservation,
+        DeductiveObservationBase,
+        ExplicitObservationBase,
         PromptRepresentation,
     )
 
@@ -391,9 +393,11 @@ def mock_honcho_llm_call():
             # For structured responses, create appropriate mock objects
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
                 _rep = PromptRepresentation(
-                    explicit=["Test explicit observation"],
+                    explicit=[
+                        ExplicitObservationBase(content="Test explicit observation")
+                    ],
                     deductive=[
-                        PromptDeductiveObservation(
+                        DeductiveObservationBase(
                             conclusion="Test deductive conclusion",
                             premises=["Test premise 1", "Test premise 2"],
                         ),

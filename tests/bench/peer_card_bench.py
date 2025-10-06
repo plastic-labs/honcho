@@ -31,8 +31,8 @@ from anthropic import AsyncAnthropic
 from src.config import settings
 from src.deriver.prompts import peer_card_prompt
 from src.utils.clients import honcho_llm_call
+from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import ExplicitObservation, Representation
-from src.utils.shared_models import PeerCardQuery
 
 COLOR_GREEN = "\033[32m"
 COLOR_RED = "\033[31m"

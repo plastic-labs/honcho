@@ -25,9 +25,8 @@ from sqlalchemy import select  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from src import models  # noqa: E402
-from src.config import settings  # noqa: E402
 from src.dependencies import tracked_db  # noqa: E402
-from src.embedding_client import EmbeddingClient  # noqa: E402
+from src.embedding_client import embedding_client  # noqa: E402
 
 
 async def get_messages_without_embeddings(
@@ -76,7 +75,6 @@ async def get_messages_without_embeddings(
 async def create_embeddings_for_messages(
     db: AsyncSession,
     messages: list[models.Message],
-    embedding_client: EmbeddingClient,
 ) -> int:
     """
     Create embeddings for a batch of messages.
@@ -84,7 +82,6 @@ async def create_embeddings_for_messages(
     Args:
         db: Database session
         messages: List of messages to create embeddings for
-        embedding_client: Embedding client instance
 
     Returns:
         Number of embeddings created
@@ -159,9 +156,6 @@ async def main() -> None:
 
     args = parser.parse_args()
 
-    # Initialize embedding client
-    embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
-
     print("Generating embeddings for messages...")
     if args.workspace_name:
         print(f"  Filtering by workspace: {args.workspace_name}")
@@ -200,9 +194,7 @@ async def main() -> None:
                     f"Processing batch {batch_num}/{total_batches} ({len(batch)} messages)..."
                 )
 
-                embeddings_created = await create_embeddings_for_messages(
-                    db, batch, embedding_client
-                )
+                embeddings_created = await create_embeddings_for_messages(db, batch)
                 total_embeddings += embeddings_created
 
                 print(

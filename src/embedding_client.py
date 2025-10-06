@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 from collections import defaultdict
 from typing import NamedTuple
 
@@ -20,7 +21,7 @@ class BatchItem(NamedTuple):
     chunk_index: int
 
 
-class EmbeddingClient:
+class _EmbeddingClient:
     """
     Embedding client supporting OpenAI and Gemini with chunking and batching support.
     """
@@ -312,12 +313,83 @@ def _chunk_text_with_tokens(
     ]
 
 
-# Shared embedding client instance
-if settings.LLM.EMBEDDING_PROVIDER == "gemini":
-    embedding_client = EmbeddingClient(
-        api_key=settings.LLM.GEMINI_API_KEY, provider="gemini"
-    )
-else:
-    embedding_client = EmbeddingClient(
-        api_key=settings.LLM.OPENAI_API_KEY, provider="openai"
-    )
+class EmbeddingClient:
+    """
+    Singleton wrapper for the embedding client with deferred loading.
+
+    The actual client is only initialized on first use, improving startup time
+    and allowing the application to start even if API keys are not yet configured.
+    """
+
+    _instance: "_EmbeddingClient | None" = None
+    _lock: threading.Lock = threading.Lock()
+    _wrapper_instance: "EmbeddingClient | None" = None
+
+    def __new__(cls):
+        """Ensure only one instance of EmbeddingClient exists."""
+        # We always return the same wrapper instance
+        if cls._wrapper_instance is None:
+            cls._wrapper_instance = super().__new__(cls)
+        return cls._wrapper_instance
+
+    def _get_client(self) -> _EmbeddingClient:
+        """
+        Get or create the underlying embedding client instance.
+
+        Uses double-checked locking for thread-safe lazy initialization.
+        """
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    provider = settings.LLM.EMBEDDING_PROVIDER
+                    if provider == "gemini":
+                        api_key = settings.LLM.GEMINI_API_KEY
+                    else:
+                        api_key = settings.LLM.OPENAI_API_KEY
+
+                    self._instance = _EmbeddingClient(
+                        api_key=api_key, provider=provider
+                    )
+                    logger.info(
+                        f"Initialized embedding client with provider: {provider}"
+                    )
+
+        return self._instance
+
+    async def embed(self, query: str) -> list[float]:
+        """Embed a single query string."""
+        return await self._get_client().embed(query)
+
+    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+        """Simple batch embedding for a list of text strings."""
+        return await self._get_client().simple_batch_embed(texts)
+
+    async def batch_embed(
+        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+    ) -> dict[str, list[list[float]]]:
+        """Embed multiple texts, chunking long ones and batching API calls."""
+        return await self._get_client().batch_embed(id_resource_dict)
+
+    @property
+    def provider(self) -> str:
+        """Get the provider name."""
+        return self._get_client().provider
+
+    @property
+    def model(self) -> str:
+        """Get the model name."""
+        return self._get_client().model
+
+    @property
+    def max_embedding_tokens(self) -> int:
+        """Get the maximum embedding tokens."""
+        return self._get_client().max_embedding_tokens
+
+    @property
+    def encoding(self) -> tiktoken.Encoding:
+        """Get the tiktoken encoding."""
+        return self._get_client().encoding
+
+
+# Shared singleton embedding client instance
+embedding_client = EmbeddingClient()

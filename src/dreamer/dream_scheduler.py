@@ -60,8 +60,25 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
 
 
 class DreamScheduler:
+    _instance: "DreamScheduler | None" = None
+    _initialized: bool = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        self.pending_dreams: dict[str, asyncio.Task[None]] = {}
+        # Only initialize once
+        if not DreamScheduler._initialized:
+            self.pending_dreams: dict[str, asyncio.Task[None]] = {}
+            DreamScheduler._initialized = True
+
+    @classmethod
+    def reset_singleton(cls) -> None:
+        """Reset the singleton instance. Only use this in tests."""
+        cls._instance = None
+        cls._initialized = False
 
     def schedule_dream(
         self,
@@ -153,9 +170,9 @@ class DreamScheduler:
             for active_session in active_sessions:
                 parsed_key = parse_work_unit_key(active_session.work_unit_key)
                 if (
-                    parsed_key["workspace_name"] == workspace_name
-                    and parsed_key["observer"] == observer
-                    and parsed_key["observed"] == observed
+                    parsed_key.workspace_name == workspace_name
+                    and parsed_key.observer == observer
+                    and parsed_key.observed == observed
                 ):
                     logger.debug("Collection is active, skipping dream")
                     return False

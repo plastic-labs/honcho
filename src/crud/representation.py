@@ -1,7 +1,5 @@
-from collections.abc import Sequence
-from datetime import datetime
 from logging import getLogger
-from typing import Any, Final, cast
+from typing import Final, cast
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,12 +8,7 @@ from src import exceptions, models, schemas
 from src.config import settings
 from src.crud.peer import get_peer
 from src.utils.embedding_store import EmbeddingStore
-from src.utils.formatting import parse_datetime_iso
-from src.utils.representation import (
-    DeductiveObservation,
-    ExplicitObservation,
-    Representation,
-)
+from src.utils.representation import Representation
 
 logger = getLogger(__name__)
 
@@ -179,7 +172,7 @@ async def get_working_representation(
         result = await db.execute(stmt)
         documents = result.scalars().all()
 
-        representation.merge_representation(representation_from_documents(documents))
+        representation.merge_representation(Representation.from_documents(documents))
 
     stmt = (
         select(models.Document)
@@ -205,59 +198,9 @@ async def get_working_representation(
             f"No observations for {observed} (observer: {observer}) found. Normal if brand-new peer."
         )
 
-    representation.merge_representation(representation_from_documents(documents))
+    representation.merge_representation(Representation.from_documents(documents))
 
     return representation
-
-
-def _safe_datetime_from_metadata(
-    internal_metadata: dict[str, Any], fallback_datetime: datetime
-) -> datetime:
-    message_created_at = internal_metadata.get("message_created_at")
-    if message_created_at is None:
-        return fallback_datetime.replace(microsecond=0)
-
-    if isinstance(message_created_at, str):
-        try:
-            return parse_datetime_iso(message_created_at)
-        except ValueError:
-            return fallback_datetime.replace(microsecond=0)
-
-    if isinstance(message_created_at, datetime):
-        return message_created_at.replace(microsecond=0)
-    return fallback_datetime.replace(microsecond=0)
-
-
-def representation_from_documents(
-    documents: Sequence[models.Document],
-) -> Representation:
-    return Representation(
-        explicit=[
-            ExplicitObservation(
-                created_at=_safe_datetime_from_metadata(
-                    doc.internal_metadata, doc.created_at
-                ),
-                content=doc.content,
-                message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
-                session_name=doc.session_name,
-            )
-            for doc in documents
-            if doc.internal_metadata.get("level") == "explicit"
-        ],
-        deductive=[
-            DeductiveObservation(
-                created_at=_safe_datetime_from_metadata(
-                    doc.internal_metadata, doc.created_at
-                ),
-                conclusion=doc.content,
-                message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
-                session_name=doc.session_name,
-                premises=doc.internal_metadata.get("premises", []),
-            )
-            for doc in documents
-            if doc.internal_metadata.get("level") == "deductive"
-        ],
-    )
 
 
 def construct_peer_card_label(*, observer: str, observed: str) -> str:

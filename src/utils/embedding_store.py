@@ -223,7 +223,7 @@ class EmbeddingStore:
 
             # convert documents to representation
             # use level to filter documents
-            return crud.representation_from_documents(documents)
+            return Representation.from_documents(documents)
 
     def _build_filter_conditions(
         self,

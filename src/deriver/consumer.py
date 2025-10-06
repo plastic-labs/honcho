@@ -87,16 +87,17 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 )
 
     elif task_type == "dream":
-        try:
-            validated = DreamPayload(**queue_payload)
-        except ValidationError as e:
-            logger.error(
-                "Invalid dream payload received: %s. Payload: %s",
-                str(e),
-                queue_payload,
-            )
-            raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        await process_dream(validated)
+        with sentry_sdk.start_transaction(name="process_dream_task", op="deriver"):
+            try:
+                validated = DreamPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid dream payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_dream(validated)
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 

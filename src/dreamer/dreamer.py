@@ -110,7 +110,7 @@ async def _consolidate_cluster(
         logger.info("Cluster has %d documents, skipping consolidation", len(cluster))
         return
 
-    cluster_representation = crud.representation_from_documents(cluster)
+    cluster_representation = Representation.from_documents(cluster)
     logger.info("unconsolidated representation:\n%s", cluster_representation)
 
     consolidated_representation = await consolidate_call(cluster_representation)
