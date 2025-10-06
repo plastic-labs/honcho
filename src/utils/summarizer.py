@@ -3,10 +3,10 @@ import logging
 import time
 from enum import Enum
 from inspect import cleandoc as c
+from typing import TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing_extensions import TypedDict
 
 from src import schemas
 from src.config import settings

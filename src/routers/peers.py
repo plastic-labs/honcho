@@ -227,7 +227,6 @@ async def get_working_representation(
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
     ),
-    db: AsyncSession = db,
 ):
     """Get a peer's working representation for a session.
 
@@ -238,7 +237,6 @@ async def get_working_representation(
     try:
         # If no target specified, get global representation (omniscient Honcho perspective)
         representation = await crud.get_working_representation(
-            db,
             workspace_id,
             observer=peer_id,
             observed=options.target if options.target is not None else peer_id,

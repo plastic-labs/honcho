@@ -40,22 +40,20 @@ async def _get_working_representation_task(
 
     Args:
         workspace_id: The workspace identifier
-        observer_name: Name of the observer peer
-        observed_name: Name of the observed peer
         last_message: Optional last message for semantic query
+        observer: Name of the observer peer
+        observed: Name of the observed peer
 
     Returns:
         The working representation
     """
-    async with tracked_db("get_working_representation") as db:
-        return await crud.get_working_representation(
-            db,
-            workspace_name=workspace_id,
-            include_semantic_query=last_message,
-            include_most_derived=True,
-            observer=observer,
-            observed=observed,
-        )
+    return await crud.get_working_representation(
+        workspace_name=workspace_id,
+        include_semantic_query=last_message,
+        include_most_derived=True,
+        observer=observer,
+        observed=observed,
+    )
 
 
 async def _get_peer_card_task(
@@ -69,8 +67,8 @@ async def _get_peer_card_task(
 
     Args:
         workspace_id: The workspace identifier
-        observer_name: Name of the observer peer
-        observed_name: Name of the observed peer
+        observer: Name of the observer peer
+        observed: Name of the observed peer
 
     Returns:
         The peer card or None if not found

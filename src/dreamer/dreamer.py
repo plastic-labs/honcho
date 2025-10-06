@@ -116,17 +116,6 @@ async def _consolidate_cluster(
     consolidated_representation = await consolidate_call(cluster_representation)
     logger.info("consolidated representation:\n%s", consolidated_representation)
 
-    collection = await crud.get_collection(
-        db, workspace_name, observer=observer, observed=observed
-    )
-    if not collection:
-        logger.error(
-            "Collection for %s/%s not found, cannot save consolidated documents",
-            observer,
-            observed,
-        )
-        return
-
     # TODO: less hacky preservation of times_derived
     total_times_derived = sum(
         doc.internal_metadata.get("times_derived", 1) for doc in cluster

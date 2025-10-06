@@ -1,8 +1,9 @@
 """Work unit utility functions for generating and parsing work unit keys."""
 
+from typing import Any
+
 import tiktoken
 from pydantic import BaseModel
-from typing_extensions import Any
 
 tokenizer = tiktoken.get_encoding("cl100k_base")
 
@@ -62,7 +63,7 @@ def parse_work_unit_key(work_unit_key: str) -> ParsedWorkUnit:
         work_unit_key: The work unit key string to parse
 
     Returns:
-        ParsedWorkUnit dictionary with extracted components
+        ParsedWorkUnit with extracted components
 
     Raises:
         ValueError: If the work unit key format is invalid

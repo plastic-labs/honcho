@@ -139,17 +139,17 @@ async def process_representation_tasks_batch(
     context_prep_start = time.perf_counter()
 
     # Use get_session_context_formatted with configurable token limit
-    async with tracked_db("deriver.get_context+representation+peer_card") as db:
-        working_representation = await crud.get_working_representation(
-            db,
-            latest_message.workspace_name,
-            observer=observer,
-            observed=observed,
-            # include_semantic_query=latest_message.content,
-            # include_most_derived=False,
-        )
 
-        if settings.PEER_CARD.ENABLED:
+    working_representation = await crud.get_working_representation(
+        latest_message.workspace_name,
+        observer=observer,
+        observed=observed,
+        # include_semantic_query=latest_message.content,
+        # include_most_derived=False,
+    )
+
+    if settings.PEER_CARD.ENABLED:
+        async with tracked_db("deriver.get_peer_card") as db:
             speaker_peer_card: list[str] | None = await crud.get_peer_card(
                 db,
                 latest_message.workspace_name,
@@ -163,50 +163,46 @@ async def process_representation_tasks_batch(
                 )
             else:
                 logger.info("Using peer card: %s", speaker_peer_card)
-        else:
-            speaker_peer_card = None
+    else:
+        speaker_peer_card = None
 
-        # Estimate tokens for deriver input
-        peer_card_tokens = estimate_tokens(speaker_peer_card)
-        working_rep_tokens = estimate_tokens(
-            str(working_representation)
-            if not working_representation.is_empty()
-            else None
-        )
-        base_prompt_tokens = estimate_base_prompt_tokens()
+    # Estimate tokens for deriver input
+    peer_card_tokens = estimate_tokens(speaker_peer_card)
+    working_rep_tokens = estimate_tokens(
+        str(working_representation) if not working_representation.is_empty() else None
+    )
+    base_prompt_tokens = estimate_base_prompt_tokens()
 
-        # Estimate tokens for new conversation turns
-        new_turns = [
-            format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
-            for m in messages
-        ]
-        new_turns_tokens = estimate_tokens(new_turns)
+    # Estimate tokens for new conversation turns
+    new_turns = [
+        format_new_turn_with_timestamp(m.content, m.created_at, m.peer_name)
+        for m in messages
+    ]
+    new_turns_tokens = estimate_tokens(new_turns)
 
-        estimated_input_tokens = (
-            peer_card_tokens
-            + working_rep_tokens
-            + base_prompt_tokens
-            + new_turns_tokens
-        )
+    estimated_input_tokens = (
+        peer_card_tokens + working_rep_tokens + base_prompt_tokens + new_turns_tokens
+    )
 
-        # Calculate available tokens for context
-        safety_buffer = 500
-        available_context_tokens = max(
-            0,
-            settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
-        )
+    # Calculate available tokens for context
+    safety_buffer = 500
+    available_context_tokens = max(
+        0,
+        settings.DERIVER.MAX_INPUT_TOKENS - estimated_input_tokens - safety_buffer,
+    )
 
-        logger.debug(
-            "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
-            + "New turns: %d, Total estimated: %d, Available for context: %d",
-            peer_card_tokens,
-            working_rep_tokens,
-            base_prompt_tokens,
-            new_turns_tokens,
-            estimated_input_tokens,
-            available_context_tokens,
-        )
+    logger.debug(
+        "Token estimation - Peer card: %d, Working rep: %d, Base prompt: %d, "
+        + "New turns: %d, Total estimated: %d, Available for context: %d",
+        peer_card_tokens,
+        working_rep_tokens,
+        base_prompt_tokens,
+        new_turns_tokens,
+        estimated_input_tokens,
+        available_context_tokens,
+    )
 
+    async with tracked_db("deriver.get_session_context_formatted") as db:
         formatted_history = await summarizer.get_session_context_formatted(
             db,
             latest_message.workspace_name,

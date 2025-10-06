@@ -27,8 +27,8 @@ async def get_peer_card(
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        observed_name: Peer name of the peer described in the peer card
-        observer_name: Peer name of the observer
+        observed: Peer name of the peer described in the peer card
+        observer: Peer name of the observer
 
     Returns:
         The peer's card text if present, otherwise None (also None if peer not found).
@@ -61,9 +61,9 @@ async def set_peer_card(
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        observed_name: Peer name of the peer described in the peer card
-        observer_name: Peer name of the observer
         peer_card: List of strings to set as the peer card
+        observed: Peer name of the peer described in the peer card
+        observer: Peer name of the observer
 
     Raises:
         ResourceNotFoundException: If the peer does not exist

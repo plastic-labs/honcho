@@ -785,7 +785,9 @@ def with_langfuse(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         if lf:
-            lf.start_as_current_generation(name="LLM Call")
-        return await func(*args, **kwargs)
+            with lf.start_as_current_generation(name="LLM Call"):
+                return await func(*args, **kwargs)
+        else:
+            return await func(*args, **kwargs)
 
     return wrapper

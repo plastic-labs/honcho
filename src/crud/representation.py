@@ -36,12 +36,10 @@ class RepresentationManager:
         *,
         observer: str,
         observed: str,
-        db: AsyncSession | None = None,
     ) -> None:
         self.workspace_name: str = workspace_name
         self.observer: str = observer
         self.observed: str = observed
-        self.db: AsyncSession | None = db
 
     @conditional_observe
     async def save_representation(
@@ -96,25 +94,15 @@ class RepresentationManager:
 
         # Batch create document objects
         create_document_start = time.perf_counter()
-        if self.db:
+        async with tracked_db("representation_manager.save_representation") as db:
             new_documents = await self._save_representation_internal(
-                self.db,
+                db,
                 all_observations,
                 embeddings,
                 message_id_range,
                 session_name,
                 message_created_at,
             )
-        else:
-            async with tracked_db("representation_manager.save_representation") as db:
-                new_documents = await self._save_representation_internal(
-                    db,
-                    all_observations,
-                    embeddings,
-                    message_id_range,
-                    session_name,
-                    message_created_at,
-                )
 
         create_document_duration = (time.perf_counter() - create_document_start) * 1000
         accumulate_metric(
@@ -210,27 +198,15 @@ class RepresentationManager:
         Returns:
             Representation
         """
-        if self.db:
+        async with tracked_db("representation_manager.get_relevant_observations") as db:
             documents = await self._get_observations_internal(
-                self.db,
+                db,
                 query,
                 top_k,
                 max_distance,
                 level,
                 conversation_context,
             )
-        else:
-            async with tracked_db(
-                "representation_manager.get_relevant_observations"
-            ) as db:
-                documents = await self._get_observations_internal(
-                    db,
-                    query,
-                    top_k,
-                    max_distance,
-                    level,
-                    conversation_context,
-                )
 
         # convert documents to representation
         return Representation.from_documents(documents)
@@ -259,9 +235,11 @@ class RepresentationManager:
         Returns:
             Representation combining various query strategies
         """
-        if self.db:
+        async with tracked_db(
+            "representation_manager.get_working_representation"
+        ) as db:
             return await self._get_working_representation_internal(
-                self.db,
+                db,
                 session_name=session_name,
                 include_semantic_query=include_semantic_query,
                 semantic_search_top_k=semantic_search_top_k,
@@ -269,19 +247,6 @@ class RepresentationManager:
                 include_most_derived=include_most_derived,
                 max_observations=max_observations,
             )
-        else:
-            async with tracked_db(
-                "representation_manager.get_working_representation"
-            ) as db:
-                return await self._get_working_representation_internal(
-                    db,
-                    session_name=session_name,
-                    include_semantic_query=include_semantic_query,
-                    semantic_search_top_k=semantic_search_top_k,
-                    semantic_search_max_distance=semantic_search_max_distance,
-                    include_most_derived=include_most_derived,
-                    max_observations=max_observations,
-                )
 
     # Private helper methods
 
@@ -572,7 +537,6 @@ class RepresentationManager:
 
 
 async def get_working_representation(
-    db: AsyncSession,
     workspace_name: str,
     *,
     observer: str,
@@ -594,7 +558,6 @@ async def get_working_representation(
         workspace_name=workspace_name,
         observer=observer,
         observed=observed,
-        db=db,
     )
     return await manager.get_working_representation(
         session_name=session_name,

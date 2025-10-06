@@ -124,10 +124,10 @@ class TestRepresentationWorkflow:
         assert "User likes dogs" in str_output
         assert "User probably has a dog named Rover" in str_output
 
-        # Test no-timestamp formatting - note that deductive observations still show timestamps
-        # because str_no_timestamps() calls str() on deductive observations
+        # Test no-timestamp formatting
         no_timestamp_output = representation.str_no_timestamps()
         assert "User likes dogs" in no_timestamp_output
+        assert "[" not in no_timestamp_output
 
         # Test markdown formatting
         markdown_output = representation.format_as_markdown()
@@ -509,7 +509,6 @@ class TestWorkingRepresentationRetrieval:
 
         # Retrieve working representation
         representation = await crud.get_working_representation(
-            db_session,
             workspace.name,
             session_name=session.name,
             observer=observer_peer.name,
@@ -559,7 +558,6 @@ class TestWorkingRepresentationRetrieval:
             mock_semantic.return_value = [mock_document]
 
             representation = await crud.get_working_representation(
-                db_session,
                 workspace.name,
                 include_semantic_query="pets dogs animals",
                 observer=observer_peer.name,
@@ -615,7 +613,6 @@ class TestWorkingRepresentationRetrieval:
 
         # Retrieve with most_derived=True
         representation = await crud.get_working_representation(
-            db_session,
             workspace.name,
             include_most_derived=True,
             observer=observer_peer.name,

@@ -228,7 +228,14 @@ class DreamScheduler:
             await db.execute(stmt)
             await db.commit()
 
-        logger.info(f"Enqueued dream task for {workspace_name}/{observer}/{observed}")
+        logger.info(
+            "Enqueued dream task",
+            extra={
+                "workspace_name": workspace_name,
+                "observer": observer,
+                "observed": observed,
+            },
+        )
 
     async def shutdown(self) -> None:
         """Cancel all pending dreams during shutdown."""
@@ -280,9 +287,16 @@ async def check_and_schedule_dream(
     documents_since_last_dream = current_document_count - last_dream_document_count
 
     logger.info(
-        f"Dream check for {collection.workspace_name}/{collection.observer}/{collection.observed}: "
-        + f"current={current_document_count}, last_dream_count={last_dream_document_count}, "
-        + f"since_last={documents_since_last_dream}, threshold={settings.DREAM.DOCUMENT_THRESHOLD}"
+        "Dream check",
+        extra={
+            "workspace_name": collection.workspace_name,
+            "observer": collection.observer,
+            "observed": collection.observed,
+            "current_document_count": current_document_count,
+            "last_dream_document_count": last_dream_document_count,
+            "documents_since_last_dream": documents_since_last_dream,
+            "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
+        },
     )
 
     # Only schedule timer if document threshold is reached
@@ -326,8 +340,14 @@ async def check_and_schedule_dream(
                 observed=collection.observed,
             )
             logger.info(
-                f"Scheduled dream for {collection.workspace_name}/{collection.observer}/{collection.observed} "
-                + f"(threshold reached: {documents_since_last_dream}/{settings.DREAM.DOCUMENT_THRESHOLD} documents)"
+                "Scheduled dream",
+                extra={
+                    "workspace_name": collection.workspace_name,
+                    "observer": collection.observer,
+                    "observed": collection.observed,
+                    "documents_since_last_dream": documents_since_last_dream,
+                    "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
+                },
             )
             return True
 

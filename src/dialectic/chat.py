@@ -208,45 +208,44 @@ async def chat(
     )
     start_time = time.perf_counter()
 
-    async with tracked_db("chat.get_working_representation+context+peer_card") as db:
-        # 1. Working representation (short-term) -----------------------------------
-        working_rep_start_time = time.perf_counter()
-        # If no target specified, get global representation (peer observing themselves)
-        working_representation: Representation = await crud.get_working_representation(
-            db,
-            workspace_name,
-            observer=observer,
-            observed=observed,
-            session_name=session_name,
-            include_semantic_query=query,
-            semantic_search_top_k=settings.DIALECTIC.SEMANTIC_SEARCH_TOP_K,
-            semantic_search_max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
-            include_most_derived=True,
-        )
-        working_rep_duration = (time.perf_counter() - working_rep_start_time) * 1000
-        accumulate_metric(
-            f"dialectic_chat_{dialectic_chat_uuid}",
-            "retrieve_working_rep",
-            working_rep_duration,
-            "ms",
-        )
-        logger.info(
-            "Retrieved working representation with %s explicit, %s deductive observations",
-            len(working_representation.explicit),
-            len(working_representation.deductive),
-        )
+    # 1. Working representation (short-term) -----------------------------------
+    working_rep_start_time = time.perf_counter()
+    # If no target specified, get global representation (peer observing themselves)
+    working_representation: Representation = await crud.get_working_representation(
+        workspace_name,
+        observer=observer,
+        observed=observed,
+        session_name=session_name,
+        include_semantic_query=query,
+        semantic_search_top_k=settings.DIALECTIC.SEMANTIC_SEARCH_TOP_K,
+        semantic_search_max_distance=settings.DIALECTIC.SEMANTIC_SEARCH_MAX_DISTANCE,
+        include_most_derived=True,
+    )
+    working_rep_duration = (time.perf_counter() - working_rep_start_time) * 1000
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "retrieve_working_rep",
+        working_rep_duration,
+        "ms",
+    )
+    logger.info(
+        "Retrieved working representation with %s explicit, %s deductive observations",
+        len(working_representation.explicit),
+        len(working_representation.deductive),
+    )
 
-        working_representation_str = str(working_representation)
+    working_representation_str = str(working_representation)
 
-        context_window_size -= max(0, len(tokenizer.encode(working_representation_str)))
+    context_window_size -= max(0, len(tokenizer.encode(working_representation_str)))
 
-        logger.info(
-            "Constructed working representation:\n%s\n",
-            working_representation_str,
-        )
+    logger.info(
+        "Constructed working representation:\n%s\n",
+        working_representation_str,
+    )
 
-        # 2. Recent conversation history --------------------------------------------
-        # If query is session-scoped, get recent conversation history from that session
+    # 2. Recent conversation history --------------------------------------------
+    # If query is session-scoped, get recent conversation history from that session
+    async with tracked_db("chat.get_context") as db:
         if session_name:
             recent_history = await summarizer.get_session_context_formatted(
                 db,
@@ -262,30 +261,35 @@ async def chat(
                 "Query is not session-scoped, skipping recent conversation history"
             )
 
-        context_window_size -= max(0, len(tokenizer.encode(recent_history or "")))
+    context_window_size -= max(0, len(tokenizer.encode(recent_history or "")))
 
-        accumulate_metric(
-            f"dialectic_chat_{dialectic_chat_uuid}",
-            "tokens_used_estimate",
-            settings.DIALECTIC.CONTEXT_WINDOW_SIZE - context_window_size,
-            "tokens",
-        )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "tokens_used_estimate",
+        settings.DIALECTIC.CONTEXT_WINDOW_SIZE - context_window_size,
+        "tokens",
+    )
 
-        # 3. Peer card(s) ----------------------------------------------------------
-        peer_card = await crud.get_peer_card(
-            db, workspace_name, observer=observer, observed=observed
-        )
-        if observer != observed:
-            observed_peer_card = await crud.get_peer_card(
+    # 3. Peer card(s) ----------------------------------------------------------
+    if settings.PEER_CARD.ENABLED:
+        async with tracked_db("chat.get_peer_card") as db:
+            peer_card = await crud.get_peer_card(
                 db, workspace_name, observer=observer, observed=observed
             )
-        else:
-            observed_peer_card = None
+            if observer != observed:
+                observed_peer_card = await crud.get_peer_card(
+                    db, workspace_name, observer=observer, observed=observed
+                )
+            else:
+                observed_peer_card = None
 
-    if observed_peer_card:
-        logger.info("Retrieved peer cards:\n%s\n%s", peer_card, observed_peer_card)
+        if observed_peer_card:
+            logger.info("Retrieved peer cards:\n%s\n%s", peer_card, observed_peer_card)
+        else:
+            logger.info("Retrieved peer card:\n%s", peer_card)
     else:
-        logger.info("Retrieved peer card:\n%s", peer_card)
+        peer_card = None
+        observed_peer_card = None
 
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = time.perf_counter()

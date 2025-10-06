@@ -101,7 +101,7 @@ def generate_closure_attempts(partial_json: str) -> list[str]:
 
     # Remove trailing comma if present
     if base.rstrip().endswith(","):
-        base = base.rstrip()[:-1]
+        base = base[:-1]
         attempts.append(base)
 
     # Close based on stack

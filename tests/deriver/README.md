@@ -53,7 +53,7 @@ queue_items = await add_queue_items([payload], session.id)
 work_unit = WorkUnit(
     session_id=session.id,
     task_type="representation",
-    observer=observer
+    observer=observer,
     observed=observed
 )
 
