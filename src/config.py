@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
 import tomllib
 from dotenv import load_dotenv
@@ -52,9 +52,11 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SENTRY": "sentry",
         "LLM": "llm",
         "DERIVER": "deriver",
+        "PEER_CARD": "peer_card",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
+        "DREAM": "dream",
         "": "app",  # For AppSettings with no prefix
     }
 
@@ -174,6 +176,8 @@ class LLMSettings(HonchoSettings):
     GROQ_API_KEY: str | None = None
     OPENAI_COMPATIBLE_BASE_URL: str | None = None
 
+    EMBEDDING_PROVIDER: Literal["openai", "gemini"] = "openai"
+
     # General LLM settings
     DEFAULT_MAX_TOKENS: Annotated[int, Field(default=1000, gt=0, le=100_000)] = 2500
 
@@ -190,22 +194,15 @@ class DeriverSettings(HonchoSettings):
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
 
-    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2500, gt=0, le=100_000)] = 2500
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=100_000)] = 10_000
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
-
-    PEER_CARD_PROVIDER: SupportedProviders = "openai"
-    PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
-    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
-    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
-        int, Field(default=4000, gt=1000, le=10_000)
-    ] = 4000
 
     # Maximum number of observations to store in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
-        int, Field(default=100, gt=0, le=500)
-    ] = 100
+        int, Field(default=50, gt=0, le=500)
+    ] = 50
 
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
@@ -224,6 +221,17 @@ class DeriverSettings(HonchoSettings):
                 f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
+
+
+class PeerCardSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
+
+    PROVIDER: SupportedProviders = "openai"
+    MODEL: str = "gpt-5-nano-2025-08-07"
+    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=1000, le=10_000)] = 4000
 
 
 class DialecticSettings(HonchoSettings):
@@ -253,6 +261,8 @@ class DialecticSettings(HonchoSettings):
 class SummarySettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="SUMMARY_", extra="ignore")  # pyright: ignore
 
+    ENABLED: bool = True
+
     MESSAGES_PER_SHORT_SUMMARY: Annotated[int, Field(default=20, gt=0, le=100)] = 20
     MESSAGES_PER_LONG_SUMMARY: Annotated[int, Field(default=60, gt=0, le=500)] = 60
 
@@ -278,6 +288,21 @@ class MetricsSettings(HonchoSettings):
     NAMESPACE: str = "honcho"
 
 
+class DreamSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
+    DOCUMENT_THRESHOLD: Annotated[int, Field(default=50, gt=0, le=1000)] = 50
+    IDLE_TIMEOUT_MINUTES: Annotated[int, Field(default=60, gt=0, le=1440)] = 60
+    MIN_HOURS_BETWEEN_DREAMS: Annotated[int, Field(default=8, gt=0, le=72)] = 8
+    ENABLED_TYPES: list[str] = ["consolidate"]
+
+    # LLM settings for dream processing
+    PROVIDER: SupportedProviders = "openai"
+    MODEL: str = "gpt-4o-mini-2024-07-18"
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=2000, gt=0, le=10_000)] = 2000
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -301,6 +326,9 @@ class AppSettings(HonchoSettings):
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
 
+    COLLECT_METRICS_LOCAL: bool = False
+    LOCAL_METRICS_FILE: str = "metrics.jsonl"
+
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)
     AUTH: AuthSettings = Field(default_factory=AuthSettings)
@@ -308,9 +336,11 @@ class AppSettings(HonchoSettings):
     LLM: LLMSettings = Field(default_factory=LLMSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
+    PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

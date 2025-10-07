@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
-## [1.4.0] - 2025-08-12
+## [1.4.1] — 2025-10-09
+
+### Added
+
+- Get Peer Card method
+- Update Message metadata method
+- Session level deriver status methods
+- Delete session message
+
+### Fixed
+
+- Dialectic Stream returns Iterators
+- Type warnings
+
+### Changed
+
+- Pagination class to match core implementation
+
+## [1.4.0] — 2025-08-12
 
 ### Added
 

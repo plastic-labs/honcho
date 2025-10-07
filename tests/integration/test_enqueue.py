@@ -223,15 +223,15 @@ class TestEnqueueFunction:
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
                 {
-                    "sender_name": test_peer1.name,
-                    "target_name": test_peer1.name,
+                    "observed": test_peer1.name,
+                    "observer": test_peer1.name,
                     "task_type": "representation",
                 }
             )
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items
@@ -302,22 +302,22 @@ class TestEnqueueFunction:
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
                 {
-                    "sender_name": test_peer1.name,
-                    "target_name": test_peer1.name,
+                    "observed": test_peer1.name,
+                    "observer": test_peer1.name,
                     "task_type": "representation",
                 }
             )
             expected_payloads.append(
                 {
-                    "sender_name": test_peer1.name,
-                    "target_name": test_peer2.name,
+                    "observed": test_peer1.name,
+                    "observer": test_peer2.name,
                     "task_type": "representation",
                 }
             )
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items
@@ -396,22 +396,22 @@ class TestEnqueueFunction:
         for _ in range(NUM_MESSAGES):
             expected_payloads.append(
                 {
-                    "sender_name": test_peer1.name,
-                    "target_name": test_peer1.name,
+                    "observed": test_peer1.name,
+                    "observer": test_peer1.name,
                     "task_type": "representation",
                 }
             )
             expected_payloads.append(
                 {
-                    "sender_name": test_peer1.name,
-                    "target_name": observing_peer.name,
+                    "observed": test_peer1.name,
+                    "observer": observing_peer.name,
                     "task_type": "representation",
                 }
             )
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items
@@ -423,7 +423,7 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
         assert unobserving_peer.name not in [
-            item.payload.get("target_name") for item in queue_items
+            item.payload.get("observer") for item in queue_items
         ]
 
     @pytest.mark.asyncio
@@ -545,25 +545,25 @@ class TestEnqueueFunction:
             expected_payloads.append(
                 {
                     "task_type": "representation",
-                    "sender_name": sender,
-                    "target_name": sender,
+                    "observed": sender,
+                    "observer": sender,
                 }
             )
             # representation for observer_peer (observe_others=True)
             expected_payloads.append(
                 {
                     "task_type": "representation",
-                    "sender_name": sender,
-                    "target_name": observer_peer.name,
+                    "observed": sender,
+                    "observer": observer_peer.name,
                 }
             )
 
-        # Extract actual payloads (task_type, sender_name, target_name) from queue_items
+        # Extract actual payloads (task_type, observed, observer) from queue_items
         actual_payloads = [
             {
                 "task_type": item[0].payload.get("task_type"),
-                "sender_name": item[0].payload.get("sender_name"),
-                "target_name": item[0].payload.get("target_name"),
+                "observed": item[0].payload.get("observed"),
+                "observer": item[0].payload.get("observer"),
             }
             for item in queue_items
         ]
@@ -645,20 +645,20 @@ class TestEnqueueFunction:
 
         expected_payloads = [
             {
-                "sender_name": sender_peer.name,
-                "target_name": sender_peer.name,
+                "observed": sender_peer.name,
+                "observer": sender_peer.name,
                 "task_type": "representation",
             },
             {
-                "sender_name": sender_peer.name,
-                "target_name": observer_peer.name,
+                "observed": sender_peer.name,
+                "observer": observer_peer.name,
                 "task_type": "representation",
             },
         ]
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items
@@ -745,10 +745,10 @@ class TestEnqueueFunction:
         queue_items = result.scalars().all()
 
         # Verify observer_who_left is NOT in the target names
-        target_names = [item.payload.get("target_name") for item in queue_items]
-        assert observer_who_left.name not in target_names
-        assert observer_who_stayed.name in target_names
-        assert sender_peer.name in target_names
+        observers = [item.payload.get("observer") for item in queue_items]
+        assert observer_who_left.name not in observers
+        assert observer_who_stayed.name in observers
+        assert sender_peer.name in observers
 
     @pytest.mark.asyncio
     @patch("src.deriver.enqueue.tracked_db")
@@ -807,20 +807,20 @@ class TestEnqueueFunction:
 
         expected_payloads = [
             {
-                "sender_name": existing_peer.name,
-                "target_name": existing_peer.name,
+                "observed": existing_peer.name,
+                "observer": existing_peer.name,
                 "task_type": "representation",
             },
             {
-                "sender_name": existing_peer.name,
-                "target_name": observer_peer.name,
+                "observed": existing_peer.name,
+                "observer": observer_peer.name,
                 "task_type": "representation",
             },
         ]
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items
@@ -932,20 +932,20 @@ class TestEnqueueFunction:
 
         expected_payloads = [
             {
-                "sender_name": sender_peer.name,
-                "target_name": sender_peer.name,
+                "observed": sender_peer.name,
+                "observer": sender_peer.name,
                 "task_type": "representation",
             },
             {
-                "sender_name": sender_peer.name,
-                "target_name": active_observer.name,
+                "observed": sender_peer.name,
+                "observer": active_observer.name,
                 "task_type": "representation",
             },
         ]
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items
@@ -956,10 +956,10 @@ class TestEnqueueFunction:
             assert expected in actual_payloads
 
         # Verify inactive peers are not in target names
-        target_names = [item.payload.get("target_name") for item in queue_items]
-        assert inactive_observer.name not in target_names
-        assert inactive_non_observer.name not in target_names
-        assert active_non_observer.name not in target_names
+        observers = [item.payload.get("observer") for item in queue_items]
+        assert inactive_observer.name not in observers
+        assert inactive_non_observer.name not in observers
+        assert active_non_observer.name not in observers
 
 
 class TestGetEffectiveObserveMeFunction:
@@ -1058,14 +1058,14 @@ class TestGetEffectiveObserveMeFunction:
             if peer_config is None:
                 # Test missing sender
                 peers_with_configuration = {}
-                sender_name = "missing_sender"
+                observed = "missing_sender"
             else:
                 peers_with_configuration = {
                     f"sender_{i}": [peer_config or {}, session_config or {}]
                 }
-                sender_name = f"sender_{i}"
+                observed = f"sender_{i}"
 
-            result = get_effective_observe_me(sender_name, peers_with_configuration)
+            result = get_effective_observe_me(observed, peers_with_configuration)
             assert (
                 result == expected
             ), f"Test case {i} failed: peer_config={peer_config}, session_config={session_config}, expected={expected}, got={result}"
@@ -1192,8 +1192,8 @@ class TestAdvancedEnqueueEdgeCases:
         queue_items = result.scalars().all()
 
         assert len(queue_items) == 1
-        assert queue_items[0].payload["sender_name"] == sender_peer.name
-        assert queue_items[0].payload["target_name"] == sender_peer.name
+        assert queue_items[0].payload["observed"] == sender_peer.name
+        assert queue_items[0].payload["observer"] == sender_peer.name
         assert queue_items[0].payload["task_type"] == "representation"
 
     @pytest.mark.asyncio
@@ -1278,8 +1278,8 @@ class TestAdvancedEnqueueEdgeCases:
         queue_items = result.scalars().all()
 
         assert len(queue_items) == 1
-        assert queue_items[0].payload["sender_name"] == sender_peer.name
-        assert queue_items[0].payload["target_name"] == sender_peer.name
+        assert queue_items[0].payload["observed"] == sender_peer.name
+        assert queue_items[0].payload["observer"] == sender_peer.name
         assert queue_items[0].payload["task_type"] == "representation"
 
     @pytest.mark.asyncio
@@ -1337,20 +1337,20 @@ class TestAdvancedEnqueueEdgeCases:
 
         expected_payloads = [
             {
-                "sender_name": existing_peer.name,
-                "target_name": existing_peer.name,
+                "observed": existing_peer.name,
+                "observer": existing_peer.name,
                 "task_type": "representation",
             },
             {
-                "sender_name": existing_peer.name,
-                "target_name": observer_peer.name,
+                "observed": existing_peer.name,
+                "observer": observer_peer.name,
                 "task_type": "representation",
             },
         ]
         actual_payloads = [
             {
-                "sender_name": item.payload.get("sender_name"),
-                "target_name": item.payload.get("target_name"),
+                "observed": item.payload.get("observed"),
+                "observer": item.payload.get("observer"),
                 "task_type": item.payload.get("task_type"),
             }
             for item in queue_items

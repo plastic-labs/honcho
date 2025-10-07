@@ -1,12 +1,14 @@
+import asyncio
 import logging
+from typing import cast
 
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import config, crud, schemas
-from src.dependencies import db
+from src import config, crud, models, schemas
+from src.dependencies import db, tracked_db
 from src.exceptions import (
     AuthenticationException,
     ResourceNotFoundException,
@@ -14,7 +16,9 @@ from src.exceptions import (
 )
 from src.security import JWTParams, require_auth
 from src.utils import summarizer
+from src.utils.representation import Representation
 from src.utils.search import search
+from src.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,88 @@ router = APIRouter(
     prefix="/workspaces/{workspace_id}/sessions",
     tags=["sessions"],
 )
+
+
+async def _get_working_representation_task(
+    workspace_id: str,
+    last_message: str | None,
+    *,
+    observer: str,
+    observed: str,
+) -> Representation:
+    """
+    Atomic task to get working representation using tracked_db.
+
+    Args:
+        workspace_id: The workspace identifier
+        last_message: Optional last message for semantic query
+        observer: Name of the observer peer
+        observed: Name of the observed peer
+
+    Returns:
+        The working representation
+    """
+    return await crud.get_working_representation(
+        workspace_name=workspace_id,
+        include_semantic_query=last_message,
+        include_most_derived=True,
+        observer=observer,
+        observed=observed,
+    )
+
+
+async def _get_peer_card_task(
+    workspace_id: str,
+    *,
+    observer: str,
+    observed: str,
+) -> list[str] | None:
+    """
+    Atomic task to get peer card using tracked_db.
+
+    Args:
+        workspace_id: The workspace identifier
+        observer: Name of the observer peer
+        observed: Name of the observed peer
+
+    Returns:
+        The peer card or None if not found
+    """
+    async with tracked_db("get_peer_card") as db:
+        return await crud.get_peer_card(
+            db,
+            workspace_name=workspace_id,
+            observer=observer,
+            observed=observed,
+        )
+
+
+async def _get_session_context_task(
+    workspace_id: str,
+    session_id: str,
+    token_limit: int,
+    include_summary: bool,
+) -> tuple[schemas.Summary | None, list[models.Message]]:
+    """
+    Atomic task to get session context using tracked_db.
+
+    Args:
+        workspace_id: The workspace identifier
+        session_id: The session identifier
+        token_limit: Maximum tokens for the context
+        include_summary: Whether to include summary if available
+
+    Returns:
+        Tuple of (summary, messages)
+    """
+    async with tracked_db("get_session_context") as db:
+        return await summarizer.get_session_context(
+            db,
+            workspace_name=workspace_id,
+            session_name=session_id,
+            token_limit=token_limit,
+            include_summary=include_summary,
+        )
 
 
 @router.post(
@@ -372,15 +458,26 @@ async def get_session_context(
     tokens: int | None = Query(
         None,
         le=config.settings.GET_CONTEXT_MAX_TOKENS,
-        description=f"Number of tokens to use for the context. Includes summary if set to true. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
+        description=f"Number of tokens to use for the context. Includes summary if set to true. Includes representation and peer card if they are included in the response. If not provided, the context will be exhaustive (within {config.settings.GET_CONTEXT_MAX_TOKENS} tokens)",
     ),
     *,
+    last_message: str | None = Query(
+        None,
+        description="The most recent message, used to fetch semantically relevant observations",
+    ),
     include_summary: bool = Query(
         default=True,
         description="Whether or not to include a summary *if* one is available for the session",
         alias="summary",
     ),
-    db: AsyncSession = db,
+    peer_target: str | None = Query(
+        None,
+        description="The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.",
+    ),
+    peer_perspective: str | None = Query(
+        None,
+        description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+    ),
 ):
     """
     Produce a context object from the session. The caller provides an optional token limit which the entire context must fit into.
@@ -388,21 +485,65 @@ async def get_session_context(
     to the summary, and 60% to recent messages -- as many as can fit. Note that the summary will usually take up less space than
     this. If the caller does not want a summary, we allocate all the tokens to recent messages.
     """
-    token_limit = tokens or config.settings.GET_CONTEXT_MAX_TOKENS
+    token_limit = (
+        tokens if tokens is not None else config.settings.GET_CONTEXT_MAX_TOKENS
+    )
 
-    # Use the shared get_session_context function from summarizer
-    summary_obj, messages = await summarizer.get_session_context(
-        db,
-        workspace_name=workspace_id,
-        session_name=session_id,
-        token_limit=token_limit,
-        include_summary=include_summary,
+    if peer_perspective and not peer_target:
+        raise ValidationException(
+            "peer_target must be provided if peer_perspective is provided"
+        )
+
+    if not peer_target:
+        # No representation or card needed
+        summary, messages = await _get_session_context_task(
+            workspace_id, session_id, token_limit, include_summary
+        )
+        return schemas.SessionContext(
+            name=session_id,
+            messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
+            summary=summary,
+        )
+
+    observer = peer_perspective or peer_target
+    observed = peer_target
+
+    # Run representation and card tasks in parallel
+    representation, card = await asyncio.gather(
+        _get_working_representation_task(
+            workspace_id, last_message, observer=observer, observed=observed
+        ),
+        _get_peer_card_task(workspace_id, observer=observer, observed=observed),
+        return_exceptions=True,
+    )
+
+    # Handle any exceptions from the parallel tasks
+    if isinstance(representation, Exception):
+        raise representation
+    if isinstance(card, Exception):
+        raise card
+
+    # At this point, we know the types are correct - cast to help type checker
+    representation = cast(Representation, representation)
+    card = cast(list[str] | None, card)
+
+    # adjust token limit downward to account for approximate token count of representation and card
+    # TODO determine if this impacts performance too much
+    adjusted_token_limit = (
+        token_limit - estimate_tokens(str(representation)) - estimate_tokens(card)
+    )
+
+    # Get the session context with the adjusted limit
+    summary, messages = await _get_session_context_task(
+        workspace_id, session_id, adjusted_token_limit, include_summary
     )
 
     return schemas.SessionContext(
         name=session_id,
         messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
-        summary=summary_obj,
+        summary=summary,
+        peer_representation=representation,
+        peer_card=card,
     )
 
 

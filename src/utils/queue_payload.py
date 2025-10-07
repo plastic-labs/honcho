@@ -18,8 +18,8 @@ class RepresentationPayload(BasePayload):
     session_name: str
     message_id: int
     content: str
-    sender_name: str
-    target_name: str
+    observer: str
+    observed: str
     created_at: datetime
 
 
@@ -37,6 +37,8 @@ class SummaryPayload(BasePayload):
     session_name: str
     message_id: int
     message_seq_in_session: int
+    # Optional for backward compatibility with older queue items
+    message_public_id: str | None = None
 
 
 class WebhookPayload(BasePayload):
@@ -46,6 +48,16 @@ class WebhookPayload(BasePayload):
     workspace_name: str
     event_type: str
     data: dict[str, Any]
+
+
+class DreamPayload(BasePayload):
+    """Payload for dream tasks."""
+
+    task_type: Literal["dream"] = "dream"
+    workspace_name: str
+    dream_type: Literal["consolidate"] = "consolidate"
+    observer: str
+    observed: str
 
 
 def create_webhook_payload(
@@ -58,12 +70,28 @@ def create_webhook_payload(
     ).model_dump(mode="json")
 
 
+def create_dream_payload(
+    workspace_name: str,
+    dream_type: Literal["consolidate"] = "consolidate",
+    *,
+    observer: str,
+    observed: str,
+) -> dict[str, Any]:
+    return DreamPayload(
+        workspace_name=workspace_name,
+        dream_type=dream_type,
+        observer=observer,
+        observed=observed,
+    ).model_dump(mode="json")
+
+
 def create_payload(
     message: dict[str, Any],
     task_type: Literal["representation", "summary"],
-    sender_name: str | None = None,
-    target_name: str | None = None,
     message_seq_in_session: int | None = None,
+    *,
+    observer: str | None = None,
+    observed: str | None = None,
 ) -> dict[str, Any]:
     """
     Create a processed payload from a message for queue processing.
@@ -71,8 +99,8 @@ def create_payload(
     Args:
         message: The original message dictionary
         task_type: Type of task ('representation' or 'summary')
-        sender_name: Name of the message sender (required for representation tasks)
-        target_name: Name of the observer peer (required for representation tasks)
+        observer: Name of the observer peer (required for representation tasks)
+        observed: Name of the observed peer (*always* the peer who sent the message) (required for representation tasks)
         message_seq_in_session: Required for summary tasks, must be None for representation
 
     Returns:
@@ -106,30 +134,38 @@ def create_payload(
             if not isinstance(created_at, datetime):
                 raise TypeError("created_at must be a datetime object")
 
-            if sender_name is None:
-                raise ValueError("sender_name is required for representation tasks")
+            if observer is None:
+                raise ValueError("observer is required for representation tasks")
 
-            if target_name is None:
-                raise ValueError("target_name is required for representation tasks")
+            if observed is None:
+                raise ValueError("observed is required for representation tasks")
 
             validated_payload = RepresentationPayload(
                 content=content,
                 workspace_name=workspace_name,
-                sender_name=sender_name,
-                target_name=target_name,
                 session_name=session_name,
                 message_id=message_id,
                 created_at=created_at,
+                observer=observer,
+                observed=observed,
             )
         elif task_type == "summary":
             if message_seq_in_session is None:
                 raise ValueError("message_seq_in_session is required for summary tasks")
+            message_public_id = message.get("message_public_id")
+            if message_public_id is not None and (
+                not isinstance(message_public_id, str) or not message_public_id.strip()
+            ):
+                raise ValueError(
+                    "message_public_id must be a non-empty string if provided"
+                )
 
             validated_payload = SummaryPayload(
                 workspace_name=workspace_name,
                 session_name=session_name,
                 message_id=message_id,
                 message_seq_in_session=message_seq_in_session,
+                message_public_id=message_public_id,
             )
 
         # Convert back to dict for compatibility with JSON serialization
