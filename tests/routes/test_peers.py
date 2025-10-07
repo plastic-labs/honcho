@@ -626,9 +626,9 @@ async def test_get_peer_card_with_data(
     await crud.set_peer_card(
         db_session,
         test_workspace.name,
-        observer_peer.name,
-        observer_peer.name,
         self_card_content,
+        observer=observer_peer.name,
+        observed=observer_peer.name,
     )
 
     # Set a card for the observer describing the target peer
@@ -636,9 +636,9 @@ async def test_get_peer_card_with_data(
     await crud.set_peer_card(
         db_session,
         test_workspace.name,
-        target_peer_name,
-        observer_peer.name,
         target_card_content,
+        observer=observer_peer.name,
+        observed=target_peer_name,
     )
 
     # Test getting observer's own card

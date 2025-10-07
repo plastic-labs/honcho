@@ -45,7 +45,7 @@ class QueryResult(TypedDict):
     actual_response: str
     session: str | None
     observer: str | None
-    target: str | None
+    observed: str | None
     judgment: dict[str, Any]
 
 
@@ -416,8 +416,8 @@ Evaluate whether the actual response contains the core correct information from 
                 query: str = query_data["query"]
                 expected_response: str = query_data["expected_response"]
                 session_name: str | None = query_data.get("session")
-                observer_name: str | None = query_data.get("observer")
-                target_name: str | None = query_data.get("target")
+                observer: str | None = query_data.get("observer")
+                observed: str | None = query_data.get("observed")
 
                 # Wait for deriver queue to be empty for this session
                 queue_empty = await self.wait_for_deriver_queue_empty(
@@ -431,17 +431,17 @@ Evaluate whether the actual response contains the core correct information from 
                 context_parts: list[str] = []
                 if session_name:
                     context_parts.append(f"session: {session_name}")
-                if observer_name:
-                    context_parts.append(f"observer: {observer_name}")
-                if target_name:
-                    context_parts.append(f"target: {target_name}")
+                if observer:
+                    context_parts.append(f"observer: {observer}")
+                if observed:
+                    context_parts.append(f"target: {observed}")
                 if context_parts:
                     output_lines.append("    " + ", ".join(context_parts))
 
                 try:
                     # Determine which peer to use for the query (observer)
-                    if observer_name:
-                        query_peer = peers[observer_name]
+                    if observer:
+                        query_peer = peers[observer]
                     else:
                         # Use the first peer from the first session
                         first_session_data = list(sessions.values())[0]
@@ -449,19 +449,19 @@ Evaluate whether the actual response contains the core correct information from 
                         query_peer = peers[first_peer_name]
 
                     # Execute chat query
-                    if session_name and target_name:
+                    if session_name and observed:
                         response_text = await query_peer.chat(
                             query,
                             session_id=session_name,
-                            target=peers[target_name],
+                            target=peers[observed],
                         )
                     elif session_name:
                         response_text = await query_peer.chat(
                             query, session_id=session_name
                         )
-                    elif target_name:
+                    elif observed:
                         response_text = await query_peer.chat(
-                            query, target=peers[target_name]
+                            query, target=peers[observed]
                         )
                     else:
                         response_text = await query_peer.chat(query)
@@ -480,8 +480,8 @@ Evaluate whether the actual response contains the core correct information from 
                         "expected_response": expected_response,
                         "actual_response": actual_response,
                         "session": session_name,
-                        "observer": observer_name,
-                        "target": target_name,
+                        "observer": observer,
+                        "observed": observed,
                         "judgment": judgment,
                     }
 
@@ -515,8 +515,8 @@ Evaluate whether the actual response contains the core correct information from 
                         expected_response=expected_response,
                         actual_response=f"ERROR: {e}",
                         session=session_name,
-                        observer=observer_name,
-                        target=target_name,
+                        observer=observer,
+                        observed=observed,
                         judgment={
                             "passed": False,
                             "reasoning": f"Query execution failed: {e}",

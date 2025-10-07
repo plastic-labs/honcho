@@ -1,9 +1,11 @@
 import asyncio
 import logging
+import threading
 from collections import defaultdict
 from typing import NamedTuple
 
 import tiktoken
+from google import genai
 from openai import AsyncOpenAI
 
 from .config import settings
@@ -19,19 +21,36 @@ class BatchItem(NamedTuple):
     chunk_index: int
 
 
-class EmbeddingClient:
+class _EmbeddingClient:
     """
-    Embedding client for OpenAI with chunking and batching support.
+    Embedding client supporting OpenAI and Gemini with chunking and batching support.
     """
 
-    def __init__(self, api_key: str | None = None):
-        if api_key is None:
-            api_key = settings.LLM.OPENAI_API_KEY
-        if not api_key:
-            raise ValueError("API key is required")
-        self.client: AsyncOpenAI = AsyncOpenAI(api_key=api_key)
+    def __init__(self, api_key: str | None = None, provider: str | None = None):
+        self.provider: str = provider or settings.LLM.EMBEDDING_PROVIDER
+
+        if self.provider == "gemini":
+            if api_key is None:
+                api_key = settings.LLM.GEMINI_API_KEY
+            if not api_key:
+                raise ValueError("Gemini API key is required")
+            self.client: genai.Client | AsyncOpenAI = genai.Client(api_key=api_key)
+            self.model: str = "gemini-embedding-001"
+            # Gemini has a 2048 token limit
+            self.max_embedding_tokens: int = min(settings.MAX_EMBEDDING_TOKENS, 2048)
+            # Gemini batch size is not documented, using conservative estimate
+            self.max_batch_size: int = 100
+        else:  # openai
+            if api_key is None:
+                api_key = settings.LLM.OPENAI_API_KEY
+            if not api_key:
+                raise ValueError("OpenAI API key is required")
+            self.client = AsyncOpenAI(api_key=api_key)
+            self.model = "text-embedding-3-small"
+            self.max_embedding_tokens = settings.MAX_EMBEDDING_TOKENS
+            self.max_batch_size = 2048  # OpenAI batch limit
+
         self.encoding: tiktoken.Encoding = tiktoken.get_encoding("cl100k_base")
-        self.max_embedding_tokens: int = settings.MAX_EMBEDDING_TOKENS
         self.max_embedding_tokens_per_request: int = (
             settings.MAX_EMBEDDING_TOKENS_PER_REQUEST
         )
@@ -44,10 +63,65 @@ class EmbeddingClient:
                 f"Query exceeds maximum token limit of {self.max_embedding_tokens} tokens (got {token_count} tokens)"
             )
 
-        response = await self.client.embeddings.create(
-            model="text-embedding-3-small", input=query
-        )
-        return response.data[0].embedding
+        if isinstance(self.client, genai.Client):
+            response = await self.client.aio.models.embed_content(
+                model=self.model,
+                contents=query,
+                config={"output_dimensionality": 1536},
+            )
+            if not response.embeddings or not response.embeddings[0].values:
+                raise ValueError("No embedding returned from Gemini API")
+            return response.embeddings[0].values
+        else:  # openai
+            response = await self.client.embeddings.create(
+                model=self.model, input=query
+            )
+            return response.data[0].embedding
+
+    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+        """
+        Simple batch embedding for a list of text strings.
+
+        Args:
+            texts: List of text strings to embed
+
+        Returns:
+            List of embedding vectors corresponding to input texts
+
+        Raises:
+            ValueError: If any text exceeds token limits
+        """
+        embeddings: list[list[float]] = []
+
+        for i in range(0, len(texts), self.max_batch_size):
+            batch = texts[i : i + self.max_batch_size]
+            try:
+                if isinstance(self.client, genai.Client):
+                    # Type cast needed due to genai type signature complexity
+                    response = await self.client.aio.models.embed_content(
+                        model=self.model,
+                        contents=batch,  # pyright: ignore[reportArgumentType]
+                        config={"output_dimensionality": 1536},
+                    )
+                    if response.embeddings:
+                        for emb in response.embeddings:
+                            if emb.values:
+                                embeddings.append(emb.values)
+                else:  # openai
+                    response = await self.client.embeddings.create(
+                        input=batch,
+                        model=self.model,
+                    )
+                    embeddings.extend([data.embedding for data in response.data])
+            except Exception as e:
+                # Check if it's a token limit error and re-raise as ValueError for consistency
+                if "token" in str(e).lower():
+                    raise ValueError(
+                        f"Text content exceeds maximum token limit of {self.max_embedding_tokens}."
+                    ) from e
+                raise
+
+        return embeddings
 
     async def batch_embed(
         self, id_resource_dict: dict[str, tuple[str, list[int]]]
@@ -124,7 +198,7 @@ class EmbeddingClient:
                     current_tokens + chunk_tokens
                     > self.max_embedding_tokens_per_request
                 )
-                would_exceed_count = len(current_batch) >= 2048  # OpenAI's input limit
+                would_exceed_count = len(current_batch) >= self.max_batch_size
 
                 if current_batch and (would_exceed_tokens or would_exceed_count):
                     batches.append(current_batch)
@@ -152,14 +226,25 @@ class EmbeddingClient:
             Maps text IDs to {chunk_index: embedding_vector} dictionaries
         """
         try:
-            response = await self.client.embeddings.create(
-                model="text-embedding-3-small", input=[item.text for item in batch]
-            )
-
             # Organize embeddings by text_id and chunk_index
             result: dict[str, dict[int, list[float]]] = defaultdict(dict)
-            for item, embedding_data in zip(batch, response.data, strict=True):
-                result[item.text_id][item.chunk_index] = embedding_data.embedding
+
+            if isinstance(self.client, genai.Client):
+                response = await self.client.aio.models.embed_content(
+                    model=self.model,
+                    contents=[item.text for item in batch],
+                    config={"output_dimensionality": 1536},
+                )
+                if response.embeddings:
+                    for item, embedding in zip(batch, response.embeddings, strict=True):
+                        if embedding.values:
+                            result[item.text_id][item.chunk_index] = embedding.values
+            else:  # openai
+                response = await self.client.embeddings.create(
+                    model=self.model, input=[item.text for item in batch]
+                )
+                for item, embedding_data in zip(batch, response.data, strict=True):
+                    result[item.text_id][item.chunk_index] = embedding_data.embedding
 
             return dict(result)
 
@@ -228,5 +313,83 @@ def _chunk_text_with_tokens(
     ]
 
 
-# Shared embedding client instance
-embedding_client = EmbeddingClient(settings.LLM.OPENAI_API_KEY)
+class EmbeddingClient:
+    """
+    Singleton wrapper for the embedding client with deferred loading.
+
+    The actual client is only initialized on first use, improving startup time
+    and allowing the application to start even if API keys are not yet configured.
+    """
+
+    _instance: "_EmbeddingClient | None" = None
+    _lock: threading.Lock = threading.Lock()
+    _wrapper_instance: "EmbeddingClient | None" = None
+
+    def __new__(cls):
+        """Ensure only one instance of EmbeddingClient exists."""
+        # We always return the same wrapper instance
+        if cls._wrapper_instance is None:
+            cls._wrapper_instance = super().__new__(cls)
+        return cls._wrapper_instance
+
+    def _get_client(self) -> _EmbeddingClient:
+        """
+        Get or create the underlying embedding client instance.
+
+        Uses double-checked locking for thread-safe lazy initialization.
+        """
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    provider = settings.LLM.EMBEDDING_PROVIDER
+                    if provider == "gemini":
+                        api_key = settings.LLM.GEMINI_API_KEY
+                    else:
+                        api_key = settings.LLM.OPENAI_API_KEY
+
+                    self._instance = _EmbeddingClient(
+                        api_key=api_key, provider=provider
+                    )
+                    logger.info(
+                        f"Initialized embedding client with provider: {provider}"
+                    )
+
+        return self._instance
+
+    async def embed(self, query: str) -> list[float]:
+        """Embed a single query string."""
+        return await self._get_client().embed(query)
+
+    async def simple_batch_embed(self, texts: list[str]) -> list[list[float]]:
+        """Simple batch embedding for a list of text strings."""
+        return await self._get_client().simple_batch_embed(texts)
+
+    async def batch_embed(
+        self, id_resource_dict: dict[str, tuple[str, list[int]]]
+    ) -> dict[str, list[list[float]]]:
+        """Embed multiple texts, chunking long ones and batching API calls."""
+        return await self._get_client().batch_embed(id_resource_dict)
+
+    @property
+    def provider(self) -> str:
+        """Get the provider name."""
+        return self._get_client().provider
+
+    @property
+    def model(self) -> str:
+        """Get the model name."""
+        return self._get_client().model
+
+    @property
+    def max_embedding_tokens(self) -> int:
+        """Get the maximum embedding tokens."""
+        return self._get_client().max_embedding_tokens
+
+    @property
+    def encoding(self) -> tiktoken.Encoding:
+        """Get the tiktoken encoding."""
+        return self._get_client().encoding
+
+
+# Shared singleton embedding client instance
+embedding_client = EmbeddingClient()

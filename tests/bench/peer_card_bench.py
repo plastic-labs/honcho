@@ -22,6 +22,7 @@ import os
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -30,7 +31,8 @@ from anthropic import AsyncAnthropic
 from src.config import settings
 from src.deriver.prompts import peer_card_prompt
 from src.utils.clients import honcho_llm_call
-from src.utils.shared_models import PeerCardQuery
+from src.utils.peer_card import PeerCardQuery
+from src.utils.representation import ExplicitObservation, Representation
 
 COLOR_GREEN = "\033[32m"
 COLOR_RED = "\033[31m"
@@ -134,23 +136,26 @@ def deduplicate_preserve_order(items: list[Candidate]) -> list[Candidate]:
 
 def build_peer_card_caller(
     candidate: Candidate,
-) -> Callable[[list[str] | None, list[str]], Coroutine[Any, Any, PeerCardQuery]]:
+) -> Callable[[list[str] | None, Representation], Coroutine[Any, Any, PeerCardQuery]]:
     """Create an async callable that invokes the peer card prompt with a specific provider/model."""
 
     resolved_provider = (
         "openai" if candidate.provider == "custom" else candidate.provider
     )
 
-    async def call(old_peer_card: list[str] | None, new_observations: list[str]) -> Any:
+    async def call(
+        old_peer_card: list[str] | None, new_observations: Representation
+    ) -> PeerCardQuery:
         prompt = peer_card_prompt(
-            old_peer_card=old_peer_card, new_observations=new_observations
+            old_peer_card=old_peer_card,
+            new_observations=new_observations.str_no_timestamps(),
         )
 
         response = await honcho_llm_call(
             provider=cast(Any, resolved_provider),
             model=candidate.model,
             prompt=prompt,
-            max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
+            max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS,
             response_model=PeerCardQuery,
             json_mode=True,
             reasoning_effort="minimal",
@@ -317,11 +322,22 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
         async def run_case(
             case: Case,
             _caller: Callable[
-                [list[str] | None, list[str]], Coroutine[Any, Any, PeerCardQuery]
+                [list[str] | None, Representation], Coroutine[Any, Any, PeerCardQuery]
             ] = caller,
         ) -> tuple[Case, dict[str, Any]]:
             card: PeerCardQuery = await _caller(
-                case.old_peer_card, case.new_observations
+                case.old_peer_card,
+                Representation(
+                    explicit=[
+                        ExplicitObservation(
+                            content=o,
+                            created_at=datetime.now(timezone.utc),
+                            message_ids=[(0, 0)],
+                            session_name=case.name,
+                        )
+                        for o in case.new_observations
+                    ]
+                ),
             )
             new_card = card.card
             if new_card is None or new_card == []:

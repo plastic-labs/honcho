@@ -3,10 +3,10 @@ import logging
 import time
 from enum import Enum
 from inspect import cleandoc as c
+from typing import TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing_extensions import TypedDict
 
 from src import schemas
 from src.config import settings
@@ -39,6 +39,7 @@ class Summary(TypedDict):
     summary_type: str
     created_at: str
     token_count: int
+    message_public_id: str
 
 
 def to_schema_summary(s: Summary) -> schemas.Summary:
@@ -48,6 +49,7 @@ def to_schema_summary(s: Summary) -> schemas.Summary:
         summary_type=s["summary_type"],
         created_at=s["created_at"],
         token_count=s["token_count"],
+        message_public_id=s["message_public_id"],
     )
 
 
@@ -180,6 +182,7 @@ async def summarize_if_needed(
     session_name: str,
     message_id: int,
     message_seq_in_session: int,
+    message_public_id: str,
 ) -> None:
     """
     Create short/long summaries if thresholds met.
@@ -209,6 +212,7 @@ async def summarize_if_needed(
                     session_name,
                     message_id,
                     SummaryType.LONG,
+                    message_public_id,
                 )
                 logger.info(
                     "Saved long summary for session %s covering up to message %s (%s in session)",
@@ -225,6 +229,7 @@ async def summarize_if_needed(
                     session_name,
                     message_id,
                     SummaryType.SHORT,
+                    message_public_id,
                 )
                 logger.info(
                     "Saved short summary for session %s covering up to message %s (%s in session)",
@@ -248,6 +253,7 @@ async def summarize_if_needed(
                     session_name,
                     message_id,
                     SummaryType.LONG,
+                    message_public_id,
                 )
                 logger.info(
                     "Saved long summary for session %s covering up to message %s (%s in session)",
@@ -262,6 +268,7 @@ async def summarize_if_needed(
                     session_name,
                     message_id,
                     SummaryType.SHORT,
+                    message_public_id,
                 )
                 logger.info(
                     "Saved short summary for session %s covering up to message %s (%s in session)",
@@ -277,6 +284,7 @@ async def _create_and_save_summary(
     session_name: str,
     message_id: int,
     summary_type: SummaryType,
+    message_public_id: str,
 ) -> None:
     """
     Create a new summary and save it to the database.
@@ -311,6 +319,7 @@ async def _create_and_save_summary(
         previous_summary_text=previous_summary_text,
         summary_type=summary_type,
         input_tokens=input_tokens,
+        message_public_id=message_public_id,
     )
 
     await _save_summary(
@@ -334,6 +343,7 @@ async def _create_summary(
     previous_summary_text: str | None,
     summary_type: SummaryType,
     input_tokens: int,
+    message_public_id: str,
 ) -> Summary:
     """
     Generate a summary of the provided messages using an LLM.
@@ -390,6 +400,7 @@ async def _create_summary(
         summary_type=summary_type.value,
         created_at=utc_now_iso(),
         token_count=summary_tokens,
+        message_public_id=message_public_id,
     )
 
 
@@ -610,6 +621,7 @@ async def get_session_context(
                 summary_type=latest_long_summary["summary_type"],
                 created_at=latest_long_summary["created_at"],
                 token_count=latest_long_summary["token_count"],
+                message_public_id=latest_long_summary["message_public_id"],
             )
             messages_tokens = token_limit - latest_long_summary["token_count"]
             messages_start_id = latest_long_summary["message_id"]
@@ -622,12 +634,13 @@ async def get_session_context(
                 summary_type=latest_short_summary["summary_type"],
                 created_at=latest_short_summary["created_at"],
                 token_count=latest_short_summary["token_count"],
+                message_public_id=latest_short_summary["message_public_id"],
             )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
         else:
             logger.warning(
-                "No summary available for get_context call with token limit %s, returning empty string. long_summary_len: %s, short_summary_len: %s",
+                "No summary available for get_context call with token limit %s, returning empty string. Normal if brand-new session. long_summary_len: %s, short_summary_len: %s",
                 token_limit,
                 long_len,
                 short_len,
