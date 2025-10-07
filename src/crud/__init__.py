@@ -1,7 +1,6 @@
 from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
 from .document import (
-    _create_document,  # pyright: ignore[reportPrivateUsage]
     create_documents,
     get_all_documents,
     query_documents,
@@ -54,7 +53,6 @@ __all__ = [
     # Deriver
     "get_deriver_status",
     # Document
-    "_create_document",
     "create_documents",
     "get_all_documents",
     "query_documents",

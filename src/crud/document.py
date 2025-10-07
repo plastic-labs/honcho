@@ -4,7 +4,6 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import attributes
 
 from src import models, schemas
 from src.config import settings
@@ -96,92 +95,6 @@ async def query_documents(
     return result.scalars().all()
 
 
-async def _create_document(  # pyright: ignore[reportUnusedFunction]
-    db: AsyncSession,
-    document: schemas.DocumentCreate,
-    collection: models.Collection,
-    duplicate_threshold: float | None = None,
-) -> tuple[models.Document, bool]:
-    """
-    Embed text as a vector and create a document.
-
-    If duplicate_threshold is provided, we use the embedding to check for
-    duplicates within the threshold. If a duplicate is found, instead of
-    saving a new document, we increment the times_derived field in the
-    `internal_metadata` of the duplicate document.
-
-    Args:
-        db: Database session
-        document: Document creation schema
-        collection: Collection to save the document to
-        embedding: Optional pre-computed embedding for the document (avoids extra API call if possible)
-        duplicate_threshold: Optional similarity threshold (0-1) for checking for duplicates.
-                            Values closer to 1 require higher similarity (e.g., 0.99 = 99% similar)
-
-    Returns:
-        The created or updated document, and a boolean indicating whether a duplicate was found
-
-    Raises:
-        ResourceNotFoundException: If the collection does not exist
-        ValidationException: If the document data is invalid
-    """
-    if duplicate_threshold is not None:
-        distance = 1 - duplicate_threshold
-        stmt = (
-            select(models.Document)
-            .where(models.Document.workspace_name == collection.workspace_name)
-            .where(models.Document.observer == collection.observer)
-            .where(models.Document.observed == collection.observed)
-            .where(
-                models.Document.embedding.cosine_distance(document.embedding)
-                <= distance
-            )
-            .order_by(models.Document.embedding.cosine_distance(document.embedding))
-            .limit(1)
-        )
-        result = await db.execute(stmt)
-        duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
-        if duplicate is not None:
-            # Get the actual distance for debugging
-            distance_stmt = select(
-                models.Document.embedding.cosine_distance(document.embedding)
-            ).where(models.Document.id == duplicate.id)
-            distance_result = await db.execute(distance_stmt)
-            actual_distance = distance_result.scalar() or 0.0
-            actual_similarity = float(1 - actual_distance)
-
-            logger.info(
-                f"Duplicate found: '{document.content}' matched with '{duplicate.content}'. "
-                + f"Similarity: {actual_similarity:.4f}, Distance: {actual_distance:.4f}, "
-                + f"Threshold: {duplicate_threshold}. Incrementing times_derived."
-            )
-            if "times_derived" not in duplicate.internal_metadata:
-                duplicate.internal_metadata["times_derived"] = 2
-            else:
-                duplicate.internal_metadata["times_derived"] += 1
-            attributes.flag_modified(duplicate, "internal_metadata")
-            await db.commit()
-            await db.refresh(duplicate)
-            return duplicate, True
-
-    metadata_dict = document.metadata.model_dump(exclude_none=True)
-    session_name = metadata_dict.pop("session_name", None)
-
-    honcho_document = models.Document(
-        workspace_name=collection.workspace_name,
-        observer=collection.observer,
-        observed=collection.observed,
-        content=document.content,
-        internal_metadata=metadata_dict,
-        embedding=document.embedding,
-        session_name=session_name,
-    )
-    db.add(honcho_document)
-    await db.commit()
-    await db.refresh(honcho_document)
-    return honcho_document, False
-
-
 async def create_documents(
     db: AsyncSession,
     documents: list[schemas.DocumentCreate],
@@ -206,7 +119,6 @@ async def create_documents(
     honcho_documents: list[models.Document] = []
     for doc in documents:
         metadata_dict = doc.metadata.model_dump(exclude_none=True)
-        session_name = metadata_dict.pop("session_name", None)
         honcho_documents.append(
             models.Document(
                 workspace_name=workspace_name,
@@ -215,7 +127,7 @@ async def create_documents(
                 content=doc.content,
                 internal_metadata=metadata_dict,
                 embedding=doc.embedding,
-                session_name=session_name,
+                session_name=doc.session_name,
             )
         )
     db.add_all(honcho_documents)

@@ -11,7 +11,7 @@ from src.utils.formatting import parse_datetime_iso
 class ObservationMetadata(BaseModel):
     created_at: datetime
     message_ids: list[tuple[int, int]]
-    session_name: str | None
+    session_name: str
 
 
 class ExplicitObservationBase(BaseModel):

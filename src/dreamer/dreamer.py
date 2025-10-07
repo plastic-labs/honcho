@@ -143,7 +143,6 @@ async def _consolidate_cluster(
             times_derived=total_times_derived,
             message_ids=obs.message_ids,
             message_created_at=format_datetime_utc(obs.created_at),
-            session_name=obs.session_name or "",
             level=level,
             premises=premises,
         )
@@ -153,6 +152,7 @@ async def _consolidate_cluster(
         documents_to_create.append(
             schemas.DocumentCreate(
                 content=content,
+                session_name=obs.session_name,
                 metadata=metadata,
                 embedding=embedding,
             )

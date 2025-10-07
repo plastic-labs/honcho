@@ -335,7 +335,7 @@ class Document(Base):
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    session_name: Mapped[str] = mapped_column(TEXT, index=True)
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (

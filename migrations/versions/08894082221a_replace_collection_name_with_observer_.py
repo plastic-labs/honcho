@@ -28,6 +28,23 @@ def upgrade() -> None:
     inspector = sa.inspect(op.get_bind())
     connection = op.get_bind()
 
+    # SESSION_NAME MIGRATION
+    # Replace NULL session_name values with empty strings and make column non-nullable
+    # This only applies to documents table
+
+    # Update documents table
+    connection.execute(
+        text(
+            """
+            UPDATE documents
+            SET session_name = ''
+            WHERE session_name IS NULL
+        """
+        )
+    )
+    if column_exists("documents", "session_name", inspector):
+        op.alter_column("documents", "session_name", nullable=False, schema=schema)
+
     # COLLECTIONS TABLE
     # Step 1: Add new observer and observed columns to collections
     if not column_exists("collections", "observer", inspector):
@@ -86,21 +103,33 @@ def upgrade() -> None:
 
     # Step 5: Populate documents observer and observed from collections table
     # Join to the already-populated collections table to get authoritative values
-    connection.execute(
-        text(
+    # Process in batches of 1000 to reduce query size
+    batch_size = 1000
+    while True:
+        result = connection.execute(
+            text(
+                """
+                WITH batch AS (
+                    SELECT d.ctid
+                    FROM documents d
+                    WHERE d.observer IS NULL OR d.observed IS NULL
+                    LIMIT :batch_size
+                )
+                UPDATE documents d
+                SET
+                    observer = c.observer,
+                    observed = c.observed
+                FROM collections c, batch
+                WHERE d.ctid = batch.ctid
+                    AND d.collection_name = c.name
+                    AND d.peer_name = c.peer_name
+                    AND d.workspace_name = c.workspace_name
             """
-            UPDATE documents d
-            SET
-                observer = c.observer,
-                observed = c.observed
-            FROM collections c
-            WHERE d.collection_name = c.name
-                AND d.peer_name = c.peer_name
-                AND d.workspace_name = c.workspace_name
-                AND (d.observer IS NULL OR d.observed IS NULL)
-        """
+            ),
+            {"batch_size": batch_size},
         )
-    )
+        if result.rowcount == 0:
+            break
 
     # Step 6: Make documents observer and observed NOT NULL
     op.alter_column("documents", "observer", nullable=False, schema=schema)
@@ -280,6 +309,13 @@ def downgrade() -> None:
     schema = settings.DB.SCHEMA
     inspector = sa.inspect(op.get_bind())
     connection = op.get_bind()
+
+    # SESSION_NAME MIGRATION ROLLBACK
+    # Make session_name nullable again for documents table
+
+    # Revert documents table
+    if column_exists("documents", "session_name", inspector):
+        op.alter_column("documents", "session_name", nullable=True, schema=schema)
 
     # COLLECTIONS TABLE
     # Step 1: Add back the name column to collections

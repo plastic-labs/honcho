@@ -21,8 +21,8 @@ from src.utils.logging import (
 )
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
+from src.utils.tokens import estimate_tokens
 from src.utils.tracing import with_sentry_transaction
-from src.utils.work_unit import estimate_tokens
 
 from .prompts import (
     critical_analysis_prompt,

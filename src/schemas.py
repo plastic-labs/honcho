@@ -294,7 +294,6 @@ class DocumentMetadata(BaseModel):
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
-    session_name: str = Field()
     level: Literal["explicit", "deductive"] = Field(
         description="The level of the document (explicit or deductive)"
     )
@@ -306,6 +305,9 @@ class DocumentMetadata(BaseModel):
 
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
+    session_name: str = Field(
+        description="The session from which the document was derived"
+    )
     metadata: DocumentMetadata = Field()
     embedding: list[float] = Field()
 
