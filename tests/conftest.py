@@ -123,13 +123,6 @@ async def setup_test_database(db_url: URL):
     return engine
 
 
-@pytest.fixture(scope="session", autouse=True)
-def mock_scheduler():
-    """Prevent scheduler from starting during tests"""
-    with patch("src.main.scheduler") as mock:
-        yield mock
-
-
 @pytest_asyncio.fixture(scope="session")
 async def db_engine():
     create_test_database(TEST_DB_URL)

@@ -43,6 +43,7 @@ class QueueManager:
         self.active_tasks: set[asyncio.Task[None]] = set()
         self.worker_ownership: dict[str, WorkerOwnership] = {}
         self.queue_empty_flag: asyncio.Event = asyncio.Event()
+        self._maintenance_task: asyncio.Task[None] | None = None
 
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
@@ -98,6 +99,12 @@ class QueueManager:
             )
         logger.debug("Signal handlers registered")
 
+        # Start background maintenance loop
+        try:
+            self._maintenance_task = asyncio.create_task(self._maintenance_loop())
+        except Exception:
+            logger.exception("Failed to start maintenance loop")
+
         # Run the polling loop directly in this task
         logger.debug("Starting polling loop directly")
         try:
@@ -141,6 +148,14 @@ class QueueManager:
                     sentry_sdk.capture_exception(e)
             finally:
                 self.worker_ownership.clear()
+
+        # Cancel maintenance loop if running
+        if self._maintenance_task is not None:
+            from contextlib import suppress
+
+            self._maintenance_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._maintenance_task
 
     ##########################
     # Polling and Scheduling #
@@ -288,6 +303,56 @@ class QueueManager:
     ######################
     # Queue Worker Logic #
     ######################
+
+    async def cleanup_queue_items(self) -> None:
+        """Delete processed queue items.
+        Successfully processed queue items are deleted immediately,
+        while errored queue items are deleted after retention window."""
+        async with tracked_db("cleanup_queue_items") as db:
+            now = datetime.now(timezone.utc)
+            error_cutoff = now - timedelta(
+                seconds=settings.DERIVER.QUEUE_ERROR_RETENTION_SECONDS
+            )
+
+            await db.execute(
+                delete(models.QueueItem).where(
+                    models.QueueItem.processed
+                    & (
+                        models.QueueItem.error.is_(None)
+                        | (
+                            models.QueueItem.error.is_not(None)
+                            & (models.QueueItem.created_at < error_cutoff)
+                        )
+                    )
+                )
+            )
+            await db.commit()
+
+    async def _maintenance_loop(self) -> None:
+        """Run periodic maintenance tasks on the queue."""
+        try:
+            while not self.shutdown_event.is_set():
+                try:
+                    await self.cleanup_queue_items()
+                except Exception:
+                    logger.exception("Error during maintenance cleanup")
+                    if settings.SENTRY.ENABLED:
+                        sentry_sdk.capture_exception()
+
+                # Sleep until interval elapses or shutdown event is set
+                try:
+                    await asyncio.wait_for(
+                        self.shutdown_event.wait(),
+                        timeout=43200,  # 12 hours
+                    )
+                    break  # Shutdown event set
+                except asyncio.TimeoutError:
+                    # Timeout means it's time for next cleanup
+                    pass
+        except asyncio.CancelledError:
+            logger.debug("Maintenance loop cancelled")
+            raise
+
     async def _handle_processing_error(
         self,
         error: Exception,

@@ -187,6 +187,11 @@ class DeriverSettings(HonchoSettings):
     ] = 1.0
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
+    # Retention window (seconds) for keeping errored items in the queue
+    QUEUE_ERROR_RETENTION_SECONDS: Annotated[
+        int, Field(default=30 * 24 * 3600, gt=0)
+    ] = 30 * 24 * 3600  # 30 days default
+
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
 
