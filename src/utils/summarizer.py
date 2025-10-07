@@ -3,10 +3,10 @@ import logging
 import time
 from enum import Enum
 from inspect import cleandoc as c
+from typing import TypedDict
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing_extensions import TypedDict
 
 from src import schemas
 from src.config import settings
@@ -640,7 +640,7 @@ async def get_session_context(
             messages_start_id = latest_short_summary["message_id"]
         else:
             logger.warning(
-                "No summary available for get_context call with token limit %s, returning empty string. long_summary_len: %s, short_summary_len: %s",
+                "No summary available for get_context call with token limit %s, returning empty string. Normal if brand-new session. long_summary_len: %s, short_summary_len: %s",
                 token_limit,
                 long_len,
                 short_len,

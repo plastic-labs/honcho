@@ -322,26 +322,29 @@ def mock_llm_call_functions():
         patch(
             "src.dialectic.chat.dialectic_stream", new_callable=AsyncMock
         ) as mock_dialectic_stream,
-        patch(
-            "src.dialectic.utils.generate_semantic_queries", new_callable=AsyncMock
-        ) as mock_semantic_queries,
     ):
         # Import the required models for proper mocking
-        from src.utils.shared_models import DeductiveObservation, SemanticQueries
+        from src.utils.representation import (
+            DeductiveObservationBase,
+            ExplicitObservationBase,
+            PromptRepresentation,
+        )
 
         # Mock return values for different function types
         mock_short_summary.return_value = "Test short summary content"
         mock_long_summary.return_value = "Test long summary content"
 
         # Mock critical_analysis_call to return a proper object with _response attribute
-        mock_critical_analysis_result = MagicMock()
-        mock_critical_analysis_result.explicit = ["Test explicit observation"]
-        mock_critical_analysis_result.deductive = [
-            DeductiveObservation(
-                conclusion="Test deductive conclusion",
-                premises=["Test premise 1", "Test premise 2"],
-            )
-        ]
+        _rep = PromptRepresentation(
+            explicit=[ExplicitObservationBase(content="Test explicit observation")],
+            deductive=[
+                DeductiveObservationBase(
+                    conclusion="Test deductive conclusion",
+                    premises=["Test premise 1", "Test premise 2"],
+                )
+            ],
+        )
+        mock_critical_analysis_result = MagicMock(wraps=_rep)
         # Add the _response attribute that contains thinking (used in the actual code)
         mock_response = MagicMock()
         mock_response.thinking = "Test thinking content"
@@ -355,18 +358,12 @@ def mock_llm_call_functions():
 
         mock_dialectic_stream.return_value = AsyncMock()
 
-        # Mock semantic query generation
-        mock_semantic_queries.return_value = SemanticQueries(
-            queries=["test query 1", "test query 2"]
-        )
-
         yield {
             "short_summary": mock_short_summary,
             "long_summary": mock_long_summary,
             "critical_analysis": mock_critical_analysis,
             "dialectic_call": mock_dialectic_call,
             "dialectic_stream": mock_dialectic_stream,
-            "semantic_queries": mock_semantic_queries,
         }
 
 
@@ -375,11 +372,10 @@ def mock_honcho_llm_call():
     """Generic mock for the honcho_llm_call decorator to avoid actual LLM calls during tests"""
     from unittest.mock import AsyncMock, MagicMock
 
-    from src.utils.shared_models import (
-        DeductiveObservation,
-        ReasoningResponse,
-        ReasoningResponseWithThinking,
-        SemanticQueries,
+    from src.utils.representation import (
+        DeductiveObservationBase,
+        ExplicitObservationBase,
+        PromptRepresentation,
     )
 
     def create_mock_response(
@@ -396,34 +392,22 @@ def mock_honcho_llm_call():
         elif response_model:
             # For structured responses, create appropriate mock objects
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
-                mock_response = MagicMock(spec=ReasoningResponse)
-                mock_response.explicit = ["Test explicit observation"]
-                mock_response.deductive = [
-                    DeductiveObservation(
-                        conclusion="Test deductive conclusion",
-                        premises=["Test premise 1", "Test premise 2"],
-                    )
-                ]
+                _rep = PromptRepresentation(
+                    explicit=[
+                        ExplicitObservationBase(content="Test explicit observation")
+                    ],
+                    deductive=[
+                        DeductiveObservationBase(
+                            conclusion="Test deductive conclusion",
+                            premises=["Test premise 1", "Test premise 2"],
+                        ),
+                    ],
+                )
+                mock_response = MagicMock(wraps=_rep)
                 # Add the _response attribute that contains thinking (used in the actual code)
                 mock_response._response = MagicMock()
                 mock_response._response.thinking = "Test thinking content"
                 return mock_response
-            elif (
-                getattr(response_model, "__name__", "")
-                == "ReasoningResponseWithThinking"
-            ):
-                mock_response = MagicMock(spec=ReasoningResponseWithThinking)
-                mock_response.thinking = "Test thinking content"
-                mock_response.explicit = ["Test explicit observation"]
-                mock_response.deductive = [
-                    DeductiveObservation(
-                        conclusion="Test deductive conclusion",
-                        premises=["Test premise 1", "Test premise 2"],
-                    )
-                ]
-                return mock_response
-            elif getattr(response_model, "__name__", "") == "SemanticQueries":
-                return SemanticQueries(queries=["test query 1", "test query 2"])
             else:
                 # Generic response model mock
                 mock_response = MagicMock(spec=response_model)
@@ -508,6 +492,8 @@ def mock_tracked_db(db_session: AsyncSession):
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
+        patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
+        patch("src.crud.representation.tracked_db", mock_tracked_db_context),
     ):
         yield
 
@@ -522,14 +508,14 @@ def mock_crud_collection_operations():
     async def mock_get_or_create_collection(
         _: AsyncSession,
         workspace_name: str,
-        collection_name: str,
-        peer_name: str | None = None,
+        observer: str,
+        observed: str,
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
-            name=collection_name,
+            observer=observer,
+            observed=observed,
             workspace_name=workspace_name,
-            peer_name=peer_name,
         )
         mock_collection.id = generate_nanoid()
         return mock_collection

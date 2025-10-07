@@ -22,8 +22,17 @@ from src.deriver.consumer import (
     process_item,
     process_representation_batch,
 )
-from src.deriver.utils import parse_work_unit_key
+from src.dreamer.dream_scheduler import (
+    DreamScheduler,
+    get_dream_scheduler,
+    set_dream_scheduler,
+)
 from src.models import QueueItem
+from src.utils.work_unit import parse_work_unit_key
+from src.webhooks.events import (
+    QueueEmptyEvent,
+    publish_webhook_event,
+)
 
 logger = getLogger(__name__)
 
@@ -47,6 +56,14 @@ class QueueManager:
         # Initialize from settings
         self.workers: int = settings.DERIVER.WORKERS
         self.semaphore: asyncio.Semaphore = asyncio.Semaphore(self.workers)
+
+        # Get or create the singleton dream scheduler
+        existing_scheduler = get_dream_scheduler()
+        if existing_scheduler is None:
+            self.dream_scheduler: DreamScheduler = DreamScheduler()
+            set_dream_scheduler(self.dream_scheduler)
+        else:
+            self.dream_scheduler = existing_scheduler
 
         # Initialize Sentry if enabled, using settings
         if settings.SENTRY.ENABLED:
@@ -109,6 +126,9 @@ class QueueManager:
         """Handle graceful shutdown"""
         logger.info(f"Received exit signal {sig.name}...")
         self.shutdown_event.set()
+
+        # Cancel all pending dreams
+        await self.dream_scheduler.shutdown()
 
         if self.active_tasks:
             logger.info(
@@ -188,6 +208,7 @@ class QueueManager:
         ) as db:  # Get number of available workers
             query = (
                 select(models.QueueItem.work_unit_key)
+                .limit(limit)
                 .outerjoin(
                     models.ActiveQueueSession,
                     models.QueueItem.work_unit_key
@@ -197,7 +218,6 @@ class QueueManager:
                 .where(models.QueueItem.work_unit_key.isnot(None))
                 .where(models.ActiveQueueSession.work_unit_key.is_(None))
                 .distinct()
-                .limit(limit)
             )
 
             result = await db.execute(query)
@@ -290,16 +310,12 @@ class QueueManager:
     ######################
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all messages for a specific work unit by routing to the correct handler."""
-        logger.debug(
-            f"Worker {worker_id} starting to process work unit {work_unit_key}"
-        )
+        logger.debug(f"Starting to process work unit {work_unit_key}")
+        work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
             message_count = 0
             messages_to_process: list[QueueItem] = []
             try:
-                parsed_key = parse_work_unit_key(work_unit_key)
-                task_type = parsed_key["task_type"]
-
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
                     ownership = self.worker_ownership.get(worker_id)
@@ -309,12 +325,12 @@ class QueueManager:
                         )
                         break
                     try:
-                        if task_type == "representation":
+                        if work_unit.task_type == "representation":
                             (
                                 messages_context,
                                 items_to_process,
                             ) = await self.get_message_batch(
-                                task_type, work_unit_key, ownership.aqs_id
+                                work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
                             logger.debug(
                                 f"Worker {worker_id} retrieved {len(messages_context)} messages and {len(items_to_process)} queue items for work unit {work_unit_key} (AQS ID: {ownership.aqs_id})"
@@ -326,13 +342,10 @@ class QueueManager:
                                 break
 
                             # Build payloads from the unique messages context window
-                            sender_name = parsed_key["sender_name"]
-                            target_name = parsed_key["target_name"]
-
                             await process_representation_batch(
                                 messages_context,
-                                sender_name=sender_name,
-                                target_name=target_name,
+                                observer=work_unit.observer,
+                                observed=work_unit.observed,
                             )
 
                             await self.mark_messages_as_processed(
@@ -342,7 +355,7 @@ class QueueManager:
 
                         else:
                             messages_to_process = await self.get_next_message(
-                                task_type, work_unit_key, ownership.aqs_id
+                                work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
                             if not messages_to_process:
                                 logger.debug(
@@ -350,7 +363,7 @@ class QueueManager:
                                 )
                                 break
                             await process_item(
-                                task_type, messages_to_process[0].payload
+                                work_unit.task_type, messages_to_process[0].payload
                             )
                             await self.mark_messages_as_processed(
                                 messages_to_process, work_unit_key
@@ -387,23 +400,17 @@ class QueueManager:
                 if removed and message_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
-                        from src.webhooks.events import (
-                            QueueEmptyEvent,
-                            publish_webhook_event,
-                        )
-
-                        parsed_key = parse_work_unit_key(work_unit_key)
-                        if parsed_key["task_type"] in ["representation", "summary"]:
+                        if work_unit.task_type in ["representation", "summary"]:
                             logger.debug(
                                 f"Publishing queue.empty event for {work_unit_key}"
                             )
                             await publish_webhook_event(
                                 QueueEmptyEvent(
-                                    workspace_id=parsed_key["workspace_name"],
-                                    queue_type=parsed_key["task_type"],
-                                    session_id=parsed_key["session_name"],
-                                    sender_name=parsed_key["sender_name"],
-                                    observer_name=parsed_key["target_name"],
+                                    workspace_id=work_unit.workspace_name,
+                                    queue_type=work_unit.task_type,
+                                    session_id=work_unit.session_name,
+                                    observer=work_unit.observer,
+                                    observed=work_unit.observed,
                                 )
                             )
                         else:
@@ -475,8 +482,6 @@ class QueueManager:
             # For representation tasks, get a batch based on token limit.
             # Step 1: Parse work_unit_key to get session context and focused sender
             parsed_key = parse_work_unit_key(work_unit_key)
-            session_name = parsed_key["session_name"]
-            workspace_name = parsed_key["workspace_name"]
 
             # Verify worker still owns the work_unit_key
             ownership_check = await db.execute(
@@ -506,8 +511,8 @@ class QueueManager:
                     == models.Message.id,
                 )
                 .where(~models.QueueItem.processed)
-                .where(models.Message.session_name == session_name)
-                .where(models.Message.workspace_name == workspace_name)
+                .where(models.Message.session_name == parsed_key.session_name)
+                .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .scalar_subquery()
             )
@@ -518,13 +523,13 @@ class QueueManager:
                 select(
                     models.Message.id.label("message_id"),
                     models.Message.token_count.label("token_count"),
-                    models.Message.peer_name.label("sender_name"),
+                    models.Message.peer_name.label("peer_name"),
                     func.sum(models.Message.token_count)
                     .over(order_by=models.Message.id)
                     .label("cumulative_token_count"),
                 )
-                .where(models.Message.session_name == session_name)
-                .where(models.Message.workspace_name == workspace_name)
+                .where(models.Message.session_name == parsed_key.session_name)
+                .where(models.Message.workspace_name == parsed_key.workspace_name)
                 .where(models.Message.id >= min_unprocessed_message_id_subq)
                 .order_by(models.Message.id)
                 .cte()

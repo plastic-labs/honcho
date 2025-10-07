@@ -3,44 +3,47 @@ from inspect import cleandoc as c
 
 def dialectic_prompt(
     query: str,
-    working_representation: str | None,
+    working_representation: str,
     recent_conversation_history: str | None,
-    additional_context: str | None,
-    peer_name: str,
-    peer_card: list[str] | None,
-    target_name: str | None = None,
-    target_peer_card: list[str] | None = None,
+    observer_peer_card: list[str] | None,
+    observed_peer_card: list[str] | None = None,
+    *,
+    observer: str,
+    observed: str,
 ) -> str:
     """
     Generate the main dialectic prompt for context synthesis.
 
     Args:
         query: The specific question or request from the application about the user
-        working_representation: Current session conclusions from recent conversation analysis
-        additional_context: Historical conclusions from the user's global representation
-        peer_name: Name of the user/peer being queried about
+        working_representation: Conclusions from recent conversation analysis AND historical conclusions from the user's global representation
+        recent_conversation_history: Recent conversation history
+        peer_card: Known biographical information about the user
+        observed_peer_card: Known biographical information about the target, if applicable
 
     Returns:
         Formatted prompt string for the dialectic model
     """
 
-    if target_name:
-        query_target = f"""The query is about user {peer_name}'s understanding of {target_name}.
+    if observer != observed:
+        # this is a directional query from the observer's view of the observed
+        query_target = f"""The query is about user {observer}'s understanding of {observed}.
 
 The user's known biographical information:
-{chr(10).join(peer_card) if peer_card else "(none)"}
+{chr(10).join(observer_peer_card) if observer_peer_card else "(none)"}
 
 The target's known biographical information:
-{chr(10).join(target_peer_card) if target_peer_card else "(none)"}
+{chr(10).join(observed_peer_card) if observed_peer_card else "(none)"}
 
 If the user's name or nickname is known, exclusively refer to them by that name.
 If the target's name or nickname is known, exclusively refer to them by that name.
 """
     else:
-        query_target = f"""The query is about user {peer_name}.
+        # this is a global query: honcho's omniscient view of the observed
+        query_target = f"""The query is about user {observed}.
 
 The user's known biographical information:
-{chr(10).join(peer_card) if peer_card else "(none)"}
+{chr(10).join(observer_peer_card) if observer_peer_card else "(none)"}
 
 If the user's name or nickname is known, exclusively refer to them by that name.
 """
@@ -62,6 +65,52 @@ Each conclusion contains:
 - **Type**: Either Explicit or Deductive
 - **Temporal Data**: When conclusions were made
 
+## CONCLUSION TYPE DEFINITIONS
+
+**Explicit Conclusions** (Direct Facts)
+- Direct, literal conclusions which were extracted from statements by the user in their messages
+- No interpretation - only derived from what was explicitly written
+
+**Deductive Conclusions** (Logical Certainties)
+- Conclusions that MUST be true given the premises
+- Built from premises that may include explicit conclusions, deductive conclusions, temporal premises, and/or general knowledge known to be true
+
+## SYNTHESIS PROCESS
+
+1. **Query Analysis**: Identify what specific information the application needs
+2. **Conclusion Gathering**: Collect all conclusions relevant to the query
+3. **Evidence Evaluation**: Assess conclusions quality based on:
+   - Reasoning type (explicit > deductive in certainty)
+   - Recency (newer = more current state)
+   - Premise strength (more supporting evidence = stronger)
+   - Qualifiers (likely, probably, typically, etc)
+1. **Synthesis**: Build a coherent answer that:
+   - Directly addresses the query
+   - Provides additional useful context
+   - Connects related conclusions logically
+   - Acknowledges gaps or uncertainties
+
+## SYNTHESIS PRINCIPLES
+
+**Logical Chaining**:
+- Connect conclusions across time to build deeper understanding
+- Use general knowledge to bridge gaps between user observations
+- Apply established user patterns from one domain to predict behavior in another
+
+**Temporal Awareness**:
+- Recent conclusions reflect current state
+- Historical patterns show consistent traits
+- Note when conclusions may be outdated
+
+**Evidence Integration**:
+- Multiple converging conclusions strengthen synthesis
+- Contradictions require resolution (prioritize: recency > explicit > deductive)
+- Build from certainties toward useful query answers
+
+**Response Requirements**:
+- Answer the specific question asked
+- Ground responses in actual conclusions
+
 ## OUTPUT FORMAT
 
 Provide a natural language response that:
@@ -79,25 +128,24 @@ Provide a natural language response that:
 
 <query>{query}</query>
 <working_representation>{working_representation}</working_representation>
-{f"<global_context>{additional_context}</global_context>" if additional_context else ""}"""
+"""
     )
 
 
-def query_generation_prompt(query: str, target_peer_name: str) -> str:
+def query_generation_prompt(query: str, observed: str) -> str:
     """
     Generate the prompt for semantic query expansion.
 
     Args:
         query: The original user query
-        peer_name: Name of the user/peer
-        target_name: Name of the target/peer if dialectic query is targeted
+        observed: Name of the target peer
 
     Returns:
         Formatted prompt string for query generation
     """
     return c(
         f"""
-You are a query expansion agent helping AI applications understand their users. The user's name is {target_peer_name}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
+You are a query expansion agent helping AI applications understand their users. The user's name is {observed}. Your job is to take application queries about this user and generate targeted search queries that will retrieve the most relevant observations using semantic search over an embedding store containing observations about the user.
 
 ## QUERY EXPANSION STRATEGY FOR SEMANTIC SIMILARITY
 

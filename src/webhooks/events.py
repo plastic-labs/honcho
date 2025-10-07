@@ -5,9 +5,9 @@ from typing import Literal
 from pydantic import BaseModel
 
 from src.dependencies import tracked_db
-from src.deriver.queue_payload import create_webhook_payload
-from src.deriver.utils import get_work_unit_key
 from src.models import QueueItem
+from src.utils.queue_payload import create_webhook_payload
+from src.utils.work_unit import get_work_unit_key
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,8 @@ class QueueEmptyEvent(BaseWebhookEvent):
     type: Literal[WebhookEventType.QUEUE_EMPTY] = WebhookEventType.QUEUE_EMPTY
     queue_type: str
     session_id: str | None = None
-    sender_name: str | None = None
-    observer_name: str | None = None
+    observer: str | None = None
+    observed: str | None = None
 
 
 class TestEvent(BaseWebhookEvent):
@@ -60,7 +60,10 @@ async def publish_webhook_event(event: WebhookEvent) -> None:
         async with tracked_db("publish_webhook_event") as db:
             queue_item = QueueItem(
                 work_unit_key=get_work_unit_key(
-                    "webhook", {"workspace_name": event.workspace_id}
+                    {
+                        "task_type": "webhook",
+                        "workspace_name": event.workspace_id,
+                    }
                 ),
                 payload=payload,
                 session_id=None,

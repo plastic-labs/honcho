@@ -132,9 +132,9 @@ async def get_deriver_status(
         return await crud.get_deriver_status(
             db,
             workspace_name=workspace_id,
-            observer_name=observer_id,
-            sender_name=sender_id,
             session_name=session_id,
+            observer=observer_id,
+            observed=sender_id,
         )
     except ValueError as e:
         logger.warning(f"Invalid request parameters: {str(e)}")
