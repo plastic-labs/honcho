@@ -31,7 +31,6 @@ dependencies = [
     "google-genai>=1.32.0",
     "pdfplumber>=0.11.7",
     "typing-extensions>=4.11.0",
-    "apscheduler>=3.11.0",
 ]
 [tool.uv]
 dev-dependencies = [
