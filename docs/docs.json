@@ -34,10 +34,10 @@
                 "group": "Core Concepts",
                 "pages": [
                   "v2/documentation/core-concepts/architecture",
-                  "v2/documentation/core-concepts/glossary",
                   "v2/documentation/core-concepts/features",
                   "v2/documentation/core-concepts/configuration",
-                  "v2/documentation/core-concepts/summarizer"
+                  "v2/documentation/core-concepts/summarizer",
+                  "v2/documentation/core-concepts/glossary"
                 ]
               },
               {
@@ -74,20 +74,7 @@
               }
             ]
           },
-          {
-            "tab": "Contributing",
-            "groups": [
-              {
-                "group": "Contributing",
-                "pages": [
-                  "v2/contributing/guidelines",
-                  "v2/contributing/self-hosting",
-                  "v2/contributing/configuration",
-                  "v2/contributing/license"
-                ]
-              }
-            ]
-          },
+
           {
             "tab": "API Reference",
             "groups": [
@@ -174,6 +161,20 @@
                 "pages": [
                   "changelog/introduction",
                   "changelog/compatibility-guide"
+                ]
+              }
+            ]
+          },
+          {
+            "tab": "Contributing",
+            "groups": [
+              {
+                "group": "Contributing",
+                "pages": [
+                  "v2/contributing/guidelines",
+                  "v2/contributing/self-hosting",
+                  "v2/contributing/configuration",
+                  "v2/contributing/license"
                 ]
               }
             ]
@@ -331,9 +332,9 @@
     "global": {
       "anchors": [
         {
-          "anchor": "Managed Platform",
+          "anchor": "Dashboard",
           "href": "https://app.honcho.dev",
-          "icon": "book-open-cover"
+          "icon": "table-columns"
         },
         {
           "anchor": "Community",
