@@ -288,6 +288,43 @@ class QueueManager:
     ######################
     # Queue Worker Logic #
     ######################
+    async def _handle_processing_error(
+        self,
+        error: Exception,
+        messages: list[QueueItem],
+        work_unit_key: str,
+        context: str,
+    ) -> None:
+        """
+        Handle processing errors by marking messages as errored, logging, and forwarding to Sentry.
+        We only mark the first message as errored so we don't potentially throw away a batch. This allows us
+        to incrementally attempt to process the batch while still maintaining progress in a work unit.
+
+        Args:
+            error: The exception that occurred
+            messages: The queue items that were being processed
+            work_unit_key: The work unit key for the messages
+            context: Context string describing what was being processed (e.g., "processing representation batch")
+        """
+        error_msg = f"{error.__class__.__name__}: {str(error)}"
+        try:
+            if messages:
+                await self.mark_message_as_errored(
+                    messages[0], work_unit_key, error_msg
+                )
+        except Exception as mark_error:
+            logger.error(
+                f"Failed to mark messages as errored for work unit {work_unit_key}: {mark_error}",
+                exc_info=True,
+            )
+
+        logger.error(
+            f"Error {context} for work unit {work_unit_key}: {error}",
+            exc_info=True,
+        )
+        if settings.SENTRY.ENABLED:
+            sentry_sdk.capture_exception(error)
+
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
         """Process all messages for a specific work unit by routing to the correct handler."""
         logger.debug(
@@ -340,17 +377,12 @@ class QueueManager:
                                 )
                                 message_count += len(items_to_process)
                             except Exception as e:
-                                # Mark the batch as failed
-                                error_msg = f"{e.__class__.__name__}: {str(e)}"
-                                await self.mark_messages_as_errored(
-                                    items_to_process, work_unit_key, error_msg
+                                await self._handle_processing_error(
+                                    e,
+                                    items_to_process,
+                                    work_unit_key,
+                                    "processing representation batch",
                                 )
-                                logger.error(
-                                    f"Error processing representation batch for work unit {work_unit_key}: {e}",
-                                    exc_info=True,
-                                )
-                                if settings.SENTRY.ENABLED:
-                                    sentry_sdk.capture_exception(e)
 
                         else:
                             messages_to_process = await self.get_next_message(
@@ -371,17 +403,12 @@ class QueueManager:
                                 )
                                 message_count += len(messages_to_process)
                             except Exception as e:
-                                # Mark the specific message as failed
-                                error_msg = f"{e.__class__.__name__}: {str(e)}"
-                                await self.mark_messages_as_errored(
-                                    messages_to_process, work_unit_key, error_msg
+                                await self._handle_processing_error(
+                                    e,
+                                    messages_to_process,
+                                    work_unit_key,
+                                    "processing message",
                                 )
-                                logger.error(
-                                    f"Error processing message for work unit {work_unit_key}: {e}",
-                                    exc_info=True,
-                                )
-                                if settings.SENTRY.ENABLED:
-                                    sentry_sdk.capture_exception(e)
 
                     except Exception as e:
                         logger.error(
@@ -633,17 +660,16 @@ class QueueManager:
             )
             await db.commit()
 
-    async def mark_messages_as_errored(
-        self, messages: list[QueueItem], work_unit_key: str, error: str
+    async def mark_message_as_errored(
+        self, message: QueueItem, work_unit_key: str, error: str
     ) -> None:
-        """Mark messages as processed with an error"""
-        if not messages:
+        """Mark message as processed with an error"""
+        if not message:
             return
-        async with tracked_db("mark_messages_as_errored") as db:
-            message_ids = [msg.id for msg in messages]
+        async with tracked_db("mark_message_as_errored") as db:
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id.in_(message_ids))
+                .where(models.QueueItem.id == message.id)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
             )
