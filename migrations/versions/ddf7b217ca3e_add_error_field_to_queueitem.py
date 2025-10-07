@@ -33,7 +33,12 @@ def upgrade() -> None:
 
     op.add_column(
         "queue",
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=True,
+            server_default=sa.func.now(),
+        ),
         schema=schema,
     )
 
