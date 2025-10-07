@@ -2,6 +2,7 @@ from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
     Counter,
+    disable_created_metrics,
     generate_latest,
 )
 from starlette.responses import Response as StarletteResponse
@@ -9,6 +10,7 @@ from starlette.responses import Response as StarletteResponse
 from src.config import settings
 
 METRICS_ENABLED = settings.METRICS.ENABLED
+disable_created_metrics()  # Disables _created metrics on counters, histograms, and summaries
 
 
 class NamespacedCounter(Counter):
@@ -40,6 +42,12 @@ MESSAGES_CREATED = NamespacedCounter(
     ],
 )
 
+MESSAGE_INPUT_TOKENS = NamespacedCounter(
+    "message_input_tokens_total",
+    "Total message input tokens",
+    ["namespace", "workspace_name"],
+)
+
 DIALECTIC_CALLS = NamespacedCounter(
     "dialectic_calls_total",
     "Total dialectic calls",
@@ -53,6 +61,15 @@ DERIVER_TASKS_COMPLETED = NamespacedCounter(
     "deriver_tasks_completed_total",
     "Total deriver tasks completed",
     ["namespace", "workspace_name", "task_type"],
+)
+
+DERIVER_TOKENS_PROCESSED = NamespacedCounter(
+    "tokens_processed_total",
+    "Total tokens processed",
+    [
+        "namespace",
+        "task_type",
+    ],
 )
 
 

@@ -7,7 +7,7 @@ from typing import Any
 import sentry_sdk
 from langfuse import get_client
 
-from src import crud, exceptions
+from src import crud, exceptions, prometheus
 from src.config import settings
 from src.crud.representation import GLOBAL_REPRESENTATION_COLLECTION_NAME
 from src.dependencies import tracked_db
@@ -61,6 +61,7 @@ async def critical_analysis_call(
     working_representation: str | None,
     history: str,
     new_turns: list[str],
+    estimated_input_tokens: int,
 ) -> ReasoningResponse | None:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
@@ -84,6 +85,10 @@ async def critical_analysis_call(
         enable_retry=True,
         retry_attempts=3,
     )
+
+    prometheus.DERIVER_TOKENS_PROCESSED.labels(
+        task_type="representation",
+    ).inc(response.output_tokens + estimated_input_tokens)
 
     return response.content
 
@@ -340,6 +345,9 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
+    # Store the final token estimate for downstream metrics
+    reasoner.estimated_input_tokens = max(0, int(estimated_input_tokens))
+
     # Run consolidated reasoning that handles explicit and deductive levels
     logger.debug(
         "REASONING: Running unified insight derivation across explicit and deductive reasoning levels"
@@ -408,6 +416,7 @@ class CertaintyReasoner:
         self.ctx = ctx
         self.sender_name = sender_name
         self.target_name = target_name
+        self.estimated_input_tokens: int = 0
 
     @conditional_observe
     @sentry_sdk.trace
@@ -456,6 +465,7 @@ class CertaintyReasoner:
                 working_representation=formatted_working_representation,
                 history=history,
                 new_turns=new_turns,
+                estimated_input_tokens=self.estimated_input_tokens,
             )
         except Exception as e:
             raise exceptions.LLMError(

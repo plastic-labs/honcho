@@ -57,6 +57,16 @@ async def create_messages_for_session(
             session_name=session_id,
         )
 
+        input_tokens = sum(message.token_count for message in created_messages)
+
+        prometheus.MESSAGES_CREATED.labels(
+            workspace_name=workspace_id,
+        ).inc(len(created_messages))
+
+        prometheus.MESSAGE_INPUT_TOKENS.labels(
+            workspace_name=workspace_id,
+        ).inc(input_tokens)
+
         # Enqueue for processing (existing logic)
         payloads = [
             {
@@ -72,9 +82,7 @@ async def create_messages_for_session(
 
         # Enqueue all messages in one call
         background_tasks.add_task(enqueue, payloads)
-        prometheus.MESSAGES_CREATED.labels(
-            workspace_name=workspace_id,
-        ).inc(len(created_messages))
+
         return created_messages
     except ValueError as e:
         logger.warning(f"Failed to create messages for session {session_id}: {str(e)}")
