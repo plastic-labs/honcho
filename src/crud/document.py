@@ -3,6 +3,7 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
@@ -102,7 +103,7 @@ async def create_documents(
     *,
     observer: str,
     observed: str,
-) -> tuple[list[models.Document], int]:
+) -> int:
     """
     Create multiple documents with NO duplicate detection.
 
@@ -114,26 +115,35 @@ async def create_documents(
         observed: Name of the observed peer
 
     Returns:
-        Tuple of (created/updated documents, count of new documents)
+        Count of new documents
     """
     honcho_documents: list[models.Document] = []
     for doc in documents:
-        metadata_dict = doc.metadata.model_dump(exclude_none=True)
-        honcho_documents.append(
-            models.Document(
-                workspace_name=workspace_name,
-                observer=observer,
-                observed=observed,
-                content=doc.content,
-                internal_metadata=metadata_dict,
-                embedding=doc.embedding,
-                session_name=doc.session_name,
+        try:
+            metadata_dict = doc.metadata.model_dump(exclude_none=True)
+            honcho_documents.append(
+                models.Document(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    content=doc.content,
+                    internal_metadata=metadata_dict,
+                    embedding=doc.embedding,
+                    session_name=doc.session_name,
+                )
             )
-        )
-    db.add_all(honcho_documents)
-    await db.commit()
+        except Exception as e:
+            logger.error(
+                f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
+            )
+            continue
+    try:
+        db.add_all(honcho_documents)
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        raise ValidationException(
+            "Failed to create documents due to integrity constraint violation"
+        ) from e
 
-    for doc in honcho_documents:
-        await db.refresh(doc)
-
-    return honcho_documents, len(honcho_documents)
+    return len(honcho_documents)

@@ -161,7 +161,7 @@ class RepresentationManager:
             )
 
         # Use bulk creation with NO duplicate detection
-        _created_documents, new_documents = await crud.create_documents(
+        new_documents = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,
