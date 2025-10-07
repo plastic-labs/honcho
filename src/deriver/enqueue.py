@@ -151,17 +151,18 @@ async def get_peers_with_configuration(
 
 def create_representation_record(
     message: dict[str, Any],
-    sender_name: str,
-    target_name: str,
     session_id: str | None = None,
+    *,
+    observer: str,
+    observed: str,
 ) -> dict[str, Any]:
     """
     Create a queue record for representation task.
 
     Args:
         message: The message payload
-        sender_name: Name of the sender
-        target_name: Name of the target
+        observed: Name of the sender
+        observer: Name of the target
         session_id: Optional session ID
 
     Returns:
@@ -169,9 +170,9 @@ def create_representation_record(
     """
     processed_payload = create_payload(
         message=message,
-        sender_name=sender_name,
-        target_name=target_name,
         task_type="representation",
+        observer=observer,
+        observed=observed,
     )
     return {
         "work_unit_key": get_work_unit_key(processed_payload),
@@ -191,8 +192,8 @@ def create_summary_record(
 
     Args:
         message: The message payload
-        sender_name: Name of the sender
-        target_name: Name of the target
+        observed: Name of the sender
+        observer: Name of the target
         session_id: Session ID
 
     Returns:
@@ -212,13 +213,13 @@ def create_summary_record(
 
 
 def get_effective_observe_me(
-    sender_name: str, peers_with_configuration: dict[str, list[dict[str, Any]]]
+    observed: str, peers_with_configuration: dict[str, list[dict[str, Any]]]
 ) -> bool:
     """
     Determine the effective observe_me setting for a sender, considering session and peer configurations.
 
     Args:
-        sender_name: Name of the sender
+        observed: Name of the sender
         peers_with_configuration: Dictionary of peer configurations
 
     Returns:
@@ -227,7 +228,7 @@ def get_effective_observe_me(
     # If the sender is not in peers_with_configuration, they left after sending a message.
     # We'll use the default behavior of observing the sender by instantiating the default
     # peer-level and session-level configs.
-    configuration: list[Any] = peers_with_configuration.get(sender_name, [{}, {}])
+    configuration: list[Any] = peers_with_configuration.get(observed, [{}, {}])
     sender_session_peer_config = (
         schemas.SessionPeerConfig(**configuration[1]) if configuration[1] else None
     )
@@ -268,7 +269,7 @@ async def generate_queue_records(
     Returns:
         List of queue records for this message
     """
-    sender_name = message["peer_name"]
+    observed = message["peer_name"]
     message_id: int = message["message_id"]
 
     # Use pre-fetched sequence if available, otherwise fall back to individual query
@@ -299,19 +300,19 @@ async def generate_queue_records(
     if deriver_disabled:
         return records
 
-    if get_effective_observe_me(sender_name, peers_with_configuration):
+    if get_effective_observe_me(observed, peers_with_configuration):
         # global representation task
         records.append(
             create_representation_record(
                 message,
-                sender_name=sender_name,
-                target_name=sender_name,
+                observed=observed,
+                observer=observed,
                 session_id=session_id,
             )
         )
 
         for peer_name, configuration in peers_with_configuration.items():
-            if peer_name == sender_name:
+            if peer_name == observed:
                 continue
 
             # If the observer peer has left the session, we don't need to enqueue a representation task for them.
@@ -331,21 +332,21 @@ async def generate_queue_records(
                 # peer representation task
                 create_representation_record(
                     message,
-                    sender_name=sender_name,
-                    target_name=peer_name,
+                    observed=observed,
+                    observer=peer_name,
                     session_id=session_id,
                 )
             )
             logger.debug(
                 "enqueued representation task for %s's representation of %s",
                 peer_name,
-                sender_name,
+                observed,
             )
 
     logger.info(
         "message %s from %s created %s queue items",
         message_id,
-        sender_name,
+        observed,
         len(records),
     )
 

@@ -10,7 +10,7 @@ from functools import cache
 from inspect import cleandoc as c
 
 from src.utils.representation import Representation
-from src.utils.work_unit import estimate_tokens
+from src.utils.tokens import estimate_tokens
 
 
 def critical_analysis_prompt(

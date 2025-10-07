@@ -170,11 +170,13 @@ async def chat(
     if not options.stream:
         response = await dialectic_chat(
             workspace_name=workspace_id,
-            peer_name=peer_id,
-            target_name=options.target,
             session_name=options.session_id,
             query=options.query,
             stream=options.stream,
+            observer=peer_id,
+            # if target is given, that's the observed peer. otherwise, observer==observed
+            # and it's answered from the omniscient Honcho perspective
+            observed=options.target if options.target is not None else peer_id,
         )
         return schemas.DialecticResponse(content=str(response))
 
@@ -182,11 +184,11 @@ async def chat(
         try:
             stream = await dialectic_chat(
                 workspace_name=workspace_id,
-                peer_name=peer_id,
-                target_name=options.target,
                 session_name=options.session_id,
                 query=options.query,
                 stream=options.stream,
+                observer=peer_id,
+                observed=options.target if options.target is not None else peer_id,
             )
             if isinstance(stream, AsyncIterator):
                 async for chunk in stream:
@@ -225,20 +227,20 @@ async def get_working_representation(
     options: schemas.PeerRepresentationGet = Body(
         ..., description="Options for getting the peer representation"
     ),
-    db: AsyncSession = db,
 ):
     """Get a peer's working representation for a session.
 
     If a session_id is provided in the body, we get the working representation of the peer in that session.
     If a target is provided, we get the representation of the target from the perspective of the peer.
-    If no target is provided, we get the global representation of the peer.
+    If no target is provided, we get the omniscient Honcho representation of the peer.
     """
     try:
-        # If no target specified, get global representation (peer observing themselves)
-        target_peer = options.target if options.target is not None else peer_id
-
+        # If no target specified, get global representation (omniscient Honcho perspective)
         representation = await crud.get_working_representation(
-            db, workspace_id, peer_id, target_peer
+            workspace_id,
+            observer=peer_id,
+            observed=options.target if options.target is not None else peer_id,
+            session_name=options.session_id,
         )
         return {"representation": representation}
     except ValueError as e:
@@ -270,9 +272,11 @@ async def get_peer_card(
     If no target is specified, returns the observer's own peer card.
     """
     # If no target specified, get the observer's own card
-    target_peer = target if target is not None else peer_id
+    observed = target if target is not None else peer_id
 
-    peer_card = await crud.get_peer_card(db, workspace_id, target_peer, peer_id)
+    peer_card = await crud.get_peer_card(
+        db, workspace_id, observer=peer_id, observed=observed
+    )
     return schemas.PeerCardResponse(peer_card=peer_card)
 
 

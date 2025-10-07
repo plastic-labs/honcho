@@ -403,17 +403,18 @@ async def honcho_llm_call_inner(
                     **openai_params
                 )
 
-                test_rep = ""
-                if response.choices[0].message.content is not None:  # pyright: ignore
-                    test_rep = response.choices[0].message.content  # pyright: ignore
-
-                final = validate_and_repair_json(test_rep)  # pyright: ignore
-
                 usage = response.usage  # pyright: ignore
                 finish_reason = response.choices[0].finish_reason  # pyright: ignore
 
-                # Schema-aware repair: ensure deductive observations have required fields
                 try:
+                    test_rep = ""
+                    if response.choices[0].message.content is not None:  # pyright: ignore
+                        test_rep = response.choices[0].message.content  # pyright: ignore
+
+                    final = validate_and_repair_json(test_rep)  # pyright: ignore
+
+                    # Schema-aware repair: ensure deductive observations have required fields
+
                     repaired_data = json.loads(final)
 
                     # Fix deductive observations that might be missing conclusion
@@ -442,6 +443,7 @@ async def honcho_llm_call_inner(
 
                     final = json.dumps(repaired_data)
                 except (json.JSONDecodeError, KeyError, TypeError) as e:
+                    final = ""
                     logger.warning(f"Could not perform schema-aware repair: {e}")
                     # Continue with original final value if repair fails
 
@@ -785,7 +787,9 @@ def with_langfuse(func: Callable[..., Any]) -> Callable[..., Any]:
     @wraps(func)
     async def wrapper(*args: Any, **kwargs: Any) -> Any:
         if lf:
-            lf.start_as_current_generation(name="LLM Call")
-        return await func(*args, **kwargs)
+            with lf.start_as_current_generation(name="LLM Call"):
+                return await func(*args, **kwargs)
+        else:
+            return await func(*args, **kwargs)
 
     return wrapper

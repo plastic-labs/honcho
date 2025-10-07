@@ -1,16 +1,48 @@
+from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
+from src import models
+from src.utils.formatting import parse_datetime_iso
 
-class Observation(BaseModel):
+
+class ObservationMetadata(BaseModel):
     created_at: datetime
     message_ids: list[tuple[int, int]]
-    session_name: str | None
+    session_name: str
 
 
-class ExplicitObservation(Observation):
+class ExplicitObservationBase(BaseModel):
     content: str = Field(description="The explicit observation")
+
+
+class DeductiveObservationBase(BaseModel):
+    premises: list[str] = Field(
+        description="Supporting premises or evidence for this conclusion",
+        default_factory=list,
+    )
+    conclusion: str = Field(description="The deductive conclusion")
+
+
+class PromptRepresentation(BaseModel):
+    """
+    The representation format that is used when getting structured output from an LLM.
+    """
+
+    explicit: list[ExplicitObservationBase] = Field(
+        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
+        default_factory=list,
+    )
+    deductive: list[DeductiveObservationBase] = Field(
+        description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
+        default_factory=list,
+    )
+
+
+class ExplicitObservation(ExplicitObservationBase, ObservationMetadata):
+    """Explicit observation with content and metadata."""
 
     def __str__(self) -> str:
         return f"[{self.created_at.replace(microsecond=0)}] {self.content}"
@@ -35,14 +67,8 @@ class ExplicitObservation(Observation):
         )
 
 
-class DeductiveObservation(Observation):
-    """Deductive observation with multiple premises and one conclusion."""
-
-    premises: list[str] = Field(
-        description="Supporting premises or evidence for this conclusion",
-        default_factory=list,
-    )
-    conclusion: str = Field(description="The deductive conclusion")
+class DeductiveObservation(DeductiveObservationBase, ObservationMetadata):
+    """Deductive observation with multiple premises and one conclusion, plus metadata."""
 
     def __str__(self) -> str:
         premises_text = "\n".join(f"    - {premise}" for premise in self.premises)
@@ -232,57 +258,80 @@ class Representation(BaseModel):
 
         return "\n".join(parts)
 
-
-class PromptDeductiveObservation(BaseModel):
-    """
-    The deductive observation format that is used when getting structured output from an LLM.
-    """
-
-    conclusion: str = Field(description="The deductive conclusion")
-    premises: list[str] = Field(description="The premises of the deductive observation")
-
-
-class PromptRepresentation(BaseModel):
-    """
-    The representation format that is used when getting structured output from an LLM.
-    """
-
-    explicit: list[str] = Field(
-        description="Facts LITERALLY stated by the user - direct quotes or clear paraphrases only, no interpretation or inference. Example: ['The user is 25 years old', 'The user has a dog named Rover']",
-        default_factory=list,
-    )
-    deductive: list[PromptDeductiveObservation] = Field(
-        description="Conclusions that MUST be true given explicit facts and premises - strict logical necessities. Each deduction should have premises and a single conclusion.",
-        default_factory=list,
-    )
-
-    def to_representation(
-        self, message_ids: tuple[int, int], session_name: str, timestamp: datetime
-    ) -> Representation:
-        """
-        Convert a PromptRepresentation object to a Representation object.
-
-        NOTE: all observations produced by this method will have the same timestamp, so
-        only use it on the output of a single inference call.
-        """
-        return Representation(
+    @classmethod
+    def from_documents(cls, documents: Sequence[models.Document]) -> "Representation":
+        return cls(
             explicit=[
                 ExplicitObservation(
-                    content=e,
-                    created_at=timestamp,
-                    message_ids=[message_ids],
-                    session_name=session_name,
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    content=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
                 )
-                for e in self.explicit
+                for doc in documents
+                if doc.internal_metadata.get("level") == "explicit"
             ],
             deductive=[
                 DeductiveObservation(
-                    created_at=timestamp,
-                    message_ids=[message_ids],
-                    session_name=session_name,
-                    conclusion=d.conclusion,
-                    premises=d.premises,
+                    created_at=_safe_datetime_from_metadata(
+                        doc.internal_metadata, doc.created_at
+                    ),
+                    conclusion=doc.content,
+                    message_ids=doc.internal_metadata.get("message_ids", [(0, 0)]),
+                    session_name=doc.session_name,
+                    premises=doc.internal_metadata.get("premises", []),
                 )
-                for d in self.deductive
+                for doc in documents
+                if doc.internal_metadata.get("level") == "deductive"
             ],
         )
+
+    @classmethod
+    def from_prompt_representation(
+        cls,
+        prompt_representation: "PromptRepresentation",
+        message_ids: tuple[int, int],
+        session_name: str,
+        created_at: datetime,
+    ) -> "Representation":
+        return cls(
+            explicit=[
+                ExplicitObservation(
+                    content=e.content,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                )
+                for e in prompt_representation.explicit
+            ],
+            deductive=[
+                DeductiveObservation(
+                    conclusion=d.conclusion,
+                    created_at=created_at,
+                    message_ids=[message_ids],
+                    session_name=session_name,
+                    premises=d.premises,
+                )
+                for d in prompt_representation.deductive
+            ],
+        )
+
+
+def _safe_datetime_from_metadata(
+    internal_metadata: dict[str, Any], fallback_datetime: datetime
+) -> datetime:
+    message_created_at = internal_metadata.get("message_created_at")
+    if message_created_at is None:
+        return fallback_datetime.replace(microsecond=0)
+
+    if isinstance(message_created_at, str):
+        try:
+            return parse_datetime_iso(message_created_at)
+        except ValueError:
+            return fallback_datetime.replace(microsecond=0)
+
+    if isinstance(message_created_at, datetime):
+        return message_created_at.replace(microsecond=0)
+    return fallback_datetime.replace(microsecond=0)

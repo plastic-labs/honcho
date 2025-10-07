@@ -124,8 +124,8 @@ def create_queue_payload() -> Callable[..., Any]:
     def _create_payload(
         message: models.Message,
         task_type: Literal["representation", "summary"],
-        sender_name: str | None = None,
-        target_name: str | None = None,
+        observer: str | None = None,
+        observed: str | None = None,
         message_seq_in_session: int | None = None,
     ) -> dict[str, Any]:
         """Create a queue payload for testing"""
@@ -135,14 +135,15 @@ def create_queue_payload() -> Callable[..., Any]:
             "message_id": message.id,
             "content": message.content,
             "created_at": message.created_at or datetime.now(timezone.utc),
+            "message_public_id": message.public_id,
         }
 
         return create_payload(
             message=message_dict,
             task_type=task_type,
-            sender_name=sender_name,
-            target_name=target_name,
             message_seq_in_session=message_seq_in_session,
+            observer=observer,
+            observed=observed,
         )
 
     return _create_payload
@@ -207,8 +208,8 @@ async def sample_queue_items(
         payload1 = create_queue_payload(
             message=message,
             task_type="representation",
-            sender_name=message.peer_name,
-            target_name=message.peer_name,
+            observer=message.peer_name,
+            observed=message.peer_name,
         )
         payloads.append(payload1)
 
@@ -216,8 +217,8 @@ async def sample_queue_items(
         payload2 = create_queue_payload(
             message=message,
             task_type="representation",
-            sender_name=message.peer_name,
-            target_name=peer2.name,  # peer2 observes others
+            observer=peer2.name,  # peer2 observes others
+            observed=message.peer_name,
         )
         payloads.append(payload2)
 
@@ -284,12 +285,12 @@ def mock_queue_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright
 
 
 @pytest.fixture
-def mock_embedding_store(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright: ignore[reportUnusedParameter]
-    """Mock the embedding store to avoid actual embedding operations"""
-    from src.utils.embedding_store import EmbeddingStore
+def mock_representation_manager(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:  # pyright: ignore[reportUnusedParameter]
+    """Mock the representation manager to avoid actual embedding operations"""
+    from src.crud.representation import RepresentationManager
 
-    mock_store = AsyncMock(spec=EmbeddingStore)
-    mock_store.save_representation.return_value = 0
-    mock_store.get_relevant_observations = AsyncMock(return_value=MagicMock())
+    mock_manager = AsyncMock(spec=RepresentationManager)
+    mock_manager.save_representation.return_value = 0
+    mock_manager.get_relevant_observations = AsyncMock(return_value=MagicMock())
 
-    return mock_store
+    return mock_manager

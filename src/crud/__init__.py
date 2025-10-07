@@ -1,8 +1,7 @@
 from .collection import get_collection, get_or_create_collection
 from .deriver import get_deriver_status
 from .document import (
-    create_document,
-    create_documents_bulk,
+    create_documents,
     get_all_documents,
     query_documents,
 )
@@ -22,12 +21,9 @@ from .peer import (
     get_sessions_for_peer,
     update_peer,
 )
+from .peer_card import get_peer_card, set_peer_card
 from .representation import (
-    construct_collection_name,
-    get_peer_card,
     get_working_representation,
-    representation_from_documents,
-    set_peer_card,
 )
 from .session import (
     clone_session,
@@ -57,8 +53,7 @@ __all__ = [
     # Deriver
     "get_deriver_status",
     # Document
-    "create_document",
-    "create_documents_bulk",
+    "create_documents",
     "get_all_documents",
     "query_documents",
     # Message
@@ -75,12 +70,11 @@ __all__ = [
     "get_peers",
     "update_peer",
     "get_sessions_for_peer",
-    # Representation
-    "construct_collection_name",
+    # Peer Card
     "get_peer_card",
-    "get_working_representation",
     "set_peer_card",
-    "representation_from_documents",
+    # Representation
+    "get_working_representation",
     # Session
     "get_sessions",
     "get_or_create_session",

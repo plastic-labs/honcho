@@ -3,8 +3,8 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import attributes
 
 from src import models, schemas
 from src.config import settings
@@ -18,19 +18,23 @@ logger = getLogger(__name__)
 async def get_all_documents(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
-    collection_name: str,
+    *,
+    observer: str,
+    observed: str,
+    limit: int = 1000,
 ) -> Sequence[models.Document]:
     """
     Get all documents in a collection.
 
     NOTE: Order is nondeterministic. Also this may return a massive amount of documents. Don't use this on large collections.
+    TODO: add pagination and update dreaming logic to deduplicate more effectively
     """
     stmt = (
         select(models.Document)
+        .limit(limit)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.peer_name == peer_name)
-        .where(models.Document.collection_name == collection_name)
+        .where(models.Document.observer == observer)
+        .where(models.Document.observed == observed)
     )
     result = await db.execute(stmt)
     return result.scalars().all()
@@ -39,9 +43,10 @@ async def get_all_documents(
 async def query_documents(
     db: AsyncSession,
     workspace_name: str,
-    peer_name: str,
-    collection_name: str,
     query: str,
+    *,
+    observer: str,
+    observed: str,
     filters: dict[str, Any] | None = None,
     max_distance: float | None = None,
     top_k: int = 5,
@@ -53,9 +58,9 @@ async def query_documents(
     Args:
         db: Database session
         workspace_name: Name of the workspace
-        peer_name: Name of the peer
-        collection_name: Name of the collection
         query: Search query text
+        observer: Name of the observing peer
+        observed: Name of the observed peer
         filters: Optional filters to apply
         max_distance: Maximum cosine distance for results
         top_k: Number of results to return
@@ -76,8 +81,8 @@ async def query_documents(
     stmt = (
         select(models.Document)
         .where(models.Document.workspace_name == workspace_name)
-        .where(models.Document.peer_name == peer_name)
-        .where(models.Document.collection_name == collection_name)
+        .where(models.Document.observer == observer)
+        .where(models.Document.observed == observed)
     )
     if max_distance is not None:
         stmt = stmt.where(
@@ -91,15 +96,16 @@ async def query_documents(
     return result.scalars().all()
 
 
-async def create_document(
+async def create_documents(
     db: AsyncSession,
-    document: schemas.DocumentCreate,
-    collection: models.Collection,
-    embedding: list[float],
-    duplicate_threshold: float | None = None,
-) -> tuple[models.Document, bool]:
+    documents: list[schemas.DocumentCreate],
+    workspace_name: str,
+    *,
+    observer: str,
+    observed: str,
+) -> int:
     """
-    Embed text as a vector and create a document.
+    Create multiple documents with NO duplicate detection.
 
     If duplicate_threshold is provided, we use the embedding to check for
     duplicates within the threshold. If a duplicate is found, instead of
@@ -108,117 +114,41 @@ async def create_document(
 
     Args:
         db: Database session
-        document: Document creation schema
-        collection: Collection to save the document to
-        embedding: Optional pre-computed embedding for the document (avoids extra API call if possible)
-        duplicate_threshold: Optional similarity threshold (0-1) for checking for duplicates.
-                            Values closer to 1 require higher similarity (e.g., 0.99 = 99% similar)
-
-    Returns:
-        The created or updated document, and a boolean indicating whether a duplicate was found
-
-    Raises:
-        ResourceNotFoundException: If the collection does not exist
-        ValidationException: If the document data is invalid
-    """
-    if duplicate_threshold is not None:
-        distance = 1 - duplicate_threshold
-        stmt = (
-            select(models.Document)
-            .where(models.Document.workspace_name == collection.workspace_name)
-            .where(models.Document.peer_name == collection.peer_name)
-            .where(models.Document.collection_name == collection.name)
-            .where(models.Document.embedding.cosine_distance(embedding) <= distance)
-            .order_by(models.Document.embedding.cosine_distance(embedding))
-            .limit(1)
-        )
-        result = await db.execute(stmt)
-        duplicate = result.scalar_one_or_none()  # Get the closest match if any exist
-        if duplicate is not None:
-            # Get the actual distance for debugging
-            distance_stmt = select(
-                models.Document.embedding.cosine_distance(embedding)
-            ).where(models.Document.id == duplicate.id)
-            distance_result = await db.execute(distance_stmt)
-            actual_distance = distance_result.scalar() or 0.0
-            actual_similarity = float(1 - actual_distance)
-
-            logger.info(
-                f"Duplicate found: '{document.content}' matched with '{duplicate.content}'. "
-                + f"Similarity: {actual_similarity:.4f}, Distance: {actual_distance:.4f}, "
-                + f"Threshold: {duplicate_threshold}. Incrementing times_derived."
-            )
-            if "times_derived" not in duplicate.internal_metadata:
-                duplicate.internal_metadata["times_derived"] = 2
-            else:
-                duplicate.internal_metadata["times_derived"] += 1
-            attributes.flag_modified(duplicate, "internal_metadata")
-            await db.commit()
-            await db.refresh(duplicate)
-            return duplicate, True
-
-    metadata_dict = document.metadata.model_dump(exclude_none=True)
-    session_name = metadata_dict.pop("session_name", None)
-
-    honcho_document = models.Document(
-        workspace_name=collection.workspace_name,
-        peer_name=collection.peer_name,
-        collection_name=collection.name,
-        content=document.content,
-        internal_metadata=metadata_dict,
-        embedding=embedding,
-        session_name=session_name,
-    )
-    db.add(honcho_document)
-    await db.commit()
-    await db.refresh(honcho_document)
-    return honcho_document, False
-
-
-async def create_documents_bulk(
-    db: AsyncSession,
-    documents: list[schemas.DocumentCreate],
-    workspace_name: str,
-    collection_name: str,
-    peer_name: str,
-    embeddings: list[list[float]],
-) -> tuple[list[models.Document], int]:
-    """
-    Create multiple documents with NO duplicate detection.
-
-    Args:
-        db: Database session
         documents: List of document creation schemas
         workspace_name: Name of the workspace
-        collection_name: Name of the collection
-        peer_name: Name of the peer
-        embeddings: Pre-computed embeddings for each document
+        observer: Name of the observing peer
+        observed: Name of the observed peer
 
     Returns:
-        Tuple of (created/updated documents, count of new documents)
+        Count of new documents
     """
-    if len(documents) != len(embeddings):
-        raise ValidationException("Number of documents must match number of embeddings")
-
     honcho_documents: list[models.Document] = []
-    for doc, embedding in zip(documents, embeddings, strict=True):
-        metadata_dict = doc.metadata.model_dump(exclude_none=True)
-        session_name = metadata_dict.pop("session_name", None)
-        honcho_documents.append(
-            models.Document(
-                workspace_name=workspace_name,
-                peer_name=peer_name,
-                collection_name=collection_name,
-                content=doc.content,
-                internal_metadata=metadata_dict,
-                embedding=embedding,
-                session_name=session_name,
+    for doc in documents:
+        try:
+            metadata_dict = doc.metadata.model_dump(exclude_none=True)
+            honcho_documents.append(
+                models.Document(
+                    workspace_name=workspace_name,
+                    observer=observer,
+                    observed=observed,
+                    content=doc.content,
+                    internal_metadata=metadata_dict,
+                    embedding=doc.embedding,
+                    session_name=doc.session_name,
+                )
             )
-        )
-    db.add_all(honcho_documents)
-    await db.commit()
+        except Exception as e:
+            logger.error(
+                f"Error adding new document to {workspace_name}/{doc.session_name}/{observer}/{observed}: {e}"
+            )
+            continue
+    try:
+        db.add_all(honcho_documents)
+        await db.commit()
+    except IntegrityError as e:
+        await db.rollback()
+        raise ValidationException(
+            "Failed to create documents due to integrity constraint violation"
+        ) from e
 
-    for doc in honcho_documents:
-        await db.refresh(doc)
-
-    return honcho_documents, len(honcho_documents)
+    return len(honcho_documents)

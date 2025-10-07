@@ -41,9 +41,9 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
         List of work unit keys that should have their dreams cancelled
     """
     workspace_name = message.get("workspace_name")
-    sender_name = message.get("peer_name")
+    peer_name = message.get("peer_name")
 
-    if not workspace_name or not sender_name:
+    if not workspace_name or not peer_name:
         return []
 
     # Generate dream work unit key for this peer's collection
@@ -51,8 +51,8 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
         {
             "task_type": "dream",
             "workspace_name": workspace_name,
-            "sender_name": sender_name,
-            "target_name": sender_name,  # Dream work units use collection name as target
+            "observer": peer_name,
+            "observed": peer_name,
         }
     )
 
@@ -60,17 +60,35 @@ def get_affected_dream_keys(message: dict[str, Any]) -> list[str]:
 
 
 class DreamScheduler:
+    _instance: "DreamScheduler | None" = None
+    _initialized: bool = False
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
     def __init__(self):
-        self.pending_dreams: dict[str, asyncio.Task[None]] = {}
+        # Only initialize once
+        if not DreamScheduler._initialized:
+            self.pending_dreams: dict[str, asyncio.Task[None]] = {}
+            DreamScheduler._initialized = True
+
+    @classmethod
+    def reset_singleton(cls) -> None:
+        """Reset the singleton instance. Only use this in tests."""
+        cls._instance = None
+        cls._initialized = False
 
     def schedule_dream(
         self,
         work_unit_key: str,
         workspace_name: str,
-        peer_name: str,
-        collection_name: str,
         document_count: int,
         delay_minutes: int,
+        *,
+        observer: str,
+        observed: str,
     ) -> None:
         """Schedule a dream for a collection after a delay."""
         if not settings.DREAM.ENABLED:
@@ -83,10 +101,10 @@ class DreamScheduler:
             self._delayed_dream(
                 work_unit_key,
                 workspace_name,
-                peer_name,
-                collection_name,
                 document_count,
                 delay_minutes,
+                observer=observer,
+                observed=observed,
             )
         )
         self.pending_dreams[work_unit_key] = task
@@ -105,24 +123,25 @@ class DreamScheduler:
         self,
         work_unit_key: str,
         workspace_name: str,
-        peer_name: str,
-        collection_name: str,
         document_count: int,
         delay_minutes: int,
+        *,
+        observer: str,
+        observed: str,
     ) -> None:
         try:
             await asyncio.sleep(delay_minutes * 60)
 
             # Check if collection is still inactive before executing dream
             if await self._should_execute_dream(
-                workspace_name, peer_name, collection_name
+                workspace_name, observer=observer, observed=observed
             ):
                 await self._execute_dream(
                     work_unit_key,
                     workspace_name,
-                    peer_name,
-                    collection_name,
                     document_count,
+                    observer=observer,
+                    observed=observed,
                 )
                 logger.info(f"Executed dream for {work_unit_key}")
             else:
@@ -138,7 +157,7 @@ class DreamScheduler:
                 sentry_sdk.capture_exception(e)
 
     async def _should_execute_dream(
-        self, workspace_name: str, peer_name: str, collection_name: str
+        self, workspace_name: str, *, observer: str, observed: str
     ) -> bool:
         """Check if the collection is inactive and should be dreamed upon."""
         async with tracked_db("dream_activity_check") as db:
@@ -151,14 +170,11 @@ class DreamScheduler:
             for active_session in active_sessions:
                 parsed_key = parse_work_unit_key(active_session.work_unit_key)
                 if (
-                    parsed_key["workspace_name"] == workspace_name
-                    and parsed_key["sender_name"] == peer_name
-                    and parsed_key["target_name"]
-                    == peer_name  # Global representation tasks
+                    parsed_key.workspace_name == workspace_name
+                    and parsed_key.observer == observer
+                    and parsed_key.observed == observed
                 ):
-                    logger.debug(
-                        f"Collection {collection_name} is active, skipping dream"
-                    )
+                    logger.debug("Collection is active, skipping dream")
                     return False
 
         return True
@@ -167,16 +183,17 @@ class DreamScheduler:
         self,
         work_unit_key: str,
         workspace_name: str,
-        peer_name: str,
-        collection_name: str,
         document_count: int,
+        *,
+        observer: str,
+        observed: str,
     ) -> None:
         """Execute the dream by enqueueing it and updating collection metadata."""
         dream_payload = create_dream_payload(
             workspace_name=workspace_name,
-            sender_name=peer_name,
-            collection_name=collection_name,
             dream_type="consolidate",
+            observer=observer,
+            observed=observed,
         )
 
         async with tracked_db("dream_execute") as db:
@@ -194,8 +211,8 @@ class DreamScheduler:
                 update(models.Collection)
                 .where(
                     models.Collection.workspace_name == workspace_name,
-                    models.Collection.peer_name == peer_name,
-                    models.Collection.name == collection_name,
+                    models.Collection.observer == observer,
+                    models.Collection.observed == observed,
                 )
                 .values(
                     internal_metadata=models.Collection.internal_metadata.op("||")(
@@ -212,7 +229,12 @@ class DreamScheduler:
             await db.commit()
 
         logger.info(
-            f"Enqueued dream task for {workspace_name}/{peer_name}/{collection_name}"
+            "Enqueued dream task",
+            extra={
+                "workspace_name": workspace_name,
+                "observer": observer,
+                "observed": observed,
+            },
         )
 
     async def shutdown(self) -> None:
@@ -256,8 +278,8 @@ async def check_and_schedule_dream(
     # Count current documents in the collection
     count_stmt = select(func.count(models.Document.id)).where(
         models.Document.workspace_name == collection.workspace_name,
-        models.Document.peer_name == collection.peer_name,
-        models.Document.collection_name == collection.name,
+        models.Document.observer == collection.observer,
+        models.Document.observed == collection.observed,
     )
     current_document_count = int(await db.scalar(count_stmt) or 0)
 
@@ -265,9 +287,16 @@ async def check_and_schedule_dream(
     documents_since_last_dream = current_document_count - last_dream_document_count
 
     logger.info(
-        f"Dream check for {collection.workspace_name}/{collection.peer_name}/{collection.name}: "
-        + f"current={current_document_count}, last_dream_count={last_dream_document_count}, "
-        + f"since_last={documents_since_last_dream}, threshold={settings.DREAM.DOCUMENT_THRESHOLD}"
+        "Dream check",
+        extra={
+            "workspace_name": collection.workspace_name,
+            "observer": collection.observer,
+            "observed": collection.observed,
+            "current_document_count": current_document_count,
+            "last_dream_document_count": last_dream_document_count,
+            "documents_since_last_dream": documents_since_last_dream,
+            "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
+        },
     )
 
     # Only schedule timer if document threshold is reached
@@ -282,7 +311,7 @@ async def check_and_schedule_dream(
 
                 if hours_since_last_dream < settings.DREAM.MIN_HOURS_BETWEEN_DREAMS:
                     logger.info(
-                        f"Skipping dream for {collection.name}: only {hours_since_last_dream:.1f} hours "
+                        f"Skipping dream for {collection.observer}/{collection.observed}: only {hours_since_last_dream:.1f} hours "
                         + f"since last dream (minimum: {settings.DREAM.MIN_HOURS_BETWEEN_DREAMS})"
                     )
                     return False
@@ -297,22 +326,28 @@ async def check_and_schedule_dream(
                 {
                     "task_type": "dream",
                     "workspace_name": collection.workspace_name,
-                    "sender_name": collection.peer_name,
-                    "target_name": collection.name,
+                    "observer": collection.observer,
+                    "observed": collection.observed,
                 }
             )
 
             dream_scheduler.schedule_dream(
                 collection_work_unit_key,
                 collection.workspace_name,
-                collection.peer_name,
-                collection.name,
                 current_document_count,
                 settings.DREAM.IDLE_TIMEOUT_MINUTES,
+                observer=collection.observer,
+                observed=collection.observed,
             )
             logger.info(
-                f"Scheduled dream for {collection.workspace_name}/{collection.peer_name}/{collection.name} "
-                + f"(threshold reached: {documents_since_last_dream}/{settings.DREAM.DOCUMENT_THRESHOLD} documents)"
+                "Scheduled dream",
+                extra={
+                    "workspace_name": collection.workspace_name,
+                    "observer": collection.observer,
+                    "observed": collection.observed,
+                    "documents_since_last_dream": documents_since_last_dream,
+                    "document_threshold": settings.DREAM.DOCUMENT_THRESHOLD,
+                },
             )
             return True
 

@@ -29,8 +29,8 @@ class QueueEmptyEvent(BaseWebhookEvent):
     type: Literal[WebhookEventType.QUEUE_EMPTY] = WebhookEventType.QUEUE_EMPTY
     queue_type: str
     session_id: str | None = None
-    sender_name: str | None = None
-    observer_name: str | None = None
+    observer: str | None = None
+    observed: str | None = None
 
 
 class TestEvent(BaseWebhookEvent):

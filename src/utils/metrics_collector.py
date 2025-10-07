@@ -79,7 +79,6 @@ class MetricsCollector:
         Collect metrics from a completed task.
 
         Args:
-            task_name: Name of the task that generated these metrics
             metrics_list: List of (metric_name, value, unit) tuples
         """
         if not self.is_collecting:

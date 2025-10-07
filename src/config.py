@@ -52,6 +52,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "SENTRY": "sentry",
         "LLM": "llm",
         "DERIVER": "deriver",
+        "PEER_CARD": "peer_card",
         "DIALECTIC": "dialectic",
         "SUMMARY": "summary",
         "WEBHOOK": "webhook",
@@ -197,14 +198,6 @@ class DeriverSettings(HonchoSettings):
     # Thinking budget tokens are only applied when using Anthropic as provider
     THINKING_BUDGET_TOKENS: Annotated[int, Field(default=1024, gt=0, le=5000)] = 1024
 
-    USE_PEER_CARD: bool = True
-    PEER_CARD_PROVIDER: SupportedProviders = "openai"
-    PEER_CARD_MODEL: str = "gpt-5-nano-2025-08-07"
-    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
-    PEER_CARD_MAX_OUTPUT_TOKENS: Annotated[
-        int, Field(default=4000, gt=1000, le=10_000)
-    ] = 4000
-
     # Maximum number of observations to store in working representation
     # This is applied to both explicit and deductive observations
     WORKING_REPRESENTATION_MAX_OBSERVATIONS: Annotated[
@@ -228,6 +221,17 @@ class DeriverSettings(HonchoSettings):
                 f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
+
+
+class PeerCardSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="PEER_CARD_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = True
+
+    PROVIDER: SupportedProviders = "openai"
+    MODEL: str = "gpt-5-nano-2025-08-07"
+    # Note: peer cards should be very short, but GPT-5 models need output tokens for thinking which cannot be turned off...
+    MAX_OUTPUT_TOKENS: Annotated[int, Field(default=4000, gt=1000, le=10_000)] = 4000
 
 
 class DialecticSettings(HonchoSettings):
@@ -325,6 +329,7 @@ class AppSettings(HonchoSettings):
     LLM: LLMSettings = Field(default_factory=LLMSettings)
     DERIVER: DeriverSettings = Field(default_factory=DeriverSettings)
     DIALECTIC: DialecticSettings = Field(default_factory=DialecticSettings)
+    PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)

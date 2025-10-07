@@ -95,14 +95,15 @@ class TestDocumentValidations:
     def test_valid_document_create(self):
         metadata = DocumentMetadata(
             message_ids=[(1, 1)],
-            session_name="test",
             level="explicit",
             premises=[],
             message_created_at="2021-01-01T00:00:00Z",
         )
         doc = DocumentCreate(
             content="test content",
+            session_name="test",
             metadata=metadata,
+            embedding=[0.1, 0.2, 0.3],
         )
         assert doc.content == "test content"
         assert doc.metadata == metadata
@@ -111,13 +112,14 @@ class TestDocumentValidations:
         with pytest.raises(ValidationError) as exc_info:
             DocumentCreate(
                 content="",
+                session_name="test",
                 metadata=DocumentMetadata(
                     message_ids=[(1, 1)],
-                    session_name="test",
                     level="explicit",
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
                 ),
+                embedding=[0.1, 0.2, 0.3],
             )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_short"
@@ -126,13 +128,14 @@ class TestDocumentValidations:
         with pytest.raises(ValidationError) as exc_info:
             DocumentCreate(
                 content="a" * 100001,
+                session_name="test",
                 metadata=DocumentMetadata(
                     message_ids=[(1, 1)],
-                    session_name="test",
                     level="explicit",
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
                 ),
+                embedding=[0.1, 0.2, 0.3],
             )
         error_dict = exc_info.value.errors()[0]
         assert error_dict["type"] == "string_too_long"

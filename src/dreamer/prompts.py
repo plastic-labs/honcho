@@ -7,13 +7,13 @@ def consolidation_prompt(
     representation: Representation,
 ) -> str:
     """
-    Generate the prompt for user reprensentation consolidation.
+    Generate the prompt for user representation consolidation.
 
     Args:
-        representation: The user reprensentation to consolidate
+        representation: The user representation to consolidate
 
     Returns:
-        A consolidated user reprensentation
+        A consolidated user representation
     """
     representation_as_json = representation.model_dump_json(indent=2)
 

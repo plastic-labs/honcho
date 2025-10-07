@@ -4,7 +4,9 @@ from typing import Any
 import sentry_sdk
 from pydantic import ValidationError
 from rich.console import Console
+from sqlalchemy import select
 
+from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
@@ -53,6 +55,30 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
+
+        message_public_id = validated.message_public_id
+        if not message_public_id:
+            logger.info(
+                "Fetching message public ID for message %s", validated.message_id
+            )
+            async with tracked_db(operation_name="summary_fallback") as db:
+                stmt = (
+                    select(models.Message)
+                    .where(models.Message.workspace_name == validated.workspace_name)
+                    .where(models.Message.session_name == validated.session_name)
+                    .where(models.Message.id == validated.message_id)
+                )
+                result = await db.execute(stmt)
+
+                message = result.scalar_one_or_none()
+                if message is None:
+                    logger.error(
+                        "Failed to fetch message with ID %s for process_summary_task",
+                        validated.message_id,
+                    )
+                    return
+                message_public_id = message.public_id
+
         with sentry_sdk.start_transaction(name="process_summary_task", op="deriver"):
             if lf:
                 with lf.start_as_current_span(
@@ -71,6 +97,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                         validated.session_name,
                         validated.message_id,
                         validated.message_seq_in_session,
+                        message_public_id,
                     )
                     log_performance_metrics(
                         "summary", f"{validated.workspace_name}_{validated.message_id}"
@@ -81,30 +108,33 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                     validated.session_name,
                     validated.message_id,
                     validated.message_seq_in_session,
+                    message_public_id,
                 )
                 log_performance_metrics(
                     "summary", f"{validated.workspace_name}_{validated.message_id}"
                 )
 
     elif task_type == "dream":
-        try:
-            validated = DreamPayload(**queue_payload)
-        except ValidationError as e:
-            logger.error(
-                "Invalid dream payload received: %s. Payload: %s",
-                str(e),
-                queue_payload,
-            )
-            raise ValueError(f"Invalid payload structure: {str(e)}") from e
-        await process_dream(validated)
+        with sentry_sdk.start_transaction(name="process_dream_task", op="deriver"):
+            try:
+                validated = DreamPayload(**queue_payload)
+            except ValidationError as e:
+                logger.error(
+                    "Invalid dream payload received: %s. Payload: %s",
+                    str(e),
+                    queue_payload,
+                )
+                raise ValueError(f"Invalid payload structure: {str(e)}") from e
+            await process_dream(validated)
     else:
         raise ValueError(f"Invalid task type: {task_type}")
 
 
 async def process_representation_batch(
     messages: list[Message],
-    sender_name: str | None,
-    target_name: str | None,
+    *,
+    observer: str | None,
+    observed: str | None,
 ) -> None:
     """Validate incoming queue payloads and dispatch to the appropriate handler.
 
@@ -115,19 +145,17 @@ async def process_representation_batch(
     Args:
         task_type: The type of task to process
         queue_payloads: List of payload dictionaries to process
-        sender_name (optional): For representation tasks, the sender_name from work_unit_key
+        observed (optional): For representation tasks, the observed from work_unit_key
                      to identify which messages should be focused on
-        target_name (optional): For representation tasks, the target_name from work_unit_key
+        observer (optional): For representation tasks, the observer from work_unit_key
                      to identify which messages should be focused on
     """
     if not messages or not messages[0]:
         logger.debug("process_representation_batch received no payloads")
         return
 
-    if sender_name is None or target_name is None:
-        raise ValueError(
-            "sender_name and target_name are required for representation tasks"
-        )
+    if observed is None or observer is None:
+        raise ValueError("observed and observer are required for representation tasks")
 
     logger.debug(
         "process_representation_batch received %s payloads",
@@ -141,8 +169,8 @@ async def process_representation_batch(
                 "payloads": [
                     {
                         "message_id": msg.id,
-                        "sender_name": sender_name,
-                        "target_name": target_name,
+                        "observer": observer,
+                        "observed": observed,
                         "session_name": msg.session_name,
                     }
                     for msg in messages
@@ -152,6 +180,10 @@ async def process_representation_batch(
                 "critical_analysis_model": settings.DERIVER.MODEL,
             },
         ):
-            await process_representation_tasks_batch(sender_name, target_name, messages)
+            await process_representation_tasks_batch(
+                messages, observer=observer, observed=observed
+            )
     else:
-        await process_representation_tasks_batch(sender_name, target_name, messages)
+        await process_representation_tasks_batch(
+            messages, observer=observer, observed=observed
+        )

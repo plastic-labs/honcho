@@ -115,21 +115,22 @@ src/
 ├── embedding_client.py  # Embedding service client
 ├── crud/                # Database operations
 │   ├── __init__.py
-│   ├── collection.py    # Collection CRUD operations
-│   ├── deriver.py       # Deriver-related CRUD operations
-│   ├── document.py      # Document CRUD operations
-│   ├── message.py       # Message CRUD operations
-│   ├── peer.py          # Peer CRUD operations
-│   ├── representation.py # Representation CRUD operations
-│   ├── session.py       # Session CRUD operations
-│   ├── webhook.py       # Webhook CRUD operations
-│   └── workspace.py     # Workspace CRUD operations
-├── dialectic/           # Dialectic API implementation
+│   ├── collection.py     # Collection CRUD operations
+│   ├── deriver.py        # Deriver-related CRUD operations
+│   ├── document.py       # Document CRUD operations
+│   ├── message.py        # Message CRUD operations
+│   ├── peer.py           # Peer CRUD operations
+│   ├── peer_card.py      # Peer Card CRUD operations
+│   ├── representation.py # RepresentationManager and representation operations
+│   ├── session.py        # Session CRUD operations
+│   ├── webhook.py        # Webhook CRUD operations
+│   └── workspace.py      # Workspace CRUD operations
+├── dialectic/            # Dialectic API implementation
 │   ├── __init__.py
-│   ├── chat.py          # Chat functionality
-│   ├── prompts.py       # Prompt templates
-│   └── utils.py         # Dialectic utilities
-├── routers/             # API endpoints
+│   ├── chat.py           # Chat functionality
+│   ├── prompts.py        # Prompt templates
+│   └── utils.py          # Dialectic utilities
+├── routers/              # API endpoints
 │   ├── workspaces.py
 │   ├── peers.py
 │   ├── sessions.py
@@ -149,7 +150,6 @@ src/
 ├── utils/               # Utilities
 │   ├── __init__.py
 │   ├── clients.py       # LLM client abstraction
-│   ├── embedding_store.py # Vector storage management
 │   ├── files.py         # File handling utilities
 │   ├── filter.py        # Query filtering utilities
 │   ├── formatting.py    # Message formatting utilities

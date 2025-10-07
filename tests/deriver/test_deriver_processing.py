@@ -41,19 +41,19 @@ class TestDeriverProcessing:
         representation_payload = {
             "workspace_name": "workspace1",
             "session_name": session.name,
-            "sender_name": peer1.name,
-            "target_name": peer2.name,
+            "observer": peer2.name,
+            "observed": peer1.name,
             "task_type": "representation",
         }
 
         # Generate work unit key for representation
         work_unit_key = get_work_unit_key(representation_payload)
         expected_key = (
-            f"representation:workspace1:{session.name}:{peer1.name}:{peer2.name}"
+            f"representation:workspace1:{session.name}:{peer2.name}:{peer1.name}"
         )
         assert work_unit_key == expected_key
 
-        # Create a payload for summary task (sender_name and target_name should be None)
+        # Create a payload for summary task
         summary_payload = {
             "workspace_name": "workspace1",
             "session_name": session.name,
@@ -89,21 +89,21 @@ class TestDeriverProcessing:
         mock_queue_manager.initialize.assert_called_once()  # type: ignore[attr-defined]
         mock_queue_manager.shutdown.assert_called_once()  # type: ignore[attr-defined]
 
-    async def test_mock_embedding_store(
+    async def test_mock_representation_manager(
         self,
-        mock_embedding_store: Any,  # AsyncMock object
+        mock_representation_manager: Any,  # AsyncMock object
     ):
-        """Test that the embedding store is properly mocked"""
-        assert mock_embedding_store is not None
+        """Test that the representation manager is properly mocked"""
+        assert mock_representation_manager is not None
 
         # Verify we can call the mocked methods
-        await mock_embedding_store.save_representation(
+        await mock_representation_manager.save_representation(
             Representation(explicit=[], deductive=[])
         )
-        mock_embedding_store.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
+        mock_representation_manager.get_relevant_observations.return_value = []  # type: ignore[attr-defined]
 
         # Verify the methods were called
-        assert mock_embedding_store.save_representation.called  # type: ignore[attr-defined]
+        assert mock_representation_manager.save_representation.called  # type: ignore[attr-defined]
 
     async def test_representation_batch_uses_earliest_cutoff(
         self,
@@ -175,7 +175,7 @@ class TestDeriverProcessing:
             )
 
         await process_representation_tasks_batch(
-            sender_name="alice", target_name="alice", messages=messages
+            observer="alice", observed="alice", messages=messages
         )
 
         # Verify that the earliest message ID was used as the cutoff

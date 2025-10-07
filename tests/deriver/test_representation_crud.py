@@ -1,67 +1,13 @@
 import datetime
 
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from src import models
-from src.crud.representation import (
-    construct_collection_name,
-    construct_peer_card_label,
-    get_peer_card,
-    set_peer_card,
-)
-from src.exceptions import ResourceNotFoundException
 from src.utils.representation import (
     DeductiveObservation,
+    DeductiveObservationBase,
     ExplicitObservation,
-    PromptDeductiveObservation,
+    ExplicitObservationBase,
     PromptRepresentation,
     Representation,
 )
-
-
-@pytest.mark.asyncio
-async def test_peer_card_get_set_roundtrip(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
-):
-    """Roundtrip set/get for peer card on a valid peer."""
-    workspace, peer = sample_data
-
-    # Initially absent
-    assert await get_peer_card(db_session, workspace.name, peer.name, peer.name) is None
-
-    # Set and read back
-    value_1 = ["Initial peer card text"]
-    await set_peer_card(db_session, workspace.name, peer.name, peer.name, value_1)
-    assert (
-        await get_peer_card(db_session, workspace.name, peer.name, peer.name) == value_1
-    )
-
-    # Update and read back
-    value_2 = ["Updated peer card text", "Another line"]
-    await set_peer_card(db_session, workspace.name, peer.name, peer.name, value_2)
-    assert (
-        await get_peer_card(db_session, workspace.name, peer.name, peer.name) == value_2
-    )
-
-
-@pytest.mark.asyncio
-async def test_set_peer_card_missing_peer_raises(
-    db_session: AsyncSession, sample_data: tuple[models.Workspace, models.Peer]
-):
-    """Setting a peer card for a non-existent peer should raise ResourceNotFoundException."""
-    workspace, _existing_peer = sample_data
-    with pytest.raises(ResourceNotFoundException):
-        await set_peer_card(
-            db_session, workspace.name, "missing-peer", "missing-peer", ["card"]
-        )
-
-
-def test_construct_helpers_labels():
-    """Helper label constructors return expected values."""
-    assert construct_peer_card_label(observer="a", observed="a") == "peer_card"
-    assert construct_peer_card_label(observer="a", observed="b") == "b_peer_card"
-    assert construct_collection_name(observer="obs", observed="obj") == "obs_obj"
 
 
 def test_representation_is_empty_and_diff():
@@ -133,14 +79,15 @@ def test_representation_formatting_methods():
 def test_prompt_representation_conversion():
     """PromptRepresentation.to_representation maps strings to observation objects."""
     pr = PromptRepresentation(
-        explicit=["A"],
-        deductive=[PromptDeductiveObservation(conclusion="C", premises=["P1"])],
+        explicit=[ExplicitObservationBase(content="A")],
+        deductive=[DeductiveObservationBase(conclusion="C", premises=["P1"])],
     )
     timestamp = datetime.datetime(2025, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
-    rep = pr.to_representation(
+    rep = Representation.from_prompt_representation(
+        pr,
         message_ids=(1, 1),
         session_name="s",
-        timestamp=timestamp,
+        created_at=timestamp,
     )
     assert isinstance(rep, Representation)
     assert [e.content for e in rep.explicit] == ["A"]

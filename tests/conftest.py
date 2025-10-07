@@ -325,7 +325,8 @@ def mock_llm_call_functions():
     ):
         # Import the required models for proper mocking
         from src.utils.representation import (
-            PromptDeductiveObservation,
+            DeductiveObservationBase,
+            ExplicitObservationBase,
             PromptRepresentation,
         )
 
@@ -335,9 +336,9 @@ def mock_llm_call_functions():
 
         # Mock critical_analysis_call to return a proper object with _response attribute
         _rep = PromptRepresentation(
-            explicit=["Test explicit observation"],
+            explicit=[ExplicitObservationBase(content="Test explicit observation")],
             deductive=[
-                PromptDeductiveObservation(
+                DeductiveObservationBase(
                     conclusion="Test deductive conclusion",
                     premises=["Test premise 1", "Test premise 2"],
                 )
@@ -372,7 +373,8 @@ def mock_honcho_llm_call():
     from unittest.mock import AsyncMock, MagicMock
 
     from src.utils.representation import (
-        PromptDeductiveObservation,
+        DeductiveObservationBase,
+        ExplicitObservationBase,
         PromptRepresentation,
     )
 
@@ -391,9 +393,11 @@ def mock_honcho_llm_call():
             # For structured responses, create appropriate mock objects
             if getattr(response_model, "__name__", "") == "ReasoningResponse":
                 _rep = PromptRepresentation(
-                    explicit=["Test explicit observation"],
+                    explicit=[
+                        ExplicitObservationBase(content="Test explicit observation")
+                    ],
                     deductive=[
-                        PromptDeductiveObservation(
+                        DeductiveObservationBase(
                             conclusion="Test deductive conclusion",
                             premises=["Test premise 1", "Test premise 2"],
                         ),
@@ -488,6 +492,8 @@ def mock_tracked_db(db_session: AsyncSession):
     with (
         patch("src.dependencies.tracked_db", mock_tracked_db_context),
         patch("src.deriver.queue_manager.tracked_db", mock_tracked_db_context),
+        patch("src.routers.sessions.tracked_db", mock_tracked_db_context),
+        patch("src.crud.representation.tracked_db", mock_tracked_db_context),
     ):
         yield
 
@@ -502,14 +508,14 @@ def mock_crud_collection_operations():
     async def mock_get_or_create_collection(
         _: AsyncSession,
         workspace_name: str,
-        collection_name: str,
-        peer_name: str | None = None,
+        observer: str,
+        observed: str,
     ):
         # Create a mock collection object that doesn't require database commit
         mock_collection = models.Collection(
-            name=collection_name,
+            observer=observer,
+            observed=observed,
             workspace_name=workspace_name,
-            peer_name=peer_name,
         )
         mock_collection.id = generate_nanoid()
         return mock_collection

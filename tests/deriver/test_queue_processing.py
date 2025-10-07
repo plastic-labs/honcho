@@ -3,6 +3,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -142,8 +143,8 @@ class TestQueueProcessing:
             payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=message,
                 task_type="representation",
-                sender_name=peer.name,
-                target_name=peer.name,
+                observed=peer.name,
+                observer=peer.name,
             )
             payloads.append(payload)
 
@@ -305,8 +306,8 @@ class TestQueueProcessing:
             create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=msg,
                 task_type="representation",
-                sender_name=peer.name,
-                target_name=peer.name,
+                observed=peer.name,
+                observer=peer.name,
             )
             for msg in messages
         ]
@@ -335,8 +336,8 @@ class TestQueueProcessing:
 
         async def mock_process_representation_batch(
             messages: list[models.Message],
-            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observer: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
@@ -423,8 +424,8 @@ class TestQueueProcessing:
             payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=message,
                 task_type="representation",
-                sender_name=peer.name,
-                target_name=target.name,
+                observed=peer.name,
+                observer=target.name,
             )
             work_unit_key = get_work_unit_key(payload)
 
@@ -479,9 +480,7 @@ class TestQueueProcessing:
             assert alice_message_ids == expected_batch_ids
 
             # Ensure items are only for alice
-            assert all(
-                qi.payload.get("sender_name") == alice.name for qi in alice_items
-            )
+            assert all(qi.payload.get("observed") == alice.name for qi in alice_items)
 
             # Test bob's work unit - starts at message 2 for per-work-unit anchoring
             bob_work_unit_key = bob_queue_items[0].work_unit_key
@@ -507,7 +506,7 @@ class TestQueueProcessing:
             }
             assert bob_message_ids == expected_bob_ids
             # Ensure items are only for bob
-            assert all(qi.payload.get("sender_name") == bob.name for qi in bob_items)
+            assert all(qi.payload.get("observed") == bob.name for qi in bob_items)
 
             # Test steve's work unit - starts at message 3 for per-work-unit anchoring
             steve_work_unit_key = steve_queue_items[0].work_unit_key
@@ -534,9 +533,7 @@ class TestQueueProcessing:
             }
             assert steve_message_ids == expected_steve_ids
             # Ensure items are only for steve
-            assert all(
-                qi.payload.get("sender_name") == steve.name for qi in steve_items
-            )
+            assert all(qi.payload.get("observed") == steve.name for qi in steve_items)
 
     @pytest.mark.asyncio
     async def test_per_work_unit_anchoring_with_token_limits(
@@ -592,8 +589,8 @@ class TestQueueProcessing:
             payload = create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=message,
                 task_type="representation",
-                sender_name=peer.name,
-                target_name=target.name,
+                observed=peer.name,
+                observer=target.name,
             )
             work_unit_key = get_work_unit_key(payload)
 
@@ -706,6 +703,7 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="First summary message",
+                public_id=generate_nanoid(),
             ),
             models.Message(
                 id=1000,
@@ -713,6 +711,7 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="Second summary message",
+                public_id=generate_nanoid(),
             ),
         ]
 
@@ -836,8 +835,8 @@ class TestQueueProcessing:
             create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=msg,
                 task_type="representation",
-                sender_name=peer.name,
-                target_name=peer.name,
+                observed=peer.name,
+                observer=peer.name,
             )
             for msg in messages
         ]
@@ -867,8 +866,8 @@ class TestQueueProcessing:
 
         async def mock_process_representation_batch(
             messages: list[models.Message],
-            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observer: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {
@@ -946,8 +945,8 @@ class TestQueueProcessing:
             create_queue_payload(  # type: ignore[reportUnknownArgumentType]
                 message=msg,
                 task_type="representation",
-                sender_name=peer.name,
-                target_name=peer.name,
+                observed=peer.name,
+                observer=peer.name,
             )
             for msg in messages
         ]
@@ -977,8 +976,8 @@ class TestQueueProcessing:
 
         async def mock_process_representation_batch(
             messages: list[models.Message],
-            sender_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
-            target_name: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observed: str | None = None,  # pyright: ignore[reportUnusedParameter]
+            observer: str | None = None,  # pyright: ignore[reportUnusedParameter]
         ) -> None:
             processed_batches.append(
                 {

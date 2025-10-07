@@ -31,8 +31,8 @@ from anthropic import AsyncAnthropic
 from src.config import settings
 from src.deriver.prompts import peer_card_prompt
 from src.utils.clients import honcho_llm_call
+from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import ExplicitObservation, Representation
-from src.utils.shared_models import PeerCardQuery
 
 COLOR_GREEN = "\033[32m"
 COLOR_RED = "\033[31m"
@@ -155,7 +155,7 @@ def build_peer_card_caller(
             provider=cast(Any, resolved_provider),
             model=candidate.model,
             prompt=prompt,
-            max_tokens=settings.DERIVER.PEER_CARD_MAX_OUTPUT_TOKENS,
+            max_tokens=settings.PEER_CARD.MAX_OUTPUT_TOKENS,
             response_model=PeerCardQuery,
             json_mode=True,
             reasoning_effort="minimal",
@@ -333,7 +333,7 @@ async def run_benchmark(candidates: list[Candidate], cases: list[Case]) -> int:
                             content=o,
                             created_at=datetime.now(timezone.utc),
                             message_ids=[(0, 0)],
-                            session_name=None,
+                            session_name=case.name,
                         )
                         for o in case.new_observations
                     ]

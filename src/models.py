@@ -121,7 +121,6 @@ class Peer(Base):
     sessions = relationship(
         "Session", secondary=session_peers_table, back_populates="peers"
     )
-    collections = relationship("Collection", back_populates="peer")
 
     __table_args__ = (
         UniqueConstraint("name", "workspace_name", name="unique_name_workspace_peer"),
@@ -280,7 +279,8 @@ class Collection(Base):
     __tablename__: str = "collections"
 
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
-    name: Mapped[str] = mapped_column(TEXT, index=True)
+    observer: Mapped[str] = mapped_column(TEXT, index=True)
+    observed: Mapped[str] = mapped_column(TEXT, index=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
     )
@@ -291,22 +291,27 @@ class Collection(Base):
     documents = relationship(
         "Document", back_populates="collection", cascade="all, delete, delete-orphan"
     )
-    peer = relationship("Peer", back_populates="collections")
-    peer_name: Mapped[str] = mapped_column(TEXT, index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "name", "peer_name", "workspace_name", name="unique_name_collection_peer"
+            "observer",
+            "observed",
+            "workspace_name",
+            name="unique_observer_observed_collection",
         ),
         CheckConstraint("length(id) = 21", name="id_length"),
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
-        CheckConstraint("length(name) <= 1025", name="name_length"),
-        # Composite foreign key constraint for peers
+        # Composite foreign key constraint for observer peer
         ForeignKeyConstraint(
-            ["peer_name", "workspace_name"],
+            ["observer", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
+        # Composite foreign key constraint for observed peer
+        ForeignKeyConstraint(
+            ["observed", "workspace_name"],
             ["peers.name", "peers.workspace_name"],
         ),
     )
@@ -325,12 +330,12 @@ class Document(Base):
         DateTime(timezone=True), index=True, default=func.now()
     )
 
-    collection_name: Mapped[str] = mapped_column(TEXT, index=True)
-    peer_name: Mapped[str] = mapped_column(index=True)
+    observer: Mapped[str] = mapped_column(TEXT, index=True)
+    observed: Mapped[str] = mapped_column(TEXT, index=True)
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), index=True
     )
-    session_name: Mapped[str | None] = mapped_column(TEXT, index=True, nullable=True)
+    session_name: Mapped[str] = mapped_column(TEXT, index=True)
     collection = relationship("Collection", back_populates="documents")
 
     __table_args__ = (
@@ -339,12 +344,21 @@ class Document(Base):
         CheckConstraint("id ~ '^[A-Za-z0-9_-]+$'", name="id_format"),
         # Composite foreign key constraint for collections
         ForeignKeyConstraint(
-            ["collection_name", "peer_name", "workspace_name"],
-            ["collections.name", "collections.peer_name", "collections.workspace_name"],
+            ["observer", "observed", "workspace_name"],
+            [
+                "collections.observer",
+                "collections.observed",
+                "collections.workspace_name",
+            ],
         ),
-        # Composite foreign key constraint for peers
+        # Composite foreign key constraint for observer peer
         ForeignKeyConstraint(
-            ["peer_name", "workspace_name"],
+            ["observer", "workspace_name"],
+            ["peers.name", "peers.workspace_name"],
+        ),
+        # Composite foreign key constraint for observed peer
+        ForeignKeyConstraint(
+            ["observed", "workspace_name"],
             ["peers.name", "peers.workspace_name"],
         ),
         # Composite foreign key constraint for sessions

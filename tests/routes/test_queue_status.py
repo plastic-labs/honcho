@@ -148,8 +148,8 @@ class TestDeriverStatusEndpoint:
         queue_items: list[models.QueueItem] = []
         for _ in range(5):
             payload = {
-                "sender_name": peer.name,
-                "target_name": peer.name,
+                "observed": peer.name,
+                "observer": peer.name,
                 "task_type": "representation",
                 "workspace_name": workspace.name,
                 "session_name": session.name,
@@ -222,8 +222,8 @@ class TestDeriverStatusEndpoint:
             queue_items: list[models.QueueItem] = []
             for _ in range(i + 1):  # 1,2,3 items respectively
                 payload = {
-                    "sender_name": peer.name,
-                    "target_name": peer.name,
+                    "observed": peer.name,
+                    "observer": peer.name,
                     "task_type": "representation",
                     "workspace_name": workspace.name,
                     "session_name": session.name,
@@ -283,8 +283,8 @@ class TestDeriverStatusEndpoint:
         await db_session.commit()
         await db_session.refresh(session)
         payload = {
-            "sender_name": peer.name,
-            "target_name": peer.name,
+            "observed": peer.name,
+            "observer": peer.name,
             "task_type": "representation",
             "workspace_name": workspace.name,
             "session_name": session.name,

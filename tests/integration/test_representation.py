@@ -16,11 +16,12 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models, schemas
+from src import crud, models
 from src.utils.representation import (
     DeductiveObservation,
+    DeductiveObservationBase,
     ExplicitObservation,
-    PromptDeductiveObservation,
+    ExplicitObservationBase,
     PromptRepresentation,
     Representation,
 )
@@ -123,10 +124,10 @@ class TestRepresentationWorkflow:
         assert "User likes dogs" in str_output
         assert "User probably has a dog named Rover" in str_output
 
-        # Test no-timestamp formatting - note that deductive observations still show timestamps
-        # because str_no_timestamps() calls str() on deductive observations
+        # Test no-timestamp formatting
         no_timestamp_output = representation.str_no_timestamps()
         assert "User likes dogs" in no_timestamp_output
+        assert "[" not in no_timestamp_output
 
         # Test markdown formatting
         markdown_output = representation.format_as_markdown()
@@ -202,336 +203,6 @@ class TestRepresentationWorkflow:
 class TestDocumentCreationWorkflow:
     """Test document creation with embedding and duplicate detection"""
 
-    async def test_document_creation_without_duplicates(
-        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
-    ):
-        """Test standard document creation without duplicate checking"""
-        workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        collection_name = "test_collection"
-
-        # Create session for foreign key constraint
-        session = models.Session(
-            name="test_session",
-            workspace_name=workspace.name,
-        )
-        db_session.add(session)
-        await db_session.flush()
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            name=collection_name,
-            workspace_name=workspace.name,
-            peer_name=peer.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create document
-        doc_schema = schemas.DocumentCreate(
-            content="Test observation content",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-        )
-
-        collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            collection_name,
-            peer.name,
-        )
-
-        embedding = fixed_embedding_vector
-
-        document, is_duplicate = await crud.create_document(
-            db_session,
-            doc_schema,
-            collection,
-            embedding,
-            duplicate_threshold=0.95,
-        )
-
-        assert not is_duplicate
-        assert document.content == "Test observation content"
-        assert document.internal_metadata["message_ids"] == [[1, 1]]
-        assert document.session_name == "test_session"
-
-    async def test_document_creation_with_duplicate_detection(
-        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
-    ):
-        """Test document creation with duplicate threshold checking"""
-        workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        collection_name = "test_collection"
-
-        # Create session for foreign key constraint
-        session = models.Session(
-            name="test_session",
-            workspace_name=workspace.name,
-        )
-        db_session.add(session)
-        await db_session.flush()
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            name=collection_name,
-            workspace_name=workspace.name,
-            peer_name=peer.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create first document
-        doc_schema = schemas.DocumentCreate(
-            content="User likes dogs very much",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-        )
-
-        collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            collection_name,
-            peer.name,
-        )
-        embedding = fixed_embedding_vector
-
-        original_doc, is_duplicate = await crud.create_document(
-            db_session,
-            doc_schema,
-            collection,
-            embedding,
-            duplicate_threshold=0.95,
-        )
-
-        assert not is_duplicate
-        assert original_doc.content == "User likes dogs very much"
-
-        # Try to create similar document - should be detected as duplicate
-        similar_doc_schema = schemas.DocumentCreate(
-            content="User likes dogs very much",  # Exact same content
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session2",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-        )
-
-        collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            collection_name,
-            peer.name,
-        )
-        embedding = fixed_embedding_vector
-
-        duplicate_doc, is_duplicate = await crud.create_document(
-            db_session,
-            similar_doc_schema,
-            collection,
-            embedding,
-            duplicate_threshold=0.95,
-        )
-
-        assert is_duplicate
-        assert duplicate_doc.id == original_doc.id
-        # Check that times_derived was incremented
-        assert duplicate_doc.internal_metadata.get("times_derived", 1) == 2
-
-    async def test_document_creation_with_precomputed_embedding(
-        self, db_session: AsyncSession
-    ):
-        """Test document creation when embedding is provided"""
-        workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        collection_name = "test_collection"
-
-        # Create session for foreign key constraint
-        session = models.Session(
-            name="test_session",
-            workspace_name=workspace.name,
-        )
-        db_session.add(session)
-        await db_session.flush()
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            name=collection_name,
-            workspace_name=workspace.name,
-            peer_name=peer.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create document with precomputed embedding
-        doc_schema = schemas.DocumentCreate(
-            content="Test with precomputed embedding",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-        )
-
-        collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            collection_name,
-            peer.name,
-        )
-
-        precomputed_embedding = [0.5] * 1536  # Different from the mock
-
-        document, is_duplicate = await crud.create_document(
-            db_session,
-            doc_schema,
-            collection,
-            embedding=precomputed_embedding,
-        )
-
-        assert not is_duplicate
-        # Compare the embedding arrays properly
-        import numpy as np
-
-        assert np.array_equal(document.embedding, precomputed_embedding)
-
-    async def create_test_workspace_and_peer(
-        self, db_session: AsyncSession
-    ) -> tuple[models.Workspace, models.Peer]:
-        """Helper to create test workspace and peer"""
-        workspace_name = generate_nanoid()
-        peer_name = generate_nanoid()
-
-        # Check if workspace already exists to avoid uniqueness constraint
-        workspace = (
-            await db_session.execute(
-                select(models.Workspace).where(models.Workspace.name == workspace_name)
-            )
-        ).scalar_one_or_none()
-
-        if workspace is None:
-            workspace = models.Workspace(name=workspace_name)
-            db_session.add(workspace)
-            await db_session.flush()
-
-        peer = models.Peer(name=peer_name, workspace_name=workspace_name)
-        db_session.add(peer)
-        await db_session.flush()
-
-        return workspace, peer
-
-
-@pytest.mark.asyncio
-class TestWorkingRepresentationRetrieval:
-    """Test working representation retrieval with different strategies"""
-
-    async def test_get_working_representation_basic(
-        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
-    ):
-        """Test basic working representation retrieval"""
-        workspace, observer_peer = await self.create_test_workspace_and_peer(db_session)
-        _, observed_peer = await self.create_test_workspace_and_peer(
-            db_session, workspace.name
-        )
-        session = await self.create_test_session(db_session, workspace)
-
-        # Create some documents for the representation
-        collection_name = crud.construct_collection_name(
-            observer=observer_peer.name, observed=observed_peer.name
-        )
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            name=collection_name,
-            workspace_name=workspace.name,
-            peer_name=observer_peer.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create explicit observation document
-        explicit_doc_schema = schemas.DocumentCreate(
-            content="User mentioned they have a dog",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name=session.name,
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-        )
-
-        collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            collection_name,
-            observer_peer.name,
-        )
-        embedding = fixed_embedding_vector
-
-        await crud.create_document(
-            db_session,
-            explicit_doc_schema,
-            collection,
-            embedding,
-        )
-
-        # Create deductive observation document
-        deductive_doc_schema = schemas.DocumentCreate(
-            content="User probably enjoys pet-related activities",
-            metadata=schemas.DocumentMetadata(
-                level="deductive",
-                session_name=session.name,
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-                premises=["User mentioned they have a dog"],
-            ),
-        )
-
-        embedding = fixed_embedding_vector
-
-        await crud.create_document(
-            db_session, deductive_doc_schema, collection, embedding
-        )
-
-        # Retrieve working representation
-        representation = await crud.get_working_representation(
-            db_session,
-            workspace.name,
-            observer_peer.name,
-            observed_peer.name,
-            session.name,
-        )
-
-        assert not representation.is_empty()
-        assert len(representation.explicit) == 1
-        assert len(representation.deductive) == 1
-
-        assert representation.explicit[0].content == "User mentioned they have a dog"
-        assert (
-            representation.deductive[0].conclusion
-            == "User probably enjoys pet-related activities"
-        )
-        assert "User mentioned they have a dog" in representation.deductive[0].premises
-
     async def test_get_working_representation_with_semantic_query(
         self, db_session: AsyncSession
     ):
@@ -541,29 +212,34 @@ class TestWorkingRepresentationRetrieval:
             db_session, workspace.name
         )
 
-        # Mock semantic search to return specific representation
-        mock_representation = Representation(
-            explicit=[
-                ExplicitObservation(
-                    content="User likes dogs",
-                    created_at=datetime.now(timezone.utc),
-                    message_ids=[(1, 1)],
-                    session_name="test_session",
-                )
-            ]
+        # Mock semantic search to return specific documents
+        from src.models import Document
+
+        mock_document = Document(
+            id="test_doc_id",
+            workspace_name=workspace.name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
+            content="User likes dogs",
+            session_name="test_session",
+            internal_metadata={
+                "level": "explicit",
+                "message_ids": [(1, 1)],
+                "session_name": "test_session",
+            },
+            created_at=datetime.now(timezone.utc),
         )
 
         with patch(
-            "src.utils.embedding_store.EmbeddingStore.get_relevant_observations"
+            "src.crud.representation.RepresentationManager._query_documents_semantic"
         ) as mock_semantic:
-            mock_semantic.return_value = mock_representation
+            mock_semantic.return_value = [mock_document]
 
             representation = await crud.get_working_representation(
-                db_session,
                 workspace.name,
-                observer_peer.name,
-                observed_peer.name,
                 include_semantic_query="pets dogs animals",
+                observer=observer_peer.name,
+                observed=observed_peer.name,
             )
 
             # Should have called semantic search
@@ -580,15 +256,13 @@ class TestWorkingRepresentationRetrieval:
             db_session, workspace.name
         )
 
-        collection_name = crud.construct_collection_name(
-            observer=observer_peer.name, observed=observed_peer.name
-        )
+        session = await self.create_test_session(db_session, workspace)
 
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
-            name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
         )
         db_session.add(collection)
         await db_session.flush()
@@ -596,9 +270,10 @@ class TestWorkingRepresentationRetrieval:
         # Create document with high times_derived count
         highly_derived_doc = models.Document(
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
-            collection_name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             content="Highly derived observation",
+            session_name=session.name,
             internal_metadata={"level": "explicit", "times_derived": 5},
             embedding=[0.1] * 1536,
         )
@@ -607,9 +282,10 @@ class TestWorkingRepresentationRetrieval:
         # Create document with lower times_derived count
         less_derived_doc = models.Document(
             workspace_name=workspace.name,
-            peer_name=observer_peer.name,
-            collection_name=collection_name,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
             content="Less derived observation",
+            session_name=session.name,
             internal_metadata={"level": "explicit", "times_derived": 2},
             embedding=[0.2] * 1536,
         )
@@ -619,11 +295,10 @@ class TestWorkingRepresentationRetrieval:
 
         # Retrieve with most_derived=True
         representation = await crud.get_working_representation(
-            db_session,
             workspace.name,
-            observer_peer.name,
-            observed_peer.name,
             include_most_derived=True,
+            observer=observer_peer.name,
+            observed=observed_peer.name,
         )
 
         # Should prioritize highly derived observation
@@ -637,8 +312,8 @@ class TestWorkingRepresentationRetrieval:
         # Create test documents
         explicit_doc = models.Document(
             workspace_name="test_workspace",
-            peer_name="test_peer",
-            collection_name="test_collection",
+            observer="test_peer",
+            observed="test_peer",
             content="User said they like programming",
             internal_metadata={
                 "level": "explicit",
@@ -651,8 +326,8 @@ class TestWorkingRepresentationRetrieval:
 
         deductive_doc = models.Document(
             workspace_name="test_workspace",
-            peer_name="test_peer",
-            collection_name="test_collection",
+            observer="test_peer",
+            observed="test_peer",
             content="User is likely a software developer",
             internal_metadata={
                 "level": "deductive",
@@ -665,9 +340,7 @@ class TestWorkingRepresentationRetrieval:
         )
 
         # Convert to representation
-        representation = crud.representation_from_documents(
-            [explicit_doc, deductive_doc]
-        )
+        representation = Representation.from_documents([explicit_doc, deductive_doc])
 
         assert len(representation.explicit) == 1
         assert len(representation.deductive) == 1
@@ -731,9 +404,12 @@ class TestPromptRepresentationConversion:
     async def test_prompt_representation_to_representation(self):
         """Test converting PromptRepresentation to Representation"""
         prompt_rep = PromptRepresentation(
-            explicit=["User likes coffee", "User works remotely"],
+            explicit=[
+                ExplicitObservationBase(content="User likes coffee"),
+                ExplicitObservationBase(content="User works remotely"),
+            ],
             deductive=[
-                PromptDeductiveObservation(
+                DeductiveObservationBase(
                     conclusion="User probably works from a coffee shop sometimes",
                     premises=["User likes coffee", "User works remotely"],
                 )
@@ -742,8 +418,11 @@ class TestPromptRepresentationConversion:
 
         timestamp = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        representation = prompt_rep.to_representation(
-            message_ids=(123, 123), session_name="test_session", timestamp=timestamp
+        representation = Representation.from_prompt_representation(
+            prompt_rep,
+            message_ids=(123, 123),
+            session_name="test_session",
+            created_at=timestamp,
         )
 
         assert len(representation.explicit) == 2
@@ -770,10 +449,11 @@ class TestPromptRepresentationConversion:
     async def test_empty_prompt_representation_conversion(self):
         """Test converting empty PromptRepresentation"""
         empty_prompt_rep = PromptRepresentation()
-        representation = empty_prompt_rep.to_representation(
+        representation = Representation.from_prompt_representation(
+            empty_prompt_rep,
             message_ids=(1, 1),
             session_name="test",
-            timestamp=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
+            created_at=datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc),
         )
 
         assert representation.is_empty()
