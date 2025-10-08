@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import cast
 
-import tiktoken
 from fastapi import APIRouter, Body, Depends, Path, Query, Response
 from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
@@ -19,6 +18,7 @@ from src.security import JWTParams, require_auth
 from src.utils import summarizer
 from src.utils.representation import Representation
 from src.utils.search import search
+from src.utils.tokens import estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -529,19 +529,9 @@ async def get_session_context(
 
     # adjust token limit downward to account for approximate token count of representation and card
     # TODO determine if this impacts performance too much
-    adjusted_token_limit = token_limit
-    try:
-        tokenizer = tiktoken.get_encoding("cl100k_base")
-        if representation:
-            adjusted_token_limit -= len(tokenizer.encode(str(representation)))
-        if card:
-            adjusted_token_limit -= len(tokenizer.encode("\n".join(card)))
-    except Exception:
-        # Fallback to rough character-based estimation
-        if representation:
-            adjusted_token_limit -= len(str(representation)) // 4
-        if card:
-            adjusted_token_limit -= len("\n".join(card)) // 4
+    adjusted_token_limit = (
+        token_limit - estimate_tokens(str(representation)) - estimate_tokens(card)
+    )
 
     # Get the session context with the adjusted limit
     summary, messages = await _get_session_context_task(

@@ -11,7 +11,6 @@ import time
 import uuid
 from collections.abc import AsyncIterator
 
-import tiktoken
 from dotenv import load_dotenv
 
 from src import crud
@@ -25,6 +24,7 @@ from src.utils.logging import (
     log_performance_metrics,
 )
 from src.utils.representation import Representation
+from src.utils.tokens import estimate_tokens
 
 from .prompts import dialectic_prompt
 
@@ -183,13 +183,11 @@ async def chat(
 
     dialectic_chat_uuid = str(uuid.uuid4())
 
-    tokenizer = tiktoken.get_encoding("cl100k_base")
-
     context_window_size = (
         settings.DIALECTIC.CONTEXT_WINDOW_SIZE - 750
     )  # this is a hardcoded (accurate, slightly conservative) estimate of system prompt
 
-    context_window_size -= len(tokenizer.encode(query))
+    context_window_size -= estimate_tokens(query)
 
     if lf:
         lf.update_current_trace(
@@ -236,7 +234,7 @@ async def chat(
 
     working_representation_str = str(working_representation)
 
-    context_window_size -= max(0, len(tokenizer.encode(working_representation_str)))
+    context_window_size -= max(0, estimate_tokens(working_representation_str))
 
     logger.info(
         "Constructed working representation:\n%s\n",
@@ -261,7 +259,7 @@ async def chat(
                 "Query is not session-scoped, skipping recent conversation history"
             )
 
-    context_window_size -= max(0, len(tokenizer.encode(recent_history or "")))
+    context_window_size -= max(0, estimate_tokens(recent_history or ""))
 
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",

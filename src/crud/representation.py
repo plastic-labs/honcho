@@ -146,7 +146,6 @@ class RepresentationManager:
 
             metadata: schemas.DocumentMetadata = schemas.DocumentMetadata(
                 message_ids=[message_id_range],
-                session_name=session_name,
                 level=obs_level,
                 premises=obs_premises,
                 message_created_at=format_datetime_utc(message_created_at),
@@ -155,13 +154,14 @@ class RepresentationManager:
             documents_to_create.append(
                 schemas.DocumentCreate(
                     content=obs_content,
+                    session_name=session_name,
                     metadata=metadata,
                     embedding=embedding,
                 )
             )
 
         # Use bulk creation with NO duplicate detection
-        _created_documents, new_documents = await crud.create_documents(
+        new_documents = await crud.create_documents(
             db,
             documents_to_create,
             self.workspace_name,

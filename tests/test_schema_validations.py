@@ -95,13 +95,13 @@ class TestDocumentValidations:
     def test_valid_document_create(self):
         metadata = DocumentMetadata(
             message_ids=[(1, 1)],
-            session_name="test",
             level="explicit",
             premises=[],
             message_created_at="2021-01-01T00:00:00Z",
         )
         doc = DocumentCreate(
             content="test content",
+            session_name="test",
             metadata=metadata,
             embedding=[0.1, 0.2, 0.3],
         )
@@ -112,9 +112,9 @@ class TestDocumentValidations:
         with pytest.raises(ValidationError) as exc_info:
             DocumentCreate(
                 content="",
+                session_name="test",
                 metadata=DocumentMetadata(
                     message_ids=[(1, 1)],
-                    session_name="test",
                     level="explicit",
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",
@@ -128,9 +128,9 @@ class TestDocumentValidations:
         with pytest.raises(ValidationError) as exc_info:
             DocumentCreate(
                 content="a" * 100001,
+                session_name="test",
                 metadata=DocumentMetadata(
                     message_ids=[(1, 1)],
-                    session_name="test",
                     level="explicit",
                     premises=[],
                     message_created_at="2021-01-01T00:00:00Z",

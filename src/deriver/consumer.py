@@ -4,7 +4,9 @@ from typing import Any
 import sentry_sdk
 from pydantic import ValidationError
 from rich.console import Console
+from sqlalchemy import select
 
+from src import models
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.deriver import process_representation_tasks_batch
@@ -53,6 +55,30 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                 queue_payload,
             )
             raise ValueError(f"Invalid payload structure: {str(e)}") from e
+
+        message_public_id = validated.message_public_id
+        if not message_public_id:
+            logger.info(
+                "Fetching message public ID for message %s", validated.message_id
+            )
+            async with tracked_db(operation_name="summary_fallback") as db:
+                stmt = (
+                    select(models.Message)
+                    .where(models.Message.workspace_name == validated.workspace_name)
+                    .where(models.Message.session_name == validated.session_name)
+                    .where(models.Message.id == validated.message_id)
+                )
+                result = await db.execute(stmt)
+
+                message = result.scalar_one_or_none()
+                if message is None:
+                    logger.error(
+                        "Failed to fetch message with ID %s for process_summary_task",
+                        validated.message_id,
+                    )
+                    return
+                message_public_id = message.public_id
+
         with sentry_sdk.start_transaction(name="process_summary_task", op="deriver"):
             if lf:
                 with lf.start_as_current_span(
@@ -71,6 +97,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                         validated.session_name,
                         validated.message_id,
                         validated.message_seq_in_session,
+                        message_public_id,
                     )
                     log_performance_metrics(
                         "summary", f"{validated.workspace_name}_{validated.message_id}"
@@ -81,6 +108,7 @@ async def process_item(task_type: str, queue_payload: dict[str, Any]) -> None:
                     validated.session_name,
                     validated.message_id,
                     validated.message_seq_in_session,
+                    message_public_id,
                 )
                 log_performance_metrics(
                     "summary", f"{validated.workspace_name}_{validated.message_id}"

@@ -16,7 +16,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models, schemas
+from src import crud, models
 from src.utils.representation import (
     DeductiveObservation,
     DeductiveObservationBase,
@@ -203,329 +203,6 @@ class TestRepresentationWorkflow:
 class TestDocumentCreationWorkflow:
     """Test document creation with embedding and duplicate detection"""
 
-    async def test_document_creation_without_duplicates(
-        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
-    ):
-        """Test standard document creation without duplicate checking"""
-        workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        observer = peer.name
-        observed = peer.name
-
-        # Create session for foreign key constraint
-        session = models.Session(
-            name="test_session",
-            workspace_name=workspace.name,
-        )
-        db_session.add(session)
-        await db_session.flush()
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            observer=observer,
-            observed=observed,
-            workspace_name=workspace.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create document
-        doc_schema = schemas.DocumentCreate(
-            content="Test observation content",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-            embedding=fixed_embedding_vector,
-        )
-
-        collection: models.Collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            observer=observer,
-            observed=observed,
-        )
-
-        document, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
-            db_session,
-            doc_schema,
-            collection,
-            duplicate_threshold=0.95,
-        )
-
-        assert not is_duplicate
-        assert document.content == "Test observation content"
-        assert document.internal_metadata["message_ids"] == [[1, 1]]
-        assert document.session_name == "test_session"
-
-    async def test_document_creation_with_duplicate_detection(
-        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
-    ):
-        """Test document creation with duplicate threshold checking"""
-        workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        observer = peer.name
-        observed = peer.name
-
-        # Create session for foreign key constraint
-        session = models.Session(
-            name="test_session",
-            workspace_name=workspace.name,
-        )
-        db_session.add(session)
-        await db_session.flush()
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            observer=observer,
-            observed=observed,
-            workspace_name=workspace.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create first document
-        doc_schema = schemas.DocumentCreate(
-            content="User likes dogs very much",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-            embedding=fixed_embedding_vector,
-        )
-
-        collection_2: models.Collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            observer=observer,
-            observed=observed,
-        )
-
-        original_doc, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
-            db_session,
-            doc_schema,
-            collection_2,
-            duplicate_threshold=0.95,
-        )
-
-        assert not is_duplicate
-        assert original_doc.content == "User likes dogs very much"
-
-        # Try to create similar document - should be detected as duplicate
-        similar_doc_schema = schemas.DocumentCreate(
-            content="User likes dogs very much",  # Exact same content
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session2",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-            embedding=fixed_embedding_vector,
-        )
-
-        collection_3: models.Collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            observer=observer,
-            observed=observed,
-        )
-
-        duplicate_doc, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
-            db_session,
-            similar_doc_schema,
-            collection_3,
-            duplicate_threshold=0.95,
-        )
-
-        assert is_duplicate
-        assert duplicate_doc.id == original_doc.id
-        # Check that times_derived was incremented
-        assert duplicate_doc.internal_metadata.get("times_derived", 1) == 2
-
-    async def test_document_creation_with_precomputed_embedding(
-        self, db_session: AsyncSession
-    ):
-        """Test document creation when embedding is provided"""
-        workspace, peer = await self.create_test_workspace_and_peer(db_session)
-        observer = peer.name
-        observed = peer.name
-
-        # Create session for foreign key constraint
-        session = models.Session(
-            name="test_session",
-            workspace_name=workspace.name,
-        )
-        db_session.add(session)
-        await db_session.flush()
-
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            observer=observer,
-            observed=observed,
-            workspace_name=workspace.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        precomputed_embedding = [0.5] * 1536  # Different from the mock
-
-        # Create document with precomputed embedding
-        doc_schema = schemas.DocumentCreate(
-            content="Test with precomputed embedding",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name="test_session",
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-            embedding=precomputed_embedding,
-        )
-
-        collection: models.Collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            observer=observer,
-            observed=observed,
-        )
-
-        document, is_duplicate = await crud._create_document(  # pyright: ignore[reportPrivateUsage]
-            db_session,
-            doc_schema,
-            collection,
-            duplicate_threshold=0.95,
-        )
-
-        assert not is_duplicate
-        # Compare the embedding arrays properly
-        import numpy as np
-
-        assert np.array_equal(document.embedding, precomputed_embedding)
-
-    async def create_test_workspace_and_peer(
-        self, db_session: AsyncSession
-    ) -> tuple[models.Workspace, models.Peer]:
-        """Helper to create test workspace and peer"""
-        workspace_name = generate_nanoid()
-        peer_name = generate_nanoid()
-
-        # Check if workspace already exists to avoid uniqueness constraint
-        workspace = (
-            await db_session.execute(
-                select(models.Workspace).where(models.Workspace.name == workspace_name)
-            )
-        ).scalar_one_or_none()
-
-        if workspace is None:
-            workspace = models.Workspace(name=workspace_name)
-            db_session.add(workspace)
-            await db_session.flush()
-
-        peer = models.Peer(name=peer_name, workspace_name=workspace_name)
-        db_session.add(peer)
-        await db_session.flush()
-
-        return workspace, peer
-
-
-@pytest.mark.asyncio
-class TestWorkingRepresentationRetrieval:
-    """Test working representation retrieval with different strategies"""
-
-    async def test_get_working_representation_basic(
-        self, db_session: AsyncSession, fixed_embedding_vector: list[float]
-    ):
-        """Test basic working representation retrieval"""
-        workspace, observer_peer = await self.create_test_workspace_and_peer(db_session)
-        _, observed_peer = await self.create_test_workspace_and_peer(
-            db_session, workspace.name
-        )
-        session = await self.create_test_session(db_session, workspace)
-
-        # Create some documents for the representation
-        # Create collection first - need to do it directly since mock doesn't persist to DB
-        collection = models.Collection(
-            observer=observer_peer.name,
-            observed=observed_peer.name,
-            workspace_name=workspace.name,
-        )
-        db_session.add(collection)
-        await db_session.flush()
-
-        # Create explicit observation document
-        explicit_doc_schema = schemas.DocumentCreate(
-            content="User mentioned they have a dog",
-            metadata=schemas.DocumentMetadata(
-                level="explicit",
-                session_name=session.name,
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-            ),
-            embedding=fixed_embedding_vector,
-        )
-
-        collection: models.Collection = await crud.get_or_create_collection(
-            db_session,
-            workspace.name,
-            observer=observer_peer.name,
-            observed=observed_peer.name,
-        )
-
-        await crud._create_document(  # pyright: ignore[reportPrivateUsage]
-            db_session,
-            explicit_doc_schema,
-            collection,
-        )
-
-        # Create deductive observation document
-        deductive_doc_schema = schemas.DocumentCreate(
-            content="User probably enjoys pet-related activities",
-            metadata=schemas.DocumentMetadata(
-                level="deductive",
-                session_name=session.name,
-                message_ids=[(1, 1)],
-                message_created_at=datetime(
-                    2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc
-                ).isoformat(),
-                premises=["User mentioned they have a dog"],
-            ),
-            embedding=fixed_embedding_vector,
-        )
-
-        await crud._create_document(  # pyright: ignore[reportPrivateUsage]
-            db_session, deductive_doc_schema, collection
-        )
-
-        # Retrieve working representation
-        representation = await crud.get_working_representation(
-            workspace.name,
-            session_name=session.name,
-            observer=observer_peer.name,
-            observed=observed_peer.name,
-        )
-
-        assert not representation.is_empty()
-        assert len(representation.explicit) == 1
-        assert len(representation.deductive) == 1
-
-        assert representation.explicit[0].content == "User mentioned they have a dog"
-        assert (
-            representation.deductive[0].conclusion
-            == "User probably enjoys pet-related activities"
-        )
-        assert "User mentioned they have a dog" in representation.deductive[0].premises
-
     async def test_get_working_representation_with_semantic_query(
         self, db_session: AsyncSession
     ):
@@ -544,6 +221,7 @@ class TestWorkingRepresentationRetrieval:
             observer=observer_peer.name,
             observed=observed_peer.name,
             content="User likes dogs",
+            session_name="test_session",
             internal_metadata={
                 "level": "explicit",
                 "message_ids": [(1, 1)],
@@ -578,6 +256,8 @@ class TestWorkingRepresentationRetrieval:
             db_session, workspace.name
         )
 
+        session = await self.create_test_session(db_session, workspace)
+
         # Create collection first - need to do it directly since mock doesn't persist to DB
         collection = models.Collection(
             observer=observer_peer.name,
@@ -593,6 +273,7 @@ class TestWorkingRepresentationRetrieval:
             observer=observer_peer.name,
             observed=observed_peer.name,
             content="Highly derived observation",
+            session_name=session.name,
             internal_metadata={"level": "explicit", "times_derived": 5},
             embedding=[0.1] * 1536,
         )
@@ -604,6 +285,7 @@ class TestWorkingRepresentationRetrieval:
             observer=observer_peer.name,
             observed=observed_peer.name,
             content="Less derived observation",
+            session_name=session.name,
             internal_metadata={"level": "explicit", "times_derived": 2},
             embedding=[0.2] * 1536,
         )

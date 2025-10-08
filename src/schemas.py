@@ -235,7 +235,12 @@ class Session(SessionBase):
 class Summary(BaseModel):
     content: str = Field(description="The summary text")
     message_id: int = Field(
-        description="The ID of the message that this summary covers up to"
+        description="The internal ID of the message that this summary covers up to",
+        exclude=True,
+    )
+    message_public_id: str = Field(
+        description="The public ID of the message that this summary covers up to",
+        serialization_alias="message_id",
     )
     summary_type: str = Field(description="The type of summary (short or long)")
     created_at: str = Field(
@@ -294,7 +299,6 @@ class DocumentMetadata(BaseModel):
     message_created_at: str = Field(
         description="The timestamp of the message that this document was derived from. Note that this is not the same as the created_at timestamp of the document. This timestamp is usually only saved with second-level precision."
     )
-    session_name: str = Field()
     level: Literal["explicit", "deductive"] = Field(
         description="The level of the document (explicit or deductive)"
     )
@@ -306,6 +310,9 @@ class DocumentMetadata(BaseModel):
 
 class DocumentCreate(DocumentBase):
     content: Annotated[str, Field(min_length=1, max_length=100000)]
+    session_name: str = Field(
+        description="The session from which the document was derived"
+    )
     metadata: DocumentMetadata = Field()
     embedding: list[float] = Field()
 

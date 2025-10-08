@@ -48,7 +48,7 @@ async def get_peer_card(
 async def set_peer_card(
     db: AsyncSession,
     workspace_name: str,
-    peer_card: list[str] | None,
+    peer_card: list[str],
     *,
     observer: str,
     observed: str,

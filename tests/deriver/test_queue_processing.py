@@ -3,6 +3,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -702,6 +703,7 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="First summary message",
+                public_id=generate_nanoid(),
             ),
             models.Message(
                 id=1000,
@@ -709,6 +711,7 @@ class TestQueueProcessing:
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="Second summary message",
+                public_id=generate_nanoid(),
             ),
         ]
 
