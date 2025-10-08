@@ -102,7 +102,6 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Lifespan events are now handled by the respective services
     yield
     await engine.dispose()
 
