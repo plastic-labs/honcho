@@ -5,27 +5,20 @@ icon: "brain"
 sidebarTitle: "Overview"
 ---
 
-When building agents developers often run into the same walls:
+Honcho is an AI-native memory library for building agents with [state-of-the-art](https://blog.plasticlabs.ai/research/Introducing-Neuromancer-XR) memory.
 
-> "My agent forgets everything between chats"
+It then goes beyond basic memory by reasoning about the stored data
+to expand the latent information available to your agent. Agents using Honcho
+will understand who they are, who they are interacting with, what happened, and
+when it happened — all without you having to think about it.
 
-You need memory: session management, message storage, context handling. It's table stakes, but surprisingly complex to get right.
+Use it to build
 
-> "My agent treats everyone exactly the same"
+- Highly personalized experiences
+- Agents with social cognition
+- Agents with rich identity that evolve over time
+- Multi-agent systems with complex social dynamics
 
-You need personalization: user modeling, preference learning, behavioral adaptation. Now you're building a [social cognition](../core-concepts/glossary#social-cognition) engine.
-
-> "I'm writing infrastructure instead of features"
-
-You need Honcho
-
-<img src="/images/agent_hierarchy.png" alt="Honcho's Hiearchy of Agents" />
-
-Honcho delivers production-ready memory infrastructure from day one. Store
-conversations, manage sessions, get perfectly formatted context for any LLM.
-But here's the magic: while your agents are chatting, Honcho is learning. It
-builds Theory of Mind models automatically, transforming raw conversations into
-rich psychological understanding.
 
 ```python
 # Start simple - just add messages
@@ -52,27 +45,22 @@ Designed for developers and agents alike:
 Developers use Honcho to store information about their users and application via
 two integrated layers:
 
-<img src="/images/basic_honcho_flowchart.png" alt="Basic Honcho Flowchart" />
-
 **Memory Layer**: Captures all user interactions - messages, preferences, and
 behavioral patterns - in a peer-centric data model that scales from individual
 conversations to complex multi-agent scenarios. This also queues up messages for
 the reasoning layer to process.
 
-**Reasoning Layer**: Continuously analyzes stored interactions to build
-psychological profiles using [theory of mind](../core-concepts/glossary#theory-of-mind)
-inference, extracting patterns about communication style, decision-making
-preferences, and mental models.
+**Reasoning Layer**: Continuously analyzes stored interactions to improve the
+memories and representation of each `Peer` in the system.
 
 ### Retrieval
 
 Once data is stored and generated within Honcho, the API exposes several
 different ways to retrieve and use those insights.
 
-**[Dialectic API](/v2/guides/dialectic-endpoint)**: This is the
-flagship endpoint that allows developers to send natural language queries to
-Honcho to chat with the representation of each user in your system to get
-dynamic, in-context actionable insights.
+**[Dialectic API](/v2/guides/dialectic-endpoint)**: This is the flagship
+endpoint that allows developers chat with Honcho about any aspect of each user
+in your system to get dynamic, in-context actionable insights.
 
 Example Queries
 - "What's the best way to explain technical concepts to this user?"
