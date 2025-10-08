@@ -51,10 +51,10 @@ def upgrade() -> None:
                 rows_updated INT;
             BEGIN
                 LOOP
-                    UPDATE {schema}.queue
+                    UPDATE "{schema}".queue
                     SET created_at = NOW()
                     WHERE id IN (
-                        SELECT id FROM {schema}.queue
+                        SELECT id FROM "{schema}".queue
                         WHERE created_at IS NULL
                         LIMIT 1000
                     );
