@@ -376,30 +376,30 @@ class QueueManager:
     async def _handle_processing_error(
         self,
         error: Exception,
-        messages: list[QueueItem],
+        items: list[QueueItem],
         work_unit_key: str,
         context: str,
     ) -> None:
         """
-        Handle processing errors by marking messages as errored, logging, and forwarding to Sentry.
-        We only mark the first message as errored so we don't potentially throw away a batch. This allows us
+        Handle processing errors by marking queue items as errored, logging, and forwarding to Sentry.
+        We only mark the first queue item as errored so we don't potentially throw away a batch. This allows us
         to incrementally attempt to process the batch while still maintaining progress in a work unit.
 
         Args:
             error: The exception that occurred
-            messages: The queue items that were being processed
-            work_unit_key: The work unit key for the messages
+            items: The queue items that were being processed
+            work_unit_key: The work unit key for the queue items
             context: Context string describing what was being processed (e.g., "processing representation batch")
         """
         error_msg = f"{error.__class__.__name__}: {str(error)}"
         try:
-            if messages:
-                await self.mark_message_as_errored(
-                    messages[0], work_unit_key, error_msg
+            if items:
+                await self.mark_queue_item_as_errored(
+                    items[0], work_unit_key, error_msg
                 )
         except Exception as mark_error:
             logger.error(
-                f"Failed to mark messages as errored for work unit {work_unit_key}: {mark_error}",
+                f"Failed to mark queue items as errored for work unit {work_unit_key}: {mark_error}",
                 exc_info=True,
             )
 
@@ -411,12 +411,11 @@ class QueueManager:
             sentry_sdk.capture_exception(error)
 
     async def process_work_unit(self, work_unit_key: str, worker_id: str) -> None:
-        """Process all messages for a specific work unit by routing to the correct handler."""
+        """Process all queue items for a specific work unit by routing to the correct handler."""
         logger.debug(f"Starting to process work unit {work_unit_key}")
         work_unit = parse_work_unit_key(work_unit_key)
         async with self.semaphore:
-            message_count = 0
-            messages_to_process: list[QueueItem] = []
+            queue_item_count = 0
             try:
                 while not self.shutdown_event.is_set():
                     # Get worker ownership info for verification
@@ -431,7 +430,7 @@ class QueueManager:
                             (
                                 messages_context,
                                 items_to_process,
-                            ) = await self.get_message_batch(
+                            ) = await self.get_queue_item_batch(
                                 work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
                             logger.debug(
@@ -449,10 +448,10 @@ class QueueManager:
                                     observer=work_unit.observer,
                                     observed=work_unit.observed,
                                 )
-                                await self.mark_messages_as_processed(
+                                await self.mark_queue_items_as_processed(
                                     items_to_process, work_unit_key
                                 )
-                                message_count += len(items_to_process)
+                                queue_item_count += len(items_to_process)
                             except Exception as e:
                                 await self._handle_processing_error(
                                     e,
@@ -462,29 +461,29 @@ class QueueManager:
                                 )
 
                         else:
-                            messages_to_process = await self.get_next_message(
+                            queue_item = await self.get_next_queue_item(
                                 work_unit.task_type, work_unit_key, ownership.aqs_id
                             )
-                            if not messages_to_process:
+                            if not queue_item:
                                 logger.debug(
-                                    f"No more messages to process for work unit {work_unit_key} for worker {worker_id}"
+                                    f"No more queue items to process for work unit {work_unit_key} for worker {worker_id}"
                                 )
                                 break
 
                             try:
                                 await process_item(
-                                    work_unit.task_type, messages_to_process[0].payload
+                                    work_unit.task_type, queue_item.payload
                                 )
-                                await self.mark_messages_as_processed(
-                                    messages_to_process, work_unit_key
+                                await self.mark_queue_items_as_processed(
+                                    [queue_item], work_unit_key
                                 )
-                                message_count += len(messages_to_process)
+                                queue_item_count += 1
                             except Exception as e:
                                 await self._handle_processing_error(
                                     e,
-                                    messages_to_process,
+                                    [queue_item],
                                     work_unit_key,
-                                    "processing message",
+                                    "processing queue item",
                                 )
 
                     except Exception as e:
@@ -514,7 +513,7 @@ class QueueManager:
                     removed = False
 
                 self.untrack_worker_work_unit(worker_id, work_unit_key)
-                if removed and message_count > 0:
+                if removed and queue_item_count > 0:
                     # Only publish webhook if we actually removed an active session
                     try:
                         if work_unit.task_type in ["representation", "summary"]:
@@ -542,22 +541,21 @@ class QueueManager:
                     )
 
     @sentry_sdk.trace
-    async def get_next_message(
+    async def get_next_queue_item(
         self, task_type: str, work_unit_key: str, aqs_id: str
-    ) -> list[QueueItem]:
-        """Get the next message to process for a specific work unit."""
+    ) -> QueueItem | None:
+        """Get the next queue item to process for a specific work unit."""
         if task_type == "representation":
             raise ValueError(
-                "Representation tasks are not supported for get_next_message"
+                "Representation tasks are not supported for get_next_queue_item"
             )
-        async with tracked_db("get_next_message") as db:
+        async with tracked_db("get_next_queue_item") as db:
             # ActiveQueueSession conditions for worker ownership verification
             aqs_conditions = [
                 models.ActiveQueueSession.work_unit_key == work_unit_key,
                 models.ActiveQueueSession.id == aqs_id,
             ]
 
-            # For non-representation tasks, just get the next single message.
             query = (
                 select(models.QueueItem)
                 .join(
@@ -572,15 +570,15 @@ class QueueManager:
                 .limit(1)
             )
             result = await db.execute(query)
-            messages = result.scalars().all()
+            queue_item = result.scalar_one_or_none()
 
             # Important: commit to avoid tracked_db's rollback expiring the instance
             # We rely on expire_on_commit=False to keep attributes accessible post-close
             await db.commit()
-            return list(messages)
+            return queue_item
 
     @sentry_sdk.trace
-    async def get_message_batch(
+    async def get_queue_item_batch(
         self,
         task_type: str,
         work_unit_key: str,
@@ -593,9 +591,9 @@ class QueueManager:
         """
         if task_type != "representation":
             raise ValueError(
-                "Non-representation tasks are not supported for get_message_batch"
+                "Non-representation tasks are not supported for get_queue_item_batch"
             )
-        async with tracked_db("get_message_batch") as db:
+        async with tracked_db("get_queue_item_batch") as db:
             # For representation tasks, get a batch based on token limit.
             # Step 1: Parse work_unit_key to get session context and focused sender
             parsed_key = parse_work_unit_key(work_unit_key)
@@ -709,16 +707,16 @@ class QueueManager:
 
             return messages_context, items_to_process
 
-    async def mark_messages_as_processed(
-        self, messages: list[QueueItem], work_unit_key: str
+    async def mark_queue_items_as_processed(
+        self, items: list[QueueItem], work_unit_key: str
     ) -> None:
-        if not messages:
+        if not items:
             return
-        async with tracked_db("process_message_batch") as db:
-            message_ids = [msg.id for msg in messages]
+        async with tracked_db("process_queue_item_batch") as db:
+            item_ids = [item.id for item in items]
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id.in_(message_ids))
+                .where(models.QueueItem.id.in_(item_ids))
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True)
             )
@@ -729,16 +727,16 @@ class QueueManager:
             )
             await db.commit()
 
-    async def mark_message_as_errored(
-        self, message: QueueItem, work_unit_key: str, error: str
+    async def mark_queue_item_as_errored(
+        self, item: QueueItem, work_unit_key: str, error: str
     ) -> None:
-        """Mark message as processed with an error"""
-        if not message:
+        """Mark queue item as processed with an error"""
+        if not item:
             return
-        async with tracked_db("mark_message_as_errored") as db:
+        async with tracked_db("mark_queue_item_as_errored") as db:
             await db.execute(
                 update(models.QueueItem)
-                .where(models.QueueItem.id == message.id)
+                .where(models.QueueItem.id == item.id)
                 .where(models.QueueItem.work_unit_key == work_unit_key)
                 .values(processed=True, error=error[:65535])  # Truncate to TEXT limit
             )
