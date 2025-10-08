@@ -162,9 +162,18 @@ app.add_api_route("/metrics", prometheus.metrics, methods=["GET"])
 
 # Global exception handlers
 @app.exception_handler(HonchoException)
-async def honcho_exception_handler(_request: Request, exc: HonchoException):
+async def honcho_exception_handler(request: Request, exc: HonchoException):
     """Handle all Honcho-specific exceptions."""
     logger.error(f"{exc.__class__.__name__}: {exc.detail}", exc_info=exc)
+
+    if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+        template = get_route_template(request)
+        prometheus.API_REQUESTS.labels(
+            method=request.method,
+            endpoint=template,
+            status_code=str(exc.status_code),
+        ).inc()
+
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": exc.detail},
@@ -172,9 +181,18 @@ async def honcho_exception_handler(_request: Request, exc: HonchoException):
 
 
 @app.exception_handler(Exception)
-async def global_exception_handler(_request: Request, exc: Exception):
+async def global_exception_handler(request: Request, exc: Exception):
     """Handle all unhandled exceptions."""
     logger.error(f"Unhandled exception: {str(exc)}", exc_info=True)
+
+    if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
+        template = get_route_template(request)
+        prometheus.API_REQUESTS.labels(
+            method=request.method,
+            endpoint=template,
+            status_code="500",
+        ).inc()
+
     if SENTRY_ENABLED:
         sentry_sdk.capture_exception(exc)
     return JSONResponse(
@@ -208,17 +226,5 @@ async def track_request(
             ).inc()
 
         return response
-
-    except Exception:
-        # Track Prometheus error metrics if enabled
-        if prometheus.METRICS_ENABLED and request.url.path != "/metrics":
-            template = get_route_template(request)
-            prometheus.API_REQUESTS.labels(
-                method=request.method,
-                endpoint=template,
-                status_code="500",
-            ).inc()
-        raise
-
     finally:
         request_context.reset(token)
