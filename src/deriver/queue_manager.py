@@ -413,11 +413,6 @@ class QueueManager:
                                     observed=work_unit.observed,
                                 )
                             )
-
-                            prometheus.DERIVER_TASKS_COMPLETED.labels(
-                                workspace_name=work_unit.workspace_name,
-                                task_type=work_unit.task_type,
-                            ).inc()
                         else:
                             logger.debug(
                                 f"Skipping queue.empty event for webhook work unit {work_unit_key}"
@@ -602,6 +597,7 @@ class QueueManager:
     ) -> None:
         if not messages:
             return
+        work_unit = parse_work_unit_key(work_unit_key)
         async with tracked_db("process_message_batch") as db:
             message_ids = [msg.id for msg in messages]
             await db.execute(
@@ -616,6 +612,12 @@ class QueueManager:
                 .values(last_updated=func.now())
             )
             await db.commit()
+
+            if work_unit.task_type in ["representation", "summary"]:
+                prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
+                    workspace_name=work_unit.workspace_name,
+                    task_type=work_unit.task_type,
+                ).inc(len(messages))
 
     async def _cleanup_work_unit(
         self,

@@ -217,6 +217,8 @@ async def process_representation_tasks_batch(
             include_summary=True,
         )
 
+    session_context_tokens = estimate_tokens(formatted_history)
+
     # got working representation and peer card, log timing
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
@@ -244,15 +246,13 @@ async def process_representation_tasks_batch(
         observed=observed,
     )
 
-    # Create reasoner instance
     reasoner = CertaintyReasoner(
         representation_manager=representation_manager,
         ctx=messages,
         observed=observed,
         observer=observer,
+        estimated_input_tokens=estimated_input_tokens + session_context_tokens,
     )
-
-    reasoner.estimated_input_tokens = max(0, int(estimated_input_tokens))
 
     # Run single-pass reasoning
     final_observations = await reasoner.reason(
@@ -305,12 +305,13 @@ class CertaintyReasoner:
         *,
         observed: str,
         observer: str,
+        estimated_input_tokens: int,
     ) -> None:
         self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
-        self.estimated_input_tokens: int = 0
+        self.estimated_input_tokens: int = estimated_input_tokens
 
     @conditional_observe
     @sentry_sdk.trace
