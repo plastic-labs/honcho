@@ -68,6 +68,14 @@ class HonchoHarness:
         # Add a unique project name to avoid conflicts
         compose_data["name"] = f"honcho_harness_{self.db_port}"
 
+        # remove init.sql mount since we use provision_db.py for setup
+        if "volumes" in compose_data["services"]["database"]:
+            compose_data["services"]["database"]["volumes"] = [
+                vol
+                for vol in compose_data["services"]["database"]["volumes"]
+                if "init.sql" not in vol
+            ]
+
         # Create temporary file
         self.temp_dir = Path(tempfile.mkdtemp(prefix="honcho_harness_"))
         self.docker_compose_file = self.temp_dir / "docker-compose.yml"

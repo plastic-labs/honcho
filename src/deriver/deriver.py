@@ -17,7 +17,7 @@ from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
     log_performance_metrics,
-    log_representation,
+    # log_representation,
 )
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
@@ -221,7 +221,7 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    logger.info(
+    logger.debug(
         "Using working representation with %s explicit, %s deductive observations",
         len(working_representation.explicit),
         len(working_representation.deductive),
@@ -255,7 +255,7 @@ async def process_representation_tasks_batch(
     )
 
     # Display final observations in a beautiful tree
-    log_representation(final_observations)
+    # log_representation(final_observations)
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000

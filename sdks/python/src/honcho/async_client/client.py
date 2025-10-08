@@ -338,6 +338,26 @@ class AsyncHoncho(BaseModel):
         return workspace_ids
 
     @validate_call
+    async def delete_workspace(
+        self,
+        workspace_id: str = Field(
+            ..., min_length=1, description="ID of the workspace to delete"
+        ),
+    ):
+        """
+        Delete a workspace.
+
+        Makes an async API call to delete the specified workspace.
+
+        Args:
+            workspace_id: The ID of the workspace to delete
+
+        Returns:
+            The deleted Workspace object
+        """
+        return await self._client.workspaces.delete(workspace_id)
+
+    @validate_call
     async def search(
         self,
         query: str = Field(..., min_length=1, description="The search query to use"),

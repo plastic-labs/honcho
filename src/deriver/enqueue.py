@@ -343,7 +343,7 @@ async def generate_queue_records(
                 observed,
             )
 
-    logger.info(
+    logger.debug(
         "message %s from %s created %s queue items",
         message_id,
         observed,

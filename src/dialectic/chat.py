@@ -236,7 +236,7 @@ async def chat(
 
     context_window_size -= max(0, estimate_tokens(working_representation_str))
 
-    logger.info(
+    logger.debug(
         "Constructed working representation:\n%s\n",
         working_representation_str,
     )

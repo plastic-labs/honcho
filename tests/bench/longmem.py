@@ -60,6 +60,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
@@ -219,7 +220,20 @@ class LongMemEvalRunner:
         for session_messages in haystack_sessions:
             for msg in session_messages:
                 content = msg.get("content", "")
-                total_tokens += len(tokenizer.encode(content))
+                try:
+                    total_tokens += len(
+                        tokenizer.encode(
+                            content,
+                            disallowed_special=(
+                                tokenizer.special_tokens_set - {"<|endoftext|>"}
+                            ),
+                        )
+                    )
+                except Exception:
+                    total_tokens += len(content) // 4
+                    self.logger.warning(
+                        f"Error tokenizing content. Using rough estimate of {len(content) // 4} tokens"
+                    )
 
         return total_tokens
 
@@ -688,7 +702,9 @@ Evaluate whether the actual response correctly answers the question based on the
                                 )
 
                     if honcho_messages:
-                        await session.add_messages(honcho_messages)
+                        for i in range(0, len(honcho_messages), 100):
+                            batch = honcho_messages[i : i + 100]
+                            await session.add_messages(batch)
 
                     results["sessions_created"].append(
                         SessionResult(
@@ -720,6 +736,19 @@ Evaluate whether the actual response correctly answers the question based on the
                 else:
                     # For user questions, use the user peer (default behavior)
                     actual_response = await user_peer.chat(question_with_date)
+
+                # once we get the response, we can delete the workspace
+                # the SDK does not have this functionality, so we manually generate the http request
+                async with httpx.AsyncClient() as client:
+                    delete_response = await client.delete(
+                        f"{honcho_url}/v2/workspaces/{workspace_id}"
+                    )
+                    if delete_response.status_code not in [200, 204]:
+                        print(
+                            f"Failed to delete workspace: {delete_response.status_code}"
+                        )
+                    else:
+                        print(f"[{workspace_id}] cleaned up workspace")
 
                 actual_response = (
                     actual_response if isinstance(actual_response, str) else ""
