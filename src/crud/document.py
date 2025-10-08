@@ -107,11 +107,6 @@ async def create_documents(
     """
     Create multiple documents with NO duplicate detection.
 
-    If duplicate_threshold is provided, we use the embedding to check for
-    duplicates within the threshold. If a duplicate is found, instead of
-    saving a new document, we increment the times_derived field in the
-    `internal_metadata` of the duplicate document.
-
     Args:
         db: Database session
         documents: List of document creation schemas

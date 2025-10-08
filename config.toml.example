@@ -106,3 +106,8 @@ THINKING_BUDGET_TOKENS = 512
 [webhook]
 SECRET = ""
 MAX_WORKSPACE_LIMIT = 10
+
+# Metrics settings
+[metrics]
+ENABLED = false
+NAMESPACE = "honcho"

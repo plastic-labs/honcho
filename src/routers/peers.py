@@ -8,7 +8,7 @@ from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, schemas
+from src import crud, prometheus, schemas
 from src.dependencies import db, tracked_db
 from src.dialectic import chat as dialectic_chat
 from src.exceptions import AuthenticationException, ResourceNotFoundException
@@ -178,6 +178,12 @@ async def chat(
             # and it's answered from the omniscient Honcho perspective
             observed=options.target if options.target is not None else peer_id,
         )
+
+        if prometheus.METRICS_ENABLED:
+            prometheus.DIALECTIC_CALLS.labels(
+                workspace_name=workspace_id,
+            ).inc()
+
         return schemas.DialecticResponse(content=str(response))
 
     async def parse_stream() -> AsyncGenerator[str, None]:
@@ -190,6 +196,12 @@ async def chat(
                 observer=peer_id,
                 observed=options.target if options.target is not None else peer_id,
             )
+
+            if prometheus.METRICS_ENABLED:
+                prometheus.DIALECTIC_CALLS.labels(
+                    workspace_name=workspace_id,
+                ).inc()
+
             if isinstance(stream, AsyncIterator):
                 async for chunk in stream:
                     if chunk.content:

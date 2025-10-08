@@ -191,6 +191,11 @@ class DeriverSettings(HonchoSettings):
     ] = 1.0
     STALE_SESSION_TIMEOUT_MINUTES: Annotated[int, Field(default=5, gt=0, le=1440)] = 5
 
+    # Retention window (seconds) for keeping errored items in the queue
+    QUEUE_ERROR_RETENTION_SECONDS: Annotated[
+        int, Field(default=30 * 24 * 3600, gt=0)
+    ] = 30 * 24 * 3600  # 30 days default
+
     PROVIDER: SupportedProviders = "google"
     MODEL: str = "gemini-2.5-flash-lite"
 
@@ -281,6 +286,13 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
+class MetricsSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    NAMESPACE: str = "honcho"
+
+
 class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
@@ -332,6 +344,7 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
+    METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")

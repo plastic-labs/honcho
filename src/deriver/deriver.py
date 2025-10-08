@@ -4,7 +4,7 @@ import time
 
 import sentry_sdk
 
-from src import crud, exceptions
+from src import crud, exceptions, prometheus
 from src.config import settings
 from src.crud.representation import RepresentationManager
 from src.dependencies import tracked_db
@@ -17,7 +17,7 @@ from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
     log_performance_metrics,
-    # log_representation,
+    log_representation,
 )
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
@@ -43,6 +43,7 @@ async def critical_analysis_call(
     working_representation: Representation,
     history: str,
     new_turns: list[str],
+    estimated_input_tokens: int,
 ) -> PromptRepresentation:
     prompt = critical_analysis_prompt(
         peer_id=peer_id,
@@ -67,6 +68,10 @@ async def critical_analysis_call(
         enable_retry=True,
         retry_attempts=3,
     )
+
+    prometheus.DERIVER_TOKENS_PROCESSED.labels(
+        task_type="representation",
+    ).inc(response.output_tokens + estimated_input_tokens)
 
     return response.content
 
@@ -212,6 +217,8 @@ async def process_representation_tasks_batch(
             include_summary=True,
         )
 
+    session_context_tokens = estimate_tokens(formatted_history)
+
     # got working representation and peer card, log timing
     context_prep_duration = (time.perf_counter() - context_prep_start) * 1000
     accumulate_metric(
@@ -221,7 +228,7 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    logger.debug(
+    logger.info(
         "Using working representation with %s explicit, %s deductive observations",
         len(working_representation.explicit),
         len(working_representation.deductive),
@@ -239,12 +246,12 @@ async def process_representation_tasks_batch(
         observed=observed,
     )
 
-    # Create reasoner instance
     reasoner = CertaintyReasoner(
         representation_manager=representation_manager,
         ctx=messages,
         observed=observed,
         observer=observer,
+        estimated_input_tokens=estimated_input_tokens + session_context_tokens,
     )
 
     # Run single-pass reasoning
@@ -255,7 +262,7 @@ async def process_representation_tasks_batch(
     )
 
     # Display final observations in a beautiful tree
-    # log_representation(final_observations)
+    log_representation(final_observations)
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -298,11 +305,13 @@ class CertaintyReasoner:
         *,
         observed: str,
         observer: str,
+        estimated_input_tokens: int,
     ) -> None:
         self.representation_manager = representation_manager
         self.ctx = ctx
         self.observed = observed
         self.observer = observer
+        self.estimated_input_tokens: int = estimated_input_tokens
 
     @conditional_observe
     @sentry_sdk.trace
@@ -343,6 +352,7 @@ class CertaintyReasoner:
                 working_representation=working_representation,
                 history=history,
                 new_turns=new_turns,
+                estimated_input_tokens=self.estimated_input_tokens,
             )
         except Exception as e:
             raise exceptions.LLMError(

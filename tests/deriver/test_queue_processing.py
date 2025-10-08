@@ -172,7 +172,7 @@ class TestQueueProcessing:
         await db_session.commit()
         await db_session.refresh(aqs)
 
-        _, items_to_process = await qm.get_message_batch(
+        _, items_to_process = await qm.get_queue_item_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
@@ -183,7 +183,7 @@ class TestQueueProcessing:
         # Mark first processed, next should be the second
         first.processed = True
         await db_session.commit()
-        _, items_to_process2 = await qm.get_message_batch(
+        _, items_to_process2 = await qm.get_queue_item_batch(
             task_type="representation",
             work_unit_key=first.work_unit_key,
             aqs_id=aqs.id,
@@ -461,7 +461,7 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(alice_aqs)
 
-            alice_messages, alice_items = await qm.get_message_batch(
+            alice_messages, alice_items = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=alice_work_unit_key,
                 aqs_id=alice_aqs.id,
@@ -489,7 +489,7 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(bob_aqs)
 
-            bob_messages, bob_items = await qm.get_message_batch(
+            bob_messages, bob_items = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=bob_work_unit_key,
                 aqs_id=bob_aqs.id,
@@ -515,7 +515,7 @@ class TestQueueProcessing:
             await db_session.commit()
             await db_session.refresh(steve_aqs)
 
-            steve_messages, steve_items = await qm.get_message_batch(
+            steve_messages, steve_items = await qm.get_queue_item_batch(
                 task_type="representation",
                 work_unit_key=steve_work_unit_key,
                 aqs_id=steve_aqs.id,
@@ -628,7 +628,7 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(alice_aqs)
 
-                alice_messages2, _ = await qm.get_message_batch(
+                alice_messages2, _ = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=alice_work_unit_key,
                     aqs_id=alice_aqs.id,
@@ -651,7 +651,7 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(bob_aqs)
 
-                bob_messages2, _ = await qm.get_message_batch(
+                bob_messages2, _ = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=bob_work_unit_key,
                     aqs_id=bob_aqs.id,
@@ -670,7 +670,7 @@ class TestQueueProcessing:
                 await db_session.commit()
                 await db_session.refresh(steve_aqs)
 
-                steve_messages2, _ = await qm.get_message_batch(
+                steve_messages2, _ = await qm.get_queue_item_batch(
                     task_type="representation",
                     work_unit_key=steve_work_unit_key,
                     aqs_id=steve_aqs.id,

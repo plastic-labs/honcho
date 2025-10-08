@@ -44,6 +44,7 @@ async def test_generic_honcho_llm_call_mock():
         ),
         history="test history",
         new_turns=["test new turn"],
+        estimated_input_tokens=100,
     )
 
     # Verify that we get a mock result, not an actual LLM call
