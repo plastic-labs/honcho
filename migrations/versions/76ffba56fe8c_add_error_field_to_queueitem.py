@@ -1,8 +1,8 @@
 """add error field to QueueItem
 
-Revision ID: ddf7b217ca3e
-Revises: 88b0fb10906f
-Create Date: 2025-10-06 17:24:27.580533
+Revision ID: 76ffba56fe8c
+Revises: 08894082221a
+Create Date: 2025-10-08 11:47:17.488301
 
 """
 
@@ -11,16 +11,16 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-from migrations.utils import column_exists, index_exists
-from src.config import settings
+from migrations.utils import column_exists, get_schema, index_exists
 
 # revision identifiers, used by Alembic.
-revision: str = "ddf7b217ca3e"
-down_revision: str | None = "88b0fb10906f"
+revision: str = "76ffba56fe8c"
+down_revision: str | None = "08894082221a"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-schema = settings.DB.SCHEMA
+
+schema = get_schema()
 
 
 def upgrade() -> None:
