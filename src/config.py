@@ -286,6 +286,13 @@ class WebhookSettings(HonchoSettings):
     MAX_WORKSPACE_LIMIT: int = 10
 
 
+class MetricsSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="METRICS_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    NAMESPACE: str = "honcho"
+
+
 class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
@@ -337,6 +344,7 @@ class AppSettings(HonchoSettings):
     PEER_CARD: PeerCardSettings = Field(default_factory=PeerCardSettings)
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
+    METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")

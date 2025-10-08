@@ -3,6 +3,7 @@ import logging
 import os
 
 import uvloop
+from prometheus_client import start_http_server
 
 from src.config import settings
 
@@ -43,6 +44,16 @@ def setup_logging():
     logging.getLogger("groq._base_client").setLevel(logging.WARNING)
 
 
+def start_metrics_server() -> None:
+    """Start Prometheus metrics HTTP server on port 9090."""
+    try:
+        # Uses default REGISTRY from prometheus_client
+        start_http_server(9090, addr="0.0.0.0")  # nosec B104
+        print("[DERIVER] Starting Prometheus metrics server on port 9090")
+    except Exception as e:
+        print(f"[DERIVER] Failed to start Prometheus metrics server: {str(e)}")
+
+
 if __name__ == "__main__":
     print("[DERIVER] Starting deriver queue processor")
 
@@ -52,6 +63,8 @@ if __name__ == "__main__":
     asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
     try:
         print("[DERIVER] Running main loop")
+        if settings.METRICS.ENABLED:
+            start_metrics_server()
         asyncio.run(main())
     except KeyboardInterrupt:
         print("[DERIVER] Shutdown initiated via KeyboardInterrupt")

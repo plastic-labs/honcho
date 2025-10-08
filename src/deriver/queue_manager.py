@@ -15,7 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
-from src import models
+from src import models, prometheus
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
@@ -518,7 +518,7 @@ class QueueManager:
                     try:
                         if work_unit.task_type in ["representation", "summary"]:
                             logger.debug(
-                                f"Publishing queue.empty event for {work_unit_key}"
+                                f"Publishing queue.empty event for {work_unit_key} in workspace {work_unit.workspace_name}"
                             )
                             await publish_webhook_event(
                                 QueueEmptyEvent(
@@ -713,6 +713,7 @@ class QueueManager:
         if not items:
             return
         async with tracked_db("process_queue_item_batch") as db:
+            work_unit = parse_work_unit_key(work_unit_key)
             item_ids = [item.id for item in items]
             await db.execute(
                 update(models.QueueItem)
@@ -726,6 +727,12 @@ class QueueManager:
                 .values(last_updated=func.now())
             )
             await db.commit()
+
+            if work_unit.task_type in ["representation", "summary"]:
+                prometheus.DERIVER_QUEUE_ITEMS_PROCESSED.labels(
+                    workspace_name=work_unit.workspace_name,
+                    task_type=work_unit.task_type,
+                ).inc(len(items))
 
     async def mark_queue_item_as_errored(
         self, item: QueueItem, work_unit_key: str, error: str
