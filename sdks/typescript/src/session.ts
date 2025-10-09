@@ -476,16 +476,16 @@ export class Session {
   async getContext(
     summary?: boolean,
     tokens?: number,
-    peerTarget?: string,
+    peerTarget?: string | Peer,
     lastUserMessage?: string | Message,
-    peerPerspective?: string
+    peerPerspective?: string | Peer
   ): Promise<SessionContext>
   async getContext(options?: {
     summary?: boolean
     tokens?: number
-    peerTarget?: string
+    peerTarget?: string | Peer
     lastUserMessage?: string | Message
-    peerPerspective?: string
+    peerPerspective?: string | Peer
   }): Promise<SessionContext>
   async getContext(
     summaryOrOptions?:
@@ -493,14 +493,14 @@ export class Session {
       | {
           summary?: boolean
           tokens?: number
-          peerTarget?: string
+          peerTarget?: string | Peer
           lastUserMessage?: string | Message
-          peerPerspective?: string
+          peerPerspective?: string | Peer
         },
     tokens?: number,
-    peerTarget?: string,
+    peerTarget?: string | Peer,
     lastUserMessage?: string | Message,
-    peerPerspective?: string
+    peerPerspective?: string | Peer
   ): Promise<SessionContext> {
     // Normalize positional arguments into options object
     let options: {
@@ -519,12 +519,15 @@ export class Session {
       options = {
         summary: summaryOrOptions as boolean | undefined,
         tokens,
-        peerTarget,
+        peerTarget: typeof peerTarget === 'object' ? peerTarget.id : peerTarget,
         lastUserMessage:
           typeof lastUserMessage === 'string'
             ? lastUserMessage
             : lastUserMessage?.id,
-        peerPerspective,
+        peerPerspective:
+          typeof peerPerspective === 'object'
+            ? peerPerspective.id
+            : peerPerspective,
       }
     } else {
       // Options object pattern
