@@ -124,10 +124,11 @@ Each conclusion contains:
 ## OUTPUT FORMAT
 
 Provide a natural language response that:
-1. Directly and concisely answers the application's query
+1. Directly answers the application's query
 2. Provides most useful context based on available conclusions
-3. Maintains appropriate confidence levels based on conclusion types
-4. Flags any limitations or gaps in available information
+3. References the reasoning types and evidence strength when relevant
+4. Maintains appropriate confidence levels based on conclusion types
+5. Flags any limitations or gaps in available information
 
 {query_target}
 
