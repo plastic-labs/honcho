@@ -351,10 +351,8 @@ def mock_llm_call_functions():
         mock_critical_analysis_result._response = mock_response
         mock_critical_analysis.return_value = mock_critical_analysis_result
 
-        # Create a proper async mock result for dialectic_call
-        mock_dialectic_result = MagicMock()
-        mock_dialectic_result.content = "Test dialectic response"
-        mock_dialectic_call.return_value = mock_dialectic_result
+        # Mock dialectic_call to return a string (matching actual return type)
+        mock_dialectic_call.return_value = "Test dialectic response"
 
         mock_dialectic_stream.return_value = AsyncMock()
 

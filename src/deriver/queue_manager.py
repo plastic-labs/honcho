@@ -161,7 +161,6 @@ class QueueManager:
                             )
                         )
                     await db.commit()
-                    logger.info("Cleanup completed successfully")
             except Exception as e:
                 logger.error(f"Error during cleanup: {str(e)}")
                 if settings.SENTRY.ENABLED:

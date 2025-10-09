@@ -117,7 +117,7 @@ async def get_or_create_session(
         except IntegrityError:
             await db.rollback()
             logger.debug(
-                f"Race condition detected for session: {session.name}, retrying get"
+                "Race condition detected for session: %s, retrying get", session.name
             )
             if _retry:
                 raise ConflictException(
@@ -220,7 +220,7 @@ async def update_session(
         honcho_session.configuration = session.configuration
 
     await db.commit()
-    logger.info(f"Session {session_name} updated successfully")
+    logger.debug("Session %s updated successfully", session_name)
     return honcho_session
 
 
@@ -257,7 +257,7 @@ async def delete_session(
 
     honcho_session.is_active = False
     await db.commit()
-    logger.info(f"Session {session_name} marked as inactive")
+    logger.debug("Session %s marked as inactive", session_name)
     return True
 
 
@@ -358,7 +358,7 @@ async def clone_session(
         db.add(new_session_peer)
 
     await db.commit()
-    logger.info(f"Session {original_session_name} cloned successfully")
+    logger.debug("Session %s cloned successfully", original_session_name)
     return new_session
 
 

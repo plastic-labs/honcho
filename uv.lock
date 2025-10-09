@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -780,7 +780,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.5.0" },
+    { name = "honcho-core", specifier = ">=1.5.1" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -791,7 +791,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.5.0"
+version = "1.5.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -801,9 +801,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/75/cd/05d2a21afd037673637e390de411cd66ca56b07e524cd7ead65c655a2b49/honcho_core-1.5.0.tar.gz", hash = "sha256:4876195dad16db437117d40a1d5e34ff88974e8eca6d093f3653b4ac2bda3c6d", size = 132236, upload-time = "2025-10-08T18:30:15.777Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a7/9f/6246f02a301a5fa1b9cd00784fafbb3f812feebfaa10a5135104885547da/honcho_core-1.5.1.tar.gz", hash = "sha256:d76da6657707df76ff464ac6874925f31c9e83fe8de51daeb0b10986385e02c7", size = 132626, upload-time = "2025-10-09T20:01:03.07Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/4e/9ef193bba00c521be1152791d2ba37a98bdb58ece8f8ce7863b710a4f511/honcho_core-1.5.0-py3-none-any.whl", hash = "sha256:01db345371d6e80230b202c797a73f9f086dc244936522dbc39efb05f4cee306", size = 123210, upload-time = "2025-10-08T18:30:14.277Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/92/87e7c894175fa6aab5e49fac51a234290bc2e46d6723617edc154e0ec675/honcho_core-1.5.1-py3-none-any.whl", hash = "sha256:740cff160e2d9e6dc98ad39f566c1b96f5413ec1abdb415d2fd70f66151cf61a", size = 123292, upload-time = "2025-10-09T20:01:01.57Z" },
 ]
 
 [[package]]

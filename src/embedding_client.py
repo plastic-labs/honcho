@@ -350,7 +350,7 @@ class EmbeddingClient:
                     self._instance = _EmbeddingClient(
                         api_key=api_key, provider=provider
                     )
-                    logger.info(
+                    logger.debug(
                         f"Initialized embedding client with provider: {provider}"
                     )
 

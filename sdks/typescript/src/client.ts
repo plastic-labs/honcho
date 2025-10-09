@@ -315,6 +315,20 @@ export class Honcho {
   }
 
   /**
+   * Delete a workspace.
+   *
+   * Makes an API call to delete the specified workspace.
+   *
+   * @param workspaceId - The ID of the workspace to delete
+   * @returns Promise resolving to the deleted Workspace object
+   */
+  async deleteWorkspace(
+    workspaceId: string
+  ): Promise<Awaited<ReturnType<typeof this._client.workspaces.delete>>> {
+    return await this._client.workspaces.delete(workspaceId)
+  }
+
+  /**
    * Search for messages in the current workspace.
    *
    * Makes an API call to search for messages in the current workspace.
