@@ -320,6 +320,20 @@ async def chat(
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = time.perf_counter()
     if stream:
+        elapsed = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "response",
+            "(no logged response, streaming=true)",
+            "blob",
+        )
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "duration_to_streaming",
+            elapsed,
+            "ms",
+        )
+        log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
         return await dialectic_stream(
             query,
             working_representation_str,
@@ -342,6 +356,12 @@ async def chat(
     dialectic_call_duration = (time.perf_counter() - dialectic_call_start_time) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
+        "response",
+        response,
+        "blob",
+    )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
         "dialectic_call",
         dialectic_call_duration,
         "ms",
@@ -354,5 +374,4 @@ async def chat(
     )
 
     log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
-    # Convert AnthropicCallResponse to string for compatibility
-    return str(response)
+    return response

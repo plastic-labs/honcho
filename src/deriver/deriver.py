@@ -65,6 +65,8 @@ async def critical_analysis_call(
         json_mode=True,
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+        reasoning_effort="minimal",
+        verbosity="medium",
         enable_retry=True,
         retry_attempts=3,
     )
