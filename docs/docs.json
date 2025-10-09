@@ -14,9 +14,9 @@
   "navigation": {
     "versions": [
       {
-        "version": "v2.3.3",
+        "version": "v2.4.0",
         "api": {
-          "openapi": ["openapi.documented.yml"]
+          "openapi": ["openapi.documented.json"]
         },
         "tabs": [
           {
@@ -147,10 +147,7 @@
                   "v2/api-reference/endpoint/messages/create-messages-with-file"
                 ]
               },
-              {
-                "group": "keys",
-                "pages": ["v2/api-reference/endpoint/keys/create-key"]
-              },
+
               {
                 "group": "webhooks",
                 "pages": [
@@ -158,6 +155,13 @@
                   "v2/api-reference/endpoint/webhooks/get-or-create-webhook-endpoint",
                   "v2/api-reference/endpoint/webhooks/delete-webhook-endpoint",
                   "v2/api-reference/endpoint/webhooks/test-emit"
+                ]
+              },
+              {
+                "group": "miscellaneous",
+                "pages": [
+                  "v2/api-reference/endpoint/keys/create-key",
+                  "v2/api-reference/endpoint/metrics"
                 ]
               }
             ]

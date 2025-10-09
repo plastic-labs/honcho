@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.4.0] - 2025-10-08
+
+### Added
+
+- Unified `Representation` class
+- vllm client support
+- Periodic queue cleanup logic
+- WIP Dreaming Feature
+- LongMemEval to Test Bench
+- Prometheus Client for better Metrics
+- Performance metrics instrumentation
+- Error reporting to deriver
+
+### Changed
+
+- Working Representations are Queried on the fly rather than cached in metadata
+- EmbeddingStore to RepresentationFactory
+- Summary Response Model to use public_id of message for cutoff
+- Semantic across codebase to reference resources based on `observer` and `observed`
+- Prompts for Deriver & Dialectic to reference peer_id and add examples
+- `Get Context` route returns peer card and representation in addition to messages and summaries
+
 ## [2.3.3] — 2025-10-01
 
 ### Changed

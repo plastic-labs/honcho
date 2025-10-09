@@ -47,7 +47,7 @@ from .session import Session
 from .session_context import SessionContext, SessionSummaries, Summary
 from .types import DialecticStreamResponse
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __author__ = "Plastic Labs"
 __email__ = "hello@plasticlabs.ai"
 

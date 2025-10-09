@@ -673,7 +673,7 @@ wheels = [
 
 [[package]]
 name = "honcho"
-version = "2.3.3"
+version = "2.4.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
