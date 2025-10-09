@@ -1,3 +1,4 @@
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { z } from 'zod'
 
 /**
@@ -124,15 +125,55 @@ export const ChatQuerySchema = z.object({
 })
 
 /**
+ * Schema for validating Message objects from the core SDK.
+ */
+const MessageSchema: z.ZodType<Message> = z.object({
+  id: z.string(),
+  content: z.string(),
+  created_at: z.string(),
+  peer_id: z.string(),
+  session_id: z.string(),
+  token_count: z.number(),
+  workspace_id: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}) as z.ZodType<Message>
+
+/**
  * Schema for context retrieval parameters.
  */
-export const ContextParamsSchema = z.object({
-  summary: z.boolean().optional(),
-  tokens: z
-    .number()
-    .positive('Token limit must be a positive number')
-    .optional(),
-})
+export const ContextParamsSchema = z
+  .object({
+    summary: z.boolean().optional(),
+    tokens: z
+      .number()
+      .positive('Token limit must be a positive number')
+      .optional(),
+    lastUserMessage: z
+      .union([
+        z.string().min(1, 'Last user message must be a non-empty string'),
+        MessageSchema,
+      ])
+      .optional(),
+    peerTarget: PeerIdSchema.optional(),
+    peerPerspective: PeerIdSchema.optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.lastUserMessage && !data.peerTarget) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'peerTarget is required when lastUserMessage is provided',
+        path: ['lastUserMessage'],
+      })
+    }
+
+    if (data.peerPerspective && !data.peerTarget) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'peerTarget is required when peerPerspective is provided',
+        path: ['peerPerspective'],
+      })
+    }
+  })
 
 /**
  * Schema for deriver status options.
