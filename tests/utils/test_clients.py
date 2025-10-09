@@ -545,7 +545,10 @@ class TestGoogleClient:
         mock_response.candidates = [
             Mock(token_count=5, finish_reason=mock_finish_reason)
         ]
-        mock_client.models.generate_content.return_value = mock_response
+        # Mock the async aio interface
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
 
         with patch.dict(CLIENTS, {"google": mock_client}):
             response = await honcho_llm_call_inner(
@@ -572,7 +575,10 @@ class TestGoogleClient:
         mock_response.candidates = [
             Mock(token_count=10, finish_reason=mock_finish_reason)
         ]
-        mock_client.models.generate_content.return_value = mock_response
+        # Mock the async aio interface
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
 
         with patch.dict(CLIENTS, {"google": mock_client}):
             _response = await honcho_llm_call_inner(
@@ -584,8 +590,8 @@ class TestGoogleClient:
             )
 
             # Verify JSON mode was set in config
-            mock_client.models.generate_content.assert_called_once()
-            call_args = mock_client.models.generate_content.call_args
+            mock_aio.models.generate_content.assert_called_once()
+            call_args = mock_aio.models.generate_content.call_args
             assert (
                 call_args.kwargs["config"]["response_mime_type"] == "application/json"
             )
@@ -603,7 +609,10 @@ class TestGoogleClient:
         mock_response.candidates = [
             Mock(token_count=15, finish_reason=mock_finish_reason)
         ]
-        mock_client.models.generate_content.return_value = mock_response
+        # Mock the async aio interface
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
 
         with patch.dict(CLIENTS, {"google": mock_client}):
             response = await honcho_llm_call_inner(
@@ -620,8 +629,8 @@ class TestGoogleClient:
             assert response.content.age == 25
 
             # Verify structured output config
-            mock_client.models.generate_content.assert_called_once()
-            call_args = mock_client.models.generate_content.call_args
+            mock_aio.models.generate_content.assert_called_once()
+            call_args = mock_aio.models.generate_content.call_args
             config = call_args.kwargs["config"]
             assert config["response_mime_type"] == "application/json"
             assert config["response_schema"] == SampleTestModel
@@ -682,7 +691,10 @@ class TestGoogleClient:
         mock_response = Mock()
         mock_response.text = "Response text"
         mock_response.candidates = []  # Empty candidates
-        mock_client.models.generate_content.return_value = mock_response
+        # Mock the async aio interface
+        mock_aio = Mock()
+        mock_aio.models.generate_content = AsyncMock(return_value=mock_response)
+        mock_client.aio = mock_aio
 
         with patch.dict(CLIENTS, {"google": mock_client}):
             response = await honcho_llm_call_inner(
