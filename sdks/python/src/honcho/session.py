@@ -445,6 +445,12 @@ class Session(BaseModel):
             Token counting is performed using tiktoken. For models using different
             tokenizers, you may need to adjust the token limit accordingly.
         """
+
+        if peer_perspective is not None and peer_target is None:
+            raise ValueError(
+                "You must provide a `peer_target` when `peer_perspective` is provided"
+            )
+
         last_user_message_id = (
             last_user_message.id
             if isinstance(last_user_message, Message)
