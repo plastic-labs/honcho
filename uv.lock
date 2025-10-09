@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.13'",
@@ -780,7 +780,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "honcho-core", specifier = ">=1.4.1a0" },
+    { name = "honcho-core", specifier = ">=1.5.0" },
     { name = "httpx", specifier = ">=0.28.0,<1" },
     { name = "pydantic", specifier = ">=2.0.0,<3" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'", specifier = ">=4.12.0" },
@@ -791,7 +791,7 @@ dev = [{ name = "ruff", specifier = ">=0.11.13" }]
 
 [[package]]
 name = "honcho-core"
-version = "1.4.1a0"
+version = "1.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -801,9 +801,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/2f/fbf3ca017ffcdaef92e26fe84b77268c1c0b26f95e282d8684f50932d81a/honcho_core-1.4.1a0.tar.gz", hash = "sha256:e0023f46c65500d727e3fb1275781ae1e0b162c226a01352afd45c421c5f350b", size = 130826, upload-time = "2025-10-01T03:23:27.143Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/75/cd/05d2a21afd037673637e390de411cd66ca56b07e524cd7ead65c655a2b49/honcho_core-1.5.0.tar.gz", hash = "sha256:4876195dad16db437117d40a1d5e34ff88974e8eca6d093f3653b4ac2bda3c6d", size = 132236, upload-time = "2025-10-08T18:30:15.777Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/83/5f/2aa746b7fd92690ef782dcacc56a5c47a19a999b9729597c04c7cc509e52/honcho_core-1.4.1a0-py3-none-any.whl", hash = "sha256:8b4c86e3ac3964ff56fe6a449b9fa23be49530609c34bdf35c9ecde7cd871bba", size = 121704, upload-time = "2025-10-01T03:23:25.66Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/4e/9ef193bba00c521be1152791d2ba37a98bdb58ece8f8ce7863b710a4f511/honcho_core-1.5.0-py3-none-any.whl", hash = "sha256:01db345371d6e80230b202c797a73f9f086dc244936522dbc39efb05f4cee306", size = 123210, upload-time = "2025-10-08T18:30:14.277Z" },
 ]
 
 [[package]]

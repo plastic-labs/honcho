@@ -4,7 +4,7 @@
     "": {
       "name": "@honcho-ai/sdk",
       "dependencies": {
-        "@honcho-ai/core": "^1.4.1-alpha.0",
+        "@honcho-ai/core": "^1.5.0",
         "@types/node": "^24.0.1",
         "zod": "4.0.0",
       },
@@ -108,7 +108,7 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@honcho-ai/core": ["@honcho-ai/core@1.4.1-alpha.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-cRp3ug8cBe9E7NZDgCXkI0EHIgm8x5Jq/nQB0xA5629GuniS99yq6M786I//FjOZhB2YEZoOxd4Zkg412uk5Yg=="],
+    "@honcho-ai/core": ["@honcho-ai/core@1.5.0", "", { "dependencies": { "@types/node": "^18.11.18", "@types/node-fetch": "^2.6.4", "abort-controller": "^3.0.0", "agentkeepalive": "^4.2.1", "form-data-encoder": "1.7.2", "formdata-node": "^4.3.2", "node-fetch": "^2.6.7" } }, "sha512-kjYhCO0S9Ll3DfVpK8MetjY1PlD9FG6QGtudlMnSwfTWGzXFjL/OafpoE3SZ3c9BVY48JIbW9IttFUZFekv/xg=="],
 
     "@istanbuljs/load-nyc-config": ["@istanbuljs/load-nyc-config@1.1.0", "", { "dependencies": { "camelcase": "^5.3.1", "find-up": "^4.1.0", "get-package-type": "^0.1.0", "js-yaml": "^3.13.1", "resolve-from": "^5.0.0" } }, "sha512-VjeHSlIzpv/NyD3N0YuHfXOPDIixcA1q2ZV98wsMqcYlPmv2n3Yb2lYP9XMElnaFVXg5A7YLTeLu6V84uQDjmQ=="],
 
