@@ -106,8 +106,6 @@ class QueueManager:
         """Setup signal handlers, initialize client, and start the main polling loop"""
         logger.debug(f"Initializing QueueManager with {self.workers} workers")
 
-        set_dream_scheduler(self.dream_scheduler)
-
         # Set up signal handlers
         loop = asyncio.get_running_loop()
         signals = (signal.SIGTERM, signal.SIGINT)

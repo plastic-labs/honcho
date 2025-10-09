@@ -407,17 +407,17 @@ class Session(BaseModel):
         tokens: int | None = Field(
             None, gt=0, description="Maximum number of tokens to include in the context"
         ),
-        last_user_message: str | None = Field(
-            None,
-            description="The most recent message, used to fetch semantically relevant observations and returned as part of the context object",
-        ),
         peer_target: str | None = Field(
             None,
-            description="The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.",
+            description="A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.",
+        ),
+        last_user_message: str | Message | None = Field(
+            None,
+            description="The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.",
         ),
         peer_perspective: str | None = Field(
             None,
-            description="A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.",
+            description="A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.",
         ),
     ) -> SessionContext:
         """
@@ -432,9 +432,9 @@ class Session(BaseModel):
             summary: Whether to include summary information
             tokens: Maximum number of tokens to include in the context. Will default
             to Honcho server configuration if not provided.
-            last_user_message: The most recent message, used to fetch semantically relevant observations and returned as part of the context object
-            peer_target: The target of the perspective. If given without `peer_perspective`, will get the Honcho-level representation and peer card for this peer. If given with `peer_perspective`, will get the representation and card for this peer *from the perspective of that peer*.
-            peer_perspective: A peer to get context for. If given, response will attempt to include representation and card from the perspective of that peer. Must be provided with `peer_target`.
+            peer_target: A peer ID to get context for. If given *without* `peer_perspective`, a representation and peer card will be included from the omniscient Honcho-level view of `peer_target`. If given *with* `peer_perspective`, will get the representation and card for `peer_target` *from the perspective of `peer_perspective`*.
+            last_user_message: The most recent message (string or Message object), used to fetch semantically relevant observations and returned as part of the context object. Use this alongside `peer_target` to get a more focused context -- does nothing if `peer_target` is not provided.
+            peer_perspective: A peer ID to get context *from the perspective of*. If given, response will attempt to include representation and card from the perspective of `peer_perspective`. Must be provided with `peer_target`.
 
         Returns:
             A SessionContext object containing the optimized message history and
@@ -445,12 +445,19 @@ class Session(BaseModel):
             Token counting is performed using tiktoken. For models using different
             tokenizers, you may need to adjust the token limit accordingly.
         """
+        last_user_message_id = (
+            last_user_message.id
+            if isinstance(last_user_message, Message)
+            else last_user_message
+        )
         context = self._client.workspaces.sessions.get_context(
             session_id=self.id,
             workspace_id=self.workspace_id,
             tokens=tokens if tokens is not None else omit,
             summary=summary,
-            last_message=last_user_message if last_user_message is not None else omit,
+            last_message=last_user_message_id
+            if last_user_message_id is not None
+            else omit,
             peer_target=peer_target if peer_target is not None else omit,
             peer_perspective=peer_perspective if peer_perspective is not None else omit,
         )

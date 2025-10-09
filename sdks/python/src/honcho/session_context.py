@@ -135,29 +135,30 @@ class SessionContext(BaseModel):
             }
             for message in self.messages
         ]
+        system_messages: list[dict[str, str]] = []
 
         if self.peer_representation:
             peer_representation_message = {
                 "role": "system",
                 "content": f"<peer_representation>{self.peer_representation}</peer_representation>",
             }
-            messages.insert(0, peer_representation_message)
+            system_messages.append(peer_representation_message)
 
         if self.peer_card:
             peer_card_message = {
                 "role": "system",
                 "content": f"<peer_card>{self.peer_card}</peer_card>",
             }
-            messages.insert(0, peer_card_message)
+            system_messages.append(peer_card_message)
 
         if self.summary:
             summary_message = {
                 "role": "system",
                 "content": f"<summary>{self.summary.content}</summary>",
             }
-            messages.insert(0, summary_message)
+            system_messages.append(summary_message)
 
-        return messages
+        return system_messages + messages
 
     def to_anthropic(
         self,
@@ -197,29 +198,30 @@ class SessionContext(BaseModel):
             }
             for message in self.messages
         ]
+        system_messages: list[dict[str, str]] = []
 
         if self.peer_representation:
             peer_representation_message = {
                 "role": "user",
                 "content": f"<peer_representation>{self.peer_representation}</peer_representation>",
             }
-            messages.insert(0, peer_representation_message)
+            system_messages.append(peer_representation_message)
 
         if self.peer_card:
             peer_card_message = {
                 "role": "user",
                 "content": f"<peer_card>{self.peer_card}</peer_card>",
             }
-            messages.insert(0, peer_card_message)
+            system_messages.append(peer_card_message)
 
         if self.summary:
             summary_message = {
                 "role": "user",
                 "content": f"<summary>{self.summary.content}</summary>",
             }
-            messages.insert(0, summary_message)
+            system_messages.append(summary_message)
 
-        return messages
+        return system_messages + messages
 
     def __len__(self) -> int:
         """
