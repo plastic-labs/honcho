@@ -1,6 +1,6 @@
 {
   "name": "@honcho-ai/sdk",
-  "version": "1.5.1",
+  "version": "1.5.0",
   "description": "Official DX Optimized TypeScript SDK for Honcho",
   "author": "Plastic Labs <hello@plasticlabs.ai>",
   "license": "Apache-2.0",
