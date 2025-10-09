@@ -148,7 +148,12 @@ export const ContextParamsSchema = z
       .number()
       .positive('Token limit must be a positive number')
       .optional(),
-    lastUserMessage: z.union([z.string(), MessageSchema]).optional(),
+    lastUserMessage: z
+      .union([
+        z.string().min(1, 'Last user message must be a non-empty string'),
+        MessageSchema,
+      ])
+      .optional(),
     peerTarget: PeerIdSchema.optional(),
     peerPerspective: PeerIdSchema.optional(),
   })
