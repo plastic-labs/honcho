@@ -46,7 +46,6 @@ dev-dependencies = [
     "pre-commit>=4.2.0",
     "pytest-cov>=6.2.1",
     "honcho-ai",
-    "textual>=6.2.1",
 ]
 
 [tool.uv.workspace]

@@ -470,7 +470,9 @@ class Session(BaseModel):
             session_id=self.id,
             messages=context.messages,
             summary=session_summary,
-            peer_representation=context.peer_representation,
+            peer_representation=str(context.peer_representation)
+            if context.peer_representation
+            else None,
             peer_card=context.peer_card,
         )
 

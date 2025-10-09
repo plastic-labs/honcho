@@ -503,7 +503,9 @@ export class Session {
       this.id,
       context.messages,
       summary,
-      context.peer_representation ?? null,
+      context.peer_representation
+        ? JSON.stringify(context.peer_representation)
+        : null,
       context.peer_card ?? null
     )
   }

@@ -306,8 +306,8 @@ class AppSettings(HonchoSettings):
     LOG_LEVEL: str = "INFO"
     SESSION_OBSERVERS_LIMIT: Annotated[int, Field(default=10, gt=0)] = 10
     MAX_FILE_SIZE: Annotated[int, Field(default=5_242_880, gt=0)] = 5_242_880  # 5MB
-    GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=10_000, gt=0, le=250_000)] = (
-        10_000
+    GET_CONTEXT_MAX_TOKENS: Annotated[int, Field(default=100_000, gt=0, le=250_000)] = (
+        100_000
     )
 
     MAX_MESSAGE_SIZE: Annotated[int, Field(default=25_000, gt=0)] = 25_000
