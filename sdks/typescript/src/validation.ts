@@ -149,8 +149,8 @@ export const ContextParamsSchema = z
       .positive('Token limit must be a positive number')
       .optional(),
     lastUserMessage: z.union([z.string(), MessageSchema]).optional(),
-    peerTarget: z.string().optional(),
-    peerPerspective: z.string().optional(),
+    peerTarget: PeerIdSchema.optional(),
+    peerPerspective: PeerIdSchema.optional(),
   })
   .superRefine((data, ctx) => {
     if (data.lastUserMessage && !data.peerTarget) {

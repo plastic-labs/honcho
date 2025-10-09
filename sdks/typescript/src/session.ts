@@ -473,19 +473,70 @@ export class Session {
    * @note Token counting is performed using tiktoken. For models using different
    *       tokenizers, you may need to adjust the token limit accordingly.
    */
+  async getContext(
+    summary?: boolean,
+    tokens?: number,
+    peerTarget?: string,
+    lastUserMessage?: string | Message,
+    peerPerspective?: string
+  ): Promise<SessionContext>
   async getContext(options?: {
     summary?: boolean
     tokens?: number
     peerTarget?: string
     lastUserMessage?: string | Message
     peerPerspective?: string
-  }): Promise<SessionContext> {
+  }): Promise<SessionContext>
+  async getContext(
+    summaryOrOptions?:
+      | boolean
+      | {
+          summary?: boolean
+          tokens?: number
+          peerTarget?: string
+          lastUserMessage?: string | Message
+          peerPerspective?: string
+        },
+    tokens?: number,
+    peerTarget?: string,
+    lastUserMessage?: string | Message,
+    peerPerspective?: string
+  ): Promise<SessionContext> {
+    // Normalize positional arguments into options object
+    let options: {
+      summary?: boolean
+      tokens?: number
+      peerTarget?: string
+      lastUserMessage?: string
+      peerPerspective?: string
+    }
+
+    if (
+      typeof summaryOrOptions === 'boolean' ||
+      (summaryOrOptions === undefined && arguments.length > 1)
+    ) {
+      // Positional arguments pattern
+      options = {
+        summary: summaryOrOptions as boolean | undefined,
+        tokens,
+        peerTarget,
+        lastUserMessage:
+          typeof lastUserMessage === 'string'
+            ? lastUserMessage
+            : lastUserMessage?.id,
+        peerPerspective,
+      }
+    } else {
+      // Options object pattern
+      options = (summaryOrOptions as typeof options) || {}
+    }
+
     const contextParams = ContextParamsSchema.parse({
-      summary: options?.summary,
-      tokens: options?.tokens,
-      peerTarget: options?.peerTarget,
-      lastUserMessage: options?.lastUserMessage,
-      peerPerspective: options?.peerPerspective,
+      summary: options.summary,
+      tokens: options.tokens,
+      peerTarget: options.peerTarget,
+      lastUserMessage: options.lastUserMessage,
+      peerPerspective: options.peerPerspective,
     })
 
     // Extract message ID if lastUserMessage is a Message object
