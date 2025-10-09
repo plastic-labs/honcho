@@ -7,7 +7,7 @@ from fastapi_pagination import Page
 from fastapi_pagination.ext.sqlalchemy import apaginate
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import config, crud, models, schemas
+from src import config, crud, schemas
 from src.dependencies import db, tracked_db
 from src.exceptions import (
     AuthenticationException,
@@ -87,7 +87,7 @@ async def _get_session_context_task(
     session_id: str,
     token_limit: int,
     include_summary: bool,
-) -> tuple[schemas.Summary | None, list[models.Message]]:
+) -> tuple[schemas.Summary | None, list[schemas.Message]]:
     """
     Atomic task to get session context using tracked_db.
 
@@ -101,13 +101,16 @@ async def _get_session_context_task(
         Tuple of (summary, messages)
     """
     async with tracked_db("get_session_context") as db:
-        return await summarizer.get_session_context(
+        summary, messages = await summarizer.get_session_context(
             db,
             workspace_name=workspace_id,
             session_name=session_id,
             token_limit=token_limit,
             include_summary=include_summary,
         )
+        # Convert SQLAlchemy models to Pydantic schemas while session is active
+        message_schemas = [schemas.Message.model_validate(msg) for msg in messages]
+        return summary, message_schemas
 
 
 @router.post(
@@ -501,7 +504,7 @@ async def get_session_context(
         )
         return schemas.SessionContext(
             name=session_id,
-            messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
+            messages=messages,
             summary=summary,
         )
 
@@ -540,7 +543,7 @@ async def get_session_context(
 
     return schemas.SessionContext(
         name=session_id,
-        messages=messages,  # pyright: ignore -- db message type and schema message type are different, but excess gets removed by schema
+        messages=messages,
         summary=summary,
         peer_representation=representation,
         peer_card=card,

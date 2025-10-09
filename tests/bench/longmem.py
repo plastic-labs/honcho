@@ -44,6 +44,7 @@ Optional arguments:
 --json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file in tests/bench/eval_results)
 --merge-sessions: Merge all sessions within a question into a single session (default: False)
 --cleanup-workspace: Delete workspace after executing each question (default: False)
+--use-get-context: Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)
 ```
 
 ## Other notes
@@ -59,10 +60,11 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import tiktoken
 from anthropic import AsyncAnthropic
+from anthropic.types import MessageParam
 from dotenv import load_dotenv
 from honcho import AsyncHoncho
 from honcho.async_client.session import SessionPeerConfig
@@ -123,6 +125,7 @@ class LongMemEvalRunner:
         timeout_seconds: int | None = None,
         merge_sessions: bool = False,
         cleanup_workspace: bool = False,
+        use_get_context: bool = False,
     ):
         """
         Initialize the test runner.
@@ -134,6 +137,7 @@ class LongMemEvalRunner:
             timeout_seconds: Timeout for deriver queue in seconds
             merge_sessions: If True, merge all sessions within a question into one session
             cleanup_workspace: If True, delete workspace after executing question (default: False)
+            use_get_context: If True, use get_context + judge LLM instead of dialectic .chat endpoint
         """
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
@@ -143,6 +147,7 @@ class LongMemEvalRunner:
         )
         self.merge_sessions: bool = merge_sessions
         self.cleanup_workspace: bool = cleanup_workspace
+        self.use_get_context: bool = use_get_context
 
         # Initialize metrics collector
         self.metrics_collector: MetricsCollector = MetricsCollector()
@@ -396,7 +401,7 @@ Actual response: "{actual_response}"
 Evaluate whether the actual response correctly answers the question based on the expected answer. Focus on factual accuracy and evidence that the AI accessed the correct memory."""
 
             response = await self.anthropic_client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-5",
                 max_tokens=300,
                 temperature=0.0,
                 system=system_prompt,
@@ -621,6 +626,7 @@ Evaluate whether the actual response correctly answers the question based on the
                     )
                 )
             else:
+                merged_session_id = None
                 # create separate sessions
                 # Zip together dates, session IDs, and session content
                 for session_date, session_id, session_messages in zip(
@@ -732,13 +738,51 @@ Evaluate whether the actual response correctly answers the question based on the
             output_lines.append(f"\nAsking question: {question_with_date}")
 
             try:
-                # Use the appropriate peer based on question type
-                if is_assistant_type:
-                    # For assistant questions, use the assistant peer
-                    actual_response = await assistant_peer.chat(question_with_date)
+                if self.use_get_context:
+                    # Use get_context instead of dialectic .chat endpoint
+                    # Get the session to retrieve context from
+                    if not self.merge_sessions or merged_session_id is None:
+                        raise ValueError(
+                            "Merged session ID is required when using get_context. Set --merge-sessions to True."
+                        )
+                    session = await honcho_client.session(id=merged_session_id)
+
+                    # Get context for the appropriate peer
+                    peer_id = "assistant" if is_assistant_type else "user"
+                    context = await session.get_context(
+                        summary=True,
+                        peer_target=peer_id,
+                        last_user_message=question,
+                    )
+
+                    # Format context using to_anthropic method
+                    context_messages = context.to_anthropic(assistant="assistant")
+
+                    # Add the question as the final user message
+                    context_messages.append(
+                        {"role": "user", "content": question_with_date}
+                    )
+
+                    # Call Anthropic API to generate response
+                    response = await self.anthropic_client.messages.create(
+                        model="claude-sonnet-4-5",
+                        max_tokens=1024,
+                        messages=cast(list[MessageParam], context_messages),
+                    )
+
+                    if not response.content:
+                        raise ValueError("Anthropic returned empty response")
+
+                    content_block = response.content[0]
+                    actual_response = getattr(content_block, "text", "")
                 else:
-                    # For user questions, use the user peer (default behavior)
-                    actual_response = await user_peer.chat(question_with_date)
+                    # Use the appropriate peer based on question type
+                    if is_assistant_type:
+                        # For assistant questions, use the assistant peer
+                        actual_response = await assistant_peer.chat(question_with_date)
+                    else:
+                        # For user questions, use the user peer (default behavior)
+                        actual_response = await user_peer.chat(question_with_date)
 
                 # Clean up workspace if requested
                 if self.cleanup_workspace:
@@ -1158,6 +1202,12 @@ Examples:
         help="Delete workspace after executing each question (default: False)",
     )
 
+    parser.add_argument(
+        "--use-get-context",
+        action="store_true",
+        help="Use get_context + judge LLM instead of dialectic .chat endpoint (default: False)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -1181,6 +1231,7 @@ Examples:
         timeout_seconds=args.timeout,
         merge_sessions=args.merge_sessions,
         cleanup_workspace=args.cleanup_workspace,
+        use_get_context=args.use_get_context,
     )
 
     try:
