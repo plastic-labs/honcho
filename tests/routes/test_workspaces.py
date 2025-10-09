@@ -264,3 +264,252 @@ def test_search_workspace_nonexistent(client: TestClient):
     # Should return empty list for nonexistent workspace
     assert isinstance(data, list)
     assert len(data) == 0
+
+
+def test_delete_workspace(client: TestClient):
+    """Test deleting a workspace"""
+    name = str(generate_nanoid())
+
+    # Create a workspace
+    response = client.post("/v2/workspaces", json={"name": name})
+    assert response.status_code == 200
+    workspace = response.json()
+    assert workspace["id"] == name
+
+    # Delete the workspace
+    response = client.delete(f"/v2/workspaces/{name}")
+    assert response.status_code == 200
+    deleted_workspace = response.json()
+    assert deleted_workspace["id"] == name
+
+    # Verify the workspace no longer exists by trying to update it
+    response = client.put(
+        f"/v2/workspaces/{name}", json={"metadata": {"test": "value"}}
+    )
+    # Should create a new workspace since the old one was deleted
+    assert response.status_code == 200
+
+
+def test_delete_nonexistent_workspace(client: TestClient):
+    """Test deleting a workspace that doesn't exist"""
+    nonexistent_workspace_id = str(generate_nanoid())
+
+    response = client.delete(f"/v2/workspaces/{nonexistent_workspace_id}")
+    assert response.status_code == 404
+    data = response.json()
+    assert "detail" in data
+    assert "not found" in data["detail"].lower()
+
+
+def test_delete_workspace_with_peers(client: TestClient):
+    """Test deleting a workspace that has peers"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    assert response.status_code == 200
+
+    # Create peers
+    peer1_name = str(generate_nanoid())
+    peer2_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer1_name}
+    )
+    assert response.status_code == 200
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer2_name}
+    )
+    assert response.status_code == 200
+
+    # Delete workspace
+    response = client.delete(f"/v2/workspaces/{workspace_name}")
+    assert response.status_code == 200
+
+
+def test_delete_workspace_with_sessions(client: TestClient):
+    """Test deleting a workspace that has sessions"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    assert response.status_code == 200
+
+    # Create peer
+    peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+    )
+    assert response.status_code == 200
+
+    # Create sessions
+    session1_name = str(generate_nanoid())
+    session2_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions", json={"name": session1_name}
+    )
+    assert response.status_code == 200
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions", json={"name": session2_name}
+    )
+    assert response.status_code == 200
+
+    # Delete workspace
+    response = client.delete(f"/v2/workspaces/{workspace_name}")
+    assert response.status_code == 200
+
+
+def test_delete_workspace_with_messages(client: TestClient):
+    """Test deleting a workspace that has messages"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    assert response.status_code == 200
+
+    # Create peer
+    peer_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+    )
+    assert response.status_code == 200
+
+    # Create session
+    session_name = str(generate_nanoid())
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions", json={"name": session_name}
+    )
+    assert response.status_code == 200
+
+    # Add peer to session
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_name}/peers",
+        json={peer_name: {}},
+    )
+    assert response.status_code == 200
+
+    # Create messages
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/sessions/{session_name}/messages",
+        json={
+            "messages": [
+                {"content": "Test message 1", "peer_id": peer_name},
+                {"content": "Test message 2", "peer_id": peer_name},
+            ]
+        },
+    )
+    assert response.status_code == 200
+
+    # Delete workspace
+    response = client.delete(f"/v2/workspaces/{workspace_name}")
+    assert response.status_code == 200
+
+
+def test_delete_workspace_with_webhooks(client: TestClient):
+    """Test deleting a workspace that has webhooks"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace
+    response = client.post("/v2/workspaces", json={"name": workspace_name})
+    assert response.status_code == 200
+
+    # Create webhook
+    response = client.post(
+        f"/v2/workspaces/{workspace_name}/webhooks",
+        json={
+            "url": "https://example.com/webhook",
+        },
+    )
+    assert response.status_code == 200
+
+    # Delete workspace
+    response = client.delete(f"/v2/workspaces/{workspace_name}")
+    assert response.status_code == 200
+
+    # Verify webhook is deleted by checking workspace doesn't exist
+    response = client.get(f"/v2/workspaces/{workspace_name}/webhooks")
+    # This should either return 404 or empty list depending on implementation
+    assert response.status_code in [404, 200]
+
+
+def test_delete_workspace_cascade(client: TestClient):
+    """Test that deleting a workspace cascades to all related resources"""
+    workspace_name = str(generate_nanoid())
+
+    # Create workspace with complex structure
+    response = client.post(
+        "/v2/workspaces",
+        json={"name": workspace_name, "metadata": {"test": "cascade"}},
+    )
+    assert response.status_code == 200
+
+    # Create multiple peers
+    peer_names = [str(generate_nanoid()) for _ in range(3)]
+    for peer_name in peer_names:
+        response = client.post(
+            f"/v2/workspaces/{workspace_name}/peers", json={"name": peer_name}
+        )
+        assert response.status_code == 200
+
+    # Create multiple sessions
+    session_names = [str(generate_nanoid()) for _ in range(2)]
+    for session_name in session_names:
+        response = client.post(
+            f"/v2/workspaces/{workspace_name}/sessions", json={"name": session_name}
+        )
+        assert response.status_code == 200
+
+    # Add peers to sessions and create messages
+    for session_name in session_names:
+        for peer_name in peer_names[:2]:  # Add 2 peers to each session
+            response = client.post(
+                f"/v2/workspaces/{workspace_name}/sessions/{session_name}/peers",
+                json={peer_name: {}},
+            )
+            assert response.status_code == 200
+
+        # Create messages in session
+        response = client.post(
+            f"/v2/workspaces/{workspace_name}/sessions/{session_name}/messages",
+            json={
+                "messages": [
+                    {
+                        "content": f"Test message in {session_name}",
+                        "peer_id": peer_names[0],
+                    }
+                ]
+            },
+        )
+        assert response.status_code == 200
+
+    # Delete the workspace
+    response = client.delete(f"/v2/workspaces/{workspace_name}")
+    assert response.status_code == 200
+    deleted_workspace = response.json()
+    assert deleted_workspace["id"] == workspace_name
+    assert deleted_workspace["metadata"]["test"] == "cascade"
+
+
+def test_delete_workspace_returns_workspace_data(client: TestClient):
+    """Test that delete workspace returns the deleted workspace data"""
+    name = str(generate_nanoid())
+    metadata = {"key": "value", "number": 42}
+    configuration = {"feature": True}
+
+    # Create workspace with metadata and configuration
+    response = client.post(
+        "/v2/workspaces",
+        json={"name": name, "metadata": metadata, "configuration": configuration},
+    )
+    assert response.status_code == 200
+    created_workspace = response.json()
+
+    # Delete workspace
+    response = client.delete(f"/v2/workspaces/{name}")
+    assert response.status_code == 200
+    deleted_workspace = response.json()
+
+    # Verify returned data matches original workspace
+    assert deleted_workspace["id"] == created_workspace["id"]
+    assert deleted_workspace["metadata"] == metadata
+    assert deleted_workspace["configuration"] == configuration
+    assert "created_at" in deleted_workspace

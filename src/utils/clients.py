@@ -370,8 +370,6 @@ async def honcho_llm_call_inner(
                 "model": params["model"],
                 "messages": params["messages"],
             }
-            if stop_seqs:
-                openai_params["stop"] = stop_seqs
             if "gpt-5" in model:
                 openai_params["max_completion_tokens"] = params["max_tokens"]
                 if reasoning_effort:
@@ -399,6 +397,8 @@ async def honcho_llm_call_inner(
                         "schema": response_model.model_json_schema(),
                     },
                 }
+                if stop_seqs:
+                    openai_params["stop"] = stop_seqs
                 response: ChatCompletion = await client.chat.completions.create(  # pyright: ignore
                     **openai_params
                 )
@@ -505,7 +505,7 @@ async def honcho_llm_call_inner(
         case genai.Client():
             if response_model is None:
                 gemini_response: GenerateContentResponse = (
-                    client.models.generate_content(
+                    await client.aio.models.generate_content(
                         model=model,
                         contents=prompt,
                         config={
@@ -537,7 +537,7 @@ async def honcho_llm_call_inner(
                 )
 
             else:
-                gemini_response = client.models.generate_content(
+                gemini_response = await client.aio.models.generate_content(
                     model=model,
                     contents=prompt,
                     config={

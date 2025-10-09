@@ -197,12 +197,11 @@ async def chat(
                 "dialectic_model": settings.DIALECTIC.MODEL,
             }
         )
-    logger.info(
-        "Received query:\n'%s'\nobserver: %s, observed: %s%s\n",
-        query,
-        observer,
-        observed,
-        f", session: {session_name}" if session_name else "",
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "query",
+        f"{query}\n\nobserver: {observer}\nobserved: {observed}\n{f'session: {session_name}' if session_name else ''}",
+        "blob",
     )
     start_time = time.perf_counter()
 
@@ -226,19 +225,28 @@ async def chat(
         working_rep_duration,
         "ms",
     )
-    logger.info(
-        "Retrieved working representation with %s explicit, %s deductive observations",
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "working_rep_explicit",
         len(working_representation.explicit),
+        "count",
+    )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "working_rep_deductive",
         len(working_representation.deductive),
+        "count",
     )
 
     working_representation_str = str(working_representation)
 
     context_window_size -= max(0, estimate_tokens(working_representation_str))
 
-    logger.info(
-        "Constructed working representation:\n%s\n",
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "working_rep",
         working_representation_str,
+        "blob",
     )
 
     # 2. Recent conversation history --------------------------------------------
@@ -252,14 +260,18 @@ async def chat(
                 token_limit=context_window_size,
                 include_summary=True,
             )
-            logger.info("Retrieved recent conversation history")
         else:
             recent_history = None
-            logger.info(
-                "Query is not session-scoped, skipping recent conversation history"
-            )
 
-    context_window_size -= max(0, estimate_tokens(recent_history or ""))
+    recent_history_tokens = estimate_tokens(recent_history or "")
+    context_window_size -= max(0, recent_history_tokens)
+
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
+        "recent_history_tokens",
+        recent_history_tokens,
+        "tokens",
+    )
 
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
@@ -282,9 +294,25 @@ async def chat(
                 observed_peer_card = None
 
         if observed_peer_card:
-            logger.info("Retrieved peer cards:\n%s\n%s", peer_card, observed_peer_card)
+            accumulate_metric(
+                f"dialectic_chat_{dialectic_chat_uuid}",
+                "peer_card",
+                "\n".join(peer_card) if peer_card else "",
+                "blob",
+            )
+            accumulate_metric(
+                f"dialectic_chat_{dialectic_chat_uuid}",
+                "observed_peer_card",
+                "\n".join(observed_peer_card),
+                "blob",
+            )
         else:
-            logger.info("Retrieved peer card:\n%s", peer_card)
+            accumulate_metric(
+                f"dialectic_chat_{dialectic_chat_uuid}",
+                "peer_card",
+                "\n".join(peer_card) if peer_card else "",
+                "blob",
+            )
     else:
         peer_card = None
         observed_peer_card = None
@@ -292,6 +320,20 @@ async def chat(
     # 4. Dialectic call --------------------------------------------------------
     dialectic_call_start_time = time.perf_counter()
     if stream:
+        elapsed = (time.perf_counter() - start_time) * 1000
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "response",
+            "(no logged response, streaming=true)",
+            "blob",
+        )
+        accumulate_metric(
+            f"dialectic_chat_{dialectic_chat_uuid}",
+            "duration_to_streaming",
+            elapsed,
+            "ms",
+        )
+        log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
         return await dialectic_stream(
             query,
             working_representation_str,
@@ -314,6 +356,12 @@ async def chat(
     dialectic_call_duration = (time.perf_counter() - dialectic_call_start_time) * 1000
     accumulate_metric(
         f"dialectic_chat_{dialectic_chat_uuid}",
+        "response",
+        response,
+        "blob",
+    )
+    accumulate_metric(
+        f"dialectic_chat_{dialectic_chat_uuid}",
         "dialectic_call",
         dialectic_call_duration,
         "ms",
@@ -326,5 +374,4 @@ async def chat(
     )
 
     log_performance_metrics("dialectic_chat", dialectic_chat_uuid)
-    # Convert AnthropicCallResponse to string for compatibility
-    return str(response)
+    return response

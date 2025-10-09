@@ -38,10 +38,12 @@ Optional arguments:
 ```
 --anthropic-api-key: Anthropic API key for response judging (can be set in .env as LLM_ANTHROPIC_API_KEY or provided as an argument)
 --timeout: Timeout for deriver queue to empty in seconds (default: 10 minutes)
---honcho-url: URL of the running Honcho instance (default: http://localhost:8000)
+--base-api-port: Base port for Honcho API instances (default: 8000)
+--pool-size: Number of Honcho instances in the pool (default: 1)
 --batch-size: Number of questions to run concurrently in each batch (default: 10)
 --json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file in tests/bench/eval_results)
 --merge-sessions: Merge all sessions within a question into a single session (default: False)
+--cleanup-workspace: Delete workspace after executing each question (default: False)
 ```
 
 ## Other notes
@@ -115,26 +117,32 @@ class LongMemEvalRunner:
 
     def __init__(
         self,
-        honcho_url: str = "http://localhost:8000",
+        base_api_port: int = 8000,
+        pool_size: int = 1,
         anthropic_api_key: str | None = None,
         timeout_seconds: int | None = None,
         merge_sessions: bool = False,
+        cleanup_workspace: bool = False,
     ):
         """
         Initialize the test runner.
 
         Args:
-            honcho_url: URL of the running Honcho instance
+            base_api_port: Base port for Honcho API instances (default: 8000)
+            pool_size: Number of Honcho instances in the pool (default: 1)
             anthropic_api_key: Anthropic API key for judging responses
             timeout_seconds: Timeout for deriver queue in seconds
             merge_sessions: If True, merge all sessions within a question into one session
+            cleanup_workspace: If True, delete workspace after executing question (default: False)
         """
-        self.honcho_url: str = honcho_url
+        self.base_api_port: int = base_api_port
+        self.pool_size: int = pool_size
         self.anthropic_api_key: str | None = anthropic_api_key
         self.timeout_seconds: int = (
             timeout_seconds if timeout_seconds is not None else 10000
         )
         self.merge_sessions: bool = merge_sessions
+        self.cleanup_workspace: bool = cleanup_workspace
 
         # Initialize metrics collector
         self.metrics_collector: MetricsCollector = MetricsCollector()
@@ -161,6 +169,20 @@ class LongMemEvalRunner:
             if not api_key:
                 raise ValueError("LLM_ANTHROPIC_API_KEY is not set")
             self.anthropic_client = AsyncAnthropic(api_key=api_key)
+
+    def get_honcho_url_for_index(self, question_index: int) -> str:
+        """
+        Get the Honcho URL for a given question index using round-robin distribution.
+
+        Args:
+            question_index: Index of the question in the test file
+
+        Returns:
+            URL of the Honcho instance to use for this question
+        """
+        instance_id = question_index % self.pool_size
+        port = self.base_api_port + instance_id
+        return f"http://localhost:{port}"
 
     def _format_duration(self, total_seconds: float) -> str:
         """Format a duration in seconds into a human-readable string.
@@ -201,7 +223,20 @@ class LongMemEvalRunner:
         for session_messages in haystack_sessions:
             for msg in session_messages:
                 content = msg.get("content", "")
-                total_tokens += len(tokenizer.encode(content))
+                try:
+                    total_tokens += len(
+                        tokenizer.encode(
+                            content,
+                            disallowed_special=(
+                                tokenizer.special_tokens_set - {"<|endoftext|>"}
+                            ),
+                        )
+                    )
+                except Exception:
+                    total_tokens += len(content) // 4
+                    self.logger.warning(
+                        f"Error tokenizing content. Using rough estimate of {len(content) // 4} tokens"
+                    )
 
         return total_tokens
 
@@ -281,12 +316,15 @@ class LongMemEvalRunner:
         with open(test_file) as f:
             return json.load(f)
 
-    async def create_honcho_client(self, workspace_id: str) -> AsyncHoncho:
+    async def create_honcho_client(
+        self, workspace_id: str, honcho_url: str
+    ) -> AsyncHoncho:
         """
         Create a Honcho client for a specific workspace.
 
         Args:
             workspace_id: Workspace ID for the test
+            honcho_url: URL of the Honcho instance
 
         Returns:
             AsyncHoncho client instance
@@ -294,7 +332,7 @@ class LongMemEvalRunner:
         return AsyncHoncho(
             environment="local",
             workspace_id=workspace_id,
-            base_url=self.honcho_url,
+            base_url=honcho_url,
         )
 
     async def wait_for_deriver_queue_empty(
@@ -402,12 +440,15 @@ Evaluate whether the actual response correctly answers the question based on the
                 "reasoning": f"Fallback string matching due to error: {'Match found' if is_correct else 'No match found'}",
             }
 
-    async def execute_question(self, question_data: dict[str, Any]) -> TestResult:
+    async def execute_question(
+        self, question_data: dict[str, Any], honcho_url: str
+    ) -> TestResult:
         """
         Execute a single longmemeval question.
 
         Args:
             question_data: Dictionary containing question data
+            honcho_url: URL of the Honcho instance to use
 
         Returns:
             Test execution results
@@ -428,10 +469,11 @@ Evaluate whether the actual response correctly answers the question based on the
         )
         output_lines.append(f"Question: {question_with_date}")
         output_lines.append(f"Expected: {expected_answer}")
+        output_lines.append(f"Using Honcho instance: {honcho_url}")
 
         # Create workspace for this question
         workspace_id = f"{question_id}_{question_type}"
-        honcho_client = await self.create_honcho_client(workspace_id)
+        honcho_client = await self.create_honcho_client(workspace_id, honcho_url)
 
         results: TestResult = {
             "question_id": question_id,
@@ -663,7 +705,9 @@ Evaluate whether the actual response correctly answers the question based on the
                                 )
 
                     if honcho_messages:
-                        await session.add_messages(honcho_messages)
+                        for i in range(0, len(honcho_messages), 100):
+                            batch = honcho_messages[i : i + 100]
+                            await session.add_messages(batch)
 
                     results["sessions_created"].append(
                         SessionResult(
@@ -695,6 +739,14 @@ Evaluate whether the actual response correctly answers the question based on the
                 else:
                     # For user questions, use the user peer (default behavior)
                     actual_response = await user_peer.chat(question_with_date)
+
+                # Clean up workspace if requested
+                if self.cleanup_workspace:
+                    try:
+                        await honcho_client.delete_workspace(workspace_id)
+                        print(f"[{workspace_id}] cleaned up workspace")
+                    except Exception as e:
+                        print(f"Failed to delete workspace: {e}")
 
                 actual_response = (
                     actual_response if isinstance(actual_response, str) else ""
@@ -790,6 +842,10 @@ Evaluate whether the actual response correctly answers the question based on the
         print(
             f"found {len(questions)} {'question' if len(questions) == 1 else 'questions'} in {test_file}"
         )
+        if self.pool_size > 1:
+            print(
+                f"distributing questions across {self.pool_size} Honcho instances (ports {self.base_api_port}-{self.base_api_port + self.pool_size - 1})"
+            )
 
         overall_start = time.time()
 
@@ -807,9 +863,12 @@ Evaluate whether the actual response correctly answers the question based on the
             )
             print(f"{'=' * 60}")
 
-            # Run questions in current batch concurrently
+            # Run questions in current batch concurrently, distributing via round-robin
             batch_results: list[TestResult] = await asyncio.gather(
-                *[self.execute_question(q) for q in batch]
+                *[
+                    self.execute_question(q, self.get_honcho_url_for_index(i + idx))
+                    for idx, q in enumerate(batch)
+                ]
             )
 
             # Print detailed per-question outputs for this batch
@@ -983,7 +1042,8 @@ Evaluate whether the actual response correctly answers the question based on the
                 "test_file": str(test_file),
                 "execution_timestamp": datetime.now().isoformat(),
                 "runner_version": "1.0.0",
-                "honcho_url": self.honcho_url,
+                "base_api_port": self.base_api_port,
+                "pool_size": self.pool_size,
                 "timeout_seconds": self.timeout_seconds,
                 "deriver_settings": settings.DERIVER.model_dump(),
                 "dialectic_settings": settings.DIALECTIC.model_dump(),
@@ -1034,7 +1094,8 @@ async def main() -> int:
         epilog="""
 Examples:
   %(prog)s --test-file tests/bench/longmemeval_data/longmemeval_s.json    # Run longmemeval tests
-  %(prog)s --honcho-url http://localhost:8000                             # Custom Honcho URL
+  %(prog)s --test-file test.json --pool-size 4                            # Use 4 Honcho instances
+  %(prog)s --test-file test.json --base-api-port 8000 --pool-size 4       # Custom base port with pool
         """,
     )
 
@@ -1046,10 +1107,17 @@ Examples:
     )
 
     parser.add_argument(
-        "--honcho-url",
-        type=str,
-        default="http://localhost:8000",
-        help="URL of the running Honcho instance (default: http://localhost:8000)",
+        "--base-api-port",
+        type=int,
+        default=8000,
+        help="Base port for Honcho API instances (default: 8000)",
+    )
+
+    parser.add_argument(
+        "--pool-size",
+        type=int,
+        default=1,
+        help="Number of Honcho instances in the pool (default: 1)",
     )
 
     parser.add_argument(
@@ -1084,6 +1152,12 @@ Examples:
         help="Merge all sessions within a question into a single session (default: False)",
     )
 
+    parser.add_argument(
+        "--cleanup-workspace",
+        action="store_true",
+        help="Delete workspace after executing each question (default: False)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -1095,12 +1169,18 @@ Examples:
         print(f"Error: Batch size must be positive, got {args.batch_size}")
         return 1
 
+    if args.pool_size <= 0:
+        print(f"Error: Pool size must be positive, got {args.pool_size}")
+        return 1
+
     # Create test runner
     runner = LongMemEvalRunner(
-        honcho_url=args.honcho_url,
+        base_api_port=args.base_api_port,
+        pool_size=args.pool_size,
         anthropic_api_key=args.anthropic_api_key,
         timeout_seconds=args.timeout,
         merge_sessions=args.merge_sessions,
+        cleanup_workspace=args.cleanup_workspace,
     )
 
     try:

@@ -8,7 +8,7 @@ from typing import Any, Literal
 import httpx
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core import Honcho as HonchoCore
-from honcho_core.types import DeriverStatus
+from honcho_core.types import DeriverStatus, Workspace
 from honcho_core.types.workspaces.peer import Peer as PeerCore
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
@@ -336,6 +336,26 @@ class AsyncHoncho(BaseModel):
         async for workspace in workspaces_page:
             workspace_ids.append(workspace.id)
         return workspace_ids
+
+    @validate_call
+    async def delete_workspace(
+        self,
+        workspace_id: str = Field(
+            ..., min_length=1, description="ID of the workspace to delete"
+        ),
+    ) -> Workspace:
+        """
+        Delete a workspace.
+
+        Makes an async API call to delete the specified workspace.
+
+        Args:
+            workspace_id: The ID of the workspace to delete
+
+        Returns:
+            The deleted Workspace object
+        """
+        return await self._client.workspaces.delete(workspace_id)
 
     @validate_call
     async def search(

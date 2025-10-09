@@ -17,7 +17,7 @@ from src.utils.logging import (
     accumulate_metric,
     conditional_observe,
     log_performance_metrics,
-    log_representation,
+    # log_representation,
 )
 from src.utils.peer_card import PeerCardQuery
 from src.utils.representation import PromptRepresentation, Representation
@@ -65,6 +65,8 @@ async def critical_analysis_call(
         json_mode=True,
         stop_seqs=["   \n", "\n\n\n\n"],
         thinking_budget_tokens=settings.DERIVER.THINKING_BUDGET_TOKENS,
+        reasoning_effort="minimal",
+        verbosity="medium",
         enable_retry=True,
         retry_attempts=3,
     )
@@ -161,13 +163,6 @@ async def process_representation_tasks_batch(
                 observer=observer,
                 observed=observed,
             )
-            if speaker_peer_card is None:
-                logger.warning(
-                    "No peer card found for %s. Normal if brand-new peer.",
-                    observed,
-                )
-            else:
-                logger.info("Using peer card: %s", speaker_peer_card)
     else:
         speaker_peer_card = None
 
@@ -228,7 +223,7 @@ async def process_representation_tasks_batch(
         "ms",
     )
 
-    logger.info(
+    logger.debug(
         "Using working representation with %s explicit, %s deductive observations",
         len(working_representation.explicit),
         len(working_representation.deductive),
@@ -262,7 +257,7 @@ async def process_representation_tasks_batch(
     )
 
     # Display final observations in a beautiful tree
-    log_representation(final_observations)
+    # log_representation(final_observations)
 
     # Calculate and log overall timing
     overall_duration = (time.perf_counter() - overall_start) * 1000
@@ -431,10 +426,9 @@ class CertaintyReasoner:
         """
         try:
             response = await peer_card_call(old_peer_card, new_observations)
-            logger.info("Jettisoned notes from peer card: %s", response.notes)
             new_peer_card = response.card
             if not new_peer_card:
-                logger.info("No changes to peer card")
+                # no changes
                 return
             # even with a dedicated notes field, we still need to prune notes out of the card
             new_peer_card = [
@@ -442,7 +436,12 @@ class CertaintyReasoner:
                 for observation in new_peer_card
                 if not observation.lower().startswith(("note", "notes"))
             ]
-            logger.info("New peer card: %s", new_peer_card)
+            accumulate_metric(
+                f"deriver_{self.ctx[-1].id}_{self.observer}",
+                "new_peer_card",
+                "\n".join(new_peer_card),
+                "blob",
+            )
             async with tracked_db("deriver.update_peer_card") as db:
                 await crud.set_peer_card(
                     db,

@@ -639,7 +639,7 @@ async def get_session_context(
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
         else:
-            logger.warning(
+            logger.debug(
                 "No summary available for get_context call with token limit %s, returning empty string. Normal if brand-new session. long_summary_len: %s, short_summary_len: %s",
                 token_limit,
                 long_len,

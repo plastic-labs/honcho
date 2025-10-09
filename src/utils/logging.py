@@ -10,8 +10,10 @@ from typing import Any
 
 from fastapi import Request
 from rich import box
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 from rich.tree import Tree
 
 from src.config import settings
@@ -157,17 +159,23 @@ def log_performance_metrics(
     if COLLECT_METRICS_LOCAL:
         append_metrics_to_file(task_slug, task_name, metrics)
 
+    # Remove metrics with "blob" unit type. They get printed separately below the table.
+    blob_metrics: list[tuple[str, str | int | float, str]] = []
+    non_blob_metrics: list[tuple[str, str | int | float, str]] = []
+    for metric in metrics:
+        (blob_metrics if metric[2] == "blob" else non_blob_metrics).append(metric)
+
     table = Table(
-        title=f"{title} - {task_name}",
         show_header=True,
         header_style="bold green",
-        box=box.ROUNDED,
+        box=None,
+        padding=(0, 1),
     )
     table.add_column("Metric", style="cyan", width=30)
     table.add_column("Value", justify="right", style="yellow", width=15)
     table.add_column("Unit", style="dim", width=8)
 
-    for metric, value, unit in metrics:
+    for metric, value, unit in non_blob_metrics:
         if unit == "ms":
             formatted_value = f"{value:.0f}"
         elif unit == "s":
@@ -177,9 +185,25 @@ def log_performance_metrics(
 
         table.add_row(metric.replace("_", " ").title(), formatted_value, unit)
 
-    if metrics:
-        console.print(table)
-        console.print()
+    # Build content for the panel
+    content_items: list[RenderableType] = [table]
+
+    if blob_metrics:
+        content_items.append(Text(""))  # Empty line separator
+        for metric, value, _unit in blob_metrics:
+            content_items.append(Text(f"{metric}:", style="bold cyan"))
+            content_items.append(Text(str(value)))
+
+    panel = Panel(
+        Group(*content_items),
+        title=f"[bold green]{title} - {task_name}[/]",
+        box=box.ROUNDED,
+        padding=(1, 2),
+        width=80,
+    )
+
+    console.print(panel)
+    console.print()
 
 
 def normalize_template_path(path: str) -> str:
