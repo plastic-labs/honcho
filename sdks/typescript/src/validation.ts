@@ -1,3 +1,4 @@
+import type { Message } from '@honcho-ai/core/resources/workspaces/sessions/messages'
 import { z } from 'zod'
 
 /**
@@ -124,6 +125,20 @@ export const ChatQuerySchema = z.object({
 })
 
 /**
+ * Schema for validating Message objects from the core SDK.
+ */
+const MessageSchema: z.ZodType<Message> = z.object({
+  id: z.string(),
+  content: z.string(),
+  created_at: z.string(),
+  peer_id: z.string(),
+  session_id: z.string(),
+  token_count: z.number(),
+  workspace_id: z.string(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+}) as z.ZodType<Message>
+
+/**
  * Schema for context retrieval parameters.
  */
 export const ContextParamsSchema = z
@@ -133,7 +148,7 @@ export const ContextParamsSchema = z
       .number()
       .positive('Token limit must be a positive number')
       .optional(),
-    lastUserMessage: z.string().optional(),
+    lastUserMessage: z.union([z.string(), MessageSchema]).optional(),
     peerTarget: z.string().optional(),
     peerPerspective: z.string().optional(),
   })

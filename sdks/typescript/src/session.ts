@@ -461,7 +461,8 @@ export class Session {
    *                             If given with `peerPerspective`, will get the representation and card
    *                             for this peer from the perspective of that peer.
    * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
-   *                                  observations and returned as part of the context object
+   *                                  observations and returned as part of the context object.
+   *                                  Can be either a message ID string or a Message object.
    * @param options.peerPerspective - A peer to get context for. If given, response will attempt to
    *                                  include representation and card from the perspective of that peer.
    *                                  Must be provided with `peerTarget`.
@@ -476,7 +477,7 @@ export class Session {
     summary?: boolean
     tokens?: number
     peerTarget?: string
-    lastUserMessage?: string
+    lastUserMessage?: string | Message
     peerPerspective?: string
   }): Promise<SessionContext> {
     const contextParams = ContextParamsSchema.parse({
@@ -486,13 +487,20 @@ export class Session {
       lastUserMessage: options?.lastUserMessage,
       peerPerspective: options?.peerPerspective,
     })
+
+    // Extract message ID if lastUserMessage is a Message object
+    const lastMessageId =
+      typeof contextParams.lastUserMessage === 'string'
+        ? contextParams.lastUserMessage
+        : contextParams.lastUserMessage?.id
+
     const context = await this._client.workspaces.sessions.getContext(
       this.workspaceId,
       this.id,
       {
         tokens: contextParams.tokens,
         summary: contextParams.summary,
-        last_message: contextParams.lastUserMessage,
+        last_message: lastMessageId,
         peer_target: contextParams.peerTarget,
         peer_perspective: contextParams.peerPerspective,
       }
