@@ -61,7 +61,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 import tiktoken
 from anthropic import AsyncAnthropic
 from dotenv import load_dotenv
@@ -743,17 +742,11 @@ Evaluate whether the actual response correctly answers the question based on the
 
                 # Clean up workspace if requested
                 if self.cleanup_workspace:
-                    # The SDK does not have this functionality, so we manually generate the http request
-                    async with httpx.AsyncClient() as client:
-                        delete_response = await client.delete(
-                            f"{honcho_url}/v2/workspaces/{workspace_id}"
-                        )
-                        if delete_response.status_code not in [200, 204]:
-                            print(
-                                f"Failed to delete workspace: {delete_response.status_code}"
-                            )
-                        else:
-                            print(f"[{workspace_id}] cleaned up workspace")
+                    try:
+                        await honcho_client.delete_workspace(workspace_id)
+                        print(f"[{workspace_id}] cleaned up workspace")
+                    except Exception as e:
+                        print(f"Failed to delete workspace: {e}")
 
                 actual_response = (
                     actual_response if isinstance(actual_response, str) else ""

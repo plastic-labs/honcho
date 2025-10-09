@@ -8,7 +8,7 @@ from typing import Any, Literal
 import httpx
 from honcho_core import AsyncHoncho as AsyncHonchoCore
 from honcho_core import Honcho as HonchoCore
-from honcho_core.types import DeriverStatus
+from honcho_core.types import DeriverStatus, Workspace
 from honcho_core.types.workspaces.peer import Peer as PeerCore
 from honcho_core.types.workspaces.session import Session as SessionCore
 from honcho_core.types.workspaces.sessions.message import Message
@@ -343,7 +343,7 @@ class AsyncHoncho(BaseModel):
         workspace_id: str = Field(
             ..., min_length=1, description="ID of the workspace to delete"
         ),
-    ):
+    ) -> Workspace:
         """
         Delete a workspace.
 

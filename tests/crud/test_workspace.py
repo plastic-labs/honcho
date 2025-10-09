@@ -3,7 +3,7 @@ from nanoid import generate as generate_nanoid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src import crud, models
+from src import crud, models, schemas
 from src.exceptions import ResourceNotFoundException
 
 
@@ -382,16 +382,14 @@ class TestWorkspaceCRUD:
         test_workspace, _test_peer = sample_data
 
         # Store workspace details before deletion
-        workspace_id = test_workspace.id
         workspace_name = test_workspace.name
 
         # Delete workspace
         deleted_workspace = await crud.delete_workspace(db_session, test_workspace.name)
 
         # Verify returned workspace matches the deleted workspace
-        assert deleted_workspace.id == workspace_id
         assert deleted_workspace.name == workspace_name
-        assert isinstance(deleted_workspace, models.Workspace)
+        assert isinstance(deleted_workspace, schemas.Workspace)
 
     @pytest.mark.asyncio
     async def test_delete_workspace_complex_cascade(

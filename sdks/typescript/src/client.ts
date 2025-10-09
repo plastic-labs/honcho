@@ -322,7 +322,9 @@ export class Honcho {
    * @param workspaceId - The ID of the workspace to delete
    * @returns Promise resolving to the deleted Workspace object
    */
-  async deleteWorkspace(workspaceId: string): Promise<any> {
+  async deleteWorkspace(
+    workspaceId: string
+  ): Promise<Awaited<ReturnType<typeof this._client.workspaces.delete>>> {
     return await this._client.workspaces.delete(workspaceId)
   }
 

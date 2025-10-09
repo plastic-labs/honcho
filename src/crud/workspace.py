@@ -38,7 +38,7 @@ async def get_or_create_workspace(
 
     if existing_workspace is not None:
         # Workspace already exists
-        logger.debug(f"Found existing workspace: {workspace.name}")
+        logger.debug("Found existing workspace: %s", workspace.name)
         return existing_workspace
 
     # Workspace doesn't exist, create a new one
@@ -50,7 +50,7 @@ async def get_or_create_workspace(
     try:
         db.add(honcho_workspace)
         await db.commit()
-        logger.debug(f"Workspace created successfully: {workspace.name}")
+        logger.debug("Workspace created successfully: %s", workspace.name)
         return honcho_workspace
     except IntegrityError:
         await db.rollback()
@@ -134,11 +134,11 @@ async def update_workspace(
         honcho_workspace.configuration = workspace.configuration
 
     await db.commit()
-    logger.debug(f"Workspace with id {honcho_workspace.id} updated successfully")
+    logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace
 
 
-async def delete_workspace(db: AsyncSession, workspace_name: str) -> models.Workspace:
+async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Workspace:
     """
     Delete a workspace.
 
@@ -147,15 +147,24 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> models.Work
         workspace_name: Name of the workspace
 
     Returns:
-        The deleted workspace
+        A snapshot of the deleted workspace as a Pydantic schema
     """
-    logger.warning(f"Deleting workspace {workspace_name}")
+    logger.warning("Deleting workspace %s", workspace_name)
     stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
     result = await db.execute(stmt)
     honcho_workspace = result.scalar_one_or_none()
 
     if honcho_workspace is None:
-        raise ResourceNotFoundException(f"Workspace {workspace_name} not found")
+        logger.warning("Workspace %s not found", workspace_name)
+        raise ResourceNotFoundException()
+
+    # Create a snapshot of the workspace data before deletion
+    workspace_snapshot = schemas.Workspace(
+        name=honcho_workspace.name,
+        h_metadata=honcho_workspace.h_metadata,
+        configuration=honcho_workspace.configuration,
+        created_at=honcho_workspace.created_at,
+    )
 
     # order is important here.
     # delete all active queue sessions referencing this workspace first (using work_unit_key parsing)
@@ -175,55 +184,67 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> models.Work
     # Delete ActiveQueueSession entries first
     # Work unit keys have format: {task_type}:{workspace_name}:{...}
     # Extract workspace_name from position 2 (second component after splitting by ':')
-    await db.execute(
-        delete(models.ActiveQueueSession).where(
-            func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
-            == workspace_name
+    try:
+        await db.execute(
+            delete(models.ActiveQueueSession).where(
+                func.split_part(models.ActiveQueueSession.work_unit_key, ":", 2)
+                == workspace_name
+            )
         )
-    )
 
-    # Then delete QueueItem entries
-    await db.execute(
-        delete(models.QueueItem).where(
-            func.split_part(models.QueueItem.work_unit_key, ":", 2) == workspace_name
+        # Then delete QueueItem entries
+        await db.execute(
+            delete(models.QueueItem).where(
+                func.split_part(models.QueueItem.work_unit_key, ":", 2)
+                == workspace_name
+            )
         )
-    )
 
-    await db.execute(
-        delete(models.MessageEmbedding).where(
-            models.MessageEmbedding.workspace_name == workspace_name
+        await db.execute(
+            delete(models.MessageEmbedding).where(
+                models.MessageEmbedding.workspace_name == workspace_name
+            )
         )
-    )
-    await db.execute(
-        delete(models.Document).where(models.Document.workspace_name == workspace_name)
-    )
-    await db.execute(
-        delete(models.Collection).where(
-            models.Collection.workspace_name == workspace_name
+        await db.execute(
+            delete(models.Document).where(
+                models.Document.workspace_name == workspace_name
+            )
         )
-    )
-    await db.execute(
-        delete(models.Message).where(models.Message.workspace_name == workspace_name)
-    )
+        await db.execute(
+            delete(models.Collection).where(
+                models.Collection.workspace_name == workspace_name
+            )
+        )
+        await db.execute(
+            delete(models.Message).where(
+                models.Message.workspace_name == workspace_name
+            )
+        )
 
-    await db.execute(
-        delete(models.WebhookEndpoint).where(
-            models.WebhookEndpoint.workspace_name == workspace_name
+        await db.execute(
+            delete(models.WebhookEndpoint).where(
+                models.WebhookEndpoint.workspace_name == workspace_name
+            )
         )
-    )
-    await db.execute(
-        delete(models.SessionPeer).where(
-            models.SessionPeer.workspace_name == workspace_name
+        await db.execute(
+            delete(models.SessionPeer).where(
+                models.SessionPeer.workspace_name == workspace_name
+            )
         )
-    )
-    await db.execute(
-        delete(models.Session).where(models.Session.workspace_name == workspace_name)
-    )
-    await db.execute(
-        delete(models.Peer).where(models.Peer.workspace_name == workspace_name)
-    )
-    await db.delete(honcho_workspace)
-    await db.commit()
+        await db.execute(
+            delete(models.Session).where(
+                models.Session.workspace_name == workspace_name
+            )
+        )
+        await db.execute(
+            delete(models.Peer).where(models.Peer.workspace_name == workspace_name)
+        )
+        await db.delete(honcho_workspace)
+        await db.commit()
+        logger.debug("Workspace %s deleted", workspace_name)
+    except Exception as e:
+        logger.error("Failed to delete workspace %s: %s", workspace_name, e)
+        await db.rollback()
+        raise e
 
-    logger.debug(f"Workspace {workspace_name} deleted")
-    return honcho_workspace
+    return workspace_snapshot
