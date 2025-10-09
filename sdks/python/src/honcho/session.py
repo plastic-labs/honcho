@@ -446,9 +446,14 @@ class Session(BaseModel):
             tokenizers, you may need to adjust the token limit accordingly.
         """
 
-        if peer_perspective is not None and peer_target is None:
+        if peer_target is None and peer_perspective is not None:
             raise ValueError(
                 "You must provide a `peer_target` when `peer_perspective` is provided"
+            )
+
+        if peer_target is None and last_user_message is not None:
+            raise ValueError(
+                "You must provide a `peer_target` when `last_user_message` is provided"
             )
 
         last_user_message_id = (
