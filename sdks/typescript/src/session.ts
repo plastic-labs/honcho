@@ -451,10 +451,21 @@ export class Session {
    * compatible with OpenAI models. The context optimization balances
    * recency and relevance to provide the best conversational context.
    *
-   * @param summary - Whether to include summary information in the context.
-   *                  When true, includes session summary if available. Defaults to true
-   * @param tokens - Maximum number of tokens to include in the context. If not provided,
-   *                 uses the server's default configuration
+   * @param options - Configuration options for context retrieval
+   * @param options.summary - Whether to include summary information in the context.
+   *                          When true, includes session summary if available. Defaults to true
+   * @param options.tokens - Maximum number of tokens to include in the context. If not provided,
+   *                         uses the server's default configuration
+   * @param options.peerTarget - The target of the perspective. If given without `peerPerspective`,
+   *                             will get the Honcho-level representation and peer card for this peer.
+   *                             If given with `peerPerspective`, will get the representation and card
+   *                             for this peer from the perspective of that peer.
+   * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
+   *                                  observations and returned as part of the context object.
+   *                                  Can be either a message ID string or a Message object.
+   * @param options.peerPerspective - A peer to get context for. If given, response will attempt to
+   *                                  include representation and card from the perspective of that peer.
+   *                                  Must be provided with `peerTarget`.
    * @returns Promise resolving to a SessionContext object containing the optimized
    *          message history and summary (if available) that maximizes conversational
    *          context while respecting the token limit
@@ -462,25 +473,103 @@ export class Session {
    * @note Token counting is performed using tiktoken. For models using different
    *       tokenizers, you may need to adjust the token limit accordingly.
    */
+  async getContext(
+    summary?: boolean,
+    tokens?: number,
+    peerTarget?: string | Peer,
+    lastUserMessage?: string | Message,
+    peerPerspective?: string | Peer
+  ): Promise<SessionContext>
   async getContext(options?: {
     summary?: boolean
     tokens?: number
-  }): Promise<SessionContext> {
+    peerTarget?: string | Peer
+    lastUserMessage?: string | Message
+    peerPerspective?: string | Peer
+  }): Promise<SessionContext>
+  async getContext(
+    summaryOrOptions?:
+      | boolean
+      | {
+          summary?: boolean
+          tokens?: number
+          peerTarget?: string | Peer
+          lastUserMessage?: string | Message
+          peerPerspective?: string | Peer
+        },
+    tokens?: number,
+    peerTarget?: string | Peer,
+    lastUserMessage?: string | Message,
+    peerPerspective?: string | Peer
+  ): Promise<SessionContext> {
+    // Normalize positional arguments into options object
+    let options: {
+      summary?: boolean
+      tokens?: number
+      peerTarget?: string
+      lastUserMessage?: string
+      peerPerspective?: string
+    }
+
+    if (
+      typeof summaryOrOptions === 'boolean' ||
+      (summaryOrOptions === undefined && arguments.length > 1)
+    ) {
+      // Positional arguments pattern
+      options = {
+        summary: summaryOrOptions as boolean | undefined,
+        tokens,
+        peerTarget: typeof peerTarget === 'object' ? peerTarget.id : peerTarget,
+        lastUserMessage:
+          typeof lastUserMessage === 'string'
+            ? lastUserMessage
+            : lastUserMessage?.id,
+        peerPerspective:
+          typeof peerPerspective === 'object'
+            ? peerPerspective.id
+            : peerPerspective,
+      }
+    } else {
+      // Options object pattern
+      options = (summaryOrOptions as typeof options) || {}
+    }
+
     const contextParams = ContextParamsSchema.parse({
-      summary: options?.summary,
-      tokens: options?.tokens,
+      summary: options.summary,
+      tokens: options.tokens,
+      peerTarget: options.peerTarget,
+      lastUserMessage: options.lastUserMessage,
+      peerPerspective: options.peerPerspective,
     })
+
+    // Extract message ID if lastUserMessage is a Message object
+    const lastMessageId =
+      typeof contextParams.lastUserMessage === 'string'
+        ? contextParams.lastUserMessage
+        : contextParams.lastUserMessage?.id
+
     const context = await this._client.workspaces.sessions.getContext(
       this.workspaceId,
       this.id,
       {
         tokens: contextParams.tokens,
         summary: contextParams.summary,
+        last_message: lastMessageId,
+        peer_target: contextParams.peerTarget,
+        peer_perspective: contextParams.peerPerspective,
       }
     )
     // Convert the summary response to Summary object if present
     const summary = context.summary ? new Summary(context.summary) : null
-    return new SessionContext(this.id, context.messages, summary)
+    return new SessionContext(
+      this.id,
+      context.messages,
+      summary,
+      context.peer_representation
+        ? JSON.stringify(context.peer_representation)
+        : null,
+      context.peer_card ?? null
+    )
   }
 
   /**

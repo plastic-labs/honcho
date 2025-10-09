@@ -436,11 +436,8 @@ try:
                         print_settings(value, full_key, max_depth, current_depth + 1)
                     else:
                         # Mask sensitive information
-                        if isinstance(value, str) and any(sensitive in value.lower() for sensitive in ['password', 'secret', 'key', 'token']):
-                            if 'testpwd' in value:
-                                masked_value = value.replace('testpwd', '***')
-                            else:
-                                masked_value = '***'
+                        if isinstance(full_key, str) and any(sensitive in full_key.lower() for sensitive in ['password', 'secret', 'key', 'uri']):
+                            masked_value = '*' * len(value) if value else 'None'
                         else:
                             masked_value = value
                         print(f"  {{key}}: {{masked_value}}")
