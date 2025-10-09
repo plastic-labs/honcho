@@ -50,7 +50,7 @@ async def get_or_create_workspace(
     try:
         db.add(honcho_workspace)
         await db.commit()
-        logger.info(f"Workspace created successfully: {workspace.name}")
+        logger.debug(f"Workspace created successfully: {workspace.name}")
         return honcho_workspace
     except IntegrityError:
         await db.rollback()
@@ -134,7 +134,7 @@ async def update_workspace(
         honcho_workspace.configuration = workspace.configuration
 
     await db.commit()
-    logger.info(f"Workspace with id {honcho_workspace.id} updated successfully")
+    logger.debug(f"Workspace with id {honcho_workspace.id} updated successfully")
     return honcho_workspace
 
 
@@ -149,7 +149,7 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> models.Work
     Returns:
         The deleted workspace
     """
-    logger.info(f"Deleting workspace {workspace_name}")
+    logger.warning(f"Deleting workspace {workspace_name}")
     stmt = select(models.Workspace).where(models.Workspace.name == workspace_name)
     result = await db.execute(stmt)
     honcho_workspace = result.scalar_one_or_none()
@@ -225,5 +225,5 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> models.Work
     await db.delete(honcho_workspace)
     await db.commit()
 
-    logger.info(f"Workspace {workspace_name} deleted")
+    logger.debug(f"Workspace {workspace_name} deleted")
     return honcho_workspace

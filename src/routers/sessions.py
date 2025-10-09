@@ -202,7 +202,7 @@ async def update_session(
         updated_session = await crud.update_session(
             db, workspace_name=workspace_id, session_name=session_id, session=session
         )
-        logger.info(f"Session {session_id} updated successfully")
+        logger.debug(f"Session {session_id} updated successfully")
         return updated_session
     except ValueError as e:
         logger.warning(f"Failed to update session {session_id}: {str(e)}")
@@ -225,7 +225,7 @@ async def delete_session(
         await crud.delete_session(
             db, workspace_name=workspace_id, session_name=session_id
         )
-        logger.info(f"Session {session_id} deleted successfully")
+        logger.debug(f"Session {session_id} deleted successfully")
         return {"message": "Session deleted successfully"}
     except ValueError as e:
         logger.warning(f"Failed to delete session {session_id}: {str(e)}")
@@ -256,7 +256,7 @@ async def clone_session(
             original_session_name=session_id,
             cutoff_message_id=message_id,
         )
-        logger.info(f"Session {session_id} cloned successfully")
+        logger.debug(f"Session {session_id} cloned successfully")
         return cloned_session
     except ValueError as e:
         logger.warning(f"Failed to clone session {session_id}: {str(e)}")
@@ -288,7 +288,7 @@ async def add_peers_to_session(
             ),
             workspace_name=workspace_id,
         )
-        logger.info(f"Added peers to session {session_id} successfully")
+        logger.debug(f"Added peers to session {session_id} successfully")
         return session
     except ValueError as e:
         logger.warning(f"Failed to add peers to session {session_id}: {str(e)}")
@@ -324,7 +324,7 @@ async def set_session_peers(
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
-        logger.info(f"Set peers for session {session_id} successfully")
+        logger.debug(f"Set peers for session {session_id} successfully")
         return session
     except ValueError as e:
         logger.warning(f"Failed to set peers for session {session_id}: {str(e)}")
@@ -360,7 +360,7 @@ async def remove_peers_from_session(
             session=schemas.SessionCreate(name=session_id),
             workspace_name=workspace_id,
         )
-        logger.info(f"Removed peers from session {session_id} successfully")
+        logger.debug(f"Removed peers from session {session_id} successfully")
         return session
     except ValueError as e:
         logger.warning(f"Failed to remove peers from session {session_id}: {str(e)}")
@@ -411,7 +411,7 @@ async def set_peer_config(
             peer_name=peer_id,
             config=config,
         )
-        logger.info(
+        logger.debug(
             f"Set peer config for {peer_id} in session {session_id} successfully"
         )
         return Response(status_code=200)

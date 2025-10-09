@@ -23,7 +23,7 @@ async def deliver_webhook(db: AsyncSession, payload: WebhookPayload) -> None:
         try:
             webhook_urls = await _get_webhook_urls(db, payload.workspace_name)
             if not webhook_urls:
-                logger.info(
+                logger.debug(
                     f"No webhook endpoints for workspace {payload.workspace_name}, skipping."
                 )
                 return
@@ -59,7 +59,7 @@ async def deliver_webhook(db: AsyncSession, payload: WebhookPayload) -> None:
             for url, result in zip(webhook_urls, results, strict=False):
                 if isinstance(result, httpx.Response):
                     if 200 <= result.status_code < 300:
-                        logger.info(
+                        logger.debug(
                             f"Successfully delivered webhook {payload.event_type} to {url}"
                         )
                     else:

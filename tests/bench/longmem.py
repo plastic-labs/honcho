@@ -43,6 +43,7 @@ Optional arguments:
 --batch-size: Number of questions to run concurrently in each batch (default: 10)
 --json-output: Path to write JSON summary results for analytics (if not provided, creates timestamped file in tests/bench/eval_results)
 --merge-sessions: Merge all sessions within a question into a single session (default: False)
+--cleanup-workspace: Delete workspace after executing each question (default: False)
 ```
 
 ## Other notes
@@ -122,6 +123,7 @@ class LongMemEvalRunner:
         anthropic_api_key: str | None = None,
         timeout_seconds: int | None = None,
         merge_sessions: bool = False,
+        cleanup_workspace: bool = False,
     ):
         """
         Initialize the test runner.
@@ -132,6 +134,7 @@ class LongMemEvalRunner:
             anthropic_api_key: Anthropic API key for judging responses
             timeout_seconds: Timeout for deriver queue in seconds
             merge_sessions: If True, merge all sessions within a question into one session
+            cleanup_workspace: If True, delete workspace after executing question (default: False)
         """
         self.base_api_port: int = base_api_port
         self.pool_size: int = pool_size
@@ -140,6 +143,7 @@ class LongMemEvalRunner:
             timeout_seconds if timeout_seconds is not None else 10000
         )
         self.merge_sessions: bool = merge_sessions
+        self.cleanup_workspace: bool = cleanup_workspace
 
         # Initialize metrics collector
         self.metrics_collector: MetricsCollector = MetricsCollector()
@@ -737,18 +741,19 @@ Evaluate whether the actual response correctly answers the question based on the
                     # For user questions, use the user peer (default behavior)
                     actual_response = await user_peer.chat(question_with_date)
 
-                # once we get the response, we can delete the workspace
-                # the SDK does not have this functionality, so we manually generate the http request
-                async with httpx.AsyncClient() as client:
-                    delete_response = await client.delete(
-                        f"{honcho_url}/v2/workspaces/{workspace_id}"
-                    )
-                    if delete_response.status_code not in [200, 204]:
-                        print(
-                            f"Failed to delete workspace: {delete_response.status_code}"
+                # Clean up workspace if requested
+                if self.cleanup_workspace:
+                    # The SDK does not have this functionality, so we manually generate the http request
+                    async with httpx.AsyncClient() as client:
+                        delete_response = await client.delete(
+                            f"{honcho_url}/v2/workspaces/{workspace_id}"
                         )
-                    else:
-                        print(f"[{workspace_id}] cleaned up workspace")
+                        if delete_response.status_code not in [200, 204]:
+                            print(
+                                f"Failed to delete workspace: {delete_response.status_code}"
+                            )
+                        else:
+                            print(f"[{workspace_id}] cleaned up workspace")
 
                 actual_response = (
                     actual_response if isinstance(actual_response, str) else ""
@@ -1154,6 +1159,12 @@ Examples:
         help="Merge all sessions within a question into a single session (default: False)",
     )
 
+    parser.add_argument(
+        "--cleanup-workspace",
+        action="store_true",
+        help="Delete workspace after executing each question (default: False)",
+    )
+
     args = parser.parse_args()
 
     # Validate arguments
@@ -1176,6 +1187,7 @@ Examples:
         anthropic_api_key=args.anthropic_api_key,
         timeout_seconds=args.timeout,
         merge_sessions=args.merge_sessions,
+        cleanup_workspace=args.cleanup_workspace,
     )
 
     try:

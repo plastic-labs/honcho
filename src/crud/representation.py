@@ -322,11 +322,6 @@ class RepresentationManager:
             db, top_k=recent_observations, session_name=session_name
         )
 
-        if not recent_docs:
-            logger.warning(
-                f"No observations for {self.observed} (observer: {self.observer}) found. Normal if brand-new peer."
-            )
-
         representation.merge_representation(Representation.from_documents(recent_docs))
 
         return representation

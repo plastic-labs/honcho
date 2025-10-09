@@ -220,7 +220,7 @@ async def update_session(
         honcho_session.configuration = session.configuration
 
     await db.commit()
-    logger.info(f"Session {session_name} updated successfully")
+    logger.debug(f"Session {session_name} updated successfully")
     return honcho_session
 
 
@@ -257,7 +257,7 @@ async def delete_session(
 
     honcho_session.is_active = False
     await db.commit()
-    logger.info(f"Session {session_name} marked as inactive")
+    logger.debug(f"Session {session_name} marked as inactive")
     return True
 
 
@@ -358,7 +358,7 @@ async def clone_session(
         db.add(new_session_peer)
 
     await db.commit()
-    logger.info(f"Session {original_session_name} cloned successfully")
+    logger.debug(f"Session {original_session_name} cloned successfully")
     return new_session
 
 

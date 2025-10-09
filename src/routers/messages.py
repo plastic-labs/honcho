@@ -139,7 +139,7 @@ async def create_messages_with_file(
     ]
 
     background_tasks.add_task(enqueue, payloads)
-    logger.info(
+    logger.debug(
         f"Batch of {len(created_messages)} messages created from file uploads and queued for processing"
     )
     prometheus.MESSAGES_CREATED.labels(
@@ -218,7 +218,7 @@ async def update_message(
             session_name=session_id,
             message_id=message_id,
         )
-        logger.info(f"Message {message_id} updated successfully")
+        logger.debug(f"Message {message_id} updated successfully")
         return updated_message
     except ValueError as e:
         logger.warning(f"Failed to update message {message_id}: {str(e)}")
