@@ -23,7 +23,7 @@ function createTestMessage(id: string, content: string, peer_id: string, additio
 function createTestSummary(content: string): Summary {
   return new Summary({
     content,
-    message_id: 1,
+    message_id: "1",
     summary_type: 'short',
     created_at: new Date().toISOString(),
     token_count: content.length
