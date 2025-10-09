@@ -456,12 +456,12 @@ export class Session {
    *                          When true, includes session summary if available. Defaults to true
    * @param options.tokens - Maximum number of tokens to include in the context. If not provided,
    *                         uses the server's default configuration
-   * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
-   *                                  observations and returned as part of the context object
    * @param options.peerTarget - The target of the perspective. If given without `peerPerspective`,
    *                             will get the Honcho-level representation and peer card for this peer.
    *                             If given with `peerPerspective`, will get the representation and card
    *                             for this peer from the perspective of that peer.
+   * @param options.lastUserMessage - The most recent message, used to fetch semantically relevant
+   *                                  observations and returned as part of the context object
    * @param options.peerPerspective - A peer to get context for. If given, response will attempt to
    *                                  include representation and card from the perspective of that peer.
    *                                  Must be provided with `peerTarget`.
@@ -475,15 +475,15 @@ export class Session {
   async getContext(options?: {
     summary?: boolean
     tokens?: number
-    lastUserMessage?: string
     peerTarget?: string
+    lastUserMessage?: string
     peerPerspective?: string
   }): Promise<SessionContext> {
     const contextParams = ContextParamsSchema.parse({
       summary: options?.summary,
       tokens: options?.tokens,
-      lastUserMessage: options?.lastUserMessage,
       peerTarget: options?.peerTarget,
+      lastUserMessage: options?.lastUserMessage,
       peerPerspective: options?.peerPerspective,
     })
     const context = await this._client.workspaces.sessions.getContext(

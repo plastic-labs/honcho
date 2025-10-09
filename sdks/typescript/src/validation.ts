@@ -126,16 +126,34 @@ export const ChatQuerySchema = z.object({
 /**
  * Schema for context retrieval parameters.
  */
-export const ContextParamsSchema = z.object({
-  summary: z.boolean().optional(),
-  tokens: z
-    .number()
-    .positive('Token limit must be a positive number')
-    .optional(),
-  lastUserMessage: z.string().optional(),
-  peerTarget: z.string().optional(),
-  peerPerspective: z.string().optional(),
-})
+export const ContextParamsSchema = z
+  .object({
+    summary: z.boolean().optional(),
+    tokens: z
+      .number()
+      .positive('Token limit must be a positive number')
+      .optional(),
+    lastUserMessage: z.string().optional(),
+    peerTarget: z.string().optional(),
+    peerPerspective: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.lastUserMessage && !data.peerTarget) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'peerTarget is required when lastUserMessage is provided',
+        path: ['lastUserMessage'],
+      })
+    }
+
+    if (data.peerPerspective && !data.peerTarget) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'peerTarget is required when peerPerspective is provided',
+        path: ['peerPerspective'],
+      })
+    }
+  })
 
 /**
  * Schema for deriver status options.
