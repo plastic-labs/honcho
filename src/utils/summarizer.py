@@ -49,7 +49,7 @@ def to_schema_summary(s: Summary) -> schemas.Summary:
         summary_type=s["summary_type"],
         created_at=s["created_at"],
         token_count=s["token_count"],
-        message_public_id=s["message_public_id"],
+        message_public_id=s.get("message_public_id", ""),
     )
 
 
