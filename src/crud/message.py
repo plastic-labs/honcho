@@ -2,7 +2,7 @@ from logging import getLogger
 from typing import Any
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import ColumnElement, Select, and_, func, select
+from sqlalchemy import ColumnElement, Select, and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
@@ -78,9 +78,24 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
+    lock_key = f"{workspace_name}:{session_name}"
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": lock_key},
+    )
+
+    last_seq_result = await db.execute(
+        select(func.max(models.Message.message_seq_in_session)).where(
+            models.Message.workspace_name == workspace_name,
+            models.Message.session_name == session_name,
+        )
+    )
+    last_seq = last_seq_result.scalar() or 0
+
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
-    for message in messages:
+    for offset, message in enumerate(messages, start=1):
+        message_seq_in_session = last_seq + offset
         message_obj = models.Message(
             session_name=session_name,
             peer_name=message.peer_name,
@@ -90,6 +105,7 @@ async def create_messages(
             public_id=generate_nanoid(),
             token_count=len(message.encoded_message),
             created_at=message.created_at,  # Use provided created_at if available
+            message_seq_in_session=message_seq_in_session,
         )
         message_objects.append(message_obj)
 
@@ -268,14 +284,14 @@ async def get_message_seq_in_session(
         The sequence number of the message (1-indexed)
     """
     stmt = (
-        select(func.count(models.Message.id))
+        select(models.Message.message_seq_in_session)
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.session_name == session_name)
-        .where(models.Message.id < message_id)
+        .where(models.Message.id == message_id)
     )
     result = await db.execute(stmt)
-    count = result.scalar() or 0
-    return count + 1
+    seq = result.scalar()
+    return int(seq) if seq is not None else 0
 
 
 async def get_message_seqs_in_session_batch(
@@ -304,24 +320,16 @@ async def get_message_seqs_in_session_batch(
 
     unique_ids = list(set(message_ids))
 
-    # Rank all messages in the session, then select only the ones we care about
-    ranked = (
-        select(
-            models.Message.id.label("id"),
-            func.row_number().over(order_by=models.Message.id).label("seq"),
-        )
-        .where(
-            models.Message.workspace_name == workspace_name,
-            models.Message.session_name == session_name,
-        )
-        .subquery()
+    stmt = (
+        select(models.Message.id, models.Message.message_seq_in_session)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.session_name == session_name)
+        .where(models.Message.id.in_(unique_ids))
     )
-    stmt = select(ranked.c.id, ranked.c.seq).where(ranked.c.id.in_(unique_ids))
     result = await db.execute(stmt)
     rows = result.all()
-    id_to_position = {row[0]: int(row[1]) for row in rows}
+    id_to_position = {int(row[0]): int(row[1]) for row in rows}
 
-    # Return positions for requested IDs; 0 for any missing/out-of-session IDs
     return {msg_id: id_to_position.get(msg_id, 0) for msg_id in message_ids}
 
 

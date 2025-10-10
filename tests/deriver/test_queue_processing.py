@@ -121,13 +121,14 @@ class TestQueueProcessing:
 
         # Create and save messages to the database first
         messages: list[models.Message] = []
-        for _ in range(3):
+        for i in range(3):
             message = models.Message(
                 session_name=session.name,
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content="hello",
                 token_count=10,
+                message_seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -291,6 +292,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
+                message_seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -396,13 +398,14 @@ class TestQueueProcessing:
         ]
 
         messages: list[models.Message] = []
-        for peer, token_count in messages_data:
+        for i, (peer, token_count) in enumerate(messages_data):
             message = models.Message(
                 session_name=session.name,
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content=f"Message from {peer.name}",
                 token_count=token_count,
+                message_seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -561,13 +564,14 @@ class TestQueueProcessing:
         ]
 
         messages: list[models.Message] = []
-        for peer, token_count in messages_data:
+        for i, (peer, token_count) in enumerate(messages_data):
             message = models.Message(
                 session_name=session.name,
                 workspace_name=session.workspace_name,
                 peer_name=peer.name,
                 content=f"Message from {peer.name}",
                 token_count=token_count,
+                message_seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -704,6 +708,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content="First summary message",
                 public_id=generate_nanoid(),
+                message_seq_in_session=1,
             ),
             models.Message(
                 id=1000,
@@ -712,6 +717,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content="Second summary message",
                 public_id=generate_nanoid(),
+                message_seq_in_session=2,
             ),
         ]
 
@@ -820,6 +826,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
+                message_seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -930,6 +937,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
+                message_seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
