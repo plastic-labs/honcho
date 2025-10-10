@@ -111,3 +111,9 @@ MAX_WORKSPACE_LIMIT = 10
 [metrics]
 ENABLED = false
 NAMESPACE = "honcho"
+
+# Cache settings
+[cache]
+ENABLED = false
+URL = "redis://localhost:6379/0"
+DEFAULT_TTL_SECONDS = 300

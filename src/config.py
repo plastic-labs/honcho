@@ -50,6 +50,7 @@ class TomlConfigSettingsSource(PydanticBaseSettingsSource):
         "DB": "db",
         "AUTH": "auth",
         "SENTRY": "sentry",
+        "CACHE": "cache",
         "LLM": "llm",
         "DERIVER": "deriver",
         "PEER_CARD": "peer_card",
@@ -293,6 +294,14 @@ class MetricsSettings(HonchoSettings):
     NAMESPACE: str = "honcho"
 
 
+class CacheSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    URL: str = "redis://localhost:6379/0"
+    DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = 300
+
+
 class DreamSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="DREAM_", extra="ignore")  # pyright: ignore
 
@@ -345,6 +354,7 @@ class AppSettings(HonchoSettings):
     SUMMARY: SummarySettings = Field(default_factory=SummarySettings)
     WEBHOOK: WebhookSettings = Field(default_factory=WebhookSettings)
     METRICS: MetricsSettings = Field(default_factory=MetricsSettings)
+    CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
 
     @field_validator("LOG_LEVEL")

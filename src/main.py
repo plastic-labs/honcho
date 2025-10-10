@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+from src.cache import close_cache, init_cache
 from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
@@ -105,8 +106,12 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    yield
-    await engine.dispose()
+    await init_cache()
+    try:
+        yield
+    finally:
+        await close_cache()
+        await engine.dispose()
 
 
 app = FastAPI(

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src import models, prometheus
+from src.cache import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (
@@ -773,6 +774,7 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
+    await init_cache()
     manager = QueueManager()
     try:
         await manager.initialize()
@@ -780,4 +782,5 @@ async def main():
         logger.error(f"Error in main: {str(e)}")
         sentry_sdk.capture_exception(e)
     finally:
+        await close_cache()
         logger.debug("Main function exiting")
