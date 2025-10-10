@@ -621,7 +621,7 @@ async def get_session_context(
                 summary_type=latest_long_summary["summary_type"],
                 created_at=latest_long_summary["created_at"],
                 token_count=latest_long_summary["token_count"],
-                message_public_id=latest_long_summary["message_public_id"],
+                message_public_id=latest_long_summary.get("message_public_id", ""),
             )
             messages_tokens = token_limit - latest_long_summary["token_count"]
             messages_start_id = latest_long_summary["message_id"]
@@ -634,7 +634,7 @@ async def get_session_context(
                 summary_type=latest_short_summary["summary_type"],
                 created_at=latest_short_summary["created_at"],
                 token_count=latest_short_summary["token_count"],
-                message_public_id=latest_short_summary["message_public_id"],
+                message_public_id=latest_short_summary.get("message_public_id", ""),
             )
             messages_tokens = token_limit - latest_short_summary["token_count"]
             messages_start_id = latest_short_summary["message_id"]
