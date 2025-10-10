@@ -519,8 +519,8 @@ async def honcho_llm_call_inner(
                 # Safely extract response data
                 text_content = gemini_response.text if gemini_response.text else ""
                 token_count = (
-                    gemini_response.candidates[0].token_count or 0
-                    if gemini_response.candidates
+                    gemini_response.usage_metadata.candidates_token_count or 0
+                    if gemini_response.usage_metadata
                     else 0
                 )
                 finish_reason = (
@@ -547,8 +547,8 @@ async def honcho_llm_call_inner(
                 )
 
                 token_count = (
-                    gemini_response.candidates[0].token_count or 0
-                    if gemini_response.candidates
+                    gemini_response.usage_metadata.candidates_token_count or 0
+                    if gemini_response.usage_metadata
                     else 0
                 )
                 finish_reason = (
