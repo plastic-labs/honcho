@@ -85,13 +85,19 @@ async def create_messages(
         {"workspace_name": workspace_name, "session_name": session_name},
     )
 
-    last_seq_result = await db.execute(
-        select(func.max(models.Message.message_seq_in_session)).where(
-            models.Message.workspace_name == workspace_name,
-            models.Message.session_name == session_name,
+    # Get the last sequence number on a session - uses (workspace_name, session_name, message_seq_in_session) index
+    last_seq = (
+        await db.scalar(
+            select(models.Message.message_seq_in_session)
+            .where(
+                models.Message.workspace_name == workspace_name,
+                models.Message.session_name == session_name,
+            )
+            .order_by(models.Message.message_seq_in_session.desc())
+            .limit(1)
         )
+        or 0
     )
-    last_seq = last_seq_result.scalar() or 0
 
     # Create list of message objects (this will trigger the before_insert event)
     message_objects: list[models.Message] = []
@@ -294,45 +300,6 @@ async def get_message_seq_in_session(
     result = await db.execute(stmt)
     seq = result.scalar()
     return int(seq) if seq is not None else 0
-
-
-async def get_message_seqs_in_session_batch(
-    db: AsyncSession,
-    workspace_name: str,
-    session_name: str,
-    message_ids: list[int],
-) -> dict[int, int]:
-    """
-    Get the sequence numbers for multiple messages within a session in a single query.
-
-    Args:
-        db: Database session
-        workspace_name: Name of the workspace
-        session_name: Name of the session
-        message_ids: List of message primary key IDs
-
-    Returns:
-        Dictionary mapping message_id to sequence number (1-indexed).
-        If a given ID does not exist in the specified session, its value will be 0.
-        Note: duplicate IDs in the input are de-duplicated in the query and the
-        resulting mapping will contain a single entry per unique message_id.
-    """
-    if not message_ids:
-        return {}
-
-    unique_ids = list(set(message_ids))
-
-    stmt = (
-        select(models.Message.id, models.Message.message_seq_in_session)
-        .where(models.Message.workspace_name == workspace_name)
-        .where(models.Message.session_name == session_name)
-        .where(models.Message.id.in_(unique_ids))
-    )
-    result = await db.execute(stmt)
-    rows = result.all()
-    id_to_position = {int(row[0]): int(row[1]) for row in rows}
-
-    return {msg_id: id_to_position.get(msg_id, 0) for msg_id in message_ids}
 
 
 async def get_message(
