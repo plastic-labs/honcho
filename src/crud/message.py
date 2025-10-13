@@ -78,10 +78,11 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
-    lock_key = f"{workspace_name}:{session_name}"
     await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
-        {"lock_key": lock_key},
+        text(
+            "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
+        ),
+        {"workspace_name": workspace_name, "session_name": session_name},
     )
 
     last_seq_result = await db.execute(
@@ -110,7 +111,9 @@ async def create_messages(
         message_objects.append(message_obj)
 
     db.add_all(message_objects)
-    await db.flush()
+
+    # Commit here to release the advisory lock before generating embeddings
+    await db.commit()
 
     if settings.EMBED_MESSAGES:
         encoded_message_lookup = {
@@ -144,8 +147,7 @@ async def create_messages(
         # Add all embedding objects to the session
         if embedding_objects:
             db.add_all(embedding_objects)
-
-    await db.commit()
+            await db.commit()
 
     return message_objects
 
