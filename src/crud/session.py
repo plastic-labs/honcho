@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import BigInteger, Boolean
 
 from src import models, schemas
+from src.cache.model_cache import ModelCache
 from src.config import settings
 from src.exceptions import (
     ConflictException,
@@ -23,6 +24,19 @@ from .peer import get_or_create_peers, get_peer
 from .workspace import get_or_create_workspace
 
 logger = getLogger(__name__)
+
+
+_session_cache = ModelCache(ttl=settings.CACHE.DEFAULT_TTL_SECONDS)
+
+
+def session_cache_key(workspace_name: str, session_name: str) -> str:
+    return f"session:{workspace_name}:{session_name}"
+
+
+async def _attach_session(
+    db: AsyncSession, session_obj: models.Session
+) -> models.Session:
+    return await db.merge(session_obj, load=False)
 
 
 def count_observers_in_config(
@@ -79,15 +93,24 @@ async def get_or_create_session(
         ConflictException: If we fail to get or create the session
     """
 
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session.name)
+    if not session.name:
+        raise ValueError("Session name must be provided")
+
+    cache_key = session_cache_key(workspace_name, session.name)
+
+    honcho_session = await _session_cache.get_or_fetch(
+        db,
+        models.Session,
+        cache_key,
+        query_func=lambda session_db: session_db.scalar(
+            select(models.Session)
+            .where(models.Session.workspace_name == workspace_name)
+            .where(models.Session.name == session.name)
+        ),
     )
 
-    result = await db.execute(stmt)
-
-    honcho_session = result.scalar_one_or_none()
+    if honcho_session is not None:
+        honcho_session = await _attach_session(db, honcho_session)
 
     # Check if session already exists
     if honcho_session is None:
@@ -148,6 +171,7 @@ async def get_or_create_session(
         )
 
     await db.commit()
+    await _session_cache.set(cache_key, honcho_session)
     return honcho_session
 
 
@@ -170,22 +194,24 @@ async def get_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
+    cache_key = session_cache_key(workspace_name, session_name)
+    honcho_session = await _session_cache.get_or_fetch(
+        db,
+        models.Session,
+        cache_key,
+        query_func=lambda session_db: session_db.scalar(
+            select(models.Session)
+            .where(models.Session.workspace_name == workspace_name)
+            .where(models.Session.name == session_name)
+        ),
     )
-
-    result = await db.execute(stmt)
-
-    honcho_session = result.scalar_one_or_none()
 
     if honcho_session is None:
         raise ResourceNotFoundException(
             f"Session {session_name} not found in workspace {workspace_name}"
         )
 
-    return honcho_session
+    return await _attach_session(db, honcho_session)
 
 
 async def update_session(
@@ -220,6 +246,9 @@ async def update_session(
         honcho_session.configuration = session.configuration
 
     await db.commit()
+    await _session_cache.set(
+        session_cache_key(workspace_name, session_name), honcho_session
+    )
     logger.debug("Session %s updated successfully", session_name)
     return honcho_session
 
@@ -241,22 +270,13 @@ async def delete_session(
     Raises:
         ResourceNotFoundException: If the session does not exist
     """
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
-    )
-    result = await db.execute(stmt)
-    honcho_session = result.scalar_one_or_none()
-
-    if honcho_session is None:
-        logger.warning(
-            f"Session {session_name} not found in workspace {workspace_name}"
-        )
-        raise ResourceNotFoundException("Session not found")
+    honcho_session = await get_session(db, session_name, workspace_name)
 
     honcho_session.is_active = False
     await db.commit()
+    await _session_cache.set(
+        session_cache_key(workspace_name, session_name), honcho_session
+    )
     logger.debug("Session %s marked as inactive", session_name)
     return True
 
@@ -359,6 +379,9 @@ async def clone_session(
 
     await db.commit()
     logger.debug("Session %s cloned successfully", original_session_name)
+    await _session_cache.set(
+        session_cache_key(workspace_name, new_session.name), new_session
+    )
     return new_session
 
 
@@ -384,18 +407,7 @@ async def remove_peers_from_session(
         ResourceNotFoundException: If the session does not exist
     """
     # Verify session exists
-    stmt = (
-        select(models.Session)
-        .where(models.Session.workspace_name == workspace_name)
-        .where(models.Session.name == session_name)
-    )
-    result = await db.execute(stmt)
-    session = result.scalar_one_or_none()
-
-    if session is None:
-        raise ResourceNotFoundException(
-            f"Session {session_name} not found in workspace {workspace_name}"
-        )
+    await get_session(db, session_name, workspace_name)
 
     # Soft delete specified session peers by setting left_at timestamp
     update_stmt = (
@@ -408,7 +420,7 @@ async def remove_peers_from_session(
         )
         .values(left_at=func.now())
     )
-    result = await db.execute(update_stmt)
+    await db.execute(update_stmt)
 
     await db.commit()
     return True

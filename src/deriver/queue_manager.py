@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import func
 
 from src import models, prometheus
-from src.cache import close_cache, init_cache
+from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.dependencies import tracked_db
 from src.deriver.consumer import (

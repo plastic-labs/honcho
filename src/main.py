@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
-from src.cache import close_cache, init_cache
+from src.cache.client import close_cache, init_cache
 from src.config import settings
 from src.db import engine, request_context
 from src.exceptions import HonchoException
