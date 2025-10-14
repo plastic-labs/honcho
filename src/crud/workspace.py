@@ -172,6 +172,8 @@ async def update_workspace(
         honcho_workspace.configuration = workspace.configuration
 
     await db.commit()
+    await db.refresh(honcho_workspace)
+
     await _workspace_cache.set(workspace_cache_key(workspace_name), honcho_workspace)
     logger.debug("Workspace with id %s updated successfully", honcho_workspace.id)
     return honcho_workspace
@@ -309,5 +311,5 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
                 workspace_name,
                 cache_error,
             )
-            raise
+            continue
     return workspace_snapshot

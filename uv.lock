@@ -765,7 +765,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.10.1" },
     { name = "pyjwt", specifier = ">=2.10.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "redis", specifier = ">=5.0.4" },
+    { name = "redis", specifier = ">=6.0.0" },
     { name = "rich", specifier = ">=13.7.1" },
     { name = "sentry-sdk", extras = ["anthropic", "fastapi", "sqlalchemy"], specifier = ">=2.3.1" },
     { name = "sqlalchemy", specifier = ">=2.0.30" },
