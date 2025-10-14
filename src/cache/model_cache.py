@@ -1,5 +1,6 @@
 import contextlib
 import json
+import logging
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar, cast
 
@@ -8,9 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
 
 from src.cache import client
-from src.config import settings
+from src.cache.constants import (
+    get_cache_namespace,
+    get_peer_prefix,
+    get_session_prefix,
+    get_workspace_prefix,
+)
 
 T = TypeVar("T")
+
+logger = logging.getLogger(__name__)
 
 
 class ModelCache:
@@ -20,9 +28,9 @@ class ModelCache:
         self,
         resource_type: str,
         ttl: int = 300,
-    ):
+    ) -> None:
         self.ttl: int = ttl
-        self.namespace: str = settings.CACHE.NAMESPACE or settings.NAMESPACE
+        self.namespace: str = get_cache_namespace()
         self.resource_type: str = resource_type
 
     async def get_or_fetch(
@@ -50,7 +58,9 @@ class ModelCache:
                 return self._deserialize_model(model_class, data)
             except (json.JSONDecodeError, Exception) as e:
                 # Log error but continue to DB fetch
-                print(f"Cache deserialization error: {e}")
+                logger.warning(
+                    "Cache deserialization error for %s: %s", model_class.__name__, e
+                )
 
         # Fall back to database
         result = await query_func(db)
@@ -85,7 +95,9 @@ class ModelCache:
                 data_list = json.loads(raw)
                 return [self._deserialize_model(model_class, d) for d in data_list]
             except (json.JSONDecodeError, Exception) as e:
-                print(f"Cache deserialization error: {e}")
+                logger.warning(
+                    "Cache deserialization error for %s: %s", model_class.__name__, e
+                )
 
         result = await query_func(db)
 
@@ -108,7 +120,7 @@ class ModelCache:
         cache_key: str,
         obj: Any,
         ttl: int | None = None,
-    ):
+    ) -> None:
         """Explicitly set a cache entry"""
         if not client.is_enabled():
             return
@@ -219,19 +231,19 @@ class ModelCache:
         if self.resource_type == "workspace":
             if not workspace_name:
                 raise ValueError("Must specify 'workspace_name' for workspace key")
-            return f"{self.namespace}:workspace:name:{workspace_name}"
+            return get_workspace_prefix(workspace_name)
         elif self.resource_type == "session":
             if not (workspace_name and session_name):
                 raise ValueError(
                     "Must specify both 'workspace_name' and 'session_name' for session key"
                 )
-            return f"{self.namespace}:session:{workspace_name}:{session_name}"
+            return f"{get_session_prefix(workspace_name)}:{session_name}"
         elif self.resource_type == "peer":
             if not (workspace_name and peer_name):
                 raise ValueError(
                     "Must specify both 'workspace_name' and 'peer_name' for peer key"
                 )
-            return f"{self.namespace}:peer:{workspace_name}:{peer_name}"
+            return f"{get_peer_prefix(workspace_name)}:{peer_name}"
         else:
             raise ValueError(
                 f"Unknown resource type '{self.resource_type}', must be one of: workspace, session, peer"

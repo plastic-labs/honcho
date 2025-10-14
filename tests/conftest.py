@@ -7,6 +7,7 @@ import fakeredis.aioredis as fakeredis
 import jwt
 import pytest
 import pytest_asyncio
+from fakeredis.aioredis import FakeRedis
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
@@ -176,7 +177,7 @@ async def fake_redis(monkeypatch: pytest.MonkeyPatch):
 
     fake_client = fakeredis.FakeRedis(decode_responses=False)
 
-    def _fake_from_url(*_: Any, **__: Any):  # pyright: ignore[reportUnusedParameter]
+    def _fake_from_url(*_: Any, **__: Any) -> FakeRedis:  # pyright: ignore[reportUnusedParameter]
         return fake_client
 
     monkeypatch.setattr(cache_client.redis, "from_url", _fake_from_url)  # pyright: ignore[reportPrivateLocalImportUsage]
@@ -185,7 +186,7 @@ async def fake_redis(monkeypatch: pytest.MonkeyPatch):
     settings.CACHE.ENABLED = original_enabled
     cache_client._client = None  # pyright: ignore[reportPrivateUsage]
 
-    await fake_client.flushall()  # pyright: ignore[reportUnknownMemberType]
+    await fake_client.flushall()
     if original_enabled:
         await cache_client.init_cache()
 
@@ -193,8 +194,8 @@ async def fake_redis(monkeypatch: pytest.MonkeyPatch):
         yield fake_client
     finally:
         await cache_client.close_cache()
-        await fake_client.flushall()  # pyright: ignore[reportUnknownMemberType]
-        await fake_client.aclose()
+        await fake_client.flushall()
+        await fake_client.close()
         cache_client._client = original_client  # pyright: ignore[reportPrivateUsage]
         settings.CACHE.ENABLED = original_enabled
         settings.CACHE.URL = original_url

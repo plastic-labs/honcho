@@ -774,7 +774,13 @@ class QueueManager:
 
 async def main():
     logger.debug("Starting queue manager")
-    await init_cache()
+    try:
+        await init_cache()
+    except Exception as e:
+        logger.warning(
+            "Error initializing cache in queue manager; proceeding without cache: %s", e
+        )
+
     manager = QueueManager()
     try:
         await manager.initialize()

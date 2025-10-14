@@ -106,7 +106,13 @@ if SENTRY_ENABLED:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await init_cache()
+    try:
+        await init_cache()
+    except Exception as e:
+        logger.warning(
+            "Error initializing cache in api process; proceeding without cache: %s", e
+        )
+
     try:
         yield
     finally:

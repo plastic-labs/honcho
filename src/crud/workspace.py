@@ -6,6 +6,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import models, schemas
+from src.cache import client
+from src.cache.constants import get_workspace_cache_prefixes
 from src.cache.model_cache import ModelCache
 from src.config import settings
 from src.exceptions import ConflictException, ResourceNotFoundException
@@ -284,5 +286,28 @@ async def delete_workspace(db: AsyncSession, workspace_name: str) -> schemas.Wor
         await db.rollback()
         raise e
 
-    await _workspace_cache.invalidate(workspace_cache_key(workspace_name))
+    cache_key = workspace_cache_key(workspace_name)
+    await _workspace_cache.invalidate(cache_key)
+
+    cache_prefixes = get_workspace_cache_prefixes(workspace_name)
+
+    for resource_type, prefix in cache_prefixes.items():
+        try:
+            search_prefix = f"{prefix}:"
+            deleted = await client.delete_prefix(search_prefix)
+            if deleted:
+                logger.debug(
+                    "Deleted %s %s cache keys for workspace %s",
+                    deleted,
+                    resource_type,
+                    workspace_name,
+                )
+        except Exception as cache_error:
+            logger.error(
+                "Failed to delete %s cache keys for workspace %s: %s",
+                resource_type,
+                workspace_name,
+                cache_error,
+            )
+            raise
     return workspace_snapshot

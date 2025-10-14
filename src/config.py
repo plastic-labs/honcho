@@ -344,7 +344,7 @@ class AppSettings(HonchoSettings):
     COLLECT_METRICS_LOCAL: bool = False
     LOCAL_METRICS_FILE: str = "metrics.jsonl"
 
-    NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overriden by service-level settings
+    NAMESPACE: str = "honcho"  # Top-level namespace for all settings, can be overridden by nested-model settings
 
     # Nested settings models
     DB: DBSettings = Field(default_factory=DBSettings)

@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING
 import redis.asyncio as redis
 
 if TYPE_CHECKING:
-    from redis.asyncio.client import Redis as AsyncRedis
+    from redis.asyncio import Redis as AsyncRedis
 
 from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-_client: AsyncRedis | None = None
+_client: AsyncRedis[bytes] | None = None
 _lock = asyncio.Lock()
 
 
@@ -30,23 +30,36 @@ async def init_cache() -> None:
     if _client is None:
         async with _lock:
             if _client is None:
-                _client = redis.from_url(  # pyright: ignore
-                    settings.CACHE.URL,
-                    encoding="utf-8",
-                    decode_responses=False,
-                )
-                connected = await _client.ping()  # pyright: ignore
-                if connected:
+                try:
+                    _client = redis.from_url(  # pyright: ignore
+                        settings.CACHE.URL,
+                        encoding="utf-8",
+                        decode_responses=False,
+                    )
+                    await _client.ping()
                     logger.info("Connected to cache at %s", settings.CACHE.URL)
-                else:
-                    logger.warning("Redis client is not connected, disabling cache")
+                except (redis.ConnectionError, redis.TimeoutError) as e:
+                    logger.warning(
+                        "Failed to connect to cache at %s: %s. Disabling cache",
+                        settings.CACHE.URL,
+                        e,
+                    )
                     settings.CACHE.ENABLED = False
+                    _client = None
+                except Exception as e:
+                    logger.warning(
+                        "Unexpected error connecting to cache at %s: %s. Disabling cache",
+                        settings.CACHE.URL,
+                        e,
+                    )
+                    settings.CACHE.ENABLED = False
+                    _client = None
 
 
 async def close_cache() -> None:
     global _client
     if _client is not None:
-        await _client.aclose()
+        await _client.close()
         _client = None
 
 
@@ -67,11 +80,33 @@ async def get(key: str) -> bytes | None:
     return await client.get(key)
 
 
-async def delete(*keys: str) -> None:
+async def delete(*keys: str) -> int:
     client = _client
     if client is None or not keys:
-        return
-    await client.delete(*keys)
+        return 0
+    return await client.delete(*keys)
+
+
+async def delete_prefix(prefix: str, *, batch_size: int = 500) -> int:
+    """Delete all keys matching a prefix using SCAN and DEL batches."""
+    client = _client
+    if client is None:
+        return 0
+
+    pattern = f"{prefix}*"
+    keys_to_delete: list[bytes] = []
+    deleted_total = 0
+
+    async for key in client.scan_iter(match=pattern, count=batch_size):
+        keys_to_delete.append(key)
+        if len(keys_to_delete) >= batch_size:
+            deleted_total += await client.delete(*keys_to_delete)
+            keys_to_delete.clear()
+
+    if keys_to_delete:
+        deleted_total += await client.delete(*keys_to_delete)
+
+    return deleted_total
 
 
 __all__ = [
@@ -80,5 +115,6 @@ __all__ = [
     "set",
     "get",
     "delete",
+    "delete_prefix",
     "is_enabled",
 ]

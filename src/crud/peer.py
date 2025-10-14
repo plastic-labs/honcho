@@ -192,6 +192,8 @@ async def update_peer(
         honcho_peer.configuration = peer.configuration
 
     await db.commit()
+    await db.refresh(honcho_peer)
+
     await peer_cache.set(peer_cache_key(workspace_name, honcho_peer.name), honcho_peer)
     logger.debug(f"Peer {peer_name} updated successfully")
     return honcho_peer
