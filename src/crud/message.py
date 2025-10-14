@@ -78,6 +78,7 @@ async def create_messages(
         workspace_name=workspace_name,
     )
 
+    await db.execute(text(text="SET LOCAL lock_timeout = '5s'"))
     await db.execute(
         text(
             "SELECT pg_advisory_xact_lock(hashtext(:workspace_name), hashtext(:session_name))"
@@ -85,15 +86,15 @@ async def create_messages(
         {"workspace_name": workspace_name, "session_name": session_name},
     )
 
-    # Get the last sequence number on a session - uses (workspace_name, session_name, message_seq_in_session) index
+    # Get the last sequence number on a session - uses (workspace_name, session_name, seq_in_session) index
     last_seq = (
         await db.scalar(
-            select(models.Message.message_seq_in_session)
+            select(models.Message.seq_in_session)
             .where(
                 models.Message.workspace_name == workspace_name,
                 models.Message.session_name == session_name,
             )
-            .order_by(models.Message.message_seq_in_session.desc())
+            .order_by(models.Message.seq_in_session.desc())
             .limit(1)
         )
         or 0
@@ -112,7 +113,7 @@ async def create_messages(
             public_id=generate_nanoid(),
             token_count=len(message.encoded_message),
             created_at=message.created_at,  # Use provided created_at if available
-            message_seq_in_session=message_seq_in_session,
+            seq_in_session=message_seq_in_session,
         )
         message_objects.append(message_obj)
 
@@ -120,40 +121,48 @@ async def create_messages(
 
     # Commit here to release the advisory lock before generating embeddings
     await db.commit()
-
-    if settings.EMBED_MESSAGES:
-        encoded_message_lookup = {
-            msg.public_id: orig_msg.encoded_message
-            for msg, orig_msg in zip(message_objects, messages, strict=True)
-        }
-        id_resource_dict = {
-            message.public_id: (
-                message.content,
-                encoded_message_lookup[message.public_id],
-            )
-            for message in message_objects
-        }
-        embedding_dict = await embedding_client.batch_embed(id_resource_dict)
-
-        # Create MessageEmbedding entries for each embedded message
-        embedding_objects: list[models.MessageEmbedding] = []
-        for message_obj in message_objects:
-            embeddings = embedding_dict.get(message_obj.public_id, [])
-            for embedding in embeddings:
-                embedding_obj = models.MessageEmbedding(
-                    content=message_obj.content,
-                    embedding=embedding,
-                    message_id=message_obj.public_id,
-                    workspace_name=workspace_name,
-                    session_name=session_name,
-                    peer_name=message_obj.peer_name,
+    try:
+        if settings.EMBED_MESSAGES:
+            encoded_message_lookup = {
+                msg.public_id: orig_msg.encoded_message
+                for msg, orig_msg in zip(message_objects, messages, strict=True)
+            }
+            id_resource_dict = {
+                message.public_id: (
+                    message.content,
+                    encoded_message_lookup[message.public_id],
                 )
-                embedding_objects.append(embedding_obj)
+                for message in message_objects
+            }
+            embedding_dict = await embedding_client.batch_embed(id_resource_dict)
 
-        # Add all embedding objects to the session
-        if embedding_objects:
-            db.add_all(embedding_objects)
-            await db.commit()
+            # Create MessageEmbedding entries for each embedded message
+            embedding_objects: list[models.MessageEmbedding] = []
+            for message_obj in message_objects:
+                embeddings = embedding_dict.get(message_obj.public_id, [])
+                for embedding in embeddings:
+                    embedding_obj = models.MessageEmbedding(
+                        content=message_obj.content,
+                        embedding=embedding,
+                        message_id=message_obj.public_id,
+                        workspace_name=workspace_name,
+                        session_name=session_name,
+                        peer_name=message_obj.peer_name,
+                    )
+                    embedding_objects.append(embedding_obj)
+
+            # Add all embedding objects to the session
+            if embedding_objects:
+                db.add_all(embedding_objects)
+                await db.commit()
+    except Exception as e:
+        logger.exception(
+            "Failed to generate message embeddings for %s messages in workspace %s and session %s: %s",
+            len(message_objects),
+            workspace_name,
+            session_name,
+            str(e),
+        )
 
     return message_objects
 
@@ -292,7 +301,7 @@ async def get_message_seq_in_session(
         The sequence number of the message (1-indexed)
     """
     stmt = (
-        select(models.Message.message_seq_in_session)
+        select(models.Message.seq_in_session)
         .where(models.Message.workspace_name == workspace_name)
         .where(models.Message.session_name == session_name)
         .where(models.Message.id == message_id)

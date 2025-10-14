@@ -83,21 +83,21 @@ async def sample_messages(
             "content": "Hello, this is the first message from peer1",
             "peer_name": peer1.name,
             "workspace_name": session.workspace_name,
-            "message_seq_in_session": 1,
+            "seq_in_session": 1,
         },
         {
             "session_name": session.name,
             "content": "Hi there! This is a response from peer2",
             "peer_name": peer2.name,
             "workspace_name": session.workspace_name,
-            "message_seq_in_session": 2,
+            "seq_in_session": 2,
         },
         {
             "session_name": session.name,
             "content": "I'm just observing this conversation as peer3",
             "peer_name": peer3.name,
             "workspace_name": session.workspace_name,
-            "message_seq_in_session": 3,
+            "seq_in_session": 3,
         },
     ]
 

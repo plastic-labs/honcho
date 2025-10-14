@@ -336,7 +336,7 @@ async def clone_session(
             "h_metadata": message.h_metadata,
             "workspace_name": workspace_name,
             "peer_name": message.peer_name,
-            "message_seq_in_session": message.message_seq_in_session,
+            "seq_in_session": message.seq_in_session,
         }
         for message in messages_to_clone
     ]

@@ -186,9 +186,7 @@ class Message(Base):
         "internal_metadata", JSONB, default=dict
     )
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    message_seq_in_session: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, index=True
-    )
+    seq_in_session: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), index=True, default=func.now()
@@ -222,7 +220,7 @@ class Message(Base):
         UniqueConstraint(
             "workspace_name",
             "session_name",
-            "message_seq_in_session",
+            "seq_in_session",
             name="uq_messages_session_seq",
         ),
         # Full text search index on content column

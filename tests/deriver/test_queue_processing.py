@@ -128,7 +128,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content="hello",
                 token_count=10,
-                message_seq_in_session=i + 1,
+                seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -292,7 +292,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
-                message_seq_in_session=i + 1,
+                seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -405,7 +405,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Message from {peer.name}",
                 token_count=token_count,
-                message_seq_in_session=i + 1,
+                seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -571,7 +571,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Message from {peer.name}",
                 token_count=token_count,
-                message_seq_in_session=i + 1,
+                seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -708,7 +708,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content="First summary message",
                 public_id=generate_nanoid(),
-                message_seq_in_session=1,
+                seq_in_session=1,
             ),
             models.Message(
                 id=1000,
@@ -717,7 +717,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content="Second summary message",
                 public_id=generate_nanoid(),
-                message_seq_in_session=2,
+                seq_in_session=2,
             ),
         ]
 
@@ -826,7 +826,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
-                message_seq_in_session=i + 1,
+                seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)
@@ -937,7 +937,7 @@ class TestQueueProcessing:
                 peer_name=peer.name,
                 content=f"Test message {i}",
                 token_count=token_count,
-                message_seq_in_session=i + 1,
+                seq_in_session=i + 1,
             )
             db_session.add(message)
             messages.append(message)

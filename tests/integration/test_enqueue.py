@@ -28,7 +28,7 @@ class TestEnqueueFunction:
         """Create real messages in database and return payload with actual IDs"""
         # Get the current max sequence number for this session
         result = await db_session.execute(
-            select(func.max(models.Message.message_seq_in_session)).where(
+            select(func.max(models.Message.seq_in_session)).where(
                 models.Message.workspace_name == workspace_name,
                 models.Message.session_name == session_name,
             )
@@ -43,7 +43,7 @@ class TestEnqueueFunction:
                 peer_name=peer_name,
                 content=f"Test message {i}",
                 public_id=generate_nanoid(),
-                message_seq_in_session=current_max_seq + i + 1,
+                seq_in_session=current_max_seq + i + 1,
                 token_count=10,
                 h_metadata={"test": f"value_{i}"},
             )
@@ -1097,7 +1097,7 @@ class TestAdvancedEnqueueEdgeCases:
         """Create real messages in database and return payload with actual IDs"""
         # Get the current max sequence number for this session
         result = await db_session.execute(
-            select(func.max(models.Message.message_seq_in_session)).where(
+            select(func.max(models.Message.seq_in_session)).where(
                 models.Message.workspace_name == workspace_name,
                 models.Message.session_name == session_name,
             )
@@ -1112,7 +1112,7 @@ class TestAdvancedEnqueueEdgeCases:
                 peer_name=peer_name,
                 content=f"Test message {i}",
                 public_id=generate_nanoid(),
-                message_seq_in_session=current_max_seq + i + 1,
+                seq_in_session=current_max_seq + i + 1,
                 token_count=10,
                 h_metadata={"test": f"value_{i}"},
             )

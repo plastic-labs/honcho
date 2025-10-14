@@ -265,7 +265,7 @@ async def generate_queue_records(
     message_id: int = message["message_id"]
 
     # Prefer the sequence captured during message creation; fallback only if missing
-    message_seq_in_session = int(message.get("message_seq_in_session") or 0)
+    message_seq_in_session = int(message.get("seq_in_session") or 0)
     if message_seq_in_session <= 0:
         message_seq_in_session = await crud.get_message_seq_in_session(
             db_session,
